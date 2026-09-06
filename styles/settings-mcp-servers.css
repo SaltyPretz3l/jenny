@@ -1,0 +1,107 @@
+/* styles/settings-mcp-servers.css
+ *
+ * Settings > Plugins & Extensions > "MCP connections".
+ * Reuses .settings-group / .settings-field-row-text / .settings-badge /
+ * .status-dot / .settings-actions / .settings-note wherever possible; only
+ * the bits those primitives don't cover live here. Tokens only -- no
+ * literal hex anywhere in this file.
+ */
+
+.mcp-servers-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.mcp-servers-header > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Row = status dot · text · actions. Without this the three children spread
+   across the row (space-between) and the dot reads as a stray bullet. */
+.mcp-servers-row {
+  gap: var(--space-3);
+}
+
+.mcp-servers-row > .settings-field-row-text {
+  flex: 1 1 auto;
+}
+
+.mcp-servers-row > .mcp-servers-row-actions {
+  margin-left: var(--space-4);
+}
+
+.mcp-servers-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-4);
+}
+
+.mcp-servers-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+
+.mcp-servers-note {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.mcp-servers-note--danger {
+  background: var(--state-danger-bg);
+  color: var(--state-danger);
+}
+
+.mcp-server-editor {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.mcp-server-details {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.mcp-server-details dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.mcp-server-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-16) * 3 + var(--space-7)), auto) 1fr;
+  gap: var(--space-4);
+}
+
+.mcp-server-details dt {
+  color: var(--text-muted);
+}
+
+.mcp-server-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-trust-review {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.mcp-trust-review code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.mcp-trust-review p {
+  margin: 0;
+}

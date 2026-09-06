@@ -1,0 +1,412 @@
+/* Ask cards contain a kicker, stacked questions, pill options, footer actions,
+ * and a pending accent rail; colors and motion derive from foundation/widget tokens. */
+
+.ask-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: min(100%, 720px);
+  padding: var(--space-6) var(--space-7);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--widget-ask-card-border);
+  background: var(--widget-ask-card-bg);
+}
+
+/* Pending accent rail: the "waiting on you" cue, same semantics as the
+ * approval block's left rail. Live cards only — the inert summary never
+ * renders it. Escalates to the warning token when the stalled timer
+ * (.interactive-stalled on the mount) fires. */
+.ask-card:not(.ask-card-inert)::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: var(--space-5);
+  bottom: var(--space-5);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--widget-ask-card-rail);
+}
+
+.interactive-stalled .ask-card::before {
+  background: var(--widget-ask-card-rail-stalled);
+}
+
+.ask-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.ask-card-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: calc(10px * var(--chat-zoom-factor, 1));
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--widget-ask-card-header-color);
+}
+
+.ask-card-kicker-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--widget-ask-card-rail);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--widget-ask-card-rail) 28%, transparent);
+}
+
+.interactive-stalled .ask-card .ask-card-kicker-dot {
+  background: var(--widget-ask-card-rail-stalled);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--widget-ask-card-rail-stalled) 28%, transparent);
+}
+
+.ask-card-progress {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--widget-interactive-note-color);
+}
+
+.ask-card-intro {
+  color: var(--widget-interactive-intro-color);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.ask-card-questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.ask-card-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* user-questions-* rules moved to styles/chat-user-questions.css (ask_user
+   editorial block owns them); this file now serves only the legacy
+   question_batch panel surfaces. */
+
+.ask-card-question-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+/* Skipped questions stay visible (and clickable to un-skip) but recede. */
+.ask-card-question[data-question-state="skipped"] .interactive-question-options {
+  opacity: 0.55;
+}
+
+.interactive-question-prompt {
+  color: var(--widget-interactive-prompt-color);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.interactive-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.interactive-option-button,
+.interactive-action-button {
+  border: 1px solid transparent;
+  background: var(--widget-interactive-option-bg);
+  color: var(--widget-interactive-option-color);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-option-button {
+  min-height: 34px;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-pill);
+  border-color: var(--widget-interactive-option-border);
+}
+
+.interactive-option-button:hover:not(:disabled),
+.interactive-action-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--widget-interactive-option-hover-bg);
+  border-color: var(--widget-interactive-option-hover-border);
+}
+
+.interactive-option-button:focus-visible,
+.interactive-action-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.interactive-option-button.selected {
+  border-color: var(--widget-interactive-option-selected-border);
+  background: var(--widget-interactive-option-selected-bg);
+  color: var(--widget-interactive-option-selected-color);
+}
+
+.interactive-question-skip {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--widget-interactive-note-color);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-question-skip:hover:not(:disabled) {
+  color: var(--widget-interactive-option-color);
+  background: var(--widget-interactive-option-bg);
+}
+
+.interactive-question-skip:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.interactive-question-skipped-note {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--widget-interactive-note-color);
+}
+
+.interactive-other-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.interactive-other-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 38px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--widget-interactive-option-border);
+  background: var(--widget-interactive-input-bg);
+  color: var(--widget-interactive-input-color);
+  padding: var(--space-5) var(--space-6);
+  font: inherit;
+  font-size: 13px;
+}
+
+.interactive-other-input:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-color: var(--widget-input-focus-border);
+  box-shadow: 0 0 0 1px var(--widget-input-focus-glow);
+}
+
+.interactive-other-confirm {
+  min-height: 38px;
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--widget-interactive-option-bg);
+  color: var(--widget-interactive-option-color);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-other-confirm:hover:not(:disabled),
+.interactive-other-confirm:focus-visible {
+  transform: translateY(-1px);
+  background: var(--widget-interactive-option-hover-bg);
+}
+
+.interactive-other-confirm:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.interactive-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+}
+
+.interactive-action-button {
+  min-height: 36px;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-md);
+}
+
+.interactive-action-button.primary {
+  background: var(--widget-approve-bg);
+  border-color: transparent;
+  color: var(--widget-approve-color);
+}
+
+.interactive-action-button-submit:disabled {
+  background: var(--widget-interactive-disabled-bg);
+  color: var(--widget-interactive-disabled-color);
+}
+
+.interactive-action-button-skip {
+  background: transparent;
+  border-color: transparent;
+  color: var(--widget-interactive-note-color);
+}
+
+.interactive-action-button-skip:hover:not(:disabled) {
+  background: var(--widget-interactive-option-bg);
+  color: var(--widget-interactive-option-color);
+  transform: none;
+}
+
+.interactive-option-button:disabled,
+.interactive-other-confirm:disabled,
+.interactive-other-input:disabled,
+.interactive-question-skip:disabled,
+.interactive-action-button:disabled {
+  background: var(--widget-interactive-disabled-bg);
+  color: var(--widget-interactive-disabled-color);
+  opacity: 0.72;
+  cursor: default;
+  transform: none;
+}
+
+.interactive-card-note {
+  color: var(--widget-interactive-note-color);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Hidden until the 30s stalled timer adds .interactive-stalled to the mount
+ * (renderer-interactive-panel-utils startStalledTimer). */
+.interactive-stalled-nudge {
+  display: none;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--widget-interactive-note-color);
+  font-style: italic;
+}
+
+.interactive-stalled .interactive-stalled-nudge {
+  display: block;
+}
+
+/* ── Historical "Jenny proposed" compatibility summary ──
+ * Same shell, kicker, rail, and footer-button family as the ask-card; only
+ * the title + numbered steps are proposal-specific. Rendered by
+ * renderer-plan-proposal-card.js as an inert timeline row (its own
+ * mount class — .chat-row-interactive-mount belongs to the question batch's
+ * focus/stalled machinery). */
+
+.plan-proposal-title {
+  color: var(--widget-interactive-prompt-color);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.plan-proposal-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding-left: var(--space-7);
+}
+
+.plan-proposal-step {
+  color: var(--widget-interactive-prompt-color);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.plan-proposal-step::marker {
+  color: var(--widget-interactive-note-color);
+  font-size: 12px;
+}
+
+.plan-proposal-step-label {
+  display: block;
+}
+
+.plan-proposal-step-detail {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 12px;
+  color: var(--widget-interactive-note-color);
+}
+
+.plan-proposal-steps-inert {
+  gap: var(--space-2);
+  color: var(--widget-interactive-note-color);
+}
+
+.plan-proposal-steps-inert .plan-proposal-step {
+  color: var(--widget-interactive-note-color);
+}
+
+/* ── Inert (historical) summary ── */
+
+.ask-card-inert {
+  gap: var(--space-3);
+  opacity: 0.85;
+}
+
+.ask-card-inert .ask-card-kicker-dot {
+  background: var(--widget-interactive-note-color);
+  box-shadow: none;
+}
+
+.interactive-summary-questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-7);
+  color: var(--widget-interactive-note-color);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .ask-card {
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interactive-option-button,
+  .interactive-action-button,
+  .interactive-other-confirm,
+  .interactive-question-skip {
+    transition: none;
+  }
+
+  .interactive-option-button:hover:not(:disabled),
+  .interactive-action-button:hover:not(:disabled),
+  .interactive-other-confirm:hover:not(:disabled) {
+    transform: none;
+  }
+}

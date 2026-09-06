@@ -1,0 +1,92 @@
+[
+  {
+    "turn_id": "stream_23",
+    "rows": [
+      {
+        "row_id": "row:stream_23:user_prompt:0",
+        "turn_id": "stream_23",
+        "kind": "user_bubble",
+        "primary_message_id": "user_stream_23",
+        "render_message_id": "user_stream_23",
+        "source_message_ids": [
+          "user_stream_23"
+        ],
+        "first_event_sort_key": [
+          0,
+          0,
+          10
+        ],
+        "source_events": [
+          "stream_23:user_prompt:0"
+        ],
+        "payload": {
+          "content": "Edit test.py",
+          "attachments": []
+        }
+      },
+      {
+        "row_id": "row:tool_call:stream_23:call_23",
+        "turn_id": "stream_23",
+        "kind": "tool_call",
+        "primary_message_id": "tool_use_stream_23",
+        "render_message_id": "tool_use_stream_23",
+        "source_message_ids": [
+          "tool_use_stream_23"
+        ],
+        "first_event_sort_key": [
+          1,
+          0,
+          40
+        ],
+        "source_events": [
+          "stream_23:tool_use:0",
+          "stream_23:tool_executing:0"
+        ],
+        "payload": {
+          "tool_call_id": "call_23",
+          "tool_name": "edit_file",
+          "input": {
+            "file_path": "test.py"
+          },
+          "input_json": "{\"file_path\":\"test.py\"}",
+          "summary": "Edit test.py",
+          "input_summary": "Edit test.py",
+          "state": "awaiting_approval",
+          "approval_requests": [],
+          "approval_resolutions": []
+        },
+        "tool_call_id": "call_23"
+      },
+      {
+        "row_id": "row:approval_gap:stream_23:call_23",
+        "turn_id": "stream_23",
+        "kind": "approval_gap",
+        "primary_message_id": "tool_use_stream_23",
+        "render_message_id": "tool_use_stream_23",
+        "source_message_ids": [
+          "tool_use_stream_23"
+        ],
+        "first_event_sort_key": [
+          1,
+          1,
+          45
+        ],
+        "source_events": [
+          "stream_23:approval_requested:0"
+        ],
+        "payload": {
+          "tool_call_id": "call_23",
+          "prompt": "",
+          "status": "pending_approval",
+          "state": "awaiting_approval",
+          "tool_name": "edit_file",
+          "input": {
+            "file_path": "test.py"
+          },
+          "input_json": "{\"file_path\":\"test.py\"}"
+        },
+        "tool_call_id": "call_23"
+      }
+    ]
+  }
+]

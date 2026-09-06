@@ -1,0 +1,21 @@
+{
+  "contract": "PluginDistributionOperationV1", "contract_version": 1, "frozen": true,
+  "defs": {
+    "subject": { "type": "object", "required": ["publisher_id", "plugin_id"], "max_keys": 2, "additional_properties": "reject", "properties": { "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" } } }
+  },
+  "root": {
+    "type": "object", "required": ["operation_schema_version", "client_request_id", "operation"], "max_keys": 3, "additional_properties": "reject",
+    "properties": {
+      "operation_schema_version": { "type": "const", "value": 1 }, "client_request_id": { "type": "ref", "ref": "operation_id" },
+      "operation": { "type": "tagged_union", "tag_field": "kind", "variants": {
+        "catalog_refresh": { "type": "object", "required": ["kind", "catalog_id"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "catalog_refresh" }, "catalog_id": { "type": "ref", "ref": "bounded_id" } } },
+        "install": { "type": "object", "required": ["kind", "source_kind", "source_locator", "target"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "install" }, "source_kind": { "type": "enum", "values": ["local_package", "https_url", "git", "signed_catalog", "offline_mirror"] }, "source_locator": { "type": "string", "max_utf8_bytes": 2048 }, "target": { "type": "ref", "ref": "subject" } } },
+        "check": { "type": "object", "required": ["kind", "target"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "check" }, "target": { "type": "ref", "ref": "subject" } } },
+        "update": { "type": "object", "required": ["kind", "target", "expected_generation_id"], "max_keys": 3, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "update" }, "target": { "type": "ref", "ref": "subject" }, "expected_generation_id": { "type": "ref", "ref": "generation_id" } } },
+        "downgrade": { "type": "object", "required": ["kind", "target", "target_version", "expected_generation_id"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "downgrade" }, "target": { "type": "ref", "ref": "subject" }, "target_version": { "type": "string", "format": "semver" }, "expected_generation_id": { "type": "ref", "ref": "generation_id" } } },
+        "rollback": { "type": "object", "required": ["kind", "target_generation_id", "expected_generation_id"], "max_keys": 3, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "rollback" }, "target_generation_id": { "type": "ref", "ref": "generation_id" }, "expected_generation_id": { "type": "ref", "ref": "generation_id" } } },
+        "cancel": { "type": "object", "required": ["kind", "target_operation_id"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "cancel" }, "target_operation_id": { "type": "ref", "ref": "operation_id" } } }
+      } }
+    }
+  }
+}

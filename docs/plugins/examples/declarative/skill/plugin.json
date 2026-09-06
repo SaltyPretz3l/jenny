@@ -1,0 +1,23 @@
+{
+  "manifest_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-skill",
+  "name": "Example Skill",
+  "version": "1.0.0",
+  "contract_versions": {
+    "manifest": 1,
+    "declarative_content": 1,
+    "operation_receipt": 1,
+    "cleanup_state": 1
+  },
+  "contributions": [
+    {
+      "kind": "skill",
+      "contribution_id": "concise_summary",
+      "name": "Concise Summary",
+      "content_path": "content/skill.json",
+      "content_sha256": "3e152ea74b98dab405f1e7ccd617ec6775e4a8761d830fd2f9504bcc3eda1a6f"
+    }
+  ],
+  "requested_permissions": []
+}

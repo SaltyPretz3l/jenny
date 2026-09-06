@@ -1,0 +1,10 @@
+{
+  "content_schema_version": 1,
+  "publisher_id": "astra-labs",
+  "plugin_id": "astra-dogfood-prompt",
+  "contribution_id": "warm_review_prompt",
+  "payload": {
+    "kind": "prompt",
+    "template": "Review the supplied text. Return one concise strength, one concrete risk, and one actionable next step."
+  }
+}

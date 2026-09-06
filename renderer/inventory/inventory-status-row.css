@@ -1,0 +1,152 @@
+/* == Status Row ==
+ *
+ * A flat status line: one tone dot plus text. Deliberately NOT a card — no
+ * border, background, radius, or shadow, and no padding. Hosts own their own
+ * spacing, so the row drops into a settings panel, the composer, or an IDE
+ * empty state without each host having to cancel a container it never wanted.
+ *
+ * Tone lives in the dot so the message text retains palette contrast.
+ *
+ * The dot mirrors .workbench-health-pill-dot exactly (same size, same ring,
+ * same pulse) so runtime status reads identically wherever it appears.
+ */
+
+.inv-status-row {
+  --inv-status-accent: var(--text-muted);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.inv-status-row--compact {
+  gap: var(--space-2);
+}
+
+/* ── Leading tone dot ── */
+
+.inv-status-row-leading {
+  display: inline-flex;
+  flex: 0 0 auto;
+  /* Nudge onto the text baseline: a 7px dot centred on the cap height reads
+     aligned, whereas true baseline alignment sits it on the descender line. */
+  position: relative;
+  top: -1px;
+}
+
+.inv-status-row-dot {
+  /* Feeds the shared status-dot-pulse keyframe (styles/chat-animations.css),
+     which the workbench health pill's dot drives the same way. */
+  --status-dot-accent: var(--inv-status-accent);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--inv-status-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--inv-status-accent) 32%, transparent);
+}
+
+.inv-status-row--with-spinner .inv-status-row-dot {
+  animation: status-dot-pulse var(--motion-duration-pulse) var(--motion-ease-standard) infinite;
+}
+
+/* ── Body ── */
+
+.inv-status-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.inv-status-row-message {
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Inline lead-in ("Runtime", "Context", "Models") rather than a separate
+   uppercase kicker line. The em dash is drawn here so callers keep passing a
+   plain label string. */
+.inv-status-row-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.inv-status-row-label::after {
+  content: " \2014 ";
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* Trailing qualifier ("Starting", "Saved", "Compacting"). Muted text, not a
+   badge pill — the dot already carries the tone. */
+.inv-status-row-badge {
+  color: var(--text-muted);
+}
+
+.inv-status-row-badge::before {
+  content: " \00b7 ";
+}
+
+/* ── Progress ── */
+
+.inv-status-row-progress-wrap {
+  width: 100%;
+}
+
+.inv-status-row-progress {
+  width: 100%;
+  --inv-progress-track-color: var(--border-subtle);
+  --inv-progress-fill-color: var(--inv-status-accent);
+  --inv-progress-text-color: var(--text-muted);
+}
+
+.inv-status-row-progress .inv-progress-text {
+  margin-top: 0.18rem;
+}
+
+/* ── Tones ──
+ * Each variant sets exactly one custom property, drawn from the same tokens
+ * .workbench-health-pill uses. No color-mix toward white: on a light palette
+ * that lifts the colour off the background instead of onto it.
+ */
+
+.inv-status-row--pending {
+  --inv-status-accent: var(--accent-cyan);
+}
+
+.inv-status-row--success {
+  --inv-status-accent: var(--widget-tool-success-color);
+}
+
+.inv-status-row--warning {
+  --inv-status-accent: var(--accent-amber);
+}
+
+.inv-status-row--danger {
+  --inv-status-accent: var(--text-danger-emphasis);
+}
+
+/* Danger is the one tone allowed to colour the copy: a failure that reads as
+   ordinary muted text gets skimmed past. */
+.inv-status-row--danger .inv-status-row-message {
+  color: var(--text-danger-emphasis);
+}
+
+.inv-status-row--danger .inv-status-row-label {
+  color: var(--text-danger-emphasis);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-status-row--with-spinner .inv-status-row-dot {
+    animation: none;
+  }
+}
+
+.inv-context-usage { margin-top: var(--space-3); }

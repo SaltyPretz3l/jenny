@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "tool_call_canceled_or_rejected",
+    "provider": "provider_neutral",
+    "model": "synthetic-local",
+    "description": "Approval explicitly rejected by user; routing layer surfaces a StopEvent and chat.error with code CMP-APPROVAL-REJECTED. Phase 9 (2026-05-03) drives this via sidecar.runtime.chat_helpers.emit_approval_rejection (the same helper request_dispatch.py calls when terminal_status == TURN_STATE_DENIED).",
+    "target_phase": 5
+  },
+  "raw_chunks": [],
+  "approval_resolution": {
+    "approved": false,
+    "tool_name": "dangerous_op"
+  },
+  "expected_engine_events": [],
+  "expected_loop_events": [
+    {
+      "_class": "StopEvent",
+      "reason": "User rejected approval for dangerous_op",
+      "code": "CMP-APPROVAL-REJECTED",
+      "user_hint": ""
+    }
+  ],
+  "expected_notifications": [
+    {
+      "method": "chat.error",
+      "params": {
+        "code": "CMP-APPROVAL-REJECTED",
+        "message": "User rejected approval for dangerous_op",
+        "retryable": false
+      }
+    }
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_dangerous_op",
+      "source_message_ids": [
+        "tool_use_t_replay_call_dangerous_op"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_dangerous_op",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "dangerous_op",
+        "tool_input": {},
+        "sequence": 1,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:2",
+      "turn_id": "t_replay",
+      "kind": "approval_requested",
+      "status": "approval_pending",
+      "primary_message_id": "tool_use_t_replay_call_dangerous_op",
+      "source_message_ids": [
+        "tool_use_t_replay_call_dangerous_op"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_dangerous_op",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "approval_state": "pending",
+        "tool_name": "dangerous_op",
+        "canonical_event_type": "tool_approval_requested",
+        "canonical_part_id": "t_replay:tool_part:2",
+        "canonical_seq": 2
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:3",
+      "turn_id": "t_replay",
+      "kind": "approval_resolved",
+      "status": "completed",
+      "primary_message_id": "tool_use_t_replay_call_dangerous_op",
+      "source_message_ids": [
+        "tool_use_t_replay_call_dangerous_op"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_dangerous_op",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "approval_state": "rejected",
+        "approved": false,
+        "tool_name": "dangerous_op",
+        "canonical_event_type": "tool_approval_resolved",
+        "canonical_part_id": "t_replay:tool_part:3",
+        "canonical_seq": 3
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:4",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "error",
+      "primary_message_id": "tool_result_t_replay_call_dangerous_op",
+      "source_message_ids": [
+        "tool_result_t_replay_call_dangerous_op"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_dangerous_op",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "dangerous_op",
+        "success": false,
+        "tool_output_summary": "User rejected approval for dangerous_op",
+        "content_type": "text",
+        "tool_input": {},
+        "error_code": "CMP-APPROVAL-REJECTED",
+        "canonical_event_type": "tool_execution_failed",
+        "canonical_part_id": "t_replay:tool_part:4",
+        "canonical_seq": 4
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "",
+    "thinking_text": "",
+    "finish_reason": "stop",
+    "tool_calls": []
+  }
+}

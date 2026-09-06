@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "profile_id": "qwen3.8-27b-ud-iq3-s-128k",
+  "model_tag": "qwen3.8:27b-ud-iq3-s",
+  "context_size": 131072,
+  "extra_args": [
+    "--parallel",
+    "1",
+    "--no-mmproj",
+    "--gpu-layers",
+    "all",
+    "--split-mode",
+    "none",
+    "--flash-attn",
+    "on",
+    "--cache-type-k",
+    "q8_0",
+    "--cache-type-v",
+    "q8_0",
+    "--kv-unified",
+    "--batch-size",
+    "512",
+    "--ubatch-size",
+    "128",
+    "--fit",
+    "off"
+  ]
+}

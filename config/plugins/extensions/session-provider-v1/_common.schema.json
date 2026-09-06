@@ -1,0 +1,33 @@
+{
+  "contract": "_common",
+  "contract_version": 1,
+  "frozen": true,
+  "structure": {
+    "max_depth": 12,
+    "max_nodes": 4096,
+    "max_object_keys": 64,
+    "max_array_items": 64,
+    "max_payload_utf8_bytes": 65536
+  },
+  "defs": {
+    "publisher_id": { "type": "string", "format": "publisher_id" },
+    "plugin_id": { "type": "string", "format": "plugin_id" },
+    "contribution_id": { "type": "string", "format": "contribution_id" },
+    "operation_id": { "type": "string", "format": "operation_id" },
+    "generation_id": { "type": "string", "format": "generation_id" },
+    "sha256_hex": { "type": "string", "format": "sha256_hex" },
+    "display_string": { "type": "string", "format": "display_string" },
+    "semver": { "type": "string", "format": "semver" },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,95}$",
+      "max_utf8_bytes": 96
+    },
+    "bounded_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "max_utf8_bytes": 64
+    },
+    "payload_json": { "type": "string", "max_utf8_bytes": 16384 }
+  }
+}

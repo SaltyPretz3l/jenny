@@ -1,0 +1,6 @@
+{
+  "lock_schema_version": 1,
+  "abi": "jenny:plugin/restricted-host@1.0.0",
+  "path": "config/plugins/capability-abi/v1/jenny-restricted-host.wit",
+  "sha256": "91b7c4c28018ec2f45d60a5473869324a5532e965cbe517de9f7400227a4bae8"
+}

@@ -1,0 +1,27 @@
+/* styles/chat-a11y-v2.css
+ * Roving-tabindex chat-entry focus styles; loads after chat-thread.css so base
+ * rules precede these overrides. */
+
+.chat-entry:focus-visible {
+  outline: 2px solid var(--focus-outline, #4cc7ff);
+  outline-offset: 2px;
+  border-radius: var(--radius-3, 12px);
+}
+
+.chat-entry:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Subtle scroll-into-view hint when the keyboard focus lands on an
+ * entry that sits at the viewport edge. Browsers handle scrollIntoView
+ * via Element.focus({ preventScroll: false }) by default; this just
+ * smooths the visible-focus transition. */
+.chat-entry {
+  scroll-margin-block: var(--space-4, 16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-entry:focus-visible {
+    transition: none;
+  }
+}

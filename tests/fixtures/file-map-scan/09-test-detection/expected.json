@@ -1,0 +1,65 @@
+{
+  "nodes": [
+    {
+      "id": "src/__tests__/helper.js",
+      "label": "helper.js",
+      "dir": "src",
+      "isTest": true,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "src/widget.js",
+      "label": "widget.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 24
+    },
+    {
+      "id": "src/widget.test.js",
+      "label": "widget.test.js",
+      "dir": "src",
+      "isTest": true,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 48
+    }
+  ],
+  "edges": [],
+  "findings": {
+    "hubs": [
+      "src/__tests__/helper.js",
+      "src/widget.js",
+      "src/widget.test.js"
+    ],
+    "cycles": [],
+    "orphans": [
+      "src/__tests__/helper.js",
+      "src/widget.js",
+      "src/widget.test.js"
+    ]
+  },
+  "meta": {
+    "scanned": 3,
+    "total": 3,
+    "durationMs": 0
+  }
+}

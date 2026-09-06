@@ -1,0 +1,600 @@
+/* styles/settings-model-library.css
+ *
+ * Settings > Models > "Model library" group (model_management_ui). Tiny —
+ * reuses .settings-group / .settings-field-row / .settings-actions /
+ * .settings-note wherever possible; only the bits those primitives don't
+ * cover live here.
+ */
+
+.model-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.model-library-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Status tags cluster ahead of the action buttons; the larger gap after the
+   cluster makes the 24px tags / 36px buttons height mix read as two groups. */
+.model-library-row-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: var(--space-3);
+}
+
+/* De-buttonize status tags in this row: softer fill, muted text, and no
+   pointer feedback so they read as state, not actions. */
+.model-library-row-tags .settings-badge {
+  background: color-mix(in srgb, var(--widget-settings-badge-bg) 60%, transparent);
+  color: var(--text-secondary);
+  border-color: color-mix(in srgb, var(--settings-shell-badge-border) 70%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
+.model-library-row-tags .model-library-inuse-badge {
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 14%, transparent);
+  color: color-mix(in srgb, var(--accent, #4c8bf5) 80%, var(--text-secondary));
+  border-color: color-mix(in srgb, var(--accent, #4c8bf5) 30%, transparent);
+}
+
+.model-library-row {
+  flex-wrap: wrap;
+}
+
+.model-library-advanced {
+  flex: 0 0 100%;
+  margin-top: var(--space-2);
+}
+
+.model-library-advanced summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  width: max-content;
+}
+
+.model-library-advanced-body {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-left: var(--space-4);
+}
+
+.model-library-advanced-body .select-shell {
+  width: min(280px, 100%);
+}
+
+.model-library-apply-note {
+  margin: 0;
+}
+
+.model-library-inuse-badge {
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 18%, transparent);
+  color: var(--accent, #4c8bf5);
+}
+
+.model-library-pull-row {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+}
+
+/* The pull input renders via the inventory text-field primitive: the class
+   lands on the wrapping <label>; the control itself is .inv-text-field-control. */
+.model-library-pull-input {
+  min-width: 0;
+  width: 220px;
+  max-width: 100%;
+}
+
+.model-library-pull-input .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-library-pull-progress {
+  font-variant-numeric: tabular-nums;
+}
+.model-tuning-drawer-copy {
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.model-tuning-drawer-subtitle {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.model-tuning-drawer-warning {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--state-warning);
+  font-size: var(--font-size-sm);
+}
+
+.model-tuning-drawer-grid[data-disabled="true"] {
+  opacity: 0.65;
+}
+
+.model-tuning-section-title {
+  margin: 16px 0 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.model-tuning-section-hint {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.model-tuning-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.model-tuning-row > * {
+  min-width: 0;
+}
+
+.model-tuning-row-label {
+  overflow-wrap: anywhere;
+}
+
+.model-tuning-row-control .inv-number-input,
+.model-tuning-row-control .inv-number-input-control,
+.model-tuning-row-control .inv-number-input input,
+.model-tuning-row-control .inv-select-field,
+.model-tuning-row-control .inv-select-field-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-tuning-row-range {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.model-tuning-row-range[data-dirty="true"] {
+  color: var(--accent);
+}
+
+.model-tuning-drawer-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  background: var(--bg-surface);
+}
+
+.model-tuning-drawer-status {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 1.4em;
+  margin: 0 0 0 auto;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* Block-level wrapper so the sticky footer has travel inside the grid drawer
+   body; also the container-query root for the narrow-drawer row collapse. */
+.model-tuning-drawer-scroll {
+  display: block;
+  container-type: inline-size;
+}
+
+@container (max-width: 400px) {
+  .model-tuning-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .model-tuning-row-label {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Tune drawer > Engine section (per-model engine choice + MTP; W4). */
+.model-tuning-engine .inv-segmented {
+  width: 100%;
+}
+
+/* The engine and MTP rows carry sentence-length notes ("Choose a GGUF file
+   to enable llama-server"); in the shared 3-column grid a nowrap note column
+   starves the control down to "O… l…", so these two rows drop the note under
+   the control instead. The GGUF row keeps the 3-column shape (Choose… sits
+   in the third column). */
+.model-tuning-engine [data-model-tuning-row="engine"],
+.model-tuning-engine .model-tuning-row--mtp {
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.model-tuning-engine [data-model-tuning-row="engine"] .model-tuning-row-range,
+.model-tuning-engine .model-tuning-row--mtp .model-tuning-row-range {
+  grid-column: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* No note -> no empty grid row (the span is written with no whitespace). */
+.model-tuning-engine .model-tuning-row-range:empty {
+  display: none;
+}
+
+@container (max-width: 400px) {
+  .model-tuning-engine [data-model-tuning-row="engine"],
+  .model-tuning-engine .model-tuning-row--mtp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-tuning-engine [data-model-tuning-row="engine"] .model-tuning-row-range,
+  .model-tuning-engine .model-tuning-row--mtp .model-tuning-row-range {
+    grid-column: 1 / -1;
+  }
+}
+
+/* .model-tuning-row is display:grid, which outranks the UA [hidden] rule —
+   the MTP row is toggled with the attribute, so restore the intent here. */
+.model-tuning-row[hidden] {
+  display: none;
+}
+
+.model-tuning-gguf-path {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: var(--font-size-sm);
+}
+
+/* Dedicated Settings > Model library section. */
+.model-library-section-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.model-library-filter-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Input + Pull + refresh stay on one line; the toolbar wraps as a whole. */
+.model-library-section-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.model-library-section-pull-input {
+  flex: 1 1 160px;
+  width: min(220px, 100%);
+}
+
+.model-library-section-refresh {
+  min-width: 32px;
+}
+
+.model-library-section-pull-input .inv-text-field-control {
+  width: 100%;
+}
+
+.model-library-hardware-summary {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.model-row-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  container-type: inline-size;
+}
+
+.model-row-group-title {
+  margin: 0 0 var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.model-row-group-count {
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px auto;
+  column-gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-1);
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.model-row-group > .model-row:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.model-row[data-active="true"] .model-row-name {
+  color: var(--accent-strong);
+}
+
+.model-row[data-pending="true"] {
+  opacity: 0.85;
+}
+
+.model-row-main,
+.model-row-fit,
+.model-row-actions {
+  min-width: 0;
+}
+
+.model-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.model-row-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.model-row-name--tag {
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.model-row-title .inv-badge {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.model-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.model-row-fit {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.model-row-fit .inv-progress {
+  margin-top: 4px;
+}
+
+/* The fit text above the bar is the label; the bar's own caption repeats it. */
+.model-row-fit .inv-progress-text {
+  display: none;
+}
+
+.model-row-fit .inv-progress-track {
+  height: 4px;
+}
+
+.model-row-fit-none {
+  color: var(--text-muted);
+}
+
+.model-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  justify-self: end;
+}
+
+.model-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  gap: 12px;
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.model-card[data-active="true"] {
+  border-color: var(--accent);
+}
+
+.model-card[data-pending="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.model-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.model-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 24%, var(--bg-surface-2)), var(--bg-surface-2));
+  color: var(--accent-strong);
+  font-family: "Fraunces", Georgia, serif;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+
+.model-card-heading {
+  min-width: 0;
+}
+
+.model-card-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-card-stats,
+.model-card-engine-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.model-card-badges,
+.model-card-pull-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-card-reason {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.model-card-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.model-card-note--error {
+  color: var(--state-danger);
+}
+
+.model-card-fit--success .inv-progress-fill {
+  --inv-progress-fill-color: var(--state-success);
+}
+
+.model-card-fit--warning .inv-progress-fill {
+  --inv-progress-fill-color: var(--state-warning);
+}
+
+.model-card-fit--danger .inv-progress-fill {
+  --inv-progress-fill-color: var(--state-danger);
+}
+
+.model-card-fit--muted .inv-progress-fill {
+  --inv-progress-fill-color: var(--state-muted);
+}
+
+.model-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.model-card-action--pending {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+.model-card-pull-progress {
+  flex: 1 1 140px;
+}
+
+.model-library-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Collapses when empty (textContent is set directly, so no whitespace node);
+   the compound selector outranks .settings-note's own font/margin rules. */
+.settings-note.model-library-section-status {
+  min-height: 0;
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.settings-note.model-library-section-status:not(:empty) {
+  margin: 0 0 var(--space-4);
+}
+
+/* Query the list's own width, not the viewport: the settings shell's content
+   column is narrowest just above its single-column breakpoint. */
+@container (max-width: 720px) {
+  .model-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .model-row-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .model-row-fit {
+    grid-column: 1 / -1;
+    padding-top: 4px;
+  }
+}

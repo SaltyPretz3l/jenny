@@ -1,0 +1,10 @@
+.inv-drawer-host { position: fixed; inset: 0; z-index: 1400; display: grid; grid-template-columns: 1fr minmax(320px, 520px); }
+.inv-drawer-host[hidden] { display: none; }
+.inv-drawer-scrim { background: color-mix(in srgb, var(--bg-base) 62%, transparent); }
+.inv-drawer-panel { min-width: 0; height: 100%; overflow: auto; background: var(--bg-surface); border-left: 1px solid var(--border-subtle); box-shadow: var(--shadow-float); }
+.inv-drawer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; background: inherit; border-bottom: 1px solid var(--border-subtle); }
+.inv-drawer-header h2 { margin: 0; font-size: 1.1rem; }
+.inv-drawer-close { width: 36px; height: 36px; border: 0; border-radius: 8px; color: inherit; background: transparent; font-size: 1.5rem; cursor: pointer; }
+.inv-drawer-close:hover, .inv-drawer-close:focus-visible { background: color-mix(in srgb, var(--text-primary) 5%, transparent); outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.inv-drawer-body { display: grid; gap: 18px; padding: 22px; }
+@media (max-width: 720px) { .inv-drawer-host { grid-template-columns: 0 minmax(0, 1fr); } }

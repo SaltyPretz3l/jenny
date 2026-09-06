@@ -1,0 +1,341 @@
+{
+  "fixture_id": "request/input_items_mapping",
+  "schema_version": 1,
+  "description": "How Jenny's own chat-history representation (list of {role, content, tool_calls?, tool_call_id?}) is serialized into Responses 'input' items by build_input_items() in sidecar/ai/engines/chatgpt_subscription_request.py, plus the static request envelope build_responses_payload() wraps around it.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_request_payload_headers_and_reasoning_effort",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription_input_items.py",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription_system_prompt.py"
+  ],
+  "constants": {
+    "EMPTY_ASSISTANT_CONTENT_PLACEHOLDER": "(no content)"
+  },
+  "declarative_verdict": "partially",
+  "notes": "Field templates and lookup tables cover most of this file. The leading-system-run fold, the whole-list call-pairing filter and the cross-request reasoning cache are the parts that are not per-item data; see streams/tool_call_argument_edge_cases.json and streams/tool_call_lifecycle.json. The placeholder-suppression rule is reclassified here as core-generic (Jenny's own transcript representation), not chatgpt-specific descriptor data.",
+  "cases": [
+    {
+      "case_id": "constant_identity_empty_assistant_content_placeholder",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "EMPTY_ASSISTANT_CONTENT_PLACEHOLDER"},
+      "expect": {"value": "${EMPTY_ASSISTANT_CONTENT_PLACEHOLDER}"},
+      "rule": "The suppression rule below keys off an EXACT string match against a Jenny-core constant (sidecar/ai/context/messages.py). Pinning the literal here means a rename of that constant fails this fixture instead of silently disarming the suppression."
+    },
+    {
+      "case_id": "leading_system_run_is_combined_into_instructions",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "",
+        "messages": [
+          {"role": "system", "content": "Primary instructions"},
+          {"role": "system", "content": "Additional context"},
+          {"role": "user", "content": "Hello"}
+        ]
+      },
+      "expect": {
+        "instructions": "Primary instructions\n\nAdditional context",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello"}]
+          }
+        ]
+      },
+      "rule": "The WHOLE leading contiguous system run folds into top-level 'instructions', joined by '\\n\\n' (byte-identical to merge_consecutive_system_messages for local engines). The first system row does NOT overwrite the rest."
+    },
+    {
+      "case_id": "supplied_system_prompt_leads_the_instruction_block",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "Base prompt",
+        "messages": [
+          {"role": "system", "content": "Primary instructions"},
+          {"role": "user", "content": "Hello"}
+        ]
+      },
+      "expect": {
+        "instructions": "Base prompt\n\nPrimary instructions",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello"}]
+          }
+        ]
+      },
+      "rule": "The engine's own `system` argument is segment 0 of the instruction block; the leading system run is appended after it with the same joiner."
+    },
+    {
+      "case_id": "non_leading_system_row_is_demoted_in_place",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "Base prompt",
+        "messages": [
+          {"role": "system", "content": "Primary instructions"},
+          {"role": "user", "content": "Hello"},
+          {"role": "system", "content": "Wind-down nudge"},
+          {"role": "user", "content": "again"}
+        ]
+      },
+      "expect": {
+        "instructions": "Base prompt\n\nPrimary instructions",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello"}]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Wind-down nudge"}]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "again"}]
+          }
+        ]
+      },
+      "rule": "A system row AFTER the first non-system message is demoted to 'user' IN PLACE, never hoisted into instructions: wind-down, tool-budget and tool-failure nudges exist for their recency right before the model's next turn, which hoisting would destroy. Mirrors demote_non_leading_system_messages for local engines."
+    },
+    {
+      "case_id": "tool_role_becomes_function_call_output_when_paired",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "",
+        "messages": [
+          {"role": "user", "content": "Read it"},
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {"name": "read_file", "arguments": {"path": "a.md"}, "call_id": "call_test_1"}
+            ]
+          },
+          {"role": "tool", "tool_call_id": "call_test_1", "content": "contents a"}
+        ]
+      },
+      "expect": {
+        "instructions": "",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Read it"}]
+          },
+          {
+            "type": "function_call",
+            "name": "read_file",
+            "arguments": "{\"path\":\"a.md\"}",
+            "call_id": "call_test_1"
+          },
+          {"type": "function_call_output", "call_id": "call_test_1", "output": "contents a"}
+        ]
+      },
+      "rule": "role 'tool' maps to a function_call_output item keyed by tool_call_id, and dict arguments on the paired assistant row are re-serialized with compact separators. The pairing filter means this row only survives WITH its matching function_call."
+    },
+    {
+      "case_id": "placeholder_only_assistant_row_with_tool_calls_omits_the_message_item",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "",
+        "messages": [
+          {"role": "user", "content": "Read it"},
+          {
+            "role": "assistant",
+            "content": "${EMPTY_ASSISTANT_CONTENT_PLACEHOLDER}",
+            "tool_calls": [
+              {"name": "read_file", "arguments": {"path": "a.md"}, "call_id": "call_test_1"}
+            ]
+          },
+          {"role": "tool", "tool_call_id": "call_test_1", "content": "contents a"}
+        ]
+      },
+      "expect": {
+        "instructions": "",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Read it"}]
+          },
+          {
+            "type": "function_call",
+            "name": "read_file",
+            "arguments": "{\"path\":\"a.md\"}",
+            "call_id": "call_test_1"
+          },
+          {"type": "function_call_output", "call_id": "call_test_1", "output": "contents a"}
+        ]
+      },
+      "rule": "When an assistant row's content is EXACTLY the '(no content)' backfill sentinel AND it carries tool calls, the sentinel is never serialized as a standalone output_text message -- only the bare function_call item ships. Sent as a free-standing message it becomes a few-shot pattern the model imitates as visible text."
+    },
+    {
+      "case_id": "placeholder_text_without_tool_calls_is_kept_verbatim",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "",
+        "messages": [
+          {"role": "user", "content": "say it"},
+          {"role": "assistant", "content": "${EMPTY_ASSISTANT_CONTENT_PLACEHOLDER}"}
+        ]
+      },
+      "expect": {
+        "instructions": "",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "say it"}]
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {"type": "output_text", "text": "${EMPTY_ASSISTANT_CONTENT_PLACEHOLDER}"}
+            ]
+          }
+        ]
+      },
+      "rule": "The suppression rule fires only when tool_calls are ALSO present on that row; a genuine reply that happens to read the same text passes through untouched."
+    },
+    {
+      "case_id": "prompt_is_used_only_when_no_messages_are_supplied",
+      "executable": true,
+      "binding": "input_items",
+      "input": {"prompt": "Hello", "system": "Base prompt", "messages": []},
+      "expect": {
+        "instructions": "Base prompt",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello"}]
+          }
+        ]
+      },
+      "rule": "With an empty history the bare `prompt` becomes the single user message; with a history present it is ignored entirely."
+    },
+    {
+      "case_id": "static_request_envelope_is_a_fixed_template",
+      "executable": true,
+      "binding": "responses_payload",
+      "input": {
+        "model": "gpt-5.5",
+        "prompt": "hi",
+        "system": "",
+        "messages": null,
+        "tools": [],
+        "reasoning_effort": null
+      },
+      "expect": {
+        "payload_fields": {
+          "model": "gpt-5.5",
+          "instructions": "",
+          "tools": [],
+          "tool_choice": "auto",
+          "parallel_tool_calls": true,
+          "reasoning": {"summary": "auto"},
+          "store": false,
+          "stream": true,
+          "include": ["reasoning.encrypted_content"]
+        },
+        "payload_key_set": [
+          "include",
+          "input",
+          "instructions",
+          "model",
+          "parallel_tool_calls",
+          "reasoning",
+          "store",
+          "stream",
+          "tool_choice",
+          "tools"
+        ]
+      },
+      "rule": "The request envelope is fixed; an absent reasoning effort is omitted so the provider default remains authoritative. The key set is pinned so a silently added wire field fails this fixture."
+    },
+    {
+      "case_id": "function_tool_shape_is_a_per_tool_field_template",
+      "executable": true,
+      "binding": "function_tools",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+          },
+          {"name": "no_parameters"}
+        ]
+      },
+      "expect": {
+        "tools": [
+          {
+            "type": "function",
+            "name": "read_file",
+            "description": "Read a file",
+            "strict": false,
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+          },
+          {
+            "type": "function",
+            "name": "no_parameters",
+            "description": "",
+            "strict": false,
+            "parameters": {}
+          }
+        ]
+      },
+      "rule": "Each admitted tool becomes {type:function, name, description, strict:false, parameters}; a missing description defaults to '' and non-dict/absent parameters default to {}. strict is hard-coded false."
+    },
+    {
+      "case_id": "deferred_and_nameless_tools_are_omitted_entirely",
+      "executable": true,
+      "binding": "function_tools",
+      "input": {
+        "tools": [
+          {"name": "deferred", "description": "d", "defer_loading": true},
+          {"name": "", "description": "nameless"},
+          {"name": "kept", "description": "k"}
+        ]
+      },
+      "expect": {
+        "tools": [
+          {
+            "type": "function",
+            "name": "kept",
+            "description": "k",
+            "strict": false,
+            "parameters": {}
+          }
+        ]
+      },
+      "rule": "A tool with defer_loading == true, or with a blank name, is dropped from the wire payload rather than sent in a degraded form."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "structural_filters",
+      "reason": "_enforce_call_pairing and _insert_reasoning_items are whole-list folds, not per-row mapping, so their behavior is asserted where it is observable: streams/tool_call_argument_edge_cases.json (pairing) and streams/tool_call_lifecycle.json (reasoning replay). Naming them here would duplicate an expectation instead of adding one."
+    },
+    {
+      "section": "core_coupling_note",
+      "reason": "The judgement that placeholder suppression belongs in provider-agnostic pre-processing (because EMPTY_ASSISTANT_CONTENT_PLACEHOLDER is a Jenny-core constant, not a provider concept) is a design verdict about WHERE code should live. Only its factual half is executable, and that half is the constant_identity case above."
+    }
+  ]
+}

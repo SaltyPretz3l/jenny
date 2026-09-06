@@ -1,0 +1,8 @@
+{
+  "fixture_schema_version": 1,
+  "cases": [
+    { "name": "required_highest", "expected": "2.1.0" },
+    { "name": "peer_does_not_pull", "expected": "omitted" },
+    { "name": "ambiguous_capability", "expected": "capability_provider_ambiguous" }
+  ]
+}

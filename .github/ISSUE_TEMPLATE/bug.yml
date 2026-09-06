@@ -1,0 +1,56 @@
+name: Bug report
+description: Something broke or behaved wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Jenny is a solo-maintained hobby project — issues are read, but there are no response-time promises (see **Project status** in the README). Clear reproduction steps are the single biggest thing that gets a bug fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: jenny-version
+    attributes:
+      label: Jenny version
+      placeholder: e.g. 1.0.0 (Settings → About, or the release you downloaded)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Windows 11 24H2 / macOS 15.3
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model runtime and tag
+      placeholder: "e.g. Ollama 0.30.10 · hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M"
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste or attach any relevant dump from `<userData>/diagnostics/` (Windows `%APPDATA%\jenny\diagnostics`). Remove anything private first.
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Maintenance status
+      options:
+        - label: I understand this is a hobby project maintained as time permits.
+          required: true

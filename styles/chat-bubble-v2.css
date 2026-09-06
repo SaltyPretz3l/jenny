@@ -1,0 +1,12 @@
+/* Streamed and settled text intentionally share identical visual styling;
+ * streaming classes remain behavioral hooks. */
+
+.chat-bubble {
+  color: var(--text-primary);
+}
+
+.chat-bubble::selection,
+.chat-bubble *::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text-primary);
+}

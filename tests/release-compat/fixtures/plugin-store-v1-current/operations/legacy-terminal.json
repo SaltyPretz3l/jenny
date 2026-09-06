@@ -1,0 +1,9 @@
+{
+  "operation_id": "legacy-terminal",
+  "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "lifecycle_epoch": 1,
+  "commit_epoch": 1,
+  "status": "committed",
+  "created_at": "2026-07-31T23:50:00Z",
+  "updated_at": "2026-07-31T23:51:00Z"
+}

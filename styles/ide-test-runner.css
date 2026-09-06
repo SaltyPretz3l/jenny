@@ -1,0 +1,347 @@
+/* styles/ide-test-runner.css - Workspace Test Runner bottom-panel view: the config
+ * authoring surface + per-config status rows (run/stop/remove) and the add-config
+ * form. Status tints come from palette --state-* tokens (keyed off data-status) so
+ * they re-theme through the theme bridge, matching ide-problems.css. Loaded via
+ * @import in styles.css after ide-problems.css.
+ *
+ * Verification gate: a persistent bordered strip above the list (not a card),
+ * a gate dot on the designated row's label (never a left-border bar), a muted
+ * "by Jenny · 2m ago" attribution beside the status pill, and 2px accent ticks
+ * above Jenny-initiated bars in the history strip. */
+
+.ide-test-runner-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 12px;
+}
+
+.ide-test-runner-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ide-test-runner-panel__empty {
+  padding: 6px 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ── Verification gate header: GATE · [gate select] · verdict · … · [mode] ── */
+.ide-test-runner-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 5px);
+  font-size: 12px;
+}
+
+.ide-test-runner-gate__label {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* The inventory select is a stacked form field by default; in the strip it is
+ * one compact inline control. */
+.ide-test-runner-gate .inv-select-field {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.ide-test-runner-gate .inv-select-field-control {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: var(--radius-sm, 5px);
+}
+
+.ide-test-runner-gate__verdict {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-test-runner-gate__verdict[data-status="passed"] { color: var(--state-success); }
+.ide-test-runner-gate__verdict[data-status="failed"],
+.ide-test-runner-gate__verdict[data-status="error"] { color: var(--state-danger); }
+.ide-test-runner-gate__verdict[data-status="skipped"],
+.ide-test-runner-gate__verdict[data-status="aborted"],
+.ide-test-runner-gate__verdict[data-status="timeout"],
+.ide-test-runner-gate__verdict[data-status="interrupted"] { color: var(--state-warning); }
+.ide-test-runner-gate__verdict[data-status="none"] { color: var(--text-secondary); font-weight: 500; }
+.ide-test-runner-gate__verdict[data-status="running"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+}
+
+/* Same pulsing dot as the row badge while the gate verifies mid-turn. */
+.ide-test-runner-gate__verdict[data-status="running"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ide-test-runner-pulse var(--motion-duration-pulse-fast) var(--motion-ease-standard) infinite;
+}
+
+.ide-test-runner-gate__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-test-runner-gate__spacer {
+  flex: 1 0 auto;
+}
+
+/* Gate marker on the designated row: a small filled dot before the label. */
+.ide-test-runner-panel__gate-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 0.12em;
+}
+
+/* "by Jenny · 2m ago" beside the status pill. */
+.ide-test-runner-panel__by {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-test-runner-panel__by[data-initiator="jenny"] { color: var(--accent); }
+
+/* UIUX-033: a Stop control bound to the RUN (activeRun/activeConfigId), not to
+ * a config row's presence in the list — always visible while a run is active,
+ * even if its config row is gone (removed elsewhere, or absent from the cap). */
+.ide-test-runner-panel__active-run {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 5px);
+  background: color-mix(in srgb, var(--state-info, var(--accent-blue, #4d9de0)) 12%, transparent);
+}
+
+.ide-test-runner-panel__active-run-label {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Config row: label · status · command · actions ── */
+.ide-test-runner-panel__row {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm, 5px);
+}
+
+.ide-test-runner-panel__row:hover {
+  background: var(--bg-surface-2);
+}
+
+.ide-test-runner-panel__label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ide-test-runner-panel__status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ide-test-runner-panel__status[data-status="passed"] { color: var(--state-success); }
+.ide-test-runner-panel__status[data-status="failed"],
+.ide-test-runner-panel__status[data-status="error"] { color: var(--state-danger); }
+.ide-test-runner-panel__status[data-status="aborted"],
+.ide-test-runner-panel__status[data-status="timeout"],
+.ide-test-runner-panel__status[data-status="interrupted"] { color: var(--state-warning); }
+.ide-test-runner-panel__status[data-status="running"] { color: var(--accent); }
+
+/* Pulsing dot for the live run badge (settles for reduced-motion). */
+.ide-test-runner-panel__status[data-status="running"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ide-test-runner-pulse var(--motion-duration-pulse-fast) var(--motion-ease-standard) infinite;
+}
+
+@keyframes ide-test-runner-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.ide-test-runner-panel__status[data-status="skipped"] { color: var(--state-warning); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-test-runner-panel__status[data-status="running"]::before,
+  .ide-test-runner-gate__verdict[data-status="running"]::before { animation: none; }
+}
+
+.ide-test-runner-panel__cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ide-test-runner-panel__row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* Per-config history: compact duration bars, statistics, and an on-demand table. */
+.ide-test-runner-history-strip {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding: 2px 0 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ide-test-runner-history-strip__chart {
+  display: block;
+  width: 100%;
+  height: 42px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-test-runner-history-strip__bar { fill: var(--text-muted); }
+.ide-test-runner-history-strip__bar--passed { fill: var(--state-success); }
+.ide-test-runner-history-strip__bar--failed,
+.ide-test-runner-history-strip__bar--error { fill: var(--state-danger); }
+.ide-test-runner-history-strip__bar--aborted,
+.ide-test-runner-history-strip__bar--timeout,
+.ide-test-runner-history-strip__bar--interrupted { fill: var(--state-warning); }
+.ide-test-runner-history-strip__bar--running { fill: var(--accent); }
+.ide-test-runner-history-strip__bar--skipped { fill: var(--state-warning); }
+/* 2px tick above a Jenny-initiated bar; the legend entry uses the same colour. */
+.ide-test-runner-history-strip__tick { fill: var(--accent); }
+.ide-test-runner-history-strip__legend { color: var(--accent); }
+.ide-test-runner-history-strip__bar--hang {
+  stroke: var(--text-primary);
+  stroke-width: 1.5px;
+  stroke-dasharray: 2 1;
+}
+
+.ide-test-runner-history-strip__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-test-runner-history-strip__trend--slower { color: var(--state-warning); }
+.ide-test-runner-history-strip__trend--faster { color: var(--state-success); }
+.ide-test-runner-history-strip__trend--flat { color: var(--text-muted); }
+
+.ide-test-runner-history-strip__details { margin-top: 2px; }
+.ide-test-runner-history-strip__details > summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.ide-test-runner-history-strip__table {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-test-runner-history-strip__table th,
+.ide-test-runner-history-strip__table td {
+  padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Why a save dropped the new entry (invalid or duplicate id). Hidden while empty. */
+.ide-test-runner-panel__form-note {
+  color: var(--state-warning);
+  font-size: 11px;
+}
+
+/* ── Add-config authoring form ── */
+.ide-test-runner-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-test-runner-panel__form-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ide-test-runner-panel__field {
+  width: 100%;
+}
+
+.ide-test-runner-panel__add {
+  align-self: flex-start;
+}

@@ -1,0 +1,547 @@
+/* Workspace Chat Dock (ide_chat_dock) — the chat subtree relocated into a
+ * full-height OUTERMOST #ideShell side column (design: CHAT_DOCK_SPEC.md,
+ * Direction A + labeled featherweight header).
+ *
+ * Scope rules:
+ * - ADDITIVE ONLY: once reparented, the moved nodes stop matching `.chat-view .X`
+ *   rules, so everything here re-authors what the dock needs — no override wars.
+ * - Palette vars only (border/text/accent/success/danger tints) — no hardcoded
+ *   hex, no gradients, so all presets work by construction.
+ * - MUST NOT suppress or restyle the composer holo (the `.composer::after`
+ *   focus ring, the accent halo, or the setComposerHoloState states); its
+ *   treatment must match main Chat.
+ * - Fully independent of the shared bottom panel: no rule here may key off the
+ *   bottom-panel state, and none may alter it. */
+
+/* ── Dock container ─────────────────────────────────────────────────────────
+ * Mirrors .ide-secondary-sidebar's shape (grid-area + divider facing the
+ * editor), but hosts the chat surface, so it sits on --bg-base like #chatView. */
+.ide-chat-dock {
+  grid-area: chatdock;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-base);
+  /* Dock right (default) -> divider on its left edge, facing the editor. */
+  border-left: 1px solid var(--line);
+}
+
+.ide-shell[data-chatdock-side="left"] .ide-chat-dock {
+  border-left: 0;
+  border-right: 1px solid var(--line);
+}
+
+.ide-chat-dock.hidden {
+  display: none;
+}
+
+.ide-chat-dock:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* ── Grid matrix (plan §8) ──────────────────────────────────────────────────
+ * Gated on [data-chatdock-open="true"] so the 4 base closed-case rules in
+ * ide-view.css stay byte-identical. Dock is OUTERMOST on its side. Negative
+ * arms use :not() so the default rail-right / secondary-closed cases match
+ * whether the attribute is absent or explicit. Tracks:
+ *   R = var(--ide-rail-width, 300px)   S = var(--ide-secondary-sidebar-width, 260px)
+ *   M = minmax(0, 1fr) (bare — the dock may squeeze the editor)
+ *   D = var(--ide-chat-dock-width, 380px) */
+
+/* rail right · no secondary · dock right:  M R D */
+.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"]):not([data-chatdock-side="left"]) {
+  grid-template-columns: minmax(0, 1fr) var(--ide-rail-width, 300px) var(--ide-chat-dock-width, 380px);
+  grid-template-areas: "main rail chatdock";
+}
+
+/* rail right · no secondary · dock left:  D M R */
+.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"])[data-chatdock-side="left"] {
+  grid-template-columns: var(--ide-chat-dock-width, 380px) minmax(0, 1fr) var(--ide-rail-width, 300px);
+  grid-template-areas: "chatdock main rail";
+}
+
+/* rail right · secondary open · dock right:  S M R D */
+.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"]:not([data-chatdock-side="left"]) {
+  grid-template-columns: var(--ide-secondary-sidebar-width, 260px) minmax(0, 1fr) var(--ide-rail-width, 300px) var(--ide-chat-dock-width, 380px);
+  grid-template-areas: "secondary main rail chatdock";
+}
+
+/* rail right · secondary open · dock left:  D S M R */
+.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"][data-chatdock-side="left"] {
+  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-secondary-sidebar-width, 260px) minmax(0, 1fr) var(--ide-rail-width, 300px);
+  grid-template-areas: "chatdock secondary main rail";
+}
+
+/* rail left · no secondary · dock right:  R M D */
+.ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"]):not([data-chatdock-side="left"]) {
+  grid-template-columns: var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-chat-dock-width, 380px);
+  grid-template-areas: "rail main chatdock";
+}
+
+/* rail left · no secondary · dock left:  D R M */
+.ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"])[data-chatdock-side="left"] {
+  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-rail-width, 300px) minmax(0, 1fr);
+  grid-template-areas: "chatdock rail main";
+}
+
+/* rail left · secondary open · dock right:  R M S D */
+.ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"]:not([data-chatdock-side="left"]) {
+  grid-template-columns: var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-secondary-sidebar-width, 260px) var(--ide-chat-dock-width, 380px);
+  grid-template-areas: "rail main secondary chatdock";
+}
+
+/* rail left · secondary open · dock left:  D R M S */
+.ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"][data-chatdock-side="left"] {
+  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-secondary-sidebar-width, 260px);
+  grid-template-areas: "chatdock rail main secondary";
+}
+
+/* ── Resizer (mirrors .ide-secondary-sidebar-resizer mechanics) ─────────────
+ * ~6px invisible hit area on the dock's INNER edge (facing the editor); the
+ * visible feedback is an accent hairline (::after) on hover/drag only. */
+.ide-chat-dock-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.ide-shell[data-chatdock-side="left"] .ide-chat-dock-resizer {
+  left: auto;
+  right: -3px;
+}
+
+.ide-chat-dock-resizer.hidden {
+  display: none;
+}
+
+.ide-chat-dock-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+}
+
+.ide-chat-dock-resizer:hover::after,
+.ide-chat-dock-resizer:active::after {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ide-chat-dock-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* ── Featherweight header (spec register) ───────────────────────────────────
+ * Plain flex row, hairline bottom border, no background, no gradient. */
+.ide-chat-dock-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-chat-dock-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Ghost actions: quiet glyphs, no hover surface — text color is the only cue. */
+.ide-chat-dock-action {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+}
+
+.ide-chat-dock-action:hover,
+.ide-chat-dock-action:focus-visible {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.ide-chat-dock-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* ── Dock body: recreates .chat-view's grid context for the 3 moved nodes ──
+ * transcript | deck | composer. ID selectors out-specify the nodes' inherited
+ * .chat-view grid placements. The body is also the @container the narrow
+ * rules below key off, and the var scope that replaces the 100vw-derived
+ * width formulas from chat-media-queries.css (plan §9). */
+.ide-chat-dock-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: chatdock;
+  /* 24px total side margin (12px each) — the dock is already an inset panel, so the
+   * main chat's roomier 48px gutter wastes space at compact dock widths. */
+  --content-column-width: min(100%, calc(var(--ide-chat-dock-width, 380px) - 24px));
+  --composer-width: min(100%, calc(var(--ide-chat-dock-width, 380px) - 32px));
+  --chat-user-bubble-max-width: max(0px, calc(100% - var(--thread-dot-hit-size) - var(--space-5)));
+  --context-panel-width: 0px;
+  /* The main-chat offsets clear floating overlays (workbench header, floating
+   * composer) that stay behind in #chatView — in-flow rows need only breathing
+   * room. */
+  --chat-thread-offset: var(--space-7);
+  --composer-safe-offset: calc(var(--space-7) * 2);
+}
+
+.ide-chat-dock-body #chatThreadStage {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
+}
+
+.ide-chat-dock-body #composerWrap {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+/* ── Simplified-dock suppression (plan §7 + §17.1) ─────────────────────────
+ * Rides-along nodes the dock hides; everything else in the "suppressed for
+ * free" column stays behind in the hidden #chatView. */
+.ide-chat-dock-body .chat-sprite-layer {
+  display: none;
+}
+
+.ide-chat-dock-body {
+  --chat-sprite-size: 0px;
+}
+
+.ide-chat-dock-body .chat-thread-column {
+  --chat-sprite-rail-offset: 0px;
+  margin-left: 0;
+}
+
+/* §17.1: terminal shortcut is main-chat-only. */
+.ide-chat-dock-body #composerTerminalShortcut {
+  display: none;
+}
+
+/* ── State-class re-authors (plan §9, mirror from surface-state.js) ─────────
+ * .chat-thread-shell's base is opacity:0/pointer-events:none; only
+ * .chat-view.chat-active reveals it, and the moved shell no longer matches.
+ * The render pipeline mirrors chat-empty/chat-active/thread-transition-ready
+ * onto #ideChatDockBody. */
+.ide-chat-dock-body.chat-active .chat-thread-shell {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.ide-chat-dock-body.chat-empty .composer-jump-tools,
+.ide-chat-dock-body.chat-empty .composer-wayfinder-host {
+  display: none;
+}
+
+/* ── Narrow-layout port (chat-media-queries.css L69-231 re-keyed off dock
+ * width; plan §9). The compact treatment applies through 700px; wider adaptive
+ * dock sizes restore the roomier layout. In <860px stacked mode it spans the
+ * window and keeps the existing vertical split. ────────────────────────── */
+@container chatdock (max-width: 700px) {
+  .ide-chat-dock-body .chat-thread-column {
+    --_thread-col-content: var(--content-column-width);
+    width: var(--_thread-col-content);
+    margin-left: max(0px, calc((100% - var(--_thread-col-content)) / 2));
+    padding-left: var(--space-3);
+    /* Compress the thread-rail gutter: at compact dock widths the full-width
+     * rail indent (24-28px hit column + gap per nesting level) pushed assistant
+     * content ~90px off the left edge. Dots/toggles derive their positions from
+     * these same vars, so they track the tighter geometry. The node-row
+     * column-gap deliberately stays at its default space-5 — the per-row dot and
+     * children-spine left calcs in chat-thread-rail.css bake that token in, and
+     * overriding the gap here would drift them ~4px off the toggle axis. */
+    --thread-dot-hit-size: calc(16px * var(--chat-zoom-factor, 1));
+    --thread-dot-size: calc(7px * var(--chat-zoom-factor, 1));
+    --thread-node-gap: calc(10px * var(--chat-zoom-factor, 1));
+    --_dot-offset: calc(6px * var(--chat-zoom-factor, 1));
+  }
+
+  /* Preserve the primary Chat semantic fills/rings, but give the compact dock
+   * dots enough interior paint to read as filled at their smaller scale. */
+  .ide-chat-dock-body .chat-thread-toggle::before,
+  .ide-chat-dock-body .chat-thread-toggle-spacer::before,
+  .ide-chat-dock-body .chat-row-node-dot {
+    border-width: 1px;
+  }
+
+  .ide-chat-dock-body .chat-entry.assistant {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ide-chat-dock-body .chat-thread-children {
+    padding-left: calc(var(--thread-dot-hit-size) + var(--space-4));
+  }
+
+  /* The first child wrapper only groups the user prompt with its response; the
+   * nested response row already reserves the rail/dot gutter. Do not pay for
+   * that gutter twice. Keep one small semantic branch inset, then flatten. */
+  .ide-chat-dock-body .chat-thread-children[data-thread-depth="1"] {
+    padding-left: 0;
+  }
+
+  .ide-chat-dock-body .chat-thread-children[data-thread-depth="2"] {
+    padding-left: var(--space-3);
+  }
+
+  /* Depth-cap the nested-thread indent. .chat-thread-children wrappers nest
+   * physically (renderer-render-pipeline-thread-dom.js:256-265), so this
+   * padding-left compounds once per tree level. A weak model's multi-iteration
+   * tool loop chains assistant->tool->assistant into an O(iterations)-deep tree
+   * (renderer-thread-tree-utils.js) and would otherwise march content off the
+   * right edge of the narrow dock column. Cap the cumulative inset at 2 levels:
+   * a normal turn coalesces to depth 1 and its first tool sits at depth 2, so
+   * everything legible stays indented while deeper runaway nesting is flattened.
+   * Defense-in-depth pending the thread-tree sibling-flatten fix.
+   * See memory project_progressive_turn_indent_rca_2026_07_07. */
+  .ide-chat-dock-body .chat-thread-children:not([data-thread-depth="1"]):not([data-thread-depth="2"]) {
+    padding-left: 0;
+  }
+
+  .ide-chat-dock-body .tool-call-block,
+  .ide-chat-dock-body .interactive-card,
+  .ide-chat-dock-body .slash-command-output,
+  .ide-chat-dock-body .proactive-suggestion-block {
+    max-width: 100%;
+  }
+
+  .ide-chat-dock-body .interactive-card {
+    gap: var(--space-6);
+    padding: var(--space-7) var(--space-7) var(--space-6);
+  }
+
+  /* (The pre-overhaul tool-call-header/summary overrides ported from
+   * chat-media-queries.css are gone: the machinery one-liner grammar
+   * (chat-machinery.css) is flex-based and already dock-compact; density
+   * is tuned via the #ideChatDock --tl-* profile in chat-timeline-tokens.css.) */
+
+  .ide-chat-dock-body .slash-command-output {
+    padding: var(--space-7);
+  }
+
+  .ide-chat-dock-body .composer-wrap {
+    width: min(var(--composer-width), 100%);
+  }
+
+  .ide-chat-dock-body .composer {
+    --composer-secondary-control-size: calc(30px * var(--chat-zoom-factor, 1));
+    --composer-secondary-icon-size: calc(14px * var(--chat-zoom-factor, 1));
+    --composer-secondary-meta-height: calc(28px * var(--chat-zoom-factor, 1));
+    padding: calc(var(--space-5) * var(--chat-zoom-factor, 1));
+  }
+
+  .ide-chat-dock-body .composer-icon-tools {
+    gap: var(--space-2);
+  }
+
+  .ide-chat-dock-body .composer-entry-row {
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin-bottom: var(--space-2);
+  }
+
+  .ide-chat-dock-body .composer-input {
+    min-height: calc(54px * var(--chat-zoom-factor, 1));
+    max-height: 120px; /* spec: dock caps auto-grow lower than main chat's 168px */
+    font-size: calc(15px * var(--chat-zoom-factor, 1));
+  }
+
+  .ide-chat-dock-body .composer-mode {
+    margin-right: auto;
+    padding: 1px;
+  }
+
+  .ide-chat-dock-body .composer-mode-button {
+    min-height: calc(26px * var(--chat-zoom-factor, 1));
+    padding: 0 10px;
+    font-size: calc(11px * var(--chat-zoom-factor, 1));
+  }
+
+  .ide-chat-dock-body .composer-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    width: 100%;
+    padding-top: var(--space-3);
+    margin-top: var(--space-2);
+    border-top: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 14%, transparent);
+  }
+
+  .ide-chat-dock-body .composer-toolbar-left,
+  .ide-chat-dock-body .composer-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ide-chat-dock-body .composer-toolbar-right {
+    margin-left: auto;
+  }
+
+  .ide-chat-dock-body .composer-send {
+    width: calc(44px * var(--chat-zoom-factor, 1));
+    height: calc(44px * var(--chat-zoom-factor, 1));
+  }
+
+  /* The 44px rule above ties chat-composer.css's queue-pill rule (0,2,0) and
+   * loads later; this (0,3,0) override keeps "Queue - runs in X" unclipped. */
+  .ide-chat-dock-body .composer-send.composer-send-queue {
+    width: auto;
+  }
+
+  /* The dock is narrower than the 300px popover anchored to the pill slot:
+   * anchor it to the positioned .composer instead and span its width. */
+  .ide-chat-dock-body .composer-model-pill-slot {
+    position: static;
+  }
+
+  .ide-chat-dock-body .composer-model-popover {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ide-chat-dock-body .composer-model-picker-list {
+    max-height: 220px;
+  }
+
+  .ide-chat-dock-body .composer-stop-button {
+    width: calc(44px * var(--chat-zoom-factor, 1));
+    height: calc(44px * var(--chat-zoom-factor, 1));
+    min-width: calc(44px * var(--chat-zoom-factor, 1));
+    min-height: calc(44px * var(--chat-zoom-factor, 1));
+  }
+
+  .ide-chat-dock-body .composer-meta {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+    padding-top: 0;
+    margin-top: var(--space-3);
+  }
+
+  .ide-chat-dock-body .composer-signal-group {
+    width: 100%;
+  }
+
+  .ide-chat-dock-body .composer-signal-group-runtime {
+    justify-content: flex-start;
+  }
+
+  .ide-chat-dock-body .composer-meta .composer-select-model select {
+    width: 104px;
+    min-width: 104px;
+  }
+
+  .ide-chat-dock-body .composer-meta .composer-select-effort select {
+    max-width: 76px;
+  }
+
+  .ide-chat-dock-body .composer-jump-tools {
+    width: auto;
+    gap: var(--space-2);
+  }
+
+  /* Attachment chips (settings-responsive.css L252-283 port). */
+  .ide-chat-dock-body .attachment-chip {
+    gap: 6px;
+    padding: 0 6px 0 10px;
+  }
+
+  .ide-chat-dock-body .attachment-chip-image {
+    min-height: 42px;
+    padding: 4px 6px 4px 4px;
+    border-radius: var(--radius-md);
+  }
+
+  .ide-chat-dock-body .attachment-chip-preview {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-base);
+  }
+
+  .ide-chat-dock-body .attachment-chip-name {
+    max-width: min(132px, 100%);
+  }
+
+  .ide-chat-dock-body .message-attachments {
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  .ide-chat-dock-body .message-attachment-card {
+    max-width: 100%;
+  }
+
+  .ide-chat-dock-body .message-attachment-image-preview {
+    width: min(220px, 100%);
+  }
+}
+
+/* §17 decision 10: attachment tray hugs the composer's trailing edge. */
+.ide-chat-dock-body .attachment-tray {
+  justify-content: flex-end;
+}
+
+/* ── Stacked-narrow (<860px): dock stacks as the FIRST row above the editor,
+ * mirroring ide-view.css's rail/secondary stacking. Fully independent of the
+ * bottom panel (which lives INSIDE #ideMain). ─────────────────────────────── */
+@media (max-width: 860px) {
+  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"]):not([data-chatdock-side="left"]),
+  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"])[data-chatdock-side="left"],
+  .ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"]):not([data-chatdock-side="left"]),
+  .ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"])[data-chatdock-side="left"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "chatdock" "main" "rail";
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"]:not([data-chatdock-side="left"]),
+  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"][data-chatdock-side="left"],
+  .ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"]:not([data-chatdock-side="left"]),
+  .ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"][data-chatdock-side="left"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "chatdock" "main" "secondary" "rail";
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
+
+  .ide-chat-dock,
+  .ide-shell[data-chatdock-side="left"] .ide-chat-dock {
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 50%;
+  }
+
+  .ide-chat-dock-resizer {
+    display: none;
+  }
+}

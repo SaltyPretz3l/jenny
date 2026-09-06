@@ -1,0 +1,745 @@
+/* styles/ide-file-map.css - Workspace File Map (Living Atlas). Districts hold
+ * file dots or compact tiles, selection rays show dependencies, and the
+ * activity layer pulses in the warm --warning family. Dot/tile color encodes
+ * language, rings encode health/findings, and warm color encodes activity.
+ * All rules are scoped under .ide-map-host and loaded from styles.css. */
+
+.ide-map-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.ide-map-host.hidden {
+  display: none;
+}
+
+/* Stage switch (editor ↔ map) crossfade-in. */
+.ide-map-host:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.ide-map-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.ide-map-viewport.is-panning {
+  cursor: grabbing;
+}
+
+.ide-map-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* ---- Districts ----------------------------------------------------------
+ * Flat absolutely-positioned divs; nesting is geometric (parents painted
+ * first). Depth steps the surface mix so containment reads at a glance.
+ *
+ * Zoom compensation: the transform stamps --atlas-zoom (the camera scale,
+ * 0.2–3.0) on .ide-map-content every commit. Chrome that must stay legible
+ * at any zoom divides by it (borders, header text, strokes) so a district
+ * border is ~1px ON SCREEN whether the camera is at 0.2 or 3.0. Fills mix
+ * toward --text-primary, not a surface token: the tint then contrasts the
+ * canvas in every palette (lightens dark themes, darkens light ones), and
+ * never feeds a gradient into color-mix() (invalid → dropped declaration). */
+
+.ide-atlas-district {
+  position: absolute;
+  box-sizing: border-box;
+  border: solid var(--line);
+  border-width: calc(1px / var(--atlas-zoom, 1));
+  border-radius: calc(12px / var(--atlas-zoom, 1));
+  background: color-mix(in srgb, var(--text-primary) 3.5%, transparent);
+  transition: border-color var(--transition-fast);
+}
+
+.ide-atlas-district--d2 {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--text-primary) 2.25%, transparent);
+}
+
+.ide-atlas-district--d3 {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--line) 55%, transparent);
+  background: transparent;
+}
+
+.ide-atlas-district:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+/* Header font-size carries the zoom compensation; every child is sized in
+ * em so the whole label row (name, count pill, language bar, health tick)
+ * scales together. Clamp keeps regions-tier labels map-like rather than
+ * enormous, and stops tiles-tier headers from vanishing. */
+.ide-atlas-district-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: auto;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 0.66em;
+  padding: 0.2em 1em;
+  overflow: hidden;
+  cursor: zoom-in;
+  border: 0;
+  border-radius: 12px 12px 0 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: clamp(9px, calc(12px / var(--atlas-zoom, 1)), 64px);
+}
+
+.ide-atlas-district-header:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 calc(1px / var(--atlas-zoom, 1)) var(--accent);
+}
+
+.ide-atlas-district-name {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 1em;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-atlas-district--d1 > .ide-atlas-district-header .ide-atlas-district-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ide-atlas-district-flat {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.ide-atlas-district-count {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+/* Language bar: stacked proportional segments, top languages only. */
+.ide-atlas-langbar {
+  flex: 0 1 5.5em;
+  display: flex;
+  height: 0.33em;
+  min-width: 2em;
+  border-radius: 999px;
+  overflow: hidden;
+  opacity: 0.85;
+}
+
+.ide-atlas-langseg { height: 100%; }
+.ide-atlas-langseg--js { background: var(--accent); }
+.ide-atlas-langseg--ts { background: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
+.ide-atlas-langseg--py { background: var(--accent-cyan); }
+.ide-atlas-langseg--css { background: var(--state-success); }
+.ide-atlas-langseg--html { background: var(--state-warning); }
+.ide-atlas-langseg--md { background: var(--text-muted); }
+.ide-atlas-langseg--data { background: var(--text-secondary); }
+.ide-atlas-langseg--other { background: var(--text-muted); }
+
+/* Health tick: shown only while the Health layer is on. */
+.ide-atlas-health {
+  display: none;
+  flex: none;
+  width: 0.66em;
+  height: 0.66em;
+  border-radius: 50%;
+}
+
+.ide-atlas--layer-health .ide-atlas-health { display: inline-block; }
+.ide-atlas-health--ok { background: color-mix(in srgb, var(--state-success) 70%, transparent); }
+.ide-atlas-health--amber { background: var(--state-warning); }
+.ide-atlas-health--red { background: var(--state-danger); }
+
+/* ---- Dots layer ---------------------------------------------------------
+ * One shared svg; circles are pointer-events:none — hits resolve through the
+ * view's spatial index, so 3k dots cost zero listeners. */
+
+.ide-atlas-dots {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ide-atlas-dot {
+  fill: var(--atlas-lang, var(--text-muted));
+  opacity: 0.8;
+  transition: opacity var(--transition-fast);
+}
+
+.ide-atlas-dot--lang-js { --atlas-lang: var(--accent); }
+.ide-atlas-dot--lang-ts { --atlas-lang: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
+.ide-atlas-dot--lang-py { --atlas-lang: var(--accent-cyan); }
+.ide-atlas-dot--lang-css { --atlas-lang: var(--state-success); }
+.ide-atlas-dot--lang-html { --atlas-lang: var(--state-warning); }
+.ide-atlas-dot--lang-md { --atlas-lang: var(--text-muted); }
+.ide-atlas-dot--lang-data { --atlas-lang: var(--text-secondary); }
+.ide-atlas-dot--lang-other { --atlas-lang: var(--text-muted); }
+
+.ide-atlas-dot--test { opacity: 0.4; }
+
+.ide-atlas-dot--git-modified { stroke: var(--state-warning); stroke-width: 2; }
+.ide-atlas-dot--git-added { stroke: var(--state-success); stroke-width: 2; }
+
+/* Tier gating: regions = structure only; dots = specks; tiles = dots stay
+ * underneath (a tile covers its own dot) so partial materialization degrades
+ * gracefully instead of blanking. */
+.ide-atlas--tier-regions .ide-atlas-dots,
+.ide-atlas--tier-regions .ide-atlas-tiles { display: none; }
+.ide-atlas--tier-dots .ide-atlas-tiles { display: none; }
+
+.ide-atlas--hide-tests .ide-atlas-dot--test,
+.ide-atlas--hide-tests .ide-atlas-tile--test { display: none; }
+
+/* ---- Tiles (viewport-culled cards) -------------------------------------- */
+
+.ide-atlas-tiles { position: absolute; left: 0; top: 0; }
+
+.ide-atlas-tile {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 132px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+}
+
+.ide-atlas-tile:hover,
+.ide-atlas-tile:focus-visible,
+.ide-atlas-tile.is-hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  outline: none;
+  z-index: 2;
+}
+
+.ide-atlas-tile--lang-js { --atlas-lang: var(--accent); }
+.ide-atlas-tile--lang-ts { --atlas-lang: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
+.ide-atlas-tile--lang-py { --atlas-lang: var(--accent-cyan); }
+.ide-atlas-tile--lang-css { --atlas-lang: var(--state-success); }
+.ide-atlas-tile--lang-html { --atlas-lang: var(--state-warning); }
+.ide-atlas-tile--lang-md { --atlas-lang: var(--text-muted); }
+.ide-atlas-tile--lang-data { --atlas-lang: var(--text-secondary); }
+.ide-atlas-tile--lang-other { --atlas-lang: var(--text-muted); }
+
+.ide-atlas-tile--test { opacity: 0.55; }
+
+.ide-atlas-tile-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--atlas-lang, var(--text-muted));
+}
+
+.ide-atlas-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ide-atlas-tile-git {
+  display: none;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ide-atlas-tile--git-modified .ide-atlas-tile-git {
+  display: inline-block;
+  background: var(--state-warning);
+}
+
+.ide-atlas-tile--git-added .ide-atlas-tile-git {
+  display: inline-block;
+  background: var(--state-success);
+}
+
+/* ---- Selection rays (deps on demand) ------------------------------------ */
+
+.ide-atlas-rays {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ide-atlas-ray {
+  fill: none;
+  stroke-width: calc(1.6px / var(--atlas-zoom, 1));
+  opacity: 0.9;
+}
+
+.ide-atlas-ray--out { stroke: var(--accent); }
+.ide-atlas-ray--in { stroke: var(--accent-cyan); }
+.ide-atlas-ray-arrow { fill: var(--accent); }
+
+/* Deps layer chip off -> no rays. */
+.ide-map-content:not(.ide-atlas--layer-deps) .ide-atlas-rays { display: none; }
+
+/* ---- Spotlight (selection / blast radius) ------------------------------- */
+
+.ide-atlas--spotlit .ide-atlas-dot,
+.ide-atlas--spotlit .ide-atlas-tile { opacity: 0.28; }
+
+.ide-atlas--spotlit .ide-atlas-district { opacity: 0.6; }
+
+.ide-atlas--spotlit .ide-atlas-dot.is-selected,
+.ide-atlas--spotlit .ide-atlas-dot.is-ray-target,
+.ide-atlas--spotlit .ide-atlas-dot.is-spotlit,
+.ide-atlas--spotlit .ide-atlas-dot.is-incident-node,
+.ide-atlas--spotlit .ide-atlas-tile.is-selected,
+.ide-atlas--spotlit .ide-atlas-tile.is-ray-target,
+.ide-atlas--spotlit .ide-atlas-tile.is-spotlit,
+.ide-atlas--spotlit .ide-atlas-tile.is-incident-node { opacity: 1; }
+
+.ide-atlas-tile.is-selected,
+.ide-atlas-tile.is-spotlit {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 1px var(--accent-cyan);
+}
+
+.ide-atlas-dot.is-selected,
+.ide-atlas-dot.is-spotlit {
+  stroke: var(--accent-cyan);
+  stroke-width: 3;
+}
+
+/* Finding rings: ring, never a recolor. */
+.ide-atlas-tile.ide-atlas-node--finding-hub { box-shadow: 0 0 0 2px var(--accent); }
+.ide-atlas-tile.ide-atlas-node--finding-cycle { box-shadow: 0 0 0 2px var(--accent-cyan); }
+.ide-atlas-tile.ide-atlas-node--finding-orphan { box-shadow: 0 0 0 2px var(--text-muted); }
+.ide-atlas-dot.ide-atlas-node--finding-hub { stroke: var(--accent); stroke-width: 3; }
+.ide-atlas-dot.ide-atlas-node--finding-cycle { stroke: var(--accent-cyan); stroke-width: 3; }
+.ide-atlas-dot.ide-atlas-node--finding-orphan { stroke: var(--text-muted); stroke-width: 3; }
+
+/* ---- Activity layer (Jenny live) ----------------------------------------
+ * The warm --warning family is reserved for activity. Heat pulses ride the
+ * dots/tiles; trail steps are drawn by the activity overlay. Everything
+ * animates transform/opacity only. */
+
+.ide-atlas-dot.is-heat { stroke: var(--state-warning); stroke-width: 2.5; opacity: 1; }
+.ide-atlas-tile.is-heat { border-color: var(--state-warning); opacity: 1; }
+.ide-atlas-dot.is-heat-edit { stroke-width: 3.5; }
+.ide-atlas-tile.is-heat-edit { box-shadow: 0 0 0 1px var(--state-warning); }
+
+.ide-map-content:not(.ide-atlas--layer-activity) .ide-atlas-dot.is-heat,
+.ide-map-content:not(.ide-atlas--layer-activity) .ide-atlas-dot.is-heat-edit { stroke: none; }
+.ide-map-content:not(.ide-atlas--layer-activity) .ide-atlas-tile.is-heat,
+.ide-map-content:not(.ide-atlas--layer-activity) .ide-atlas-tile.is-heat-edit {
+  border-color: color-mix(in srgb, var(--line) 80%, transparent);
+  box-shadow: none;
+}
+
+/* Pulse rings + trail markers. */
+.ide-atlas-activity { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+.ide-atlas-pulse {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid var(--state-warning);
+  border-radius: 50%;
+  opacity: 0;
+  animation: ideAtlasPulse var(--motion-duration-pulse-fast) var(--motion-ease-standard) 2;
+}
+
+@keyframes ideAtlasPulse {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.ide-atlas-trail-step {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--state-warning);
+  color: var(--bg-base);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.95;
+  transition: opacity var(--motion-duration-emphasis) var(--motion-ease-standard);
+}
+
+.ide-atlas-activity.is-fading .ide-atlas-trail-step { opacity: 0; }
+
+.ide-map-content:not(.ide-atlas--layer-activity) .ide-atlas-activity { display: none; }
+
+/* ---- Activity rail ------------------------------------------------------ */
+
+.ide-map-activity-rail {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  bottom: 52px;
+  width: 216px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-base);
+  background: var(--bg-surface);
+}
+
+.ide-map-activity-rail.hidden { display: none; }
+
+.ide-map-activity-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ide-map-activity-rail-live {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.ide-map-activity-rail.is-live .ide-map-activity-rail-live {
+  background: var(--state-warning);
+}
+
+.ide-map-activity-rail-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ide-map-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ide-map-activity-row:hover,
+.ide-map-activity-row:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.ide-map-activity-row-icon { flex: none; display: inline-flex; color: var(--text-muted); }
+.ide-map-activity-row.is-edit .ide-map-activity-row-icon { color: var(--state-warning); }
+
+.ide-map-activity-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-map-activity-row-verb { flex: none; color: var(--text-muted); font-size: 10px; }
+.ide-map-activity-rail-foot {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ---- Bucket strip (ignored dirs as chrome, bottom-right) ----------------- */
+
+.ide-atlas-bucket-strip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 46%;
+}
+
+.ide-atlas-bucket-strip.hidden { display: none; }
+
+.ide-atlas-bucket-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 10px;
+  white-space: nowrap;
+  transition: color var(--transition-fast);
+}
+
+.ide-atlas-bucket-chip:hover {
+  color: var(--text-primary);
+}
+
+.ide-atlas-bucket-chip.is-heat { border-color: var(--state-warning); }
+.ide-atlas-bucket-glyph { color: var(--text-muted); }
+.ide-atlas-bucket-count {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+
+/* ---- Controls bar (search / layers / refresh / overview) ---------------- */
+
+.ide-map-controls {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.ide-map-controls > * { pointer-events: auto; }
+
+.ide-map-controls .ide-map-search {
+  min-width: 180px;
+  max-width: 280px;
+  flex: 0 1 auto;
+}
+
+.ide-map-layer-chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ide-map-controls-spacer { flex: 1; }
+
+.ide-map-status-slot {
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+}
+
+.ide-map-status-slot:empty { display: none; }
+
+.ide-map-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.ide-map-overview-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ---- Findings chip bar (Health layer detail, bottom-left) ---------------- */
+
+.ide-map-findings {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ide-map-findings.hidden { display: none; }
+
+.ide-map-findings .inv-chip.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ---- Project Overview panel (kept, restyled lightly) --------------------- */
+
+.ide-map-overview {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  width: 280px;
+  max-height: calc(100% - 190px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-base);
+  background: var(--bg-surface);
+}
+
+.ide-map-overview.hidden { display: none; }
+
+.ide-map-overview-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ide-map-overview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ide-map-overview-heading {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ide-map-overview-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ide-map-overview-row .ide-map-overview-path {
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ide-map-overview-count {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-map-overview-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ide-map-overview-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* Legend rows inside the Overview (language + activity key). */
+.ide-map-overview-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.ide-map-overview-legend-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ide-map-overview-legend-swatch--activity { background: var(--state-warning); }
+.ide-map-overview-legend-swatch--deps { background: var(--accent); }
+.ide-map-overview-legend-swatch--health { background: var(--state-danger); }
+
+/* ---- State panel (idle / loading / empty / error / no-root) ------------- */
+
+.ide-map-state-host {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg-base);
+}
+
+.ide-map-state-host.hidden { display: none; }
+
+/* ---- Motion discipline --------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-atlas-tile,
+  .ide-atlas-dot,
+  .ide-atlas-district,
+  .ide-atlas-trail-step {
+    transition: none;
+  }
+
+  .ide-atlas-pulse {
+    animation: none;
+    opacity: 0.7;
+  }
+}

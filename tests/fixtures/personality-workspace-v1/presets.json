@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "file_hashes": {
+    "IDENTITY.md": [
+      "e004b6499809115641de6ee9363ffe4201440dd3715c9751ae1c04939c97bc35",
+      "79173441588c0cc014613e1cb4bca9cb92d8bc7507aea21bcaac5cebf420ff95",
+      "229a3e7580333460567b84e9b235c7b0388b69ecb7c33166eb707975866e4836"
+    ],
+    "SOUL.md": [
+      "cd73428f2197d88e316baf3fe37e0ced9a0fd1e359e60f1fa986e7e0f40734f2",
+      "6ce2e0709aa3f8ecbf0d949c9a59f49571490c73859bf27a1b318c4605980936",
+      "336ba076660bc2603c672f375f4b6722a1a23e083d42d23ede77a59cd2028156"
+    ],
+    "USER.md": [
+      "85148452d0e452d2d9d067a71243b91f60e5ea691a9c10c758ecb1109e0f9fd2"
+    ],
+    "MEMORY.md": [
+      "5d236ab178e98616135b55c26a10b696083fc067ed63c46dc1b5975d17d24e16"
+    ]
+  },
+  "file_sizes": {
+    "IDENTITY.md": [1329, 251, 4900],
+    "SOUL.md": [2686, 261, 9757],
+    "USER.md": [178],
+    "MEMORY.md": [99]
+  }
+}

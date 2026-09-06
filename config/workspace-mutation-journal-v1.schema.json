@@ -1,0 +1,704 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jenny.local/schemas/workspace-mutation-journal-v1.schema.json",
+  "title": "Jenny Workspace Mutation Journal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "change_set_id",
+    "state",
+    "workspace",
+    "session_id",
+    "turn_id",
+    "actor",
+    "tool_call_ids",
+    "wall_time",
+    "termination_reason",
+    "operation_count",
+    "completed_sequences",
+    "coverage",
+    "retention",
+    "restore",
+    "operations",
+    "integrity",
+    "extensions"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "change_set_id": { "$ref": "#/$defs/uuid_v7" },
+    "state": {
+      "enum": ["prepared", "in_progress", "committed", "rolled_back", "interrupted"]
+    },
+    "workspace": { "$ref": "#/$defs/workspace" },
+    "session_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+    "turn_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+    "actor": { "enum": ["sidecar_tools", "explorer"] },
+    "tool_call_ids": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+    },
+    "wall_time": { "$ref": "#/$defs/wall_time" },
+    "termination_reason": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "turn_completed",
+        "turn_cancelled",
+        "tool_failed",
+        "process_recovered",
+        "restore_completed"
+      ]
+    },
+    "operation_count": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "completed_sequences": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1, "maximum": 10000 }
+    },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "retention": { "$ref": "#/$defs/retention" },
+    "restore": { "$ref": "#/$defs/restore" },
+    "operations": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "integrity": { "$ref": "#/$defs/integrity" },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "actor": { "const": "sidecar_tools" } }, "required": ["actor"] },
+      "then": {
+        "properties": {
+          "session_id": { "type": "string" },
+          "turn_id": { "type": "string" },
+          "tool_call_ids": { "type": "array", "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "actor": { "const": "explorer" } }, "required": ["actor"] },
+      "then": {
+        "properties": {
+          "session_id": { "type": "null" },
+          "turn_id": { "type": "null" },
+          "tool_call_ids": { "type": "array", "maxItems": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid_v7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//).+$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured_path",
+        "real_path",
+        "device_id",
+        "file_id",
+        "fingerprint",
+        "workspace_id"
+      ],
+      "properties": {
+        "configured_path": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "real_path": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "file_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fingerprint": { "$ref": "#/$defs/sha256" },
+        "workspace_id": { "type": "string", "pattern": "^ws_[0-9a-f]{32}$" }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "byte_size", "sha256"],
+      "properties": {
+        "kind": { "enum": ["missing", "file", "directory", "symlink", "junction", "other"] },
+        "byte_size": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "pre_signature", "post_signature"],
+      "properties": {
+        "relative_path": { "$ref": "#/$defs/relative_path" },
+        "pre_signature": { "$ref": "#/$defs/signature" },
+        "post_signature": { "$ref": "#/$defs/signature" }
+      }
+    },
+    "recovery_object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "store_kind", "workspace_relative_path", "role", "signature"],
+      "properties": {
+        "object_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "store_kind": { "enum": ["trash", "backup"] },
+        "workspace_relative_path": { "$ref": "#/$defs/relative_path" },
+        "role": { "enum": ["deleted_source", "overwritten_destination", "protected_occupant"] },
+        "signature": { "$ref": "#/$defs/signature" }
+      }
+    },
+    "inverse_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_id",
+        "kind",
+        "from_relative_path",
+        "to_relative_path",
+        "recovery_object_id",
+        "expected_current_signature"
+      ],
+      "properties": {
+        "step_id": { "type": "string", "pattern": "^[1-9][0-9]*\\.[1-9][0-9]*$", "maxLength": 32 },
+        "kind": {
+          "enum": [
+            "move_to_stage",
+            "move_back",
+            "restore_object",
+            "remove_created",
+            "restore_protected_occupant",
+            "remove_empty_parent"
+          ]
+        },
+        "from_relative_path": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/)(?!.*(?:^|/)[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//).+$"
+        },
+        "to_relative_path": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/)(?!.*(?:^|/)[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//).+$"
+        },
+        "recovery_object_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+        "expected_current_signature": { "$ref": "#/$defs/signature" }
+      }
+    },
+    "metadata_preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_bytes",
+        "mtime",
+        "ctime",
+        "owner",
+        "mode",
+        "acls",
+        "extended_attributes",
+        "alternate_data_streams"
+      ],
+      "properties": {
+        "content_bytes": { "$ref": "#/$defs/preservation_value" },
+        "mtime": { "$ref": "#/$defs/preservation_value" },
+        "ctime": { "$ref": "#/$defs/preservation_value" },
+        "owner": { "$ref": "#/$defs/preservation_value" },
+        "mode": { "$ref": "#/$defs/preservation_value" },
+        "acls": { "$ref": "#/$defs/preservation_value" },
+        "extended_attributes": { "$ref": "#/$defs/preservation_value" },
+        "alternate_data_streams": { "$ref": "#/$defs/preservation_value" }
+      }
+    },
+    "preservation_value": {
+      "enum": ["preserved", "best_effort", "not_preserved"]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "status",
+        "kind",
+        "tool_name",
+        "tool_call_id",
+        "observed_at",
+        "source",
+        "destination",
+        "created_parent_paths",
+        "recovery_objects",
+        "inverse_steps",
+        "metadata_preservation",
+        "restore_outcome",
+        "diagnostic_code"
+      ],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "status": {
+          "enum": ["planned", "applying", "applied", "undoing", "undone", "skipped", "conflict", "unknown"]
+        },
+        "kind": { "enum": ["create", "modify", "delete", "move"] },
+        "tool_name": { "enum": ["write_file", "edit_file", "delete_file", "move_file", "explorer_rename"] },
+        "tool_call_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "source": { "anyOf": [{ "$ref": "#/$defs/endpoint" }, { "type": "null" }] },
+        "destination": { "anyOf": [{ "$ref": "#/$defs/endpoint" }, { "type": "null" }] },
+        "created_parent_paths": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relative_path" }
+        },
+        "recovery_objects": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/recovery_object" }
+        },
+        "inverse_steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/inverse_step" }
+        },
+        "metadata_preservation": { "$ref": "#/$defs/metadata_preservation" },
+        "restore_outcome": {
+          "type": ["string", "null"],
+          "enum": [null, "restored", "skipped", "alternate_name", "protected_then_replaced", "conflict"]
+        },
+        "diagnostic_code": {
+          "type": ["string", "null"],
+          "pattern": "^CMP-[A-Z][A-Z0-9_]*-[0-9]{4}$",
+          "maxLength": 64
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "create" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "source": { "type": "null" },
+              "destination": { "$ref": "#/$defs/endpoint" },
+              "recovery_objects": { "type": "array", "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "modify" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "source": { "type": "null" },
+              "destination": { "$ref": "#/$defs/endpoint" },
+              "recovery_objects": { "type": "array", "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "delete" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "source": { "$ref": "#/$defs/endpoint" },
+              "destination": { "type": "null" },
+              "recovery_objects": { "type": "array", "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "move" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "source": { "$ref": "#/$defs/endpoint" },
+              "destination": { "$ref": "#/$defs/endpoint" }
+            }
+          }
+        }
+      ]
+    },
+    "wall_time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prepared_at", "mutation_started_at", "updated_at", "terminal_at", "elapsed_ms"],
+      "properties": {
+        "prepared_at": { "$ref": "#/$defs/timestamp" },
+        "mutation_started_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "terminal_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "included_tools",
+        "excluded_mutation_classes",
+        "known_unjournaled_events",
+        "partially_undoable",
+        "warning"
+      ],
+      "properties": {
+        "level": { "const": "typed_tools_only" },
+        "included_tools": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "enum": ["write_file", "edit_file", "delete_file", "move_file"] }
+        },
+        "excluded_mutation_classes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["run_command", "explorer_rename"] }
+        },
+        "known_unjournaled_events": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+        },
+        "partially_undoable": { "type": "boolean" },
+        "warning": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protected",
+        "reserved_bytes",
+        "reserved_entries",
+        "referenced_object_ids",
+        "created_active_use_seconds",
+        "last_accessed_active_use_seconds",
+        "active_age_seconds",
+        "wall_clock_review_due_at",
+        "wall_clock_review_presented_at",
+        "pinned_as_newest_committed"
+      ],
+      "properties": {
+        "protected": { "type": "boolean" },
+        "reserved_bytes": { "type": "integer", "minimum": 0 },
+        "reserved_entries": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "referenced_object_ids": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "created_active_use_seconds": { "type": "integer", "minimum": 0 },
+        "last_accessed_active_use_seconds": { "type": "integer", "minimum": 0 },
+        "active_age_seconds": { "type": "integer", "minimum": 0 },
+        "wall_clock_review_due_at": { "$ref": "#/$defs/timestamp" },
+        "wall_clock_review_presented_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "pinned_as_newest_committed": { "type": "boolean" }
+      }
+    },
+    "restore_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inverse_step_id", "outcome", "alternate_relative_path"],
+      "properties": {
+        "inverse_step_id": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "outcome": { "enum": ["skip", "alternate_name", "protect_then_replace"] },
+        "alternate_relative_path": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/)(?!.*(?:^|/)[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//).+$"
+        }
+      }
+    },
+    "staging_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inverse_step_id", "stage_relative_path", "expected_signature"],
+      "properties": {
+        "inverse_step_id": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "stage_relative_path": { "$ref": "#/$defs/relative_path" },
+        "expected_signature": { "$ref": "#/$defs/signature" }
+      }
+    },
+    "restore_partial_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["restored", "skipped", "alternate_name", "protected_then_replaced", "conflicts", "warning"],
+      "properties": {
+        "restored": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "alternate_name": { "type": "integer", "minimum": 0 },
+        "protected_then_replaced": { "type": "integer", "minimum": 0 },
+        "conflicts": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "string", "maxLength": 512 }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "requested_at",
+        "updated_at",
+        "completed_at",
+        "completed_inverse_step_ids",
+        "decisions",
+        "staging_entries",
+        "protected_occupants",
+        "partial_result"
+      ],
+      "properties": {
+        "status": { "enum": ["not_requested", "preflight", "in_progress", "committed", "interrupted", "abandoned"] },
+        "requested_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "updated_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "completed_at": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$" },
+        "completed_inverse_step_ids": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 32 }
+        },
+        "decisions": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/restore_decision" } },
+        "staging_entries": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/staging_entry" } },
+        "protected_occupants": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/recovery_object" } },
+        "partial_result": { "anyOf": [{ "$ref": "#/$defs/restore_partial_result" }, { "type": "null" }] }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalization", "payload_byte_length", "payload_sha256"],
+      "properties": {
+        "canonicalization": { "const": "jenny_canonical_json_v1" },
+        "payload_byte_length": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+        "payload_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "change_set_id": "01990f9a-8c51-7ad2-a8be-41190e0e1f21",
+      "state": "committed",
+      "workspace": {
+        "configured_path": "C:/Users/example/Desktop/Project",
+        "real_path": "C:/Users/example/Desktop/Project",
+        "device_id": "2147942482",
+        "file_id": "281474976712345",
+        "fingerprint": "149a2744d6a43328447e13eb31e389808de741844178cc631ebaa31d89a2f3c7",
+        "workspace_id": "ws_149a2744d6a43328447e13eb31e38980"
+      },
+      "session_id": "sess_1788491436526_43c46acbe58b",
+      "turn_id": "req_01990f99f729",
+      "actor": "sidecar_tools",
+      "tool_call_ids": ["call_move_a", "call_move_b", "call_delete_old"],
+      "wall_time": {
+        "prepared_at": "2026-09-04T15:03:11.120Z",
+        "mutation_started_at": "2026-09-04T15:03:11.151Z",
+        "updated_at": "2026-09-04T15:03:11.492Z",
+        "terminal_at": "2026-09-04T15:03:11.492Z",
+        "elapsed_ms": 372
+      },
+      "termination_reason": "turn_completed",
+      "operation_count": 3,
+      "completed_sequences": [1, 2, 3],
+      "coverage": {
+        "level": "typed_tools_only",
+        "included_tools": ["write_file", "edit_file", "delete_file", "move_file"],
+        "excluded_mutation_classes": ["run_command", "explorer_rename"],
+        "known_unjournaled_events": [],
+        "partially_undoable": false,
+        "warning": "Shell mutations are not journaled. Explorer rename is not journaled until WO-27 item 2."
+      },
+      "retention": {
+        "protected": true,
+        "reserved_bytes": 9,
+        "reserved_entries": 1,
+        "referenced_object_ids": ["trash:20260904T150311.401Z:inbox/old.txt"],
+        "created_active_use_seconds": 864000,
+        "last_accessed_active_use_seconds": 864000,
+        "active_age_seconds": 0,
+        "wall_clock_review_due_at": "2027-09-04T15:03:11.120Z",
+        "wall_clock_review_presented_at": null,
+        "pinned_as_newest_committed": true
+      },
+      "restore": {
+        "status": "not_requested",
+        "requested_at": null,
+        "updated_at": null,
+        "completed_at": null,
+        "completed_inverse_step_ids": [],
+        "decisions": [],
+        "staging_entries": [],
+        "protected_occupants": [],
+        "partial_result": null
+      },
+      "operations": [
+        {
+          "sequence": 1,
+          "status": "applied",
+          "kind": "move",
+          "tool_name": "move_file",
+          "tool_call_id": "call_move_a",
+          "observed_at": "2026-09-04T15:03:11.205Z",
+          "source": {
+            "relative_path": "inbox/a.txt",
+            "pre_signature": { "kind": "file", "byte_size": 5, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "post_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+          },
+          "destination": {
+            "relative_path": "docs/a.txt",
+            "pre_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            "post_signature": { "kind": "file", "byte_size": 5, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+          },
+          "created_parent_paths": ["docs"],
+          "recovery_objects": [],
+          "inverse_steps": [
+            {
+              "step_id": "1.1",
+              "kind": "move_back",
+              "from_relative_path": "docs/a.txt",
+              "to_relative_path": "inbox/a.txt",
+              "recovery_object_id": null,
+              "expected_current_signature": { "kind": "file", "byte_size": 5, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+            },
+            {
+              "step_id": "1.2",
+              "kind": "remove_empty_parent",
+              "from_relative_path": "docs",
+              "to_relative_path": null,
+              "recovery_object_id": null,
+              "expected_current_signature": { "kind": "directory", "byte_size": 0, "sha256": "1111111111111111111111111111111111111111111111111111111111111111" }
+            }
+          ],
+          "metadata_preservation": {
+            "content_bytes": "preserved",
+            "mtime": "best_effort",
+            "ctime": "not_preserved",
+            "owner": "not_preserved",
+            "mode": "best_effort",
+            "acls": "not_preserved",
+            "extended_attributes": "not_preserved",
+            "alternate_data_streams": "not_preserved"
+          },
+          "restore_outcome": null,
+          "diagnostic_code": null
+        },
+        {
+          "sequence": 2,
+          "status": "applied",
+          "kind": "move",
+          "tool_name": "move_file",
+          "tool_call_id": "call_move_b",
+          "observed_at": "2026-09-04T15:03:11.312Z",
+          "source": {
+            "relative_path": "inbox/b.txt",
+            "pre_signature": { "kind": "file", "byte_size": 4, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+            "post_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+          },
+          "destination": {
+            "relative_path": "docs/b.txt",
+            "pre_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+            "post_signature": { "kind": "file", "byte_size": 4, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+          },
+          "created_parent_paths": [],
+          "recovery_objects": [],
+          "inverse_steps": [
+            {
+              "step_id": "2.1",
+              "kind": "move_back",
+              "from_relative_path": "docs/b.txt",
+              "to_relative_path": "inbox/b.txt",
+              "recovery_object_id": null,
+              "expected_current_signature": { "kind": "file", "byte_size": 4, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+            }
+          ],
+          "metadata_preservation": {
+            "content_bytes": "preserved",
+            "mtime": "best_effort",
+            "ctime": "not_preserved",
+            "owner": "not_preserved",
+            "mode": "best_effort",
+            "acls": "not_preserved",
+            "extended_attributes": "not_preserved",
+            "alternate_data_streams": "not_preserved"
+          },
+          "restore_outcome": null,
+          "diagnostic_code": null
+        },
+        {
+          "sequence": 3,
+          "status": "applied",
+          "kind": "delete",
+          "tool_name": "delete_file",
+          "tool_call_id": "call_delete_old",
+          "observed_at": "2026-09-04T15:03:11.401Z",
+          "source": {
+            "relative_path": "inbox/old.txt",
+            "pre_signature": { "kind": "file", "byte_size": 9, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+            "post_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+          },
+          "destination": null,
+          "created_parent_paths": [],
+          "recovery_objects": [
+            {
+              "object_id": "trash:20260904T150311.401Z:inbox/old.txt",
+              "store_kind": "trash",
+              "workspace_relative_path": ".jenny/trash/20260904T150311.401Z/inbox/old.txt",
+              "role": "deleted_source",
+              "signature": { "kind": "file", "byte_size": 9, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+            }
+          ],
+          "inverse_steps": [
+            {
+              "step_id": "3.1",
+              "kind": "restore_object",
+              "from_relative_path": ".jenny/trash/20260904T150311.401Z/inbox/old.txt",
+              "to_relative_path": "inbox/old.txt",
+              "recovery_object_id": "trash:20260904T150311.401Z:inbox/old.txt",
+              "expected_current_signature": { "kind": "missing", "byte_size": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+            }
+          ],
+          "metadata_preservation": {
+            "content_bytes": "preserved",
+            "mtime": "not_preserved",
+            "ctime": "not_preserved",
+            "owner": "not_preserved",
+            "mode": "best_effort",
+            "acls": "not_preserved",
+            "extended_attributes": "not_preserved",
+            "alternate_data_streams": "not_preserved"
+          },
+          "restore_outcome": null,
+          "diagnostic_code": null
+        }
+      ],
+      "integrity": {
+        "canonicalization": "jenny_canonical_json_v1",
+        "payload_byte_length": 7184,
+        "payload_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "extensions": {}
+    }
+  ]
+}

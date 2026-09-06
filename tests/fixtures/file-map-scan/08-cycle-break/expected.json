@@ -1,0 +1,86 @@
+{
+  "nodes": [
+    {
+      "id": "a.js",
+      "label": "a.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "b.js",
+      "label": "b.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 24
+    },
+    {
+      "id": "c.js",
+      "label": "c.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 48
+    }
+  ],
+  "edges": [
+    {
+      "from": "a.js",
+      "to": "b.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "b.js",
+      "to": "c.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "c.js",
+      "to": "a.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "a.js",
+      "b.js",
+      "c.js"
+    ],
+    "cycles": [
+      [
+        "a.js",
+        "b.js",
+        "c.js"
+      ]
+    ],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 3,
+    "total": 3,
+    "durationMs": 0
+  }
+}

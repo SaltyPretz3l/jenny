@@ -1,0 +1,265 @@
+/* styles/ide-view-replace.css - Workspace IDE find-AND-replace (Tier 2).
+ * Loaded immediately after ide-view.css to extend its base search styles. */
+
+.ide-search-results {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ide-search-file {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.ide-search-file:hover {
+  background: var(--bg-surface-2);
+}
+
+/* UIUX-037: the row-activation control is a role="button" span, a SIBLING
+   of the real per-file replace <button> (see renderer-ide-search-panel.js
+   buildResultsMarkup) -- never nested interactives. Layout/typography that
+   used to live on .ide-search-file itself now lives here so the row still
+   reads and hovers as one control. */
+.ide-search-file-activate {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ide-search-file-twisty {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.ide-search-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ide-search-file-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 10px;
+}
+
+.ide-search-file-count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.ide-search-match {
+  display: flex;
+  min-width: 0;
+}
+
+.ide-search-match:hover {
+  background: var(--bg-surface-2);
+}
+
+/* UIUX-037: same sibling-activation-control shape as .ide-search-file-activate
+   above, for the per-match "open result" row. */
+.ide-search-match-activate {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 2px 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ide-search-match:hover .ide-search-match-activate {
+  color: var(--text-primary);
+}
+
+.ide-search-file-activate:focus-visible,
+.ide-search-match-activate:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-search-match-line {
+  flex-shrink: 0;
+  min-width: 28px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.ide-search-match-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ide-search-replace-field {
+  display: block;
+}
+
+.ide-search-replace-field .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ide-search-replace-field .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-search-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ide-search-toggles,
+.ide-search-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ide-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-family-mono);
+  cursor: pointer;
+}
+
+.ide-search-toggle:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-search-toggle--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ide-search-status--error {
+  color: var(--widget-tool-error-color);
+}
+
+.ide-search-status--ok {
+  color: var(--widget-tool-success-color);
+}
+
+.ide-search-file-replace,
+.ide-search-match-replace {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ide-search-file:hover .ide-search-file-replace,
+.ide-search-match:hover .ide-search-match-replace,
+.ide-search-file:focus-within .ide-search-file-replace,
+.ide-search-match:focus-within .ide-search-match-replace {
+  /* :focus-within (UIUX-037): the replace <button> is a real keyboard-
+     reachable sibling now (no longer nested inside the row's role="button"
+     activation span) -- opacity:0-by-default must not hide it from a
+     keyboard user who has tabbed onto it or the row's activation control. */
+  opacity: 1;
+}
+
+.ide-search-file-replace:hover,
+.ide-search-match-replace:hover {
+  color: var(--accent);
+}
+
+.ide-search-replace-before {
+  text-decoration: line-through;
+  color: var(--widget-tool-error-color);
+  background: color-mix(in srgb, var(--widget-tool-error-color) 12%, transparent);
+}
+
+.ide-search-replace-after {
+  margin-left: 2px;
+  color: var(--widget-tool-success-color);
+  background: color-mix(in srgb, var(--widget-tool-success-color) 12%, transparent);
+}
+
+/* Find-in-Folder scope pill: an accent-tinted, dismissible chip that signals the
+ * search is narrowed to a folder. The whole chip is the clear control; the ✕ is
+ * a CSS affordance so the JS label can stay the plain folder path. */
+.ide-search-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-search-scope-chip::after {
+  content: "✕";
+  margin-left: 6px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.ide-search-scope-chip:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}

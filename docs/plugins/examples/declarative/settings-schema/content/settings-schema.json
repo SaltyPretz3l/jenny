@@ -1,0 +1,17 @@
+{
+  "content_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-settings",
+  "contribution_id": "review_settings",
+  "payload": {
+    "kind": "settings_schema",
+    "fields": [
+      {
+        "type": "boolean",
+        "key": "include_summary",
+        "label": "Include a summary",
+        "default": true
+      }
+    ]
+  }
+}

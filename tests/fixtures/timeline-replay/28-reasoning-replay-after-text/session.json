@@ -1,0 +1,105 @@
+[
+  {
+    "id": "user_stream_28",
+    "role": "user",
+    "content": "Explain the result",
+    "stream_error": "",
+    "terminal_status": "",
+    "terminal_subcode": "",
+    "timestamp": "",
+    "status": "complete",
+    "finalizedAt": null,
+    "parent_stream_id": "",
+    "phases": [],
+    "visible_segments": [],
+    "tool_steps": [],
+    "reasoning": {
+      "available": false,
+      "status": "none",
+      "source": "none",
+      "entries": []
+    },
+    "reasoning_phases": [],
+    "interactive_round_recap": null
+  },
+  {
+    "id": "assistant_stream_28",
+    "role": "assistant",
+    "streamId": "stream_28",
+    "phases": [
+      {
+        "phaseId": "phase_reasoning_28",
+        "phaseKind": "reasoning",
+        "iteration": 1,
+        "thinkingId": "think_28",
+        "toolCallId": "",
+        "toolName": "",
+        "renderCollapsed": false,
+        "startedAt": "",
+        "completedAt": "2026-08-29T12:00:00.000Z",
+        "entries": [
+          {
+            "id": "e1",
+            "text": "Working through the answer.",
+            "timestamp": ""
+          }
+        ]
+      },
+      {
+        "phaseId": "phase_text_28",
+        "phaseKind": "text",
+        "iteration": 1,
+        "thinkingId": "",
+        "toolCallId": "",
+        "toolName": "",
+        "renderCollapsed": false,
+        "startedAt": "",
+        "completedAt": "",
+        "entries": []
+      }
+    ],
+    "visible_segments": [
+      {
+        "segmentId": "seg_28",
+        "phaseId": "phase_text_28",
+        "text": "Here is the answer."
+      }
+    ],
+    "content": "Here is the answer.",
+    "stream_error": "",
+    "terminal_status": "",
+    "terminal_subcode": "",
+    "timestamp": "",
+    "status": "complete",
+    "finalizedAt": "",
+    "parent_stream_id": "",
+    "tool_steps": [],
+    "reasoning": {
+      "available": true,
+      "status": "complete",
+      "source": "provider",
+      "entries": [
+        {
+          "id": "e1",
+          "text": "Working through the answer.",
+          "timestamp": ""
+        }
+      ]
+    },
+    "reasoning_phases": [
+      {
+        "phaseId": "phase_reasoning_28",
+        "phaseKind": "reasoning",
+        "iteration": 1,
+        "thinkingId": "think_28",
+        "toolCallId": "",
+        "toolName": "",
+        "completed": true,
+        "renderCollapsed": false,
+        "startedAt": "",
+        "completedAt": "2026-08-29T12:00:00.000Z"
+      }
+    ],
+    "interactive_round_recap": null
+  }
+]

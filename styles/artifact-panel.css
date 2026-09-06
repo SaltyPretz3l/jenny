@@ -1,0 +1,965 @@
+/* Artifact Panel V2 rules are scoped to .artifact-review-panel.artifact-panel-v2, installed only
+   when the flag is enabled; the panel edge owns the artifact frame. */
+
+.artifact-review-panel.artifact-panel-v2 {
+  padding: 0;
+}
+
+.artifact-panel-v2-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.artifact-panel-v2-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.artifact-panel-v2-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.artifact-panel-v2-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-base);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.artifact-panel-v2-icon-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  display: block;
+}
+
+.artifact-panel-v2-icon-btn:hover:not(:disabled),
+.artifact-panel-v2-icon-btn:focus-visible,
+.artifact-panel-v2-icon-btn[aria-pressed="true"] {
+  color: var(--text-primary);
+  background: none;
+}
+
+.artifact-panel-v2-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.artifact-panel-v2-icon-btn:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.artifact-panel-v2-delete-btn {
+  color: var(--text-muted);
+}
+
+.artifact-panel-v2-delete-btn:hover:not(:disabled),
+.artifact-panel-v2-delete-btn:focus-visible {
+  color: var(--text-danger, var(--text-secondary));
+}
+
+.artifact-panel-v2-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.artifact-panel-v2-save-revert {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.artifact-panel-v2-text-btn {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.artifact-panel-v2-save-btn {
+  color: var(--accent, var(--text-primary));
+}
+
+.artifact-panel-v2-text-btn:hover,
+.artifact-panel-v2-text-btn:focus-visible {
+  color: var(--text-primary);
+}
+
+.artifact-panel-v2-toolbar-spacer {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.artifact-panel-v2-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.artifact-panel-v2-stepper-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.artifact-panel-v2-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+.artifact-panel-v2-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.artifact-panel-v2-scroll::-webkit-scrollbar-thumb {
+  background: var(--widget-scrollbar-color);
+  border-radius: var(--radius-pill);
+}
+
+.artifact-panel-v2-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Content host: full-bleed, no border/background/radius anywhere in the
+   chain between the panel edge and the artifact content. Document-ish kinds
+   still get readable internal padding, applied by the per-kind renderers
+   (unchanged) — the host itself carries none. */
+.artifact-panel-v2-content-host {
+  min-height: 100%;
+}
+
+.artifact-panel-v2-content-host .artifact-preview-content {
+  padding: 12px 16px;
+}
+
+/* Mermaid / SVG / image / chart previews center on the panel surface with no
+   backdrop card inside the V2 panel. */
+.artifact-panel-v2-content-host .artifact-preview-mermaid-shell,
+.artifact-panel-v2-content-host .artifact-preview-image {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* Executable HTML preview inside this panel only: the frame host drops its
+   border/radius (HTML_PREVIEW_CHROME_SPEC's frame border is superseded here
+   — the panel provides the frame). The full Studio surface (outside this
+   panel) keeps its bordered frame — this selector is scoped to V2 only. */
+.artifact-panel-v2-content-host .artifact-html-preview-host {
+  border: none;
+  border-radius: 0;
+}
+
+.artifact-panel-v2-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-default);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.artifact-panel-v2-footer-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.artifact-panel-v2-footer-action {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.artifact-panel-v2-provenance-popover {
+  /* Opens upward (anchored above the trigger), so rise in from below. */
+  animation: fade-up var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 12px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-input-background);
+  box-shadow: var(--shadow-elevation-2);
+  z-index: var(--z-popover, 60);
+}
+
+.artifact-panel-v2-provenance-popover[hidden] {
+  display: none;
+}
+
+/* V3 Canvas chrome. */
+.artifact-review-panel.artifact-panel-v3 { position: relative; }
+
+.artifact-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.artifact-panel-header-primary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.artifact-panel-header-actions,
+.artifact-panel-controls-actions,
+.artifact-panel-save-revert {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.artifact-panel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-base);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.artifact-panel-icon-btn svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+}
+
+.artifact-panel-icon-btn:hover:not(:disabled),
+.artifact-panel-icon-btn:focus-visible,
+.artifact-panel-icon-btn[aria-pressed="true"] {
+  background: none;
+  color: var(--text-primary);
+}
+
+.artifact-panel-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.artifact-panel-icon-btn:focus-visible,
+.artifact-panel-text-btn:focus-visible,
+.artifact-panel-title:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.artifact-panel-text-btn {
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.artifact-panel-save-btn { color: var(--accent, var(--text-primary)); }
+
+.artifact-panel-text-btn:hover,
+.artifact-panel-text-btn:focus-visible { color: var(--text-primary); }
+
+.artifact-panel-kind-glyph {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.artifact-panel-kind-glyph svg { width: 14px; height: 14px; }
+
+.artifact-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 4px;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.artifact-panel-title { cursor: pointer; }
+button.artifact-panel-title:hover,
+button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
+
+.artifact-panel-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-panel-title-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.artifact-panel-title-chevron svg { display: block; width: 12px; height: 12px; }
+
+.artifact-panel-type-chip {
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--holo-periwinkle);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.artifact-panel-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.artifact-panel-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.artifact-panel-controls-view { min-width: 0; }
+.artifact-panel-controls-actions { margin-left: auto; }
+
+.artifact-panel-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+
+.artifact-panel-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 26px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.artifact-panel-status-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-panel-save-state {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  opacity: 1;
+  transition: opacity var(--motion-duration-feedback) var(--motion-ease-standard);
+}
+
+.artifact-panel-save-state.is-settled { opacity: 0; }
+.artifact-panel-status .artifact-panel-v2-footer-action { margin-left: 0; }
+
+.artifact-panel-hidden-actions { display: none; }
+
+/* V3 tool output: an integrated editor well rather than a nested card. */
+.artifact-panel-v3 .artifact-panel-v2-scroll:has(.artifact-output-viewer) { overflow: hidden; }
+.artifact-panel-v3 .artifact-review-detail-panel:has(.artifact-output-viewer) {
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+.artifact-panel-v3 .artifact-panel-v2-content-host:has(.artifact-output-viewer) {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Artifact bodies are full-bleed inside the V3 panel; the legacy Artifacts view retains its card styling. */
+.artifact-panel-v3 .artifact-panel-v2-content-host .artifact-preview-content:has(.artifact-output-viewer) {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.artifact-review-panel .artifact-editor-shell,
+.artifact-review-panel .artifact-preview-pre,
+.artifact-review-panel .artifact-preview-web-shell,
+.artifact-review-panel .artifact-preview-chart-host,
+.artifact-review-panel .artifact-preview-image-shell,
+.artifact-review-panel .artifact-image-shell,
+.artifact-review-panel .artifact-preview-mermaid-shell {
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The mermaid diagram keeps its light fill for legibility, just squared. */
+.artifact-review-panel .artifact-preview-mermaid-host .mermaid-viewport svg { border-radius: 0; }
+
+/* Text-like bodies also drop the wrapping content padding, matching the
+   output viewer's edge-to-edge treatment above. (The editor shell is a SIBLING
+   of .artifact-preview-content inside .artifact-preview-shell, not a child —
+   its inset was entirely its own card chrome, removed above.) Media previews
+   keep their breathing room. */
+.artifact-panel-v3 .artifact-panel-v2-content-host .artifact-preview-content:has(.artifact-preview-pre) {
+  padding: 0;
+}
+
+.artifact-output-viewer {
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* No frame: no border, no radius, no inset fill — the panel owns the edges. */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Flat full-width toolbar row: only the bottom hairline separates it from the
+   body it labels. */
+.artifact-output-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.artifact-output-wrap {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.artifact-output-wrap:hover,
+.artifact-output-wrap[aria-pressed="true"] { color: var(--text-secondary); }
+.artifact-output-wrap:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); }
+
+.artifact-output-body {
+  min-height: 0;
+  overflow: auto;
+  color: var(--text-primary);
+  font: 13px/1.6 var(--font-family-mono);
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+.artifact-output-body::-webkit-scrollbar { width: 5px; height: 5px; }
+.artifact-output-body::-webkit-scrollbar-thumb { background: var(--widget-scrollbar-color); }
+
+/* The artifact/code-review rail still consumes the legacy two-gutter hunk
+   markup. Keep that presentation scoped here so timeline diffs stay flat. */
+.artifact-output-body .diff-hunk {
+  min-width: max-content;
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-code);
+  line-height: 1.55;
+}
+.artifact-output-body .diff-hunk-header {
+  padding: var(--space-2) var(--space-6);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+  font-style: italic;
+  border-bottom: 1px solid var(--widget-tool-border);
+}
+.artifact-output-body .diff-hunk-separator {
+  padding: var(--space-1) var(--space-6);
+  border-top: 1px solid var(--widget-tool-border);
+  border-bottom: 1px solid var(--widget-tool-border);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+  text-align: center;
+}
+.artifact-output-body .diff-line { display: flex; min-height: 20px; }
+.artifact-output-body .diff-line-context { background: transparent; }
+.artifact-output-body .diff-line-meta { background: color-mix(in srgb, var(--widget-tool-border) 18%, transparent); }
+.artifact-output-body .diff-gutter {
+  flex: 0 0 40px;
+  padding: 0 var(--space-3);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  text-align: right;
+  user-select: none;
+}
+.artifact-output-body .diff-gutter-old,
+.artifact-output-body .diff-gutter-new { border-right: 1px solid var(--widget-tool-border); }
+.artifact-output-body .diff-marker {
+  flex: 0 0 16px;
+  font-weight: 600;
+  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  text-align: center;
+  user-select: none;
+}
+.artifact-output-body .diff-line-add .diff-marker { color: var(--widget-tool-success-color); }
+.artifact-output-body .diff-line-remove .diff-marker { color: var(--widget-tool-error-color); }
+.artifact-output-body .diff-line-context .diff-marker { color: transparent; }
+.artifact-output-body .diff-content {
+  flex: 1 1 auto;
+  padding-right: var(--space-6);
+  color: var(--widget-tool-code-color);
+  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  overflow: visible;
+  white-space: pre;
+  word-break: normal;
+}
+.artifact-output-body .diff-line-meta .diff-content { color: var(--widget-tool-denied-color); font-style: italic; }
+.artifact-output-body .diff-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
+  color: var(--widget-tool-color);
+  font: var(--tl-font-ui)/1.4 var(--font-family-mono);
+}
+.artifact-output-body .diff-summary-add { color: var(--widget-tool-success-color); font-weight: 600; }
+.artifact-output-body .diff-summary-remove { color: var(--widget-tool-error-color); font-weight: 600; }
+.artifact-output-body .diff-summary-note { color: var(--widget-tool-denied-color); font-style: italic; }
+.artifact-output-body .diff-status {
+  padding: var(--space-3) var(--space-6);
+  color: var(--widget-tool-denied-color);
+  font-size: var(--tl-font-code);
+}
+
+.artifact-output-line {
+  display: grid;
+  grid-template-columns: 42px 16px minmax(0, 1fr);
+  min-width: 100%;
+}
+
+.artifact-output-line-number {
+  padding: 1px 9px 1px 0;
+  border-right: 1px solid color-mix(in srgb, var(--border-default) 62%, transparent);
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.artifact-output-line-marker { padding: 1px 0 1px 7px; }
+.artifact-output-line-content { min-width: 0; padding: 1px 14px 1px 4px; }
+.artifact-output-viewer.is-wrapped .artifact-output-line-content,
+.artifact-output-viewer.is-wrapped .diff-content { overflow-wrap: anywhere; white-space: pre-wrap; }
+.artifact-output-viewer.is-wrapped .diff-hunk { min-width: 0; }
+.artifact-output-viewer.is-nowrap .artifact-output-line { width: max-content; }
+.artifact-output-viewer.is-nowrap .artifact-output-line-content,
+.artifact-output-viewer.is-nowrap .diff-content { white-space: pre; }
+
+.artifact-output-line--file { color: var(--text-secondary); }
+.artifact-output-line--hunk,
+.artifact-output-body .diff-hunk-header {
+  background: color-mix(in srgb, var(--accent-cyan) 7%, transparent);
+  color: color-mix(in srgb, var(--accent-cyan) 78%, var(--text-primary));
+}
+
+.artifact-output-line--add,
+.artifact-output-body .diff-line-add {
+  background: color-mix(in srgb, var(--widget-tool-success-color) 9%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--widget-tool-success-color) 76%, transparent);
+  color: color-mix(in srgb, var(--widget-tool-success-color) 76%, var(--text-primary));
+}
+
+.artifact-output-line--remove,
+.artifact-output-body .diff-line-remove {
+  background: color-mix(in srgb, var(--widget-tool-error-color) 9%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--widget-tool-error-color) 76%, transparent);
+  color: color-mix(in srgb, var(--widget-tool-error-color) 76%, var(--text-primary));
+}
+.artifact-output-body .diff-line-add .diff-content { color: color-mix(in srgb, var(--widget-tool-success-color) 76%, var(--text-primary)); }
+.artifact-output-body .diff-line-remove .diff-content { color: color-mix(in srgb, var(--widget-tool-error-color) 76%, var(--text-primary)); }
+
+.artifact-output-body .diff-summary,
+.artifact-output-body .diff-status { border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent); }
+.artifact-output-body .diff-container { margin: 0; overflow: visible; border: 0; border-radius: 0; background: none; }
+.artifact-output-pre { min-width: max-content; margin: 0; padding: 14px 16px; color: inherit; font: inherit; white-space: pre; }
+.artifact-output-viewer.is-wrapped .artifact-output-pre { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.artifact-review-panel.is-narrow .artifact-panel-copy,
+.artifact-review-panel.is-narrow .artifact-panel-download { display: none; }
+
+.artifact-review-panel.artifact-review-overlay .artifact-panel-maximize { display: none; }
+
+.chat-view.artifact-review-maximized {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-view.artifact-review-maximized > .hero-stage,
+.chat-view.artifact-review-maximized > .chat-thread-stage,
+.chat-view.artifact-review-maximized > .composer-wrap,
+.chat-view.artifact-review-maximized > .artifact-review-resizer {
+  display: none;
+}
+
+.chat-view.artifact-review-maximized > .artifact-review-panel {
+  grid-column: 1 / -1;
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+  border-left: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Read-only chat-rail FILE PREVIEW (renderer-artifact-file-preview.js)
+   ══════════════════════════════════════════════════════════════════════
+   Scoped to the rail-mode ATTRIBUTE the layout sync stamps
+   (#artifactReviewPanel[data-artifact-review-mode="file_preview"]) — the same
+   convention the code-review rail uses in styles/context-panel.css. There is
+   no parallel modifier class, so artifact mode and code-review mode are
+   untouched. The preview body renders its own identity bar because the
+   Panel V2 afterRender() pass clobbers the shared header title.
+   Highlight tokens reuse the existing .tok-* classes from the chat
+   transcript (renderer-code-highlight.js) — nothing new is defined here.
+   ══════════════════════════════════════════════════════════════════════ */
+
+#artifactReviewPanel[data-artifact-review-mode="file_preview"] .artifact-review-detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+#artifactReviewPanel[data-artifact-review-mode="file_preview"] .artifact-preview-content {
+  display: block;
+  min-width: 0;
+}
+
+.artifact-file-preview-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-default);
+  flex: 0 0 auto; /* fixed chrome: never shrinks when the fill chain makes this a flex item */
+}
+
+/* The V3 panel header owns "Open in IDE" (.artifact-panel-open-ide), so the
+   identity bar's duplicate is suppressed there. The markup stays for the
+   flag-off (no V3 chrome) case, where the header button does not exist —
+   display:none also takes it out of the tab order, so no dead focus stop.
+   Error-state cards keep their own contextual Open-in-IDE button. */
+.artifact-panel-v3 .artifact-file-preview-bar .artifact-file-preview-ide-btn { display: none; }
+
+.artifact-file-preview-name {
+  font-size: var(--tl-font-ui);
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.artifact-file-preview-path {
+  font-size: var(--tl-font-meta);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.artifact-file-preview-line,
+.artifact-file-preview-kind {
+  font-size: var(--tl-font-meta);
+  color: var(--text-muted);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 0 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.artifact-file-preview-line {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.artifact-file-preview-views {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.artifact-file-preview-view-btn,
+.artifact-file-preview-ide-btn,
+.artifact-file-preview-retry-btn {
+  font-size: var(--tl-font-meta);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.artifact-file-preview-view-btn:hover,
+.artifact-file-preview-ide-btn:hover,
+.artifact-file-preview-retry-btn:hover {
+  color: var(--text-primary);
+  background: var(--rail-hover-bg);
+}
+
+.artifact-file-preview-view-btn[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--rail-hover-bg);
+}
+
+.artifact-file-preview-view-btn:focus-visible,
+.artifact-file-preview-ide-btn:focus-visible,
+.artifact-file-preview-retry-btn:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.artifact-file-preview-code {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--tl-font-code);
+  font-family: var(--font-family-mono);
+  tab-size: 2;
+  overflow-x: auto;
+}
+
+.artifact-file-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: 1.45em;
+  border-left: 2px solid transparent;
+  padding-left: var(--space-2);
+}
+
+.artifact-file-preview-row > code {
+  /* Wrapped by default like every other text body; the panel wrap toggle
+     adds .artifact-panel-nowrap to flip it. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  color: var(--text-primary);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+
+/* Wrap toggle (parity with the tool-output viewer's inline control): the
+   panel-level class flips every non-editor text body in one place; Monaco
+   flips through its setWordWrap API instead. */
+.artifact-review-panel.artifact-panel-nowrap .artifact-file-preview-row > code {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.artifact-review-panel.artifact-panel-nowrap .artifact-preview-pre {
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+}
+
+.artifact-file-preview-gutter {
+  color: var(--text-muted);
+  text-align: right;
+  min-width: 3.5ch;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.artifact-file-preview-row.is-cited {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left-color: var(--accent);
+  border-radius: 0;
+}
+
+.artifact-file-preview-row.is-cited .artifact-file-preview-gutter {
+  color: var(--accent);
+}
+
+.artifact-file-preview-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.artifact-file-preview-state-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.artifact-file-preview-note {
+  margin: 0 0 var(--space-2);
+  font-size: var(--tl-font-meta);
+  color: var(--text-muted);
+}
+
+.artifact-file-preview-image {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+}
+
+.artifact-file-preview-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-xs);
+}
+
+/* Sandboxed HTML render host. The frame factory sizes the iframe itself from
+   the child's postMessage height handshake (clamped), so the host only
+   supplies padding and a minimum — never a fixed height. */
+.artifact-file-preview-frame-host { padding: var(--space-3) 0; min-height: 120px; }
+
+.artifact-file-preview-bar-note {
+  min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: var(--tl-font-meta); color: var(--text-muted);
+}
+
+/* Fill-height sandboxed HTML frames (createHtmlArtifactFrame sizing:'fill').
+   The factory stamps .html-artifact-frame-fill on the frame HOST and sizes the
+   iframe to 100% of it, so the host needs a DEFINITE height. Percentages cannot
+   resolve inside .artifact-review-scroll (auto-height, padded scroller), so the
+   chain is pure flex with min-height:0 at every level. Every rule is gated on
+   :has(.html-artifact-frame-fill) - code / markdown / image / truncated /
+   failed bodies keep the normal scrolling column untouched. The gate also
+   requires the preview content to be VISIBLE: the code-artifact renderer hides
+   #artifactReviewPreviewContent without clearing it, and a stale hidden fill
+   host must not restructure the panel around the editor. */
+#artifactReviewPanel .artifact-panel-v2-scroll:has(#artifactReviewPreviewContent:not(.hidden) .html-artifact-frame-fill) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#artifactReviewPanel .artifact-review-detail-panel:has(#artifactReviewPreviewContent:not(.hidden) .html-artifact-frame-fill) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#artifactReviewPanel #artifactReviewPreviewShell:has(#artifactReviewPreviewContent:not(.hidden) .html-artifact-frame-fill),
+#artifactReviewPanel #artifactReviewPreviewContent:not(.hidden):has(.html-artifact-frame-fill) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.html-artifact-frame-fill {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 120px; /* defensive floor if the chain ever breaks */
+}
+.html-artifact-frame-fill > iframe {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.artifact-file-preview-frame-host.html-artifact-frame-fill {
+  padding: 0;
+}
+/* artifact_panel_v2 rollback chrome has no .artifact-panel-v2-scroll and keeps
+   note/actions/meta below the preview, so the flex column above would squeeze
+   the frame. Fall back to a viewport-relative frame that scrolls in the outer
+   scroller. */
+#artifactReviewPanel:not(.artifact-panel-v2) #artifactReviewPreviewContent:not(.hidden) .html-artifact-frame-fill {
+  height: min(70vh, 720px);
+  min-height: 320px;
+  flex: 0 0 auto;
+}

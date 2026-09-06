@@ -1,0 +1,807 @@
+/* -- Chat Composer -- */
+
+:root {
+  --chat-zoom-factor: 1;
+  --chat-zoom-percent: 100;
+  --composer-holo-opacity-idle: 0.36;
+  --composer-holo-opacity-hover: 0.38;
+  --composer-holo-opacity-active: 0.62;
+  --composer-holo-opacity-streaming: 0.54;
+  --composer-holo-border-width-idle: 2.4px;
+  --composer-holo-border-width-active: 3.4px;
+  --composer-holo-filter-idle: saturate(1.5) brightness(1.12);
+  --composer-holo-filter-active: saturate(1.75) brightness(1.28);
+  --composer-holo-shell-ring-strength: 54%;
+  --composer-holo-shell-glow-strength: 36%;
+  --composer-holo-draw-enabled: 1;
+  --composer-holo-draw-stroke-scale: 1.2;
+  --composer-holo-draw-glow-scale: 1.6;
+  --composer-holo-draw-alpha-scale: 1.2;
+  --composer-holo-draw-glow-alpha-scale: 1.65;
+}
+
+.composer-wrap {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  z-index: var(--z-raised);
+  width: 100%;
+  max-width: var(--composer-width);
+  /* Column-relative floor: a viewport-derived value here overflowed the grid
+     column whenever the artifact review rail was open at narrow window
+     widths (UIUX-004). */
+  min-width: min(320px, 100%);
+  margin: 0 auto;
+  padding: 0 0 var(--composer-dock-bottom);
+  transition:
+    transform var(--thread-transition-duration) var(--motion-ease-emphasis),
+    opacity var(--thread-transition-duration) var(--motion-ease-emphasis);
+}
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.attachment-tray .attachment-chip {
+  box-shadow:
+    var(--shadow-elevation-1),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.attachment-notice {
+  display: none;
+  margin: 0 0 var(--space-4);
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+}
+
+.composer-status-notice {
+  margin: 0 0 var(--space-4);
+}
+
+.composer-status-notice > .inv-status-row {
+  width: 100%;
+}
+
+.composer {
+  --composer-radius: 28px;
+  --composer-secondary-control-size: calc(32px * var(--chat-zoom-factor, 1));
+  --composer-secondary-icon-size: calc(15px * var(--chat-zoom-factor, 1));
+  --composer-secondary-meta-height: calc(30px * var(--chat-zoom-factor, 1));
+  --composer-secondary-control-bg: color-mix(in srgb, var(--surface-composer-signal-background) 64%, transparent);
+  --composer-secondary-control-hover-bg: color-mix(in srgb, var(--text-primary) 5%, var(--surface-composer-signal-background));
+  --composer-secondary-control-border: color-mix(in srgb, var(--widget-composer-signal-border) 22%, transparent);
+  --composer-secondary-control-hover-border: color-mix(in srgb, var(--widget-composer-signal-border) 42%, transparent);
+  --composer-secondary-control-color: color-mix(in srgb, var(--widget-composer-meta-color) 88%, var(--text-primary));
+  --composer-secondary-control-hover-color: var(--text-primary);
+  --composer-secondary-control-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --composer-secondary-control-hover-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent),
+    0 8px 14px color-mix(in srgb, var(--bg-base) 5%, transparent);
+  --composer-control-transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+  --composer-holo-opacity: var(--composer-holo-opacity-idle);
+  --composer-holo-border-width: var(--composer-holo-border-width-idle);
+  --composer-holo-filter: var(--composer-holo-filter-idle);
+  position: relative;
+  min-height: 0;
+  padding: calc(var(--space-5) * var(--chat-zoom-factor, 1));
+  border-radius: var(--composer-radius);
+  overflow: visible;
+  isolation: isolate;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow:
+    var(--shadow-elevation-2),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  backdrop-filter: blur(22px) saturate(1.04);
+  transition:
+    box-shadow var(--motion-duration-emphasis) var(--motion-ease-standard),
+    background-color var(--motion-duration-emphasis) var(--motion-ease-standard);
+}
+
+.composer::before {
+  content: "";
+  inset: 1px;
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: calc(var(--composer-radius) - 1px);
+  background:
+    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--widget-input-focus-glow) 12%, transparent) 0%, transparent 44%),
+    radial-gradient(circle at 86% 100%, color-mix(in srgb, var(--text-primary) 6%, transparent) 0%, transparent 38%);
+  opacity: 0.9;
+  transition:
+    opacity var(--motion-duration-regular) var(--motion-ease-standard),
+    transform var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.composer::after {
+  content: "";
+  inset: 1px;
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: calc(var(--composer-radius) - 1px);
+  border: 1px solid color-mix(
+    in srgb,
+    var(--widget-input-focus-border) var(--composer-holo-shell-ring-strength),
+    var(--border-default)
+  );
+  background: var(--surface-composer-inner);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 32%, transparent),
+    0 0 24px color-mix(
+      in srgb,
+      var(--widget-input-focus-glow) var(--composer-holo-shell-glow-strength),
+      transparent
+    ),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  transition:
+    border-color var(--motion-duration-regular) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-regular) var(--motion-ease-standard),
+    opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.composer > * {
+  position: relative;
+  z-index: 1;
+}
+
+.composer-holo {
+  position: absolute;
+  top: calc(-1 * var(--composer-holo-border-width));
+  left: calc(-1 * var(--composer-holo-border-width));
+  width: calc(100% + (2 * var(--composer-holo-border-width)));
+  height: calc(100% + (2 * var(--composer-holo-border-width)));
+  display: block;
+  overflow: clip;
+  overflow-clip-margin: content-box;
+  pointer-events: none;
+  z-index: 0;
+  opacity: var(--composer-holo-opacity);
+  filter: var(--composer-holo-filter);
+  transform: scale(0.996);
+  transform-origin: center;
+  transition:
+    opacity var(--motion-duration-emphasis) var(--motion-ease-standard),
+    filter var(--motion-duration-emphasis) var(--motion-ease-standard),
+    transform var(--motion-duration-regular) var(--motion-ease-standard),
+    top var(--motion-duration-emphasis) var(--motion-ease-standard),
+    left var(--motion-duration-emphasis) var(--motion-ease-standard),
+    width var(--motion-duration-emphasis) var(--motion-ease-standard),
+    height var(--motion-duration-emphasis) var(--motion-ease-standard);
+  mix-blend-mode: screen;
+  border-radius: calc(var(--composer-radius) + var(--composer-holo-border-width));
+}
+
+:root[data-palette="paper"] .composer-holo,
+:root[data-palette="woolly"] .composer-holo {
+  mix-blend-mode: multiply;
+}
+
+.composer:hover {
+  --composer-holo-opacity: var(--composer-holo-opacity-hover);
+}
+
+.composer:hover .composer-holo {
+  transform: scale(0.998);
+}
+
+.composer:hover::after {
+  border-color: color-mix(in srgb, var(--widget-input-focus-border) 62%, var(--border-strong));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 44%, transparent),
+    0 0 28px color-mix(in srgb, var(--widget-input-focus-glow) 36%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer:hover::before {
+  opacity: 1;
+  transform: scale(1.004);
+}
+
+.composer:focus-within::after {
+  border-color: var(--border-focus);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 48%, transparent),
+    0 0 32px color-mix(in srgb, var(--widget-input-focus-glow) 34%, transparent),
+    0 10px 26px color-mix(in srgb, var(--widget-input-focus-glow) 26%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.composer:focus-within:not(.composer-active):not([data-send-lifecycle="preflight"]):not([data-send-lifecycle="streaming"]):not([data-send-lifecycle="settling"]) {
+  box-shadow:
+    0 0 0 4px var(--accent-a-20),
+    var(--shadow-elevation-2),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer.composer-active {
+  --composer-holo-opacity: var(--composer-holo-opacity-active);
+  --composer-holo-border-width: var(--composer-holo-border-width-active);
+  --composer-holo-filter: var(--composer-holo-filter-active);
+  box-shadow:
+    0 0 0 4px var(--accent-a-20),
+    0 16px 34px rgba(0, 0, 0, 0.16),
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 54%, transparent),
+    0 10px 30px color-mix(in srgb, var(--widget-input-focus-glow) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.composer.composer-active .composer-holo {
+  transform: scale(1);
+}
+
+.composer.composer-active::after {
+  border-color: color-mix(in srgb, var(--widget-input-focus-border) 94%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 60%, transparent),
+    0 0 36px color-mix(in srgb, var(--widget-input-focus-glow) 48%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.composer[data-send-lifecycle="preflight"],
+.composer[data-send-lifecycle="streaming"],
+.composer[data-send-lifecycle="settling"] {
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.15),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer[data-send-lifecycle="preflight"]::after,
+.composer[data-send-lifecycle="streaming"]::after,
+.composer[data-send-lifecycle="settling"]::after {
+  border-color: color-mix(in srgb, var(--widget-input-focus-border) 68%, var(--border-strong));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-border) 52%, transparent),
+    0 0 34px color-mix(in srgb, var(--widget-input-focus-glow) 42%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.composer[data-send-lifecycle="preflight"] .composer-holo,
+.composer[data-send-lifecycle="streaming"] .composer-holo,
+.composer[data-send-lifecycle="settling"] .composer-holo {
+  opacity: var(--composer-holo-opacity-streaming);
+  transform: scale(1);
+}
+
+.composer-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: calc(var(--space-3) - 2px);
+}
+
+.composer-icon-button,
+.composer-gear,
+.composer-jump-button {
+  display: grid;
+  place-items: center;
+  width: var(--composer-secondary-control-size);
+  height: var(--composer-secondary-control-size);
+  flex: 0 0 var(--composer-secondary-control-size);
+  padding: 0;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--composer-secondary-control-border);
+  background: var(--composer-secondary-control-bg);
+  box-shadow: var(--composer-secondary-control-shadow);
+  color: var(--composer-secondary-control-color);
+  cursor: pointer;
+  transition: var(--composer-control-transition);
+}
+
+.composer-icon-button {
+  position: relative;
+}
+
+.composer-icon-button:hover:not(:disabled),
+.composer-gear:hover,
+.composer-jump-button:hover:not(:disabled) {
+  border-color: var(--composer-secondary-control-hover-border);
+  background: var(--composer-secondary-control-hover-bg);
+  color: var(--composer-secondary-control-hover-color);
+  box-shadow: var(--composer-secondary-control-hover-shadow);
+  transform: translateY(-1px);
+}
+
+.composer-icon-button:active:not(:disabled),
+.composer-gear:active,
+.composer-jump-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.composer-icon-button:disabled,
+.composer-jump-button:disabled {
+  opacity: 0.46;
+  cursor: default;
+  box-shadow: none;
+  transform: none;
+}
+
+.composer-icon-button[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-cyan) 14%, var(--surface-composer-signal-background));
+  color: var(--accent-cyan);
+}
+
+.composer-icon-button svg,
+.composer-gear svg,
+.composer-jump-button svg {
+  width: var(--composer-secondary-icon-size);
+  height: var(--composer-secondary-icon-size);
+  stroke: currentColor;
+  stroke-width: 1.5;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.composer.composer-has-interactive {
+  --composer-holo-opacity: 0.16;
+}
+
+.composer-entry-row {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  margin-bottom: var(--space-3);
+}
+
+.composer-input {
+  width: 100%;
+  min-width: 0;
+  min-height: calc(58px * var(--chat-zoom-factor, 1));
+  max-height: 168px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: calc(16px * var(--chat-zoom-factor, 1));
+  line-height: 1.58;
+  resize: none;
+  overflow-y: auto;
+  padding: 2px 0;
+  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-composer-scrollbar-color) transparent;
+}
+
+.composer-input::placeholder {
+  color: var(--widget-placeholder-color);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer:focus-within .composer-input::placeholder {
+  color: var(--widget-placeholder-focus-color);
+}
+
+.composer-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: 1px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 32%, transparent);
+  background: color-mix(in srgb, var(--surface-composer-mode-background) 76%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 8px 14px color-mix(in srgb, var(--bg-base) 4%, transparent);
+  white-space: nowrap;
+}
+
+.composer-select-shell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.composer-meta .composer-select-shell {
+  min-height: var(--composer-secondary-meta-height);
+  padding: 0 calc(var(--space-3) + 2px);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--composer-secondary-control-border);
+  background: var(--composer-secondary-control-bg);
+  box-shadow: var(--composer-secondary-control-shadow);
+}
+
+.composer-select-shell select {
+  min-width: 0;
+  max-width: none;
+  height: var(--composer-secondary-meta-height);
+  padding: 0 var(--space-8) 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--composer-secondary-control-color);
+  color-scheme: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.28;
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-control-inert {
+  pointer-events: none;
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 1;
+  box-shadow: none;
+  transform: none;
+}
+
+.composer-select-model select {
+  min-width: 112px;
+  width: 128px;
+}
+
+.composer-select-effort select {
+  min-width: 76px;
+  max-width: 92px;
+}
+
+.composer-select-shell::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  right: var(--space-4);
+  top: 50%;
+  border-right: 1.5px solid var(--widget-select-caret-color);
+  border-bottom: 1.5px solid var(--widget-select-caret-color);
+  transform: translateY(-62%) rotate(45deg);
+  pointer-events: none;
+}
+
+.composer-select-shell select:hover,
+.composer-select-shell select:focus-visible {
+  color: var(--widget-select-hover-color);
+}
+
+.composer-select-shell select option {
+  color: var(--widget-select-option-color);
+  background: var(--widget-select-option-bg);
+}
+
+.composer-select-shell select:focus-visible,
+.composer-icon-button:focus-visible,
+.composer-gear:focus-visible,
+.composer-jump-button:focus-visible,
+.attachment-chip-remove:focus-visible,
+.composer-popover-action:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 16%, transparent);
+}
+
+.composer-toolbar-left,
+.composer-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.composer-toolbar-right .composer-mode {
+  margin-right: 0;
+}
+
+#composerRunModeSlot {
+  display: inline-flex;
+}
+
+#composerRunModeSlot .composer-run-mode-chip {
+  min-width: 76px;
+  justify-content: center;
+}
+
+#composerRunModeSlot .composer-run-mode-chip.inv-chip--on {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 28%, var(--widget-composer-rail-pill-bg));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-plan {
+  color: var(--accent-amber);
+  border-color: color-mix(in srgb, var(--accent-amber) 56%, var(--widget-composer-rail-pill-border));
+  background: var(--widget-composer-mode-active-bg);
+}
+
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-plan:hover:not(.inv-chip--disabled) {
+  color: var(--accent-amber);
+  border-color: var(--accent-amber);
+  background: color-mix(in srgb, var(--accent-amber) 24%, var(--widget-composer-mode-active-bg));
+}
+
+.composer-run-mode-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.composer-turn-timer {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.composer-turn-timer[data-turn-timer-state="done"] {
+  opacity: 0.6;
+}
+
+.composer-send {
+  display: grid;
+  place-items: center;
+  width: calc(48px * var(--chat-zoom-factor, 1));
+  height: calc(48px * var(--chat-zoom-factor, 1));
+  border-radius: 50%;
+  /* Top sheen layered OVER the send-bg token rather than color-mixed INTO it:
+   * palettes (Obsidian, Jenny Day/Night, Darkroom, Pewter, Rocko, Woolly) set
+   * --widget-send-bg to a gradient, and color-mix(in srgb, <gradient> ...) is
+   * invalid → the whole declaration dropped → transparent button → dark glyph
+   * vanished until hover. A translucent overlay works for color OR gradient. */
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.16) 0%,
+      rgba(255, 255, 255, 0) 62%
+    ),
+    var(--widget-send-bg);
+  border: 1px solid var(--widget-send-border);
+  color: var(--widget-send-color);
+  cursor: pointer;
+  box-shadow:
+    var(--shadow-elevation-1),
+    inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-send.composer-send-queue {
+  width: auto;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-6);
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--widget-send-border);
+  /* The queue pill is a flex item in the rail: let it shrink and clip instead
+   * of pushing the toolbar wider when the label is longer than the space. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-send:hover {
+  background: var(--widget-send-hover-bg);
+  border-color: color-mix(in srgb, var(--widget-send-border) 86%, var(--border-strong));
+  color: var(--widget-send-hover-color);
+  box-shadow:
+    var(--shadow-elevation-2),
+    inset 0 1px 0 color-mix(in srgb, white 20%, transparent),
+    0 10px 18px color-mix(in srgb, var(--widget-input-focus-glow) 16%, transparent);
+  transform: translateY(-1px);
+}
+
+.composer-send:focus-visible,
+.composer-stop-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-send.composer-send-queue:hover {
+  background: var(--widget-send-hover-bg);
+  color: var(--widget-send-color);
+}
+
+.composer-stop-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: calc(48px * var(--chat-zoom-factor, 1));
+  height: calc(48px * var(--chat-zoom-factor, 1));
+  min-width: calc(48px * var(--chat-zoom-factor, 1));
+  min-height: calc(48px * var(--chat-zoom-factor, 1));
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--widget-stop-bg);
+  background: color-mix(in srgb, var(--widget-stop-bg) 16%, transparent);
+  color: var(--widget-stop-color);
+  cursor: pointer;
+  box-shadow: 0 0 0 3px var(--accent-a-20);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-stop-button svg {
+  /* Scale the stop glyph with the chat zoom factor. */
+  width: calc(20px * var(--chat-zoom-factor, 1));
+  height: calc(20px * var(--chat-zoom-factor, 1));
+  fill: currentColor;
+}
+
+.composer-stop-button:hover {
+  background: color-mix(in srgb, var(--widget-stop-bg) 28%, transparent);
+  box-shadow: 0 0 0 4px var(--accent-a-30);
+  transform: translateY(calc(-1 * var(--motion-hover-lift)));
+}
+
+.composer-stop-button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.composer-stop-button[data-send-lifecycle="streaming"] {
+  animation: stop-button-breath var(--motion-duration-pulse) var(--motion-ease-standard) infinite;
+}
+
+@keyframes stop-button-breath {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-a-20); }
+  50%      { box-shadow: 0 0 0 5px var(--accent-a-30); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-stop-button[data-send-lifecycle="streaming"] { animation: none; }
+}
+
+.chat-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-view.artifact-review-open {
+  grid-template-columns: minmax(0, 1fr) var(--artifact-review-resizer-width, 10px) auto;
+}
+
+.chat-view .hero-stage {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.chat-thread-stage {
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.composer-wrap {
+  position: relative;
+  align-self: end;
+  min-width: 0;
+  z-index: var(--z-raised);
+}
+
+.chat-view.chat-empty .hero-stack {
+  opacity: 1;
+  pointer-events: none;
+  transform: translateY(0);
+}
+
+.chat-view.chat-empty .prompt-grid {
+  display: flex;
+  pointer-events: auto;
+}
+
+.chat-view.chat-empty .chat-thread-shell {
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+}
+
+.chat-view.chat-empty .composer-wrap {
+  transform: none;
+}
+
+.chat-view.chat-empty[data-send-lifecycle="idle"] .composer-wrap {
+  transform: translateY(calc(-1 * var(--empty-composer-lift)));
+}
+
+.chat-view.chat-empty .composer-jump-tools,
+.chat-view.chat-empty .composer-wayfinder-host {
+  display: none;
+}
+
+.chat-view.chat-drop-active .composer::after {
+  border-color: color-mix(in srgb, var(--accent-cyan) 56%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent-cyan) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-cyan) 16%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.chat-view.chat-active .hero-stack {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-10px);
+}
+
+.chat-view.chat-active .prompt-grid {
+  display: none;
+}
+
+.chat-view.chat-active .chat-thread-shell {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* When the holographic typing border is the primary edge treatment, suppress
+   the layered focus/active/streaming halos so the composer reads as a single ring. */
+:root[data-composer-holo="on"] .composer,
+:root[data-composer-holo="on"] .composer:focus-within:not(.composer-active):not([data-send-lifecycle="preflight"]):not([data-send-lifecycle="streaming"]):not([data-send-lifecycle="settling"]),
+:root[data-composer-holo="on"] .composer.composer-active,
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="preflight"],
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="streaming"],
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="settling"] {
+  box-shadow:
+    var(--shadow-elevation-2),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+:root[data-composer-holo="on"] .composer::after,
+:root[data-composer-holo="on"] .composer:hover::after,
+:root[data-composer-holo="on"] .composer:focus-within::after,
+:root[data-composer-holo="on"] .composer.composer-active::after,
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="preflight"]::after,
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="streaming"]::after,
+:root[data-composer-holo="on"] .composer[data-send-lifecycle="settling"]::after {
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+:root[data-composer-holo="on"] .composer.composer-has-interactive {
+  --composer-holo-opacity: 1;
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 19,
+  "sessions": {
+    "session_v19_current": {
+      "id": "session_v19_current",
+      "title": "Current context session v19",
+      "session_type": "chat",
+      "plugin_session": null,
+      "created_at": "2026-08-17T12:00:00.000Z",
+      "updated_at": "2026-08-17T12:00:00.000Z",
+      "message_count": 1
+    }
+  }
+}

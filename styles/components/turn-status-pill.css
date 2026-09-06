@@ -1,0 +1,168 @@
+/* styles/components/turn-status-pill.css
+ *
+ * Compact pill in the titlebar status slot. One element, one source at a
+ * time, picked by priority by renderer/shell/renderer-turn-status-pill.js.
+ * Replaces the full-width composer-status-notice bar above the composer
+ * for tool / approval / lifecycle signals. Same height as the existing
+ * metric-list row so the titlebar doesn't grow when the pill appears.
+ *
+ * Self-contained chip styling: the titlebar context calls for its own
+ * padding, font-weight, and a built-in spinner glyph + progress underline.
+ */
+
+.turn-status-pill {
+  --turn-status-pill-bg: var(--status-bg-info);
+  --turn-status-pill-border: var(--status-border-info);
+  --turn-status-pill-fg: var(--status-fg-info);
+  --turn-status-pill-progress: 0%;
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  position: relative;
+  min-height: 26px;
+  max-width: 280px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--turn-status-pill-border);
+  border-radius: var(--radius-pill);
+  background: var(--turn-status-pill-bg);
+  color: var(--turn-status-pill-fg);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: var(--tracking-ui);
+  overflow: hidden;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    max-width var(--motion-duration-regular) var(--motion-ease-emphasis);
+}
+
+.turn-status-pill.hidden {
+  display: none;
+}
+
+.turn-status-pill[data-tone="info"] {
+  --turn-status-pill-bg: var(--status-bg-info);
+  --turn-status-pill-border: var(--status-border-info);
+  --turn-status-pill-fg: var(--status-fg-info);
+}
+
+.turn-status-pill[data-tone="pending"] {
+  --turn-status-pill-bg: var(--status-bg-pending);
+  --turn-status-pill-border: var(--status-border-pending);
+  --turn-status-pill-fg: var(--status-fg-pending);
+}
+
+.turn-status-pill[data-tone="success"] {
+  --turn-status-pill-bg: var(--status-bg-success);
+  --turn-status-pill-border: var(--status-border-success);
+  --turn-status-pill-fg: var(--status-fg-success);
+}
+
+.turn-status-pill[data-tone="warning"] {
+  --turn-status-pill-bg: var(--status-bg-warning);
+  --turn-status-pill-border: var(--status-border-warning);
+  --turn-status-pill-fg: var(--status-fg-warning);
+}
+
+.turn-status-pill[data-tone="danger"] {
+  --turn-status-pill-bg: var(--status-bg-danger);
+  --turn-status-pill-border: var(--status-border-danger);
+  --turn-status-pill-fg: var(--status-fg-danger);
+}
+
+.turn-status-pill[data-shutdown="true"] {
+  max-width: 420px;
+}
+
+.turn-status-pill__spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: turn-status-pill-spinner var(--motion-duration-spin) linear infinite;
+}
+
+@keyframes turn-status-pill-spinner {
+  to { transform: rotate(360deg); }
+}
+
+.turn-status-pill__badge {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  color: currentColor;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-md);
+  text-transform: uppercase;
+  line-height: 18px;
+}
+
+.turn-status-pill__message {
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.turn-status-pill__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, currentColor 70%, transparent) var(--turn-status-pill-progress, 0%),
+    transparent var(--turn-status-pill-progress, 0%)
+  );
+  pointer-events: none;
+}
+
+.turn-status-pill__progress[data-indeterminate="true"] {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, currentColor 70%, transparent) 35%,
+    transparent 70%
+  );
+  background-size: 240% 100%;
+  animation: turn-status-pill-shimmer var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
+}
+
+@keyframes turn-status-pill-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* When the pill is hosting a shutdown scenario, suppress the metric list
+   (CPU / RAM percentages) so the warning has room and doesn't compete with
+   numeric chrome the user can't act on. */
+.metric-list.hidden-by-pill {
+  display: none;
+}
+
+.titlebar-status--shutdown .stat-divider {
+  display: none;
+}
+
+/* Narrow windows: hide the metric list whenever the pill is visible so the
+   message text has room. */
+@media (max-width: 860px) {
+  .turn-status-pill:not(.hidden) ~ .stat-divider,
+  .titlebar-status:has(.turn-status-pill:not(.hidden)) .metric-list,
+  .titlebar-status:has(.turn-status-pill:not(.hidden)) .stat-divider {
+    display: none;
+  }
+
+  .turn-status-pill {
+    max-width: 220px;
+  }
+}

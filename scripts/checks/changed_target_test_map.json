@@ -1,0 +1,273 @@
+{
+  "required_target_prefixes": [
+    "services/",
+    "renderer/",
+    "renderer-",
+    "sidecar/ai/context/",
+    "sidecar/ai/engines/",
+    "sidecar/ai/routing/",
+    "sidecar/ai/tools/",
+    "sidecar/ai/memory/",
+    "sidecar/runtime/"
+  ],
+  "rules": [
+    {
+      "target_prefixes": [
+        "services/"
+      ],
+      "required_tests": [
+        "tests/backend-service-utils.test.js",
+        "tests/main-lifecycle.test.js",
+        "tests/sidecar-manager.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/data-lifecycle/",
+        "services/main/data-lifecycle-startup.js",
+        "services/main/data-lifecycle-ipc-registration.js",
+        "services/main/uninstall-assistant-main.js",
+        "uninstall-preload.js",
+        "scripts/uninstall.js"
+      ],
+      "required_tests": [
+        "tests/data-lifecycle-archive.test.js",
+        "tests/data-lifecycle-restore.test.js",
+        "tests/data-lifecycle-session-import.test.js",
+        "tests/data-lifecycle-cleanup.test.js",
+        "tests/data-lifecycle-service.test.js",
+        "tests/data-lifecycle-ipc-registration.test.js",
+        "tests/data-lifecycle-startup.test.js",
+        "tests/uninstall-assistant-main.test.js",
+        "tests/uninstall-preload.test.js",
+        "tests/uninstall-script.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/features/renderer-data-lifecycle",
+        "renderer/uninstall/",
+        "styles/data-lifecycle.css",
+        "uninstall.html"
+      ],
+      "required_tests": [
+        "tests/renderer-data-lifecycle.test.js",
+        "tests/data-lifecycle-css.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/backend/backend-auth.js"
+      ],
+      "required_tests": [
+        "tests/backend-service-dark-paths.test.js",
+        "tests/secure-store.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/",
+        "renderer-"
+      ],
+      "required_tests": [
+        "tests/renderer-shell.test.js",
+        "tests/renderer-shell-harness-parity.test.js",
+        "tests/renderer-render-pipeline-utils.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/context/"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/context/test_builder.py",
+        "tests/sidecar/ai/context/test_compaction.py",
+        "tests/sidecar/ai/context/test_token_budget.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/engines/"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/engines/test_factory.py",
+        "tests/sidecar/ai/engines/test_provider_http.py",
+        "tests/sidecar/ai/engines/test_vllm_engine.py",
+        "tests/sidecar/ai/engines/test_ollama_wrapper.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/routing/"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/routing/test_router.py",
+        "tests/sidecar/ai/routing/test_tool_loop.py",
+        "tests/sidecar/ai/routing/test_tool_call_execution.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/tools/"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/tools/test_registry.py",
+        "tests/sidecar/test_server_tools.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/memory/"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/memory/test_store.py",
+        "tests/sidecar/server_core/test_memory_dispatch.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/runtime/"
+      ],
+      "required_tests": [
+        "tests/sidecar/runtime/test_capabilities.py",
+        "tests/sidecar/test_server.py",
+        "tests/sidecar/test_approval.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/plugins/",
+        "config/plugins/",
+        "sidecar/ai/plugins/",
+        "services/main/plugins-ipc-registration.js"
+      ],
+      "required_tests": [
+        "tests/plugin-contract-parity.test.js",
+        "tests/plugins-startup-unchanged.test.js",
+        "tests/sidecar/ai/plugins/test_plugin_contract_parity.py",
+        "tests/sidecar/test_plugin_contract_generator.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "scripts/plugins/jenny-plugin-packager.mjs"
+      ],
+      "required_tests": [
+        "tests/plugins/package/jenny-plugin-packager.test.js",
+        "tests/plugins/package/local-package-intake.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/plugins/runtime/",
+        "services/plugins/contribution-control-plane.js",
+        "services/plugins/plugin-control-plane-service.js",
+        "services/plugins/control-plane-queries.js"
+      ],
+      "required_tests": [
+        "tests/plugins/runtime/declarative-compiler.test.js",
+        "tests/plugins/runtime/runtime-apply-coordinator.test.js",
+        "tests/plugins/contribution-control-plane.test.js",
+        "tests/plugins/plugin-control-plane-activation.test.js",
+        "tests/plugins/plugin-control-plane-consent-vocabulary.test.js",
+        "tests/plugins/plugin-control-plane-service.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/plugins/lifecycle/"
+      ],
+      "required_tests": [
+        "tests/plugins/lifecycle/activation-operation.test.js",
+        "tests/plugins/lifecycle/uninstall-operation.test.js",
+        "tests/plugins/lifecycle/epoch-recovery.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/backend/managed-plugin-runtime.js",
+        "services/backend/managed-sidecar-chat.js",
+        "services/backend/sidecar-client-plugin-runtime.js",
+        "services/backend/sidecar-client.js"
+      ],
+      "required_tests": [
+        "tests/managed-plugin-runtime.test.js",
+        "tests/managed-sidecar-chat-dark-paths.test.js",
+        "tests/sidecar-client.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/backend/managed-sidecar-attachments.js"
+      ],
+      "required_tests": [
+        "tests/managed-sidecar/managed-sidecar-runtime.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/routing/turn_event_contract.py"
+      ],
+      "required_tests": [
+        "tests/sidecar/runtime/test_chat_serialization.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/ai/container.py",
+        "sidecar/ai/error_codes.py",
+        "sidecar/ai/context/",
+        "sidecar/runtime/",
+        "sidecar/server.py"
+      ],
+      "required_tests": [
+        "tests/sidecar/ai/context/test_builder_plugins.py",
+        "tests/sidecar/runtime/test_plugin_runtime.py",
+        "tests/sidecar/runtime/test_initialize_mode.py",
+        "tests/sidecar/runtime/test_server_chat_workers.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/shell/renderer-plugins-settings.js",
+        "styles/settings-plugins.css"
+      ],
+      "required_tests": [
+        "tests/renderer-plugins-settings-drift.test.js",
+        "tests/renderer-plugins-settings.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/chat/renderer-chat-scroll-coordinator.js",
+        "renderer/chat/chat-scroll-utils.js",
+        "renderer/chat/renderer-chat-timeline-virtualizer",
+        "renderer/chat/renderer-chat-citation-jump-utils.js",
+        "renderer/chat/renderer-chat-search-overlay.js",
+        "renderer/chat/renderer-chat-search-highlight.js",
+        "renderer/inventory/search-bar.js",
+        "renderer/shell/renderer-viewport-",
+        "renderer/chat/renderer-pin-to-top-utils.js"
+      ],
+      "required_tests": [
+        "tests/renderer-chat-scroll-coordinator.test.js",
+        "tests/renderer-chat-scroll-coordinator-perf.test.js",
+        "tests/renderer-chat-scroll-coordinator-telemetry.test.js",
+        "tests/chat-scroll-utils.test.js",
+        "tests/renderer-chat-timeline-virtualizer.test.js",
+        "tests/renderer-chat-timeline-virtualizer-scroll-marker.test.js",
+        "tests/renderer-chat-citation-jump-utils.test.js",
+        "tests/renderer-chat-citation-jump-follow.test.js",
+        "tests/renderer-chat-search-overlay.test.js",
+        "tests/renderer-chat-search-overlay-follow.test.js",
+        "tests/renderer-chat-search-highlight.test.js",
+        "tests/renderer-inventory-search-bar.test.js",
+        "tests/renderer-viewport-utils.test.js",
+        "tests/renderer-viewport-utils-follow-guard.test.js",
+        "tests/renderer-viewport-live-follow-utils.test.js",
+        "tests/renderer-viewport-reveal-utils.test.js",
+        "tests/renderer-pin-to-top-utils.test.js"
+      ]
+    }
+  ]
+}

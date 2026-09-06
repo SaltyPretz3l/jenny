@@ -1,0 +1,611 @@
+/* styles/ide-chrome.css - Workspace IDE editor chrome (W4-W7): breadcrumbs
+ * strip, bottom status bar, tab drag-reorder states, the Quick Open (Ctrl+P)
+ * overlay, and the image preview pane. Split out of ide-view.css to respect
+ * the 1015-line file ceiling; loaded via @import in styles.css right after
+ * ide-view.css. */
+
+/* == Editor chrome (W4): breadcrumbs strip + bottom status bar == */
+
+.ide-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  min-height: 24px;
+  padding: 0 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--bg-surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ide-crumb {
+  color: var(--text-muted);
+}
+
+.ide-crumb-action {
+  border: 0;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-crumb-action:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-crumb-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-crumb--leaf {
+  color: var(--text-primary);
+}
+
+.ide-crumb-sep {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.ide-statusbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  min-height: 22px;
+  padding: 0 12px;
+  background: var(--bg-surface-2);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ide-statusbar-item {
+  flex-shrink: 0;
+}
+
+/* Left-most git branch segment (name-only for now). */
+.ide-statusbar-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.ide-statusbar-branch svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.ide-statusbar-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-statusbar-action {
+  border: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-statusbar-action:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-statusbar-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Toggled-on layout control (the bottom-panel toggle while the panel is open). */
+.ide-statusbar-action--active {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+
+.ide-statusbar-panel {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ide-statusbar-inline-suggest {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The inline-suggest toggle + its menu caret read as one control. */
+.ide-statusbar-inline-suggest-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+/* Caret button beside the toggle: opens the completion-model menu. Reuses the
+   statusbar-action look with tighter padding so it hugs the toggle. */
+.ide-statusbar-inline-suggest-caret {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 2px;
+}
+
+.ide-statusbar-spacer {
+  flex: 1;
+}
+
+.ide-statusbar-dirty {
+  color: var(--accent);
+}
+
+/* == Tab drag-reorder states (W5) == */
+
+.ide-tab--dragging {
+  opacity: 0.5;
+}
+
+.ide-tab--drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-tab--drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
+/* == Pinned tabs (compact) ==
+ * A pinned tab clamps to the left of the strip (the pinned-first ordering
+ * invariant lives in renderer-ide-tabs-controller / -state) and renders
+ * compact: a small pin glyph precedes the name, the tab is a touch narrower,
+ * and the close control stays hidden until hover (the base rule reveals × for
+ * the active tab; a pinned tab opts back out so it reads tight and resists an
+ * accidental close). The dirty dot still shows via the shared rules. */
+.ide-tab-pin {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.ide-tab--pinned {
+  max-width: 168px;
+}
+
+.ide-tab--pinned .ide-tab-label {
+  padding-left: 8px;
+}
+
+.ide-tab--pinned.ide-tab--active .ide-tab-pin {
+  color: var(--accent);
+}
+
+/* Stay compact while active: the × only appears on hover (the base rule reveals
+ * it for the active tab; the :not(:hover) guard lets hover win again). */
+.ide-tab--pinned.ide-tab--active:not(:hover) .ide-tab-close {
+  opacity: 0;
+}
+
+/* == Tab-strip overflow affordance ==
+ * The strip itself scrolls (overflow-x:auto, no wrap; see .ide-tabstrip in
+ * ide-view.css). The "show all tabs" control is sticky-pinned to the right
+ * edge so it stays reachable while the tabs scroll under it. It is rendered
+ * only when tabs exist and revealed only once the strip overflows
+ * (.ide-tabstrip--overflowing, toggled in renderer-ide-tabs.js) - so the
+ * empty / fits-without-scrolling cases stay pixel-identical to before (no
+ * affordance, no layout shift). */
+.ide-tabstrip-overflow {
+  display: none;
+  position: sticky;
+  right: 0;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ide-tabstrip--overflowing {
+  /* Keep the active tab clear of the sticky overflow control when it is
+   * scrolled into view - scrollIntoView honours scroll-padding, so reserving
+   * the control's width stops the active tab tucking under it. */
+  scroll-padding-inline-end: 28px;
+}
+
+.ide-tabstrip--overflowing .ide-tabstrip-overflow {
+  display: inline-flex;
+}
+
+.ide-tabstrip-overflow:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-tabstrip-overflow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* == Quick-pick overlays — shared `.ide-picker-*` chrome ==
+ * The Ctrl+P file picker, the Ctrl+T symbol picker, the branch switcher, and
+ * the run-script picker all render through the renderer-ide-picker-overlay
+ * factory and carry these base classes. Each picker also carries a specific
+ * class for its deltas below (panel size, the symbol kind chip). */
+
+.ide-picker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 8px;
+  background: transparent;
+}
+
+.ide-picker-panel {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+/* Ctrl+Tab MRU switcher reuses the picker chrome but has no search field, so it
+ * sizes its own (narrower) card around the recent-tabs listbox. */
+.ide-mru-switcher-panel {
+  width: min(420px, calc(100% - 48px));
+  max-height: min(320px, 60%);
+}
+
+.ide-picker-field {
+  display: block;
+  padding: 8px 8px 6px;
+}
+
+.ide-picker-field .inv-text-field-control {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.ide-picker-results {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
+}
+
+.ide-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ide-picker-row:hover {
+  background: var(--bg-surface-2);
+}
+
+.ide-picker-row--selected,
+.ide-picker-row--selected:hover {
+  background: var(--bg-surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-picker-name {
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.ide-picker-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-picker-status {
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Quick Open (Ctrl+P) deltas: panel size + the highlighted path column. */
+.ide-quick-open-panel {
+  width: min(560px, calc(100% - 48px));
+  max-height: min(420px, 70%);
+}
+
+.ide-quick-open-path mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* "@" symbol mode rows (Ctrl+P): the leading kind chip reuses the Go-to-Symbol
+ * (Ctrl+T) `.ide-symbol-open-kind` style; only the accent name highlight is
+ * quick-open-specific (the name lives in a `.ide-quick-open-name` span). */
+.ide-quick-open-symbol-row .ide-quick-open-name mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* == Symbol breadcrumb segments (caret symbol path, appended after the
+ * file-path crumbs the statusbar renders) == */
+
+/* display:contents so the symbol segments share the parent .ide-breadcrumbs
+ * flex gap with the folder/file crumbs (one continuous "src > foo.ts >
+ * Greeter > greet" trail) while still being one container to swap out. */
+.ide-crumb-symbols {
+  display: contents;
+}
+
+.ide-crumb-symbol {
+  color: var(--text-primary);
+}
+
+.ide-crumb-sep--symbol {
+  opacity: 0.55;
+}
+
+/* == Go to Symbol in Workspace (Ctrl+T) deltas — shares the `.ide-picker-*`
+ * chrome above; adds a wider panel, an extra kind chip, and the highlighted
+ * name column. == */
+
+.ide-symbol-open-panel {
+  width: min(620px, calc(100% - 48px));
+  max-height: min(440px, 70%);
+}
+
+.ide-symbol-open-kind {
+  flex-shrink: 0;
+  min-width: 56px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ide-symbol-open-name mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* == Image preview pane (W7) - overlays the editor like .ide-diff-pane == */
+
+.ide-image-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.ide-image-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.ide-image-zoom-button {
+  border: 0;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-image-zoom-button:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-image-zoom-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-image-meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ide-image-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: auto;
+  scrollbar-width: thin;
+  /* Classic transparency checkerboard from palette tokens. */
+  --ide-image-check: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  background-image:
+    linear-gradient(45deg, var(--ide-image-check) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--ide-image-check) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--ide-image-check) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--ide-image-check) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* margin:auto centers small images and keeps large ones scrollable. */
+.ide-image-el {
+  margin: auto;
+  flex-shrink: 0;
+}
+
+.ide-image-el--fit {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* == Terminal rail panel (W9) == */
+
+.ide-terminal-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ide-terminal-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.ide-terminal-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ide-terminal-status {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ide-terminal-status--running {
+  color: var(--text-success-soft);
+  font-style: normal;
+}
+
+/* An unconfirmed kill: the child may still be alive. --text-danger-soft is used
+ * rather than a new warning token because it already resolves in every palette
+ * (foundation defines it; the palettes that care override it), so this needs no
+ * 11-palette pass. */
+.ide-terminal-status--warn {
+  color: var(--text-danger-soft);
+  font-style: normal;
+}
+
+.ide-terminal-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.ide-terminal-button {
+  border: 0;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-terminal-button:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-terminal-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* xterm host for the PTY terminal (workspace_pty_terminal): layout-only —
+ * without flex:1 the host collapses to content height and the fit addon
+ * measures a degenerate size. xterm paints its own colors inside. */
+.ide-terminal-xterm {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ide-terminal-scrollback {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.ide-terminal-scrollback:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-terminal-input {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-terminal-field {
+  display: block;
+}
+
+.ide-terminal-field .inv-text-field-control {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+
+.ide-terminal-field .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}

@@ -1,0 +1,63 @@
+/* styles/ide-presentation.css — the model-initiated presentation chip
+ * (renderer/features/renderer-workspace-presentation-controller.js).
+ * Sibling of ide-view.css for the file-size ceiling. */
+
+/* Non-stealing presentation chip ("Jenny wants to show …"): floats over the
+ * editor stage bottom without moving focus or layout; aria-live polite. No
+ * entrance animation — nothing to disable under prefers-reduced-motion.
+ * Positioning context: .ide-main (position: relative in ide-view.css). */
+.ide-presentation-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 7px 8px 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-base);
+  background: var(--bg-surface);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ide-presentation-chip-copy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-presentation-chip-show {
+  flex-shrink: 0;
+  padding: 3px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ide-presentation-chip-show:hover {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+.ide-presentation-chip-dismiss {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-presentation-chip-dismiss:hover {
+  color: var(--text-primary);
+}

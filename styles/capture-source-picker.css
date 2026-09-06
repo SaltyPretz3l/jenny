@@ -1,0 +1,126 @@
+/* styles/capture-source-picker.css
+ *
+ * Visual treatment for the in-app screen/window capture-source picker
+ * (renderer/features/renderer-display-media-picker.js). Decorates the shared
+ * inventory help-overlay primitive with a thumbnail grid. Registered in
+ * styles.css right after chat-help-overlay-v2.css so these rules cascade over
+ * the base .inv-help-overlay-* dialog. Theme-aware via foundation/palette tokens.
+ */
+
+/* The picker owns a dedicated overlay host id, so widen its dialog beyond the
+   help-overlay default (560px) to give the thumbnail grid room to breathe. */
+#displayMediaPickerOverlay .inv-help-overlay-dialog {
+  width: min(760px, 100%);
+}
+
+.capture-source-section + .capture-source-section {
+  margin-top: var(--space-5, 20px);
+}
+
+.capture-source-section-label {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #8a93a4);
+}
+
+.capture-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3, 12px);
+}
+
+.capture-source-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  padding: var(--space-2, 8px);
+  background: var(--surface-card-background, #14181f);
+  border: 1px solid var(--border-default, #2a3140);
+  border-radius: var(--radius-md, 12px);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary, #e9eef5);
+  transition: border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.capture-source-tile:hover {
+  border-color: color-mix(in srgb, var(--accent-cyan, #4cc7ff) 55%, var(--border-default, #2a3140));
+  background: color-mix(in srgb, var(--accent-cyan, #4cc7ff) 8%, var(--surface-card-background, #14181f));
+  transform: translateY(-1px);
+}
+
+.capture-source-tile:focus-visible {
+  outline: 2px solid var(--focus-outline, #4cc7ff);
+  outline-offset: 2px;
+}
+
+.capture-source-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface-input-background, #0e1218);
+}
+
+.capture-source-thumb--empty {
+  border: 1px dashed var(--border-default, #2a3140);
+}
+
+.capture-source-name {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary, #aab3c0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.capture-source-empty {
+  margin: 0;
+  padding: var(--space-4, 16px) 0;
+  color: var(--text-muted, #8a93a4);
+  font-size: var(--font-size-lg);
+  text-align: center;
+}
+
+.capture-source-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-5, 20px);
+}
+
+.capture-source-cancel {
+  appearance: none;
+  padding: var(--space-2, 8px) var(--space-4, 16px);
+  background: transparent;
+  border: 1px solid var(--border-default, #2a3140);
+  border-radius: var(--radius-md, 12px);
+  color: var(--text-secondary, #aab3c0);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.capture-source-cancel:hover {
+  color: var(--text-primary, #e9eef5);
+  border-color: color-mix(in srgb, var(--text-primary, #e9eef5) 30%, var(--border-default, #2a3140));
+}
+
+.capture-source-cancel:focus-visible {
+  outline: 2px solid var(--focus-outline, #4cc7ff);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-source-tile {
+    transition: none;
+  }
+  .capture-source-tile:hover {
+    transform: none;
+  }
+}

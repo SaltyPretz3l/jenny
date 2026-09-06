@@ -1,0 +1,18 @@
+{
+  "contract": "PluginPackageRecordV3", "contract_version": 3, "frozen": true,
+  "defs": {
+    "source_identity": { "type": "tagged_union", "tag_field": "kind", "variants": {
+      "local_package": { "type": "object", "required": ["kind", "package_path_digest"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "local_package" }, "package_path_digest": { "type": "ref", "ref": "sha256_hex" } } },
+      "https_url": { "type": "object", "required": ["kind", "url_digest"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "https_url" }, "url_digest": { "type": "ref", "ref": "sha256_hex" } } },
+      "git": { "type": "object", "required": ["kind", "repository_url_digest", "pinned_commit"], "max_keys": 3, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "git" }, "repository_url_digest": { "type": "ref", "ref": "sha256_hex" }, "pinned_commit": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$", "max_utf8_bytes": 64 } } },
+      "signed_catalog": { "type": "object", "required": ["kind", "catalog_id", "target_path_digest", "tuf_root_digest"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "signed_catalog" }, "catalog_id": { "type": "ref", "ref": "bounded_id" }, "target_path_digest": { "type": "ref", "ref": "sha256_hex" }, "tuf_root_digest": { "type": "ref", "ref": "sha256_hex" } } },
+      "offline_mirror": { "type": "object", "required": ["kind", "mirror_id", "target_path_digest", "tuf_root_digest"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "offline_mirror" }, "mirror_id": { "type": "ref", "ref": "bounded_id" }, "target_path_digest": { "type": "ref", "ref": "sha256_hex" }, "tuf_root_digest": { "type": "ref", "ref": "sha256_hex" } } }
+    } }
+  },
+  "root": {
+    "type": "object", "required": ["package_record_schema_version", "publisher_id", "plugin_id", "package_semver", "content_digest", "canonical_metadata_digest", "signing_key_id", "source_identity", "archive_bytes", "entry_count", "uncompressed_bytes", "verification_cache_key", "created_at"], "max_keys": 13, "additional_properties": "reject",
+    "properties": {
+      "package_record_schema_version": { "type": "const", "value": 3 }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "package_semver": { "type": "string", "format": "semver" }, "content_digest": { "type": "ref", "ref": "sha256_hex" }, "canonical_metadata_digest": { "type": "ref", "ref": "sha256_hex" }, "signing_key_id": { "type": "ref", "ref": "sha256_hex" }, "source_identity": { "type": "ref", "ref": "source_identity" }, "archive_bytes": { "type": "integer", "minimum": 0, "maximum": 67108864 }, "entry_count": { "type": "integer", "minimum": 0, "maximum": 4096 }, "uncompressed_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 }, "verification_cache_key": { "type": "ref", "ref": "sha256_hex" }, "created_at": { "type": "ref", "ref": "iso8601_utc" }
+    }
+  }
+}

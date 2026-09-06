@@ -1,0 +1,84 @@
+/* ── Scratchpad quick-capture (Ctrl+Shift+Space) ──
+   Global centered popover, built by renderer-scratchpad-capture.js and appended
+   to <body>. Saves a one-line thought to the active Home note from any view.
+   Hidden via the `hidden` property until opened.
+*/
+
+.scratchpad-capture {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-overlay) + 5);
+  display: grid;
+  place-items: start center;
+  padding-top: 18vh;
+  pointer-events: auto;
+}
+
+.scratchpad-capture[hidden] {
+  display: none;
+}
+
+.scratchpad-capture__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.52);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+  cursor: pointer;
+}
+
+.scratchpad-capture__card {
+  position: relative;
+  width: min(560px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--surface-card-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  animation: palette-in var(--motion-duration-regular) var(--motion-ease-emphasis) both;
+}
+
+.scratchpad-capture__title {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--tracking-ui);
+  text-transform: uppercase;
+}
+
+/* The field comes from the inventory text-field primitive; widen its control
+   and drop the label margin so it reads as a single prominent capture line. */
+.scratchpad-capture__field {
+  margin: 0;
+}
+
+.scratchpad-capture__card .inv-text-field-control {
+  width: 100%;
+  font-size: var(--font-size-lg);
+}
+
+.scratchpad-capture__status {
+  min-height: 1.2em;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.scratchpad-capture__status.is-error {
+  color: var(--status-fg-danger, var(--text-danger, #d6455d));
+}
+
+.scratchpad-capture__hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-ui);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scratchpad-capture__card,
+  .scratchpad-capture__backdrop {
+    animation: none;
+  }
+}

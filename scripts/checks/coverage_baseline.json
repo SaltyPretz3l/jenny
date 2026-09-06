@@ -1,0 +1,51 @@
+{
+  "$comment": "Machine-readable coverage baseline read by the Phase 3 ratchet (scripts/checks/check_coverage_ratchet.py). Human narrative + methodology live in docs/process/COVERAGE_BASELINE.md; remediation plan in docs/plans/TEST_COVERAGE_RATCHET.md. 'overall_lines_pct' is the FLOOR the ratchet defends (measured >= floor - epsilon). 'ratchet_enforced' gates whether check_coverage_ratchet.py hard-fails for that scope; flipped TRUE on 2026-06-15 after tranches #1-#6 raised + held coverage. The floors are set deliberately BELOW measured for V8/CI/cross-OS headroom (see 'measured_lines_pct') so first-enforcement does not flake; ratchet them UP toward measured once the lane numbers prove stable. NOTE: check_coverage_ratchet.py IS wired into ci.yml's coverage-gate job, shipped informational (continue-on-error) during the soak window so a red run does not yet block merge; it also enforces locally and in any lane that runs the check after a coverage artifact. Promote the coverage-gate (drop continue-on-error) once the lane is observed stable (matches the js.note below). 'hard_floor_pct' mirrors the independent, already-live sidecar coverage gate sourced from pyproject.toml [tool.coverage.report] fail_under. 'js.c8_exclude_hash' lets the ratchet warn when the .c8rc.json exclude set drifts. 2026-08-21 (Surface Effects review): `c8_exclude_hash` drifts by design this pass -- renderer/shell/renderer-doodle-field-layout-utils.js left .c8rc.json's exclude list with the effect itself, so the JS denominator changed and the ratchet will WARN 'baseline may be stale' until the coverage lane re-measures. ~2,100 well-covered production lines and ~1,825 test lines were deleted together (doodle-field + darkroom-living-ink); no `per_file` entry references them, so the deleted-test smell is not implicated. Re-measure via the coverage lane and bump the recorded numbers -- do NOT lower overall_lines_pct. 2026-08-25: re-measured (js stable lane 89.14, sidecar 90.08) and floors RAISED js 80->87 / sidecar 88->89.5 (owner-ratified 2026-08-25, PRE_V1_BACKLOG.md section 1.8) to lock in the code-hygiene program's gains; c8_exclude_hash re-recorded (ab026e994baa40dc), clearing the 2026-08-21 drift WARN.",
+  "measured_on": "2026-08-25",
+  "epsilon": 0.5,
+  "js": {
+    "overall_lines_pct": 87.0,
+    "measured_lines_pct": 89.14,
+    "measured_stable_lines_pct": 89.14,
+    "lines_covered": 321428,
+    "lines_total": 360558,
+    "ratchet_enforced": true,
+    "c8_exclude_hash": "ab026e994baa40dc",
+    "tool": "c8 (NODE_V8_COVERAGE) over scripts/run-node-tests-safe.js",
+    "config": ".c8rc.json",
+    "note": "all:true denominator. RENDERER ATTRIBUTION FIX 2026-06-15: the jsdom shell harness loads renderer/app.js + the production SCRIPT_ORDER via vm.runInContext; it previously passed RELATIVE filenames, so c8/NODE_V8_COVERAGE could not map the V8 profile back to disk and every harness-loaded renderer file read 0% despite being exercised. tests/helpers/renderer-shell-harness-dom.js now passes ABSOLUTE filenames, lifting the stable lane 72.29 -> 83.67 (166831/199381) and dropping the literal-0% file count 60 -> 7 (survivors are pure-data ipc-contract-types.js + genuinely jsdom-hostile overlay/frame/worker bootstraps). Floor raised 70.0 -> 80.0: ~3.7pp below the Windows stable-lane measured (83.67) for V8 + Windows->ubuntu cross-OS headroom on first enforcement; tighten toward 83 once the ubuntu stable-lane number is observed stable. The full suite was not separately re-measured post-fix (it is >= the stable lane). The ratchet is now wired into ci.yml's coverage-gate job (informational/continue-on-error during soak). 2026-08-25: floor raised 80.0 -> 87.0 against stable-lane measured 89.14 (owner-ratified; 2.14pp + epsilon headroom for V8/cross-OS variance).",
+    "per_file": {
+      "services/ipc-contract.js": 99.04,
+      "services/main/ipc-handler-registration.js": 99.36,
+      "services/chat-stream-bridge.js": 91.64,
+      "services/backend/canonical-turn-event.js": 95.03,
+      "services/backend/canonical-turn-event-collector.js": 97.69,
+      "services/shell-config-state.js": 99.49,
+      "renderer/shell/renderer-view-panel-registry.js": 96.28
+    },
+    "per_file_note": "P2-2 (armed 2026-06-22): seeds the JS deleted-test smell, which was INERT for JS before this block existed (check_coverage_ratchet.py guards on isinstance(js.per_file, dict)). These 7 high-consequence files are the production counterparts of the P2-4 blocking contract subset (run_renderer_contract_tests.py), so every entry is exercised by the --parallel-only stable lane the coverage-gate measures -- a hard requirement, because the smell fires on statements>0 AND covered==0 in the fresh stable-lane artifact, so seeding any stable-lane-EXCLUDED file false-positives every run. Percentages are the measured lines.pct from `npm run coverage:js:stable` (2026-06-22, total 85.06%); they are recorded for audit only -- the smell compares >0 -> 0, never a pct threshold, so run-to-run drift is harmless. services/* entries are covered solely via their dedicated node tests (none are in the renderer SCRIPT_ORDER harness); canonical-turn-event.js has a single stable-lane consumer (canonical-turn-event-contract.test.js; its 2 managed-sidecar consumers are sequential-risk and dropped by --parallel-only), making its smell the most direct. Keep this list a subset of files the stable lane exercises; re-measure before adding entries."
+  },
+  "sidecar": {
+    "overall_lines_pct": 89.5,
+    "measured_lines_pct": 90.08,
+    "lines_covered": 49542,
+    "lines_total": 54999,
+    "baseline_start_pct": 85.39,
+    "hard_floor_pct": 75,
+    "hard_floor_source": "pyproject.toml [tool.coverage.report] fail_under",
+    "ratchet_enforced": true,
+    "tool": "pytest --cov=sidecar (coverage.json totals.percent_covered)",
+    "note": "ENFORCED 2026-06-15: floor 88.0 sits 1.5pp below the measured 89.5 (tranches #1-#5 raised sidecar 85.39 -> 89.5). baseline_start_pct (85.39) is the pre-Phase-1 starting point. The sidecar suite runs identically in CI (no jsdom/OS variance), so the 1.5pp + epsilon(0.5) headroom is comfortable. Both narrated in COVERAGE_BASELINE.md. 2026-08-25: floor raised 88.0 -> 89.5 against measured 90.08 (owner-ratified). Headroom is now 0.58pp + epsilon(0.5) -- deliberately tight to defend the hygiene program's gains; if this flakes in CI, lower to 89.0 (one reviewed commit), never below.",
+    "per_module": {
+      "sidecar/ai/engines/ollama_runtime.py": 99.59,
+      "sidecar/ai/engines/mock.py": 100.0,
+      "sidecar/runtime/request_dispatch.py": 86.03,
+      "sidecar/ai/routing/tool_execution.py": 91.28,
+      "sidecar/runtime/memory_suggestions.py": 88.36,
+      "sidecar/ai/routing/chat_decision.py": 97.62,
+      "sidecar/runtime/ipc_payloads.py": 90.24,
+      "sidecar/runtime/ollama_support.py": 100.0,
+      "sidecar/ai/engines/provider_registry.py": 100.0
+    },
+    "per_module_note": "Recorded for the high-consequence modules the audit flagged. Phase 3 per-package review targets: sidecar/ai/engines >=80, sidecar/runtime >=75, sidecar/ai/routing >=75 (term-missing review, not hard gates initially)."
+  }
+}

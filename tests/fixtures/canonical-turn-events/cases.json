@@ -1,0 +1,458 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "tool_input_delta_is_ephemeral_and_redacted",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_packet_0",
+        "stream_id": "stream_packet_0",
+        "session_id": "session_packet_0",
+        "seq": 1,
+        "type": "tool_input_delta",
+        "tool_call_id": "call_read",
+        "payload": {
+          "tool_name": "read_file",
+          "arguments_delta": "{\"path\":\"G:/Users/example/secret.txt\",\"token\":\"sk-test-secret\"}",
+          "provider_metadata": {
+            "raw": "do not keep"
+          }
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "durability": "ephemeral",
+        "persisted_kind": null,
+        "part_kind": "tool_part",
+        "part_state": "input_streaming",
+        "redacted_substrings_absent": [
+          "G:/Users/example/secret.txt",
+          "sk-test-secret",
+          "do not keep"
+        ]
+      }
+    },
+    {
+      "name": "tool_call_requested_is_durable",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_packet_0",
+        "seq": 2,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_read",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read workspace file",
+          "input": {
+            "path": "renderer/app.js"
+          }
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_packet_0:canonical:2",
+        "part_id": "turn_packet_0:tool_part:2",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending"
+      }
+    },
+    {
+      "name": "future_version_is_unsupported",
+      "input": {
+        "v": 99,
+        "turn_id": "turn_packet_0",
+        "seq": 3,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "unsupported",
+        "diagnostic_code": "unsupported_version"
+      }
+    },
+    {
+      "name": "missing_turn_id_is_dropped",
+      "input": {
+        "v": 1,
+        "seq": 4,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "missing_turn_id"
+      }
+    },
+    {
+      "name": "seq_numeric_string_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": "42",
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_string_with_trailing_junk_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": "1junk",
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_decimal_string_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": "1.5",
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_fractional_number_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": 1.5,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_boolean_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": true,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_zero_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": 0,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_negative_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": -1,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_above_integer_bound_is_dropped",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": 9007199254740992,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "dropped",
+        "diagnostic_code": "invalid_seq"
+      }
+    },
+    {
+      "name": "seq_integral_float_is_accepted",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_seq_parity",
+        "seq": 5.0,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_seq_parity",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read workspace file"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_seq_parity:canonical:5",
+        "part_id": "turn_seq_parity:tool_part:5",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending"
+      }
+    },
+    {
+      "name": "version_boolean_is_unsupported",
+      "input": {
+        "v": true,
+        "turn_id": "turn_seq_parity",
+        "seq": 1,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "unsupported",
+        "diagnostic_code": "unsupported_version"
+      }
+    },
+    {
+      "name": "version_numeric_string_is_unsupported",
+      "input": {
+        "v": "1",
+        "turn_id": "turn_seq_parity",
+        "seq": 1,
+        "type": "turn_started",
+        "payload": {}
+      },
+      "expected": {
+        "status": "unsupported",
+        "diagnostic_code": "unsupported_version"
+      }
+    },
+    {
+      "name": "posix_paths_are_redacted_like_drive_letter_paths",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "stream_id": "stream_path_parity",
+        "session_id": "session_path_parity",
+        "seq": 1,
+        "type": "tool_input_delta",
+        "tool_call_id": "call_read_posix",
+        "payload": {
+          "tool_name": "read_file",
+          "arguments_delta": "{\"path\":\"/Users/example/secret.txt\",\"key\":\"/home/gosh/.ssh/id_rsa\"}",
+          "input": {
+            "log": "/var/log/app.log",
+            "note": "opened /Users/example/Desktop/plan.md today"
+          }
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "durability": "ephemeral",
+        "persisted_kind": null,
+        "part_kind": "tool_part",
+        "part_state": "input_streaming",
+        "redacted_substrings_absent": [
+          "/Users/example/secret.txt",
+          "/home/gosh/.ssh/id_rsa",
+          "/var/log/app.log",
+          "/Users/example/Desktop/plan.md"
+        ],
+        "redacted_substrings_present": [
+          "[redacted:path]/secret.txt",
+          "[redacted:path]/id_rsa",
+          "[redacted:path]/app.log",
+          "[redacted:path]/plan.md"
+        ]
+      }
+    },
+    {
+      "name": "file_urls_redact_on_both_platforms_and_http_urls_stay_legible",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 2,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_fetch",
+        "payload": {
+          "tool_name": "fetch",
+          "tool_input_summary": "open file:///Users/example/notes.md and file:///C:/Users/example/notes.md then https://example.com/docs/page?q=1"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_path_parity:canonical:2",
+        "part_id": "turn_path_parity:tool_part:2",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "redacted_substrings_absent": [
+          "file:///Users/example/notes.md",
+          "file:///C:/Users/example/notes.md",
+          "/Users/example/notes.md"
+        ],
+        "redacted_substrings_present": [
+          "file:///[redacted:path]/notes.md",
+          "https://example.com/docs/page?q=1"
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_code_and_routes_survive_root_anchored_path_redaction",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 3,
+        "type": "text_delta",
+        "payload": {
+          "delta": "Register app.get('/api/users', handler) then GET /api/users/42 — config lives in /Users/example/.config/app.toml"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "durability": "ephemeral",
+        "persisted_kind": null,
+        "part_kind": "text_part",
+        "part_state": "streaming",
+        "redacted_substrings_absent": [
+          "/Users/example/.config/app.toml"
+        ],
+        "redacted_substrings_present": [
+          "app.get('/api/users', handler)",
+          "GET /api/users/42",
+          "[redacted:path]/app.toml"
+        ]
+      }
+    },
+    {
+      "name": "filename_preserving_windows_path",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 4,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_windows_path",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Roots C:\\ and C:\\etc then read C:\\Users\\alex\\proj\\src\\foo.js"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_path_parity:canonical:4",
+        "part_id": "turn_path_parity:tool_part:4",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "sanitized_payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Roots C:\\ and [redacted:path] then read [redacted:path]\\foo.js"
+        }
+      }
+    },
+    {
+      "name": "filename_preserving_posix_path_with_trailing_separator",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 5,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_posix_path",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Roots / and /etc then read /home/x/proj/dir/ and /home/x/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_path_parity:canonical:5",
+        "part_id": "turn_path_parity:tool_part:5",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "sanitized_payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Roots / and [redacted:path] then read [redacted:path]/dir/ and [redacted:path]/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      }
+    },
+    {
+      "name": "filename_preserving_file_url",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 6,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_file_url",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read file:///C:/Users/alex/proj/foo.js"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_path_parity:canonical:6",
+        "part_id": "turn_path_parity:tool_part:6",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "sanitized_payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read file:///[redacted:path]/foo.js"
+        }
+      }
+    },
+    {
+      "name": "filename_preserving_delimiter_path",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_path_parity",
+        "seq": 7,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_delimiter_path",
+        "payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read \"/var/lib/jenny\""
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_path_parity:canonical:7",
+        "part_id": "turn_path_parity:tool_part:7",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "sanitized_payload": {
+          "tool_name": "read_file",
+          "tool_input_summary": "Read \"[redacted:path]/jenny\""
+        }
+      }
+    }
+  ]
+}

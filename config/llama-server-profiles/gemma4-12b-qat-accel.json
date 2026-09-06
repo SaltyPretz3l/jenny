@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "profile_id": "gemma4-12b-qat-accel",
+  "model_tag": "gemma4-12b-qat",
+  "context_size": 32768,
+  "extra_args": [
+    "--parallel",
+    "1",
+    "--no-mmproj",
+    "--gpu-layers",
+    "all",
+    "--split-mode",
+    "none",
+    "--flash-attn",
+    "on"
+  ],
+  "acceleration": {
+    "mode": "mtp",
+    "draft_n_max": 4
+  }
+}

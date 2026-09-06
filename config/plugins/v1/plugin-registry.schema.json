@@ -1,0 +1,26 @@
+{
+  "contract": "PluginRegistryV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "registry_schema_version",
+      "revision",
+      "commit_epoch",
+      "generation_id",
+      "generation_digest",
+      "committed_at"
+    ],
+    "max_keys": 7,
+    "additional_properties": "reject",
+    "properties": {
+      "registry_schema_version": { "type": "const", "value": 1 },
+      "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "generation_id": { "type": "ref", "ref": "generation_id" },
+      "generation_digest": { "type": "ref", "ref": "sha256_hex" },
+      "committed_at": { "type": "ref", "ref": "iso8601_utc" }
+    }
+  }
+}

@@ -1,0 +1,416 @@
+/* Settings attachments and composer popover controls */
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 30px;
+  padding: 0 var(--space-4) 0 var(--space-6);
+  border-radius: var(--radius-pill);
+  background: var(--widget-attachment-bg);
+  border: 1px solid var(--widget-attachment-border);
+  color: var(--widget-attachment-color);
+  font-size: 12px;
+}
+
+.attachment-chip-image {
+  min-height: 48px;
+  padding: 4px var(--space-4) 4px 4px;
+  border-radius: var(--radius-md);
+}
+
+.attachment-chip-audio {
+  padding-left: var(--space-4);
+}
+
+.attachment-chip-preview {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-base);
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-base) 18%, transparent);
+}
+
+.attachment-chip-audio-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-cyan) 14%, transparent);
+  color: var(--accent-cyan);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.attachment-chip-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attachment-chip-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip-meta {
+  color: var(--widget-attachment-meta-color);
+  font-size: 11px;
+}
+
+.attachment-chip-remove {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--widget-attachment-remove-color);
+  cursor: pointer;
+}
+
+.attachment-chip-remove:hover,
+.attachment-chip-retry:hover {
+  background: var(--widget-action-hover-bg);
+}
+
+.attachment-chip-retry {
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--widget-attachment-border);
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.attachment-chip-clear {
+  border-style: dashed;
+  color: var(--widget-attachment-clear-color);
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+.message-attachment-card {
+  max-width: min(100%, var(--chat-user-bubble-max-width));
+  padding: var(--space-5);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--widget-attachment-border);
+  background: color-mix(in srgb, var(--widget-attachment-bg) 92%, transparent);
+}
+
+.message-attachment-image {
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.message-attachment-unavailable {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.message-attachment-image-preview {
+  display: block;
+  width: min(240px, 64vw);
+  max-height: 240px;
+  border-radius: var(--radius-base);
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.message-attachment-audio {
+  min-width: min(320px, 72vw);
+}
+
+.message-attachment-audio-player {
+  width: min(320px, 72vw);
+  max-width: 100%;
+}
+
+.assistant-reply-audio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: 999px;
+  border: 1px solid var(--widget-attachment-border);
+  background: color-mix(in srgb, var(--widget-attachment-bg) 96%, transparent);
+}
+
+.assistant-reply-audio[data-playback-state="playing"] {
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--widget-attachment-border));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--widget-attachment-bg));
+}
+
+.assistant-reply-audio-toggle {
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assistant-reply-audio-toggle:hover,
+.assistant-reply-audio-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-primary) 70%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+.assistant-reply-audio-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.assistant-reply-audio-duration {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assistant-reply-audio-element {
+  display: none;
+}
+
+.message-attachment-caption,
+.message-attachment-label {
+  margin-top: var(--space-4);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.message-attachment-meta {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.composer-popover {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: fixed;
+  min-width: 292px;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: calc(var(--space-5) + 2px);
+  border-radius: calc(var(--radius-md) + 8px);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--mat-ephemeral-bg) 94%, white) 0%,
+      var(--mat-ephemeral-bg) 100%
+    );
+  border: 1px solid color-mix(in srgb, var(--mat-ephemeral-border) 52%, transparent);
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 1px color-mix(in srgb, var(--mat-ephemeral-border) 22%, transparent),
+    0 18px 34px color-mix(in srgb, var(--bg-base) 12%, transparent);
+  backdrop-filter: blur(20px) saturate(1.04);
+  z-index: var(--z-popover);
+}
+
+#composerCommandPopover {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#composerCommandPopover.hidden {
+  display: none;
+}
+
+.composer-popover::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--widget-input-focus-glow) 10%, transparent) 0%, transparent 42%);
+  opacity: 0.9;
+}
+
+.composer-popover-header {
+  margin-bottom: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.composer-popover-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.composer-popover-copy {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 28ch;
+}
+
+.composer-popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 1;
+}
+
+.composer-popover-section + .composer-popover-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--mat-ephemeral-border) 34%, transparent);
+}
+
+.composer-popover-section-label {
+  color: var(--widget-composer-meta-color);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-popover-action,
+.composer-popover-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 42px;
+  padding: 0 calc(var(--space-4) + 2px);
+  margin-top: 0;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: var(--surface-popover-row);
+  border: 1px solid color-mix(in srgb, var(--mat-ephemeral-border) 28%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 8px 16px color-mix(in srgb, var(--bg-base) 5%, transparent);
+}
+
+.composer-popover-action {
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-popover-action:hover {
+  background: var(--surface-popover-row-hover);
+  border-color: color-mix(in srgb, var(--widget-input-focus-border) 18%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 12px 20px color-mix(in srgb, var(--bg-base) 8%, transparent);
+  transform: translateY(-1px);
+}
+
+.composer-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.composer-popover-command-section,
+#composerCommandPopoverList {
+  min-height: 0;
+}
+
+#composerCommandPopoverList {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.composer-command-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.composer-command-item-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.composer-command-name {
+  font-weight: 650;
+}
+
+.composer-command-item .composer-popover-copy {
+  margin: 0;
+  font-size: 11px;
+  max-width: none;
+}
+
+.composer-command-action-badge {
+  align-self: center;
+  min-width: 48px;
+  padding: 3px var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 32%, transparent);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.composer-command-item--unavailable {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.composer-command-item--unavailable:hover {
+  transform: none;
+}
+
+.composer-command-empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.composer-popover-secondary {
+  color: color-mix(in srgb, var(--text-secondary) 72%, white);
+}

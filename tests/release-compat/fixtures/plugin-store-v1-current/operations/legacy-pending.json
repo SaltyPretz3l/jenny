@@ -1,0 +1,9 @@
+{
+  "operation_id": "legacy-pending",
+  "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "lifecycle_epoch": 1,
+  "commit_epoch": 1,
+  "status": "pending",
+  "created_at": "2026-07-31T23:58:00Z",
+  "updated_at": "2026-07-31T23:58:00Z"
+}

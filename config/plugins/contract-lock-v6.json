@@ -1,0 +1,19 @@
+{
+  "lock_schema_version": 1,
+  "contracts": {
+    "config/plugins/v6/_common.schema.json": "193304303c2f1d9dbaaeb7823e8c368f1b6b2043ede234b9df749368b3a9b216",
+    "config/plugins/v6/plugin-containment-profile.schema.json": "ed8e67ec96def3cb17988e17d89e455b125320f6e0dc348e1d8b24cbe5648938",
+    "config/plugins/v6/plugin-engine-adapter.schema.json": "75cab6f7b1790a078b0613b4504906a15449cd90bf9c83d7361d1909d09a714f",
+    "config/plugins/v6/plugin-full-host-attestation.schema.json": "1f2d7c1ddaf3f528516042c13e0231e9fb015b5e674086f23e54f2a1395924e3",
+    "config/plugins/v6/plugin-full-host-content.schema.json": "16a6a3e365ee2ddbaf5e212d52445bf092aaaf4e5180b40b38b7699ac6f5e52f",
+    "config/plugins/v6/plugin-full-host-health.schema.json": "081780b9f40cde41058dc96277e801e14d175460f860dc5480977d40498287d6",
+    "config/plugins/v6/plugin-full-host-termination-receipt.schema.json": "1f186fed82667e0a6dc71f83dfa455b6617ec3ec05b235a1af35f376788c8d33",
+    "config/plugins/v6/plugin-generation.schema.json": "2bac8491879ecb1610b3ad53ba6a8aa9cbb7c1ac56cb68d79f633aada1416741",
+    "config/plugins/v6/plugin-hook-descriptor.schema.json": "fabfc5dbc2d9dd25960c122e6521d4e1d24eeab413aaa60ea281d6b32871f51f",
+    "config/plugins/v6/plugin-manifest.schema.json": "27e6891196f43fa1ddb47397bca308ccfb1abde5f61a3aa0e283440e62790651",
+    "config/plugins/v6/plugin-native-mcp-binding.schema.json": "0135e984d74dba00e1da29125e0456e2cf1c1fecd48c199b1ee57a6776dc93a2",
+    "config/plugins/v6/plugin-runtime-attestation.schema.json": "d563d590f66982dcae64b997e37240f5d7b64911b873cf750a285aa83ede4188",
+    "config/plugins/v6/plugin-runtime-snapshot.schema.json": "3cbca7ab4602ce2a025a10dab84761d81fa38454aa43b1a21a8a9efedace6687",
+    "config/plugins/v6/plugin-secret-delivery-grant.schema.json": "00d17a252feab2a040ab41fb097e5d5186d1de7852cf9542f48cf02de3193408"
+  }
+}

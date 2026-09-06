@@ -1,0 +1,202 @@
+{
+  "fixture_id": "descriptor/stream_event_map.draft",
+  "schema_version": 1,
+  "description": "DRAFT per-event-type mapping table -- the heart of the descriptor. Each case feeds ONE provider event (plus a terminal response.completed) through the real parser and pins what that event type does on its own: what it emits, what it records, and what it ignores.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_text_and_thinking_stream_returns_usage",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_done_only_finalized_text_is_recovered_and_diagnosed",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_reasoning_items_are_captured_and_replayed_before_their_function_call",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_function_call_missing_call_id_is_dropped_with_a_diagnostic_warning",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_unrecognized_event_types_are_counted_not_dropped_silently"
+  ],
+  "declarative_verdict": "partially",
+  "notes": "Isolating one event type per case is what makes this a MAP rather than a narrative: a row that claims 'emits nothing' is only credible if a stream containing just that event really produces nothing. The terminal rows (response.failed / .incomplete / .completed) are exercised where their tables live -- streams/error_taxonomy.json and streams/incomplete_and_malformed.json.",
+  "cases": [
+    {
+      "case_id": "output_text_delta_emits_a_text_delta",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [{"type": "response.output_text.delta", "delta": "Hello"}]
+      },
+      "expect": {
+        "stream_items": [{"kind": "content", "text": "Hello"}],
+        "result": {"content": "Hello", "finish_reason": "stop"},
+        "diagnostics": {"output_text_delta_count": 1, "output_text_delta_chars": 5}
+      },
+      "rule": "field_map {text: $.delta} -> engine_event_kind 'content'. The extraction is a one-line lookup, but the value passes through the stateful citation normalizer before it is a valid output, which is the carve-out."
+    },
+    {
+      "case_id": "output_text_done_records_only_and_emits_nothing",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [
+          {
+            "type": "response.output_text.done",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "Recovered"
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "Recovered", "finish_reason": "stop"},
+        "diagnostics": {
+          "output_text_done_count": 1,
+          "output_text_done_chars": 9,
+          "terminal_text_source": "output_text_done"
+        }
+      },
+      "rule": "action 'record_only': the event yields no stream item at all. Its text is keyed by (output_index, content_index) and consumed only at finalize by the two-buffer resolution, which is why the content appears in the result but never in the stream."
+    },
+    {
+      "case_id": "reasoning_summary_text_delta_emits_a_reasoning_delta",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [{"type": "response.reasoning_summary_text.delta", "delta": "Plan"}]
+      },
+      "expect": {
+        "stream_items": [{"kind": "thinking", "text": "Plan"}],
+        "result": {"thinking_text": "Plan", "content": ""},
+        "diagnostics": {"output_text_delta_count": 0, "ignored_event_count": 0}
+      },
+      "rule": "field_map {text: $.delta} -> engine_event_kind 'thinking'. Reasoning text is NOT counted in the output-text diagnostics: a reasoning-only turn still reads as textless."
+    },
+    {
+      "case_id": "reasoning_text_delta_is_an_alias_of_the_summary_row",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [{"type": "response.reasoning_text.delta", "delta": "Plan"}]
+      },
+      "expect": {
+        "stream_items": [{"kind": "thinking", "text": "Plan"}],
+        "result": {"thinking_text": "Plan", "content": ""},
+        "diagnostics": {"ignored_event_count": 0}
+      },
+      "rule": "An alias row: a different provider event name with byte-identical handling. Asserting it separately is what proves it is an alias rather than an unhandled type that happens to be harmless."
+    },
+    {
+      "case_id": "output_item_done_with_a_reasoning_item_emits_nothing",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "reasoning",
+              "id": "rs_test_1",
+              "encrypted_content": "synthetic-opaque-reasoning-blob"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "", "tool_calls": [], "finish_reason": "stop"},
+        "diagnostics": {"tool_call_count": 0, "ignored_event_count": 0}
+      },
+      "rule": "action 'branch_on_item_type': item.type == 'reasoning' updates the pending-reasoning carry-over state and emits nothing. It is also NOT counted as an ignored event -- the type IS handled, it just has no output."
+    },
+    {
+      "case_id": "output_item_done_with_a_function_call_emits_a_tool_call",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"README.md\"}",
+              "call_id": "call_test_1"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_1",
+            "arguments": {"path": "README.md"},
+            "coerced": false
+          }
+        ],
+        "result": {"finish_reason": "tool_calls", "content": ""},
+        "diagnostics": {"tool_call_count": 1, "duplicate_function_call_event_count": 0}
+      },
+      "rule": "sub_mapping when item.type == 'function_call': field_map {tool_name: $.item.name, tool_call_id: $.item.call_id, arguments: $.item.arguments with dict-passthrough | json-parse | default-empty-plus-flag}. The presence of any tool call overrides the terminal finish_reason to 'tool_calls'."
+    },
+    {
+      "case_id": "function_call_inbound_field_aliases_are_not_recognized",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [
+          {
+            "type": "response.output_item.done",
+            "item": {"type": "function_call", "tool_id": "read_file", "id": "call_test_1"}
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"tool_calls": [], "finish_reason": "stop", "content": ""},
+        "diagnostics": {"tool_call_count": 0, "ignored_event_count": 0}
+      },
+      "rule": "There are NO inbound aliases on the parse side: _parse_function_call reads $.item.name and $.item.call_id only, so an item carrying tool_id/id is DROPPED with the missing-identifier diagnostic. The 'name OR tool_id' / 'call_id OR id' aliases exist only on the REQUEST-serialization side (_function_call_items in chatgpt_subscription_request.py), where Jenny's own tool-call rows may use either spelling. An earlier draft of this table recorded them as inbound aliases; they never were."
+    },
+    {
+      "case_id": "unhandled_event_types_are_counted_not_silently_ignored",
+      "executable": true,
+      "binding": "event_recognition",
+      "input": {
+        "events": [
+          {"type": "response.created"},
+          {"type": "response.output_item.added"},
+          {"type": "response.reasoning_summary_part.added"},
+          {"type": "response.reasoning_summary_text.done"},
+          {"type": "response.custom_tool_call_input.delta"},
+          {"type": "response.metadata"}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "", "finish_reason": "stop"},
+        "diagnostics": {
+          "ignored_event_count": 5,
+          "ignored_event_types": {
+            "response.created": 1,
+            "response.output_item.added": 1,
+            "response.reasoning_summary_text.done": 1,
+            "response.custom_tool_call_input.delta": 1,
+            "response.metadata": 1
+          },
+          "undecodable_line_count": 0
+        }
+      },
+      "rule": "The default row still has no BEHAVIORAL effect, but it is no longer silent: every unhandled type is counted into a bounded, charset-gated histogram. Five of the six fed types are exactly the appendix-A types the shipped parser never implemented; response.reasoning_summary_part.added became a HANDLED event on 2026-08-29 (it arms the summary-part separator) and the case now also pins that a handled event stays out of the ignored histogram."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "terminal_event_types",
+      "reason": "response.failed / response.incomplete / response.completed are terminal and cannot be isolated the way the rows above are -- a case feeding one of them IS a whole-stream case. Their tables are asserted in streams/error_taxonomy.json and streams/incomplete_and_malformed.json."
+    },
+    {
+      "section": "sse_framing_rules",
+      "reason": "The 'data:' prefix, the [DONE] sentinel, ignored non-prefixed lines and skipped non-object payloads are generic SSE transport that a Jenny-owned engine implements once for every Responses-shaped provider, not per-provider descriptor data. Their behavior is asserted in streams/incomplete_and_malformed.json rather than restated as a map row."
+    },
+    {
+      "section": "argument_delta_events_are_unverified",
+      "reason": "ADVERSARIAL FINDING, unchanged and still open: response.custom_tool_call_input.delta -- a streaming tool-call-ARGUMENT delta -- is named in the plan's protocol fact sheet but has no handler in the shipped parser, and every recorded fixture shows arguments arriving COMPLETE in one shot on response.output_item.done. Whether the real backend ever emits argument-delta events for this endpoint cannot be verified from static analysis or existing tests; if it does, today's code drops them and relies on output_item.done carrying the full final arguments. The 'ignore' default is trivially expressible either way, but the underlying behavioral ASSUMPTION is unverified and is an owner note, independent of the descriptor question. The case above pins only that such an event is counted, not that ignoring it is correct."
+    }
+  ]
+}

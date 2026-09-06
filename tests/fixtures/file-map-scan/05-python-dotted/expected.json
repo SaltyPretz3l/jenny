@@ -1,0 +1,95 @@
+{
+  "nodes": [
+    {
+      "id": "pkg/mod.py",
+      "label": "mod.py",
+      "dir": "pkg",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    },
+    {
+      "id": "pkg/other.py",
+      "label": "other.py",
+      "dir": "pkg",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 114
+    },
+    {
+      "id": "pkg/sub/a.py",
+      "label": "a.py",
+      "dir": "pkg",
+      "isTest": false,
+      "loc": 3,
+      "inbound": 0,
+      "outbound": 3,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "pkg/sub/sibling.py",
+      "label": "sibling.py",
+      "dir": "pkg",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 138
+    }
+  ],
+  "edges": [
+    {
+      "from": "pkg/sub/a.py",
+      "to": "pkg/mod.py",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "pkg/sub/a.py",
+      "to": "pkg/other.py",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "pkg/sub/a.py",
+      "to": "pkg/sub/sibling.py",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "pkg/mod.py",
+      "pkg/other.py",
+      "pkg/sub/sibling.py",
+      "pkg/sub/a.py"
+    ],
+    "cycles": [],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 4,
+    "total": 4,
+    "durationMs": 0
+  }
+}

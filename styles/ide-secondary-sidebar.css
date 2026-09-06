@@ -1,0 +1,128 @@
+/* styles/ide-secondary-sidebar.css — Workspace IDE secondary sidebar internals
+ * (the second static side container opposite the primary rail). The grid
+ * placement, container background + border, and [data-secondary-open] column
+ * sizing live in ide-view.css next to the shell grid; this sheet owns the
+ * container's INTERNAL chrome: the side-aware resize handle, the header
+ * panel-picker, and the scrollable content host. Re-themes via palette CSS vars;
+ * inline SVG only (CSP). Loaded via @import in styles.css after ide-view.css.
+ * Same split pattern as ide-source-control.css. */
+
+:root {
+  --ide-secondary-sidebar-width: 260px;
+}
+
+/* Vertical resize handle on the sidebar's INNER edge (the edge facing the
+ * editor). rail left -> sidebar on the right -> handle on its left edge;
+ * rail right -> sidebar on the left -> handle on its right edge. The negative
+ * margin overlaps the container border for a fatter grab zone. Hidden while
+ * collapsed (the module toggles .hidden). */
+.ide-secondary-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.ide-shell[data-rail-side="right"] .ide-secondary-sidebar-resizer {
+  left: auto;
+  right: -3px;
+}
+
+.ide-secondary-sidebar-resizer.hidden {
+  display: none;
+}
+
+.ide-secondary-sidebar-resizer:hover {
+  background: var(--line);
+}
+
+.ide-secondary-sidebar-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Header: it carries the .ide-activitybar class too, so the bar layout + the
+ * .ide-activity-button panel buttons mirror the primary rail's activity bar
+ * exactly. This sheet only adds the secondary-specific bits: horizontal scroll
+ * when the buttons overflow the narrow sidebar, and the trailing collapse
+ * (hide) control (which the primary rail has no equivalent of). */
+.ide-secondary-sidebar-header {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.ide-secondary-sidebar-collapse {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ide-secondary-sidebar-collapse:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-secondary-sidebar-collapse:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Scrollable content host. Matches the .ide-rail-panel scroll context (flex:1 /
+ * min-height:0 / overflow-y:auto as a BLOCK) so a pinned rail panel scrolls
+ * inside it exactly as it does in the rail. */
+.ide-secondary-sidebar-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* ── Rail activity-bar open affordance ──
+ * The toggle that opens/closes this sidebar lives in the PRIMARY rail's activity
+ * bar (renderer-ide-rail.js). It takes the auto-margin so it + the side-flip
+ * control sit together at the rail's far edge. */
+.ide-rail-secondary-toggle {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ide-rail-secondary-toggle:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-rail-secondary-toggle--active {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-rail-secondary-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* When the toggle is present it owns the single auto-margin that docks the
+ * control cluster to the rail's far edge; drop the flip's own auto-margin
+ * (ide-view.css) so the two don't split the free space — which made the toggle
+ * drift left as primary panels were moved out to the secondary sidebar. */
+.ide-rail-secondary-toggle ~ .ide-rail-flip {
+  margin-left: 0;
+}

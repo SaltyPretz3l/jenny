@@ -1,0 +1,110 @@
+:root[data-palette="lexicon"] {
+  --widget-context-weave-line-color: rgba(178, 166, 156, 0.36);
+  --widget-context-weave-spacing: 106;
+  --widget-context-weave-pointer-radius: 142;
+  --widget-context-weave-interlace: 3.5;
+  --widget-context-weave-weft-alpha: 0.7;
+  --widget-context-weave-lit-gain: 2.8;
+  --widget-context-weave-density: 0.88;
+  color-scheme: dark;
+  --bg-base: #100d11;
+  --bg-surface: #171319;
+  --bg-surface-2: #1e1920;
+  --bg-sidebar: #141117;
+  --bg-panel: #18131a;
+  --line: rgba(184, 164, 143, 0.12);
+  --line-strong: rgba(184, 164, 143, 0.22);
+  --text-primary: #f3ede4;
+  --text-secondary: #b7aa98;
+  --text-muted: #8e8275; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #7f7468;
+  --accent: #c88f52;
+  --accent-primary: var(--accent);
+  --accent-strong: #d9a062;
+  --accent-cyan: #a6b8cf;
+  --accent-amber: #e0b072;
+  --holo-periwinkle: #c1c8d8;
+  --holo-lavender: #d8bca5;
+  --holo-pink: #d59b7b;
+  --holo-cyan: #a6b8cf;
+
+  /* ── Doodle field — dust-blue ink on aubergine, copper hover halo ── */
+
+  /* ── Atomic burst — copper lead, dust-blue, editorial gold ── */
+  --widget-atomic-burst-color-a: rgba(200, 143, 82, 0.84);
+  --widget-atomic-burst-color-b: rgba(166, 184, 207, 0.78);
+  --widget-atomic-burst-color-c: rgba(224, 176, 114, 0.82);
+  --widget-atomic-burst-flare-color: rgba(255, 248, 232, 0.94);
+  --widget-atomic-burst-link-color: rgba(213, 155, 123, 0.58);
+  --widget-atomic-burst-wave-color: rgba(200, 143, 82, 0.86);
+  --widget-atomic-burst-size: 28;
+  --widget-atomic-burst-density: 8.0;
+
+  /* ── Circuit trace — copper grid, dust-blue hover line for contrast, warm-dusk trace heads, gold accent ── */
+  --widget-circuit-trace-grid-color: rgba(200, 143, 82, 0.16);
+  --widget-circuit-trace-line-color: rgba(166, 184, 207, 0.92);
+  --widget-circuit-trace-glow-color: rgba(213, 155, 123, 0.92);
+  --widget-circuit-trace-accent-color: rgba(224, 176, 114, 0.92);
+  --widget-circuit-trace-hex-size: 38;
+  --widget-circuit-trace-density: 0.9;
+
+  /* ── Reactive grid: copper idle, gold active ── */
+  --widget-reactive-grid-dot-idle: rgba(200, 143, 82, 0.22);
+  --widget-reactive-grid-dot-active: rgba(224, 176, 114, 0.96);
+  --widget-reactive-grid-dot-glow: rgba(200, 143, 82, 0.42);
+
+  /* ── Playlist scroll — copper line, dust-blue ghosts, gold pad accents ── */
+  --playlist-scroll-line-color: rgba(216, 156, 92, 0.50);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.04;
+  --playlist-scroll-ghost-color: rgba(166, 184, 207, 0.20);
+  --playlist-scroll-pad-color: rgba(224, 176, 114, 0.06);
+  --playlist-scroll-accent-color: rgba(216, 156, 92, 0.62);
+
+  --shadow-soft: 0 20px 44px rgba(0, 0, 0, 0.34);
+  --shadow-accent: 0 16px 32px rgba(200, 143, 82, 0.18);
+  --surface-body-background:
+    radial-gradient(circle at 18% 16%, rgba(200, 143, 82, 0.12), rgba(16, 13, 17, 0) 30%),
+    radial-gradient(circle at 82% 20%, rgba(166, 184, 207, 0.08), rgba(16, 13, 17, 0) 28%),
+    linear-gradient(180deg, #120e12, #0c0a0d 82%);
+  --surface-shell-background:
+    linear-gradient(180deg, rgba(22, 17, 23, 0.98), rgba(13, 10, 14, 0.98)),
+    var(--bg-base);
+  --surface-titlebar-background: linear-gradient(90deg, rgba(24, 19, 25, 0.98), rgba(16, 13, 17, 0.98));
+  --surface-sidebar-background:
+    linear-gradient(180deg, rgba(20, 16, 22, 0.98), rgba(13, 10, 15, 0.98)),
+    var(--bg-sidebar);
+  --surface-main-stage-background:
+    radial-gradient(circle at 18% 18%, rgba(200, 143, 82, 0.11), rgba(16, 13, 17, 0) 28%),
+    radial-gradient(circle at 82% 76%, rgba(166, 184, 207, 0.08), rgba(16, 13, 17, 0) 24%),
+    linear-gradient(180deg, #171116, #0f0b0f 78%);
+  --surface-main-stage-overlay:
+    linear-gradient(90deg, rgba(200, 143, 82, 0.04), rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 82%, rgba(166, 184, 207, 0.04)),
+    radial-gradient(circle at 50% 66%, rgba(255, 248, 240, 0.02), rgba(255, 248, 240, 0) 38%);
+  --surface-main-stage-glow:
+    radial-gradient(circle at 50% 55%, rgba(200, 143, 82, 0.08), rgba(16, 13, 17, 0) 24%),
+    radial-gradient(circle at 50% 96%, rgba(166, 184, 207, 0.06), rgba(16, 13, 17, 0) 18%);
+  --surface-card-background:
+    linear-gradient(180deg, rgba(24, 18, 24, 0.94), rgba(18, 13, 18, 0.98)),
+    radial-gradient(circle at top left, rgba(200, 143, 82, 0.08), transparent 56%);
+  --surface-input-background: rgba(17, 13, 17, 0.92);
+  --surface-input-background-strong: rgba(14, 11, 15, 0.9);
+  --surface-composer-signal-background: rgba(18, 14, 18, 0.82);
+  --surface-composer-mode-background: rgba(18, 14, 18, 0.78);
+  --widget-composer-signal-border: rgba(184, 164, 143, 0.16);
+  --widget-face-glow-color: var(--accent);
+  --widget-face-aura-primary: rgba(200, 143, 82, 0.12);
+  --widget-face-aura-secondary: rgba(166, 184, 207, 0.1);
+  --widget-face-shine-color: rgba(247, 239, 230, 0.78);
+  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --mat-live-accent: var(--accent-cyan);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 12%, var(--border-subtle));
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+
+}

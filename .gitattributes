@@ -1,0 +1,41 @@
+* text=auto
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+# Runtime source, renderer byte-budget inputs, and package/signing inputs are
+# consumed as exact bytes. Keep them stable across Windows and POSIX checkouts.
+*.js text eol=lf
+*.mjs text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+renderer/inventory/assets/*.svg text eol=lf
+# Shell entrypoints must stay LF on every platform (CRLF breaks bash: "/bin/bash^M").
+*.sh text eol=lf
+setup.command text eol=lf
+# Frozen plugin contracts and their digest lock must be byte-stable across
+# Windows and POSIX checkouts.
+config/plugins/v1/*.json text eol=lf
+config/plugins/contract-lock.json text eol=lf
+config/plugins/v2/*.json text eol=lf
+config/plugins/contract-lock-v2.json text eol=lf
+config/plugins/v3/*.json text eol=lf
+config/plugins/contract-lock-v3.json text eol=lf
+config/plugins/v4/*.json text eol=lf
+config/plugins/contract-lock-v4.json text eol=lf
+config/plugins/v5/*.json text eol=lf
+config/plugins/contract-lock-v5.json text eol=lf
+config/plugins/v6/*.json text eol=lf
+config/plugins/contract-lock-v6.json text eol=lf
+config/plugins/extensions/session-provider-v1/*.json text eol=lf
+config/plugins/contract-lock-session-provider-v1.json text eol=lf
+plugins/official/local-image-generation/runtime/upstream/** -whitespace text eol=lf
+config/plugins/capability-abi-lock-v1.json text eol=lf
+config/plugins/capability-abi/v1/*.wit text eol=lf
+# The reviewed offline signer is hash-pinned before it receives the owner key.
+scripts/plugins/jenny-plugin-packager.mjs text eol=lf
+scripts/plugins/jenny-plugin-v4-packager.mjs text eol=lf
+# Release-compat payloads are hash-pinned binary fixtures; never rewrite bytes.
+tests/release-compat/fixtures/jenny-archive-v1-plain/data/preferences/fixture.txt -text
+archive/** linguist-generated
+repomix/** linguist-generated
+vendor/** linguist-vendored

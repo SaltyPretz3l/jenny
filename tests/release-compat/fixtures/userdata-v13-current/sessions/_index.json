@@ -1,0 +1,30 @@
+{
+  "schema_version": 13,
+  "sessions": {
+    "frontier_diag_v13_current": {
+      "id": "frontier_diag_v13_current",
+      "title": "Frontier diagnostics frontier_v13_current",
+      "session_type": "chat",
+      "diagnostic_mode": "frontier",
+      "diagnostic_run_id": "frontier_v13_current",
+      "diagnostic_provider": "codex-cli",
+      "diagnostic_model": "gpt-5",
+      "created_at": "2026-05-22T02:36:14.078Z",
+      "updated_at": "2026-05-22T02:36:15.000Z",
+      "session_start_date": "2026-05-21",
+      "message_count": 2,
+      "last_message_preview": "The frontier run failed at step 3.",
+      "last_model_used": "gpt-5",
+      "preferred_model": "gpt-5",
+      "reasoning_effort": "default",
+      "conversation_mode": "chat",
+      "pending_question_batch": null,
+      "interactive_sequence_state": "idle",
+      "interactive_round_count": 0,
+      "plan_mode": false,
+      "context_preferences": {},
+      "linked_session_ids": [],
+      "branch_origin": null
+    }
+  }
+}

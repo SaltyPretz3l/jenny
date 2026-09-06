@@ -1,0 +1,7 @@
+{
+  "commits": [
+    { "hash": "c1", "files": ["src/x.js", "src/y.js"] },
+    { "hash": "c2", "files": ["src/x.js", "src/y.js", "src/z.js"] },
+    { "hash": "c3", "files": ["src/z.js"] }
+  ]
+}

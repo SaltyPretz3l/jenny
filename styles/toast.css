@@ -1,0 +1,192 @@
+/* ── Toast Viewport ── */
+
+.toast-viewport {
+  position: fixed;
+  top: calc(var(--titlebar-height) + var(--space-8));
+  right: var(--space-10);
+  z-index: var(--z-toast);
+  display: grid;
+  justify-items: end;
+  gap: var(--space-4);
+  width: min(380px, calc(100vw - var(--space-16)));
+  pointer-events: none;
+}
+
+.toast-viewport:empty {
+  display: none;
+}
+
+/* One fill, one hairline, sharpened radius. Tone is carried by the mark alone —
+ * no tinted background, no tinted border. */
+.inv-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-4);
+  width: fit-content;
+  min-width: 240px;
+  max-width: 100%;
+  padding: var(--space-5) var(--space-5) var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-toast-background);
+  box-shadow: var(--shadow-elevated);
+  animation: toast-in var(--motion-duration-regular) var(--motion-ease-emphasis);
+}
+
+.inv-toast__mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: color-mix(in srgb, var(--state-info) 55%, var(--text-primary));
+}
+
+.inv-toast--success .inv-toast__mark {
+  color: color-mix(in srgb, var(--state-success) 55%, var(--text-primary));
+}
+
+.inv-toast--warning .inv-toast__mark {
+  color: color-mix(in srgb, var(--state-warning) 55%, var(--text-primary));
+}
+
+.inv-toast--danger .inv-toast__mark {
+  color: color-mix(in srgb, var(--state-danger) 55%, var(--text-primary));
+}
+
+.inv-toast__body {
+  min-width: 0;
+}
+
+.inv-toast__eyebrow {
+  margin: 0 0 var(--space-1);
+  color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--tracking-kicker-md);
+  text-transform: uppercase;
+}
+
+.inv-toast__message {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.inv-toast__dismiss {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin: -4px -4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.inv-toast__dismiss:is(:hover, :focus-visible) {
+  color: var(--text-primary);
+}
+
+.inv-toast__dismiss:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.inv-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-3);
+}
+
+.inv-toast__action {
+  padding: 0 0 1px;
+  border: 0;
+  /* Tied to the resolved label colour so the rule tracks it on every palette. */
+  border-bottom: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  background: none;
+  color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+/* --accent is brand chrome tuned for dark surfaces and drops to 2.05:1 on
+ * jenny-day; blend it toward the palette foreground like the tone marks. */
+.inv-toast__action--primary {
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-primary));
+  border-bottom-color: color-mix(in srgb, currentColor 52%, transparent);
+}
+
+.inv-toast__action:is(:hover, :focus-visible) {
+  color: var(--text-primary);
+  border-bottom-color: currentColor;
+}
+
+.inv-toast__action:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+.toast-viewport__overflow {
+  pointer-events: none;
+  width: 100%;
+  margin: 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  text-align: right;
+}
+
+.inv-toast.toast-exiting {
+  animation: toast-out var(--transition-fast) forwards;
+  pointer-events: none;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* With no animation to wait on, the controller removes the node synchronously
+ * rather than listening for an animationend that never fires. */
+@media (prefers-reduced-motion: reduce) {
+  .inv-toast {
+    animation: none;
+  }
+
+  .inv-toast.toast-exiting {
+    animation: none;
+    opacity: 0;
+  }
+}

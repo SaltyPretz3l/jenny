@@ -1,0 +1,70 @@
+[
+  {
+    "payload": {
+      "type": "started",
+      "streamId": "stream_24"
+    },
+    "context": {
+      "turn_id": "stream_24",
+      "event_id": "stream_24:started:0",
+      "primary_user_message_id": "user_stream_24",
+      "primary_assistant_message_id": "",
+      "sort_key": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_24",
+      "callId": "call_24",
+      "toolName": "Write",
+      "status": "pending_approval",
+      "summary": "write notes.txt",
+      "input": {
+        "path": "notes.txt"
+      }
+    },
+    "context": {
+      "turn_id": "stream_24",
+      "event_id": "stream_24:tool_use:0",
+      "primary_user_message_id": "user_stream_24",
+      "primary_tool_message_id": "tool_use_stream_24",
+      "tool_result_message_id": "tool_result_stream_24",
+      "sort_key": [
+        1,
+        0,
+        40
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_24",
+      "callId": "call_24",
+      "toolName": "Write",
+      "status": "denied",
+      "approvalState": "denied",
+      "summary": "write notes.txt",
+      "input": {
+        "path": "notes.txt"
+      }
+    },
+    "context": {
+      "turn_id": "stream_24",
+      "event_id": "stream_24:tool_use:1",
+      "primary_user_message_id": "user_stream_24",
+      "primary_tool_message_id": "tool_use_stream_24",
+      "tool_result_message_id": "tool_result_stream_24",
+      "sort_key": [
+        1,
+        1,
+        50
+      ]
+    }
+  }
+]

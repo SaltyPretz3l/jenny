@@ -1,0 +1,67 @@
+[
+  {
+    "payload": {
+      "type": "started",
+      "streamId": "stream_18"
+    },
+    "context": {
+      "turn_id": "stream_18",
+      "event_id": "stream_18:started:0",
+      "primary_user_message_id": "user_stream_18",
+      "primary_assistant_message_id": "assistant_stream_18",
+      "sort_key": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_18",
+      "callId": "call_18",
+      "toolName": "Read",
+      "status": "running",
+      "summary": "Read config.json",
+      "input": {
+        "path": "config.json"
+      }
+    },
+    "context": {
+      "turn_id": "stream_18",
+      "event_id": "stream_18:tool_use:0",
+      "primary_user_message_id": "user_stream_18",
+      "primary_tool_message_id": "tool_use_stream_18",
+      "tool_result_message_id": "tool_result_stream_18",
+      "sort_key": [
+        1,
+        0,
+        40
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_result",
+      "streamId": "stream_18",
+      "callId": "call_18",
+      "toolName": "Read",
+      "content": "config: {\"port\":8080}",
+      "isError": false,
+      "summary": ""
+    },
+    "context": {
+      "turn_id": "stream_18",
+      "event_id": "stream_18:tool_result:0",
+      "primary_user_message_id": "user_stream_18",
+      "primary_tool_message_id": "tool_use_stream_18",
+      "tool_result_message_id": "tool_result_stream_18",
+      "sort_key": [
+        1,
+        1,
+        50
+      ]
+    }
+  }
+]

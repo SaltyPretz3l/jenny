@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "created-file",
+      "file_path": "notes.txt",
+      "old_text": "",
+      "new_text": "hello\n",
+      "status": "created",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "created",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 0,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": null,
+        "after_hash": "sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 0,
+            "newStart": 1,
+            "newLines": 1,
+            "lines": [
+              "+hello"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-created-file",
+      "file_path": "empty.txt",
+      "old_text": "",
+      "new_text": "",
+      "status": "created",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "created",
+        "review_state": "summary_only",
+        "body_kind": "none",
+        "additions": 0,
+        "deletions": 0,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": null,
+        "after_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "hash_kind": "diff_input_text",
+        "hunks": []
+      }
+    },
+    {
+      "name": "one-line-replacement",
+      "file_path": "notes.txt",
+      "old_text": "alpha\n",
+      "new_text": "beta\n",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 1,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "after_hash": "sha256:f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 1,
+            "newStart": 1,
+            "newLines": 1,
+            "lines": [
+              "-alpha",
+              "+beta"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "crlf-replacement",
+      "file_path": "notes.txt",
+      "old_text": "alpha\r\n",
+      "new_text": "beta\r\n",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 1,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "after_hash": "sha256:f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 1,
+            "newStart": 1,
+            "newLines": 1,
+            "lines": [
+              "-alpha",
+              "+beta"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "insertion",
+      "file_path": "notes.txt",
+      "old_text": "alpha\nomega\n",
+      "new_text": "alpha\nbeta\nomega\n",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 0,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:b712eddc43eed4e738d7783ddcad4affe6a28788f5150a693250cf6be5d7ac8a",
+        "after_hash": "sha256:062fb3c9d40b334fe7bbb1d54bd37272402244ba6e38721342544dc8205ce2ad",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 2,
+            "newStart": 1,
+            "newLines": 3,
+            "lines": [
+              " alpha",
+              "+beta",
+              " omega"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "deletion",
+      "file_path": "notes.txt",
+      "old_text": "alpha\nbeta\nomega\n",
+      "new_text": "alpha\nomega\n",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 0,
+        "deletions": 1,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:062fb3c9d40b334fe7bbb1d54bd37272402244ba6e38721342544dc8205ce2ad",
+        "after_hash": "sha256:b712eddc43eed4e738d7783ddcad4affe6a28788f5150a693250cf6be5d7ac8a",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 3,
+            "newStart": 1,
+            "newLines": 2,
+            "lines": [
+              " alpha",
+              "-beta",
+              " omega"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-op",
+      "file_path": "same.txt",
+      "old_text": "same\n",
+      "new_text": "same\n",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "summary_only",
+        "body_kind": "none",
+        "additions": 0,
+        "deletions": 0,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6",
+        "after_hash": "sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6",
+        "hash_kind": "diff_input_text",
+        "hunks": []
+      }
+    },
+    {
+      "name": "missing-trailing-newline",
+      "file_path": "notes.txt",
+      "old_text": "alpha\n",
+      "new_text": "alpha",
+      "status": "modified",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 1,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "after_hash": "sha256:8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 1,
+            "newStart": 1,
+            "newLines": 1,
+            "lines": [
+              "-alpha",
+              "+alpha",
+              "\\ No newline at end of file"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "line-cap-summary",
+      "file_path": "large.txt",
+      "old_text": "a\n",
+      "new_text": "b\n",
+      "status": "modified",
+      "options": {
+        "max_diff_line_chars": 1
+      },
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "summary_only",
+        "body_kind": "summary_only",
+        "additions": 1,
+        "deletions": 1,
+        "truncated": true,
+        "truncation_reason": "line_limit",
+        "before_hash": "sha256:87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7",
+        "after_hash": "sha256:0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f",
+        "hash_kind": "diff_input_text",
+        "hunks": []
+      }
+    },
+    {
+      "name": "missing-trailing-newline-unchanged-eof-context",
+      "file_path": "src/eof.txt",
+      "old_text": "a\nb\nc",
+      "new_text": "a\nB\nc",
+      "expected": {
+        "diff_id": "",
+        "operation_index": 0,
+        "status": "modified",
+        "review_state": "full",
+        "body_kind": "inline_hunks",
+        "additions": 1,
+        "deletions": 1,
+        "truncated": false,
+        "truncation_reason": null,
+        "before_hash": "sha256:ea7fb08b7a2dc4619ffb7c7bb38d95a2047935fa165d71b12efd3852a2e6d0cc",
+        "after_hash": "sha256:8f37d02ad286259f5b9fee3509c7c63ffa16fe3a760fdbfdfcc9595ee7828ead",
+        "hash_kind": "diff_input_text",
+        "hunks": [
+          {
+            "oldStart": 1,
+            "oldLines": 3,
+            "newStart": 1,
+            "newLines": 3,
+            "lines": [
+              " a",
+              "-b",
+              "+B",
+              " c",
+              "\\ No newline at end of file"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "turns": [
+    {
+      "turn_id": "stream_22",
+      "branch_id": "user_stream_22",
+      "events": [
+        {
+          "event_id": "stream_22:user_prompt:0",
+          "turn_id": "stream_22",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_22",
+          "source_message_ids": [
+            "user_stream_22"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Update test.py to add a docstring",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_22:tool_use:0",
+          "turn_id": "stream_22",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_22",
+          "source_message_ids": [
+            "tool_use_stream_22"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "edit_file",
+            "input": {
+              "file_path": "test.py"
+            },
+            "input_json": "{\"file_path\":\"test.py\"}",
+            "approval_state": "pending",
+            "summary": "Edit test.py",
+            "parent_stream_id": "stream_22"
+          },
+          "tool_call_id": "call_22",
+          "status": "pending_approval"
+        },
+        {
+          "event_id": "stream_22:approval_requested:0",
+          "turn_id": "stream_22",
+          "kind": "approval_requested",
+          "primary_message_id": "tool_use_stream_22",
+          "source_message_ids": [
+            "tool_use_stream_22"
+          ],
+          "sort_key": [
+            1,
+            1,
+            45
+          ],
+          "payload": {
+            "approval_state": "pending"
+          },
+          "tool_call_id": "call_22",
+          "status": "pending_approval"
+        }
+      ],
+      "primary_user_message_id": "user_stream_22",
+      "primary_assistant_message_id": "tool_use_stream_22",
+      "source_message_ids": [
+        "user_stream_22",
+        "tool_use_stream_22"
+      ]
+    }
+  ],
+  "byTurnId": {
+    "stream_22": {
+      "turn_id": "stream_22",
+      "branch_id": "user_stream_22",
+      "events": [
+        {
+          "event_id": "stream_22:user_prompt:0",
+          "turn_id": "stream_22",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_22",
+          "source_message_ids": [
+            "user_stream_22"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Update test.py to add a docstring",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_22:tool_use:0",
+          "turn_id": "stream_22",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_22",
+          "source_message_ids": [
+            "tool_use_stream_22"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "edit_file",
+            "input": {
+              "file_path": "test.py"
+            },
+            "input_json": "{\"file_path\":\"test.py\"}",
+            "approval_state": "pending",
+            "summary": "Edit test.py",
+            "parent_stream_id": "stream_22"
+          },
+          "tool_call_id": "call_22",
+          "status": "pending_approval"
+        },
+        {
+          "event_id": "stream_22:approval_requested:0",
+          "turn_id": "stream_22",
+          "kind": "approval_requested",
+          "primary_message_id": "tool_use_stream_22",
+          "source_message_ids": [
+            "tool_use_stream_22"
+          ],
+          "sort_key": [
+            1,
+            1,
+            45
+          ],
+          "payload": {
+            "approval_state": "pending"
+          },
+          "tool_call_id": "call_22",
+          "status": "pending_approval"
+        }
+      ],
+      "primary_user_message_id": "user_stream_22",
+      "primary_assistant_message_id": "tool_use_stream_22",
+      "source_message_ids": [
+        "user_stream_22",
+        "tool_use_stream_22"
+      ]
+    }
+  },
+  "byMessageId": {
+    "user_stream_22": "stream_22",
+    "tool_use_stream_22": "stream_22"
+  }
+}

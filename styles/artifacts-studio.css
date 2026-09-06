@@ -1,0 +1,351 @@
+/* Artifact review panel catalog, detail, provenance, and dirty-state styling. */
+.artifact-review-panel {
+  --artifact-studio-divider: var(--artifact-surface-shell-border);
+  --artifact-catalog-card-bg: var(--artifact-surface-item-bg);
+  --artifact-catalog-card-hover: var(--artifact-surface-item-hover-bg);
+  --artifact-catalog-card-selected:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--bg-surface) 90%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 12%, transparent), transparent 46%);
+  --artifact-pane-kicker-color: var(--artifact-surface-kicker-color);
+  --artifact-pane-copy-color: var(--artifact-surface-copy-color);
+  --artifact-action-bg: var(--artifact-surface-action-bg);
+  --artifact-action-border: var(--artifact-surface-action-border);
+  --artifact-action-hover-bg: var(--artifact-surface-action-hover-bg);
+  --artifact-action-hover-border: var(--artifact-surface-action-hover-border);
+}
+
+.catalog-entry {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  padding: 14px;
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 92%, transparent);
+  border-radius: 24px;
+  background: var(--artifact-catalog-card-bg);
+  text-align: left;
+  color: inherit;
+  box-shadow:
+    0 16px 28px color-mix(in srgb, var(--bg-base) 14%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.catalog-entry:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent-cyan) 26%, var(--artifact-studio-divider));
+  background: var(--artifact-catalog-card-hover);
+  box-shadow:
+    0 20px 34px color-mix(in srgb, var(--bg-base) 20%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+
+.catalog-entry-selected {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--artifact-studio-divider));
+  background: var(--artifact-catalog-card-selected);
+  box-shadow:
+    0 24px 42px color-mix(in srgb, var(--bg-base) 22%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.catalog-entry:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px var(--focus-outline),
+    0 20px 34px color-mix(in srgb, var(--bg-base) 18%, transparent);
+}
+
+.catalog-entry-media {
+  position: relative;
+  display: grid;
+  align-content: end;
+  min-height: 112px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 86%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 58%, transparent), color-mix(in srgb, var(--surface-input-background) 96%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 8%, transparent), transparent 52%);
+}
+
+.catalog-entry-image-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.catalog-entry-media-fallback {
+  place-items: center;
+  gap: 8px;
+  padding: 14px;
+}
+
+.catalog-entry-icon {
+  font-size: 28px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--accent-cyan) 66%, var(--text-secondary));
+}
+
+.catalog-entry-media-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.catalog-entry-media-file,
+.catalog-entry-media-tool {
+  padding: 14px;
+}
+
+.catalog-entry-file-label,
+.catalog-entry-tool-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--artifact-pane-kicker-color);
+}
+
+.catalog-entry-file-name {
+  margin-top: auto;
+  font-family: var(--font-family-display);
+  font-size: 19px;
+  line-height: 1.02;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.catalog-entry-file-path,
+.catalog-entry-tool-snippet {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-secondary) 90%, white 4%);
+  white-space: normal;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.catalog-entry-tool-snippet {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-input-background) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 80%, transparent);
+}
+
+.catalog-entry-main {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+}
+
+.catalog-entry-topline {
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.catalog-entry-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.catalog-entry-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-input-background) 72%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 92%, white 6%);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.catalog-entry-title {
+  font-family: var(--font-family-display);
+  font-size: 20px;
+  line-height: 1.02;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.catalog-entry-preview {
+  font-size: 13px;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--text-secondary) 92%, white 6%);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.catalog-entry-meta {
+  font-size: 11px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-muted) 90%, white 4%);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.artifact-detail-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.artifacts-meta-section {
+  padding-bottom: 22px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 84%, transparent);
+}
+
+.artifacts-meta-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.artifacts-meta-section .section-header {
+  margin-bottom: 12px;
+}
+
+.artifacts-meta-section .section-header-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--artifact-pane-kicker-color);
+}
+
+.dirty-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-amber) 16%, transparent);
+  color: var(--accent-amber);
+}
+
+.dirty-badge.hidden {
+  display: none;
+}
+
+.provenance-entry {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  padding: 2px 0 18px 28px;
+}
+
+.provenance-entry::before {
+  content: attr(data-provenance-step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--artifact-studio-divider));
+  background: color-mix(in srgb, var(--surface-input-background) 78%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 90%, white 6%);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.provenance-entry::after {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 8px;
+  bottom: -2px;
+  width: 1px;
+  background: color-mix(in srgb, var(--artifact-studio-divider) 82%, transparent);
+}
+
+.provenance-entry:last-child {
+  padding-bottom: 0;
+}
+
+.provenance-entry:last-child::after {
+  display: none;
+}
+
+.provenance-entry-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-muted) 90%, var(--text-secondary));
+}
+
+.provenance-entry-detail {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.inv-artifact-primary {
+  font-size: 10px;
+  font-weight: 700;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 26%, transparent);
+  background: color-mix(in srgb, var(--accent-cyan) 8%, transparent);
+  color: var(--accent-cyan);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-artifact-primary:hover {
+  background: color-mix(in srgb, var(--accent-cyan) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-cyan) 34%, transparent);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .catalog-entry {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-entry-media {
+    min-height: 132px;
+  }
+}

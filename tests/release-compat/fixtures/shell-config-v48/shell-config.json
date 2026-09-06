@@ -1,0 +1,17 @@
+{
+  "version": 48,
+  "toolsWorkspaceRoot": "G:/JennyWorkspace",
+  "preferredEngineType": "ollama",
+  "engineTuning": {
+    "maxBudgetUsd": 5
+  },
+  "chatUi": {
+    "zoomPercent": 110
+  },
+  "assistantIdentity": {
+    "agentName": "Jenny"
+  },
+  "tools": {
+    "worktree": true
+  }
+}

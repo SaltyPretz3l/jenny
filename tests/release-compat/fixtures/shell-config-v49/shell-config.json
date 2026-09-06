@@ -1,0 +1,23 @@
+{
+  "version": 49,
+  "toolsWorkspaceRoot": "G:/JennyWorkspace",
+  "preferredEngineType": "ollama",
+  "defaultRunMode": "auto",
+  "engineTuning": {
+    "maxBudgetUsd": 5
+  },
+  "chatUi": {
+    "zoomPercent": 110
+  },
+  "assistantIdentity": {
+    "agentName": "Jenny"
+  },
+  "tools": {
+    "worktree": true,
+    "browser": true,
+    "applyPatch": true,
+    "richFiles": true
+  },
+  "tools_browser_enabled": true,
+  "tools_apply_patch_enabled": true
+}

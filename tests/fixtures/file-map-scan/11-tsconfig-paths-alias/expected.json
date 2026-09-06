@@ -1,0 +1,70 @@
+{
+  "nodes": [
+    {
+      "id": "src/a.js",
+      "label": "a.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 220,
+      "y": 0
+    },
+    {
+      "id": "src/util.js",
+      "label": "util.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 220,
+      "y": 90
+    },
+    {
+      "id": "tsconfig.json",
+      "label": "tsconfig.json",
+      "dir": ".",
+      "isTest": false,
+      "loc": 8,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0.1667,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "src/a.js",
+      "to": "src/util.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "src/util.js",
+      "tsconfig.json",
+      "src/a.js"
+    ],
+    "cycles": [],
+    "orphans": [
+      "tsconfig.json"
+    ]
+  },
+  "meta": {
+    "scanned": 3,
+    "total": 3,
+    "durationMs": 0
+  }
+}

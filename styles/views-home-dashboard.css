@@ -1,0 +1,713 @@
+/* Home dashboard surface: info strip + widget grid + card chrome + the
+ * widget internals (resource bars, signal lists, session rows, link tiles,
+ * status dots). Status colors come from the shared state tokens. */
+
+/* Daybook shell: info strip across the top, the main widget column, the
+ * draggable separator, and the rail column. Explicit rows/columns so the
+ * hidden-widgets strip (inserted right after the grid by the manager) can span
+ * the full width from row 3 without disturbing auto-placement. */
+.home-daybook {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto var(--home-rail-width, 360px);
+  grid-template-rows: auto auto auto;
+  align-items: start;
+  min-width: 0;
+}
+
+.home-daybook > .home-info-strip {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.home-daybook > .home-dashboard-grid {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.home-daybook > .home-rail-resizer,
+.home-daybook > .home-rail-grip {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.home-daybook > .home-dashboard-rail {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.home-daybook > .dashboard-hidden-strip {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+/* Rail column: rides along while the main column scrolls. The top offset
+ * matches the strip's own vertical padding so the pad clears the app chrome. */
+.home-dashboard-rail {
+  position: sticky;
+  top: var(--space-6);
+  display: grid;
+  align-content: start;
+  gap: var(--space-16);
+  min-width: 0;
+  padding-left: var(--space-8);
+}
+
+/* The grip replaces the textarea's native resize handle — one control, both
+ * axes, and no second affordance disagreeing with the persisted rows. */
+.home-dashboard-rail .dashboard-scratchpad .inv-text-field-control {
+  resize: none;
+}
+
+.home-dashboard-rail textarea {
+  resize: none;
+}
+
+/* Vertical separator between the columns. A hairline at rest; the full hit
+ * area is the padded column so it is grabbable without being loud. */
+.home-rail-resizer {
+  position: relative;
+  align-self: stretch;
+  width: var(--space-6);
+  min-height: var(--space-16);
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Flat hairline via a pseudo-element: Home bans gradients (flat-restyle
+ * contract, pinned by views-home-artifacts-split-css.test.js). */
+.home-rail-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 calc(50% - 1px);
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+}
+
+.home-rail-resizer:hover,
+.home-daybook.is-resizing .home-rail-resizer {
+  background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.home-rail-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Corner grip: sits where the separator meets the bottom of the rail and
+ * drives width AND the pad's row count at once. Pointer-only (aria-hidden) —
+ * the separator above it carries the keyboard contract. */
+.home-rail-grip {
+  align-self: end;
+  justify-self: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  cursor: nwse-resize;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.home-rail-grip:hover,
+.home-daybook.is-resizing .home-rail-grip {
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-rail-resizer {
+    transition: none;
+  }
+}
+
+/* Focus mode: every card dims except the one under the pointer or holding
+ * keyboard focus. Opacity/filter only (no color literals, no layout shift);
+ * the transition tokens zero out under prefers-reduced-motion globally. */
+.home-daybook[data-focus-mode="on"] .dashboard-card {
+  opacity: 0.42;
+  filter: saturate(0.7);
+  transition:
+    opacity var(--motion-duration-regular) var(--motion-ease-standard),
+    filter var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.home-daybook[data-focus-mode="on"] .dashboard-card:hover,
+.home-daybook[data-focus-mode="on"] .dashboard-card:focus-within {
+  opacity: 1;
+  filter: none;
+}
+
+/* Edit-layout mode: per-card toolbar + hidden-widgets restore strip. */
+.dashboard-card__edit {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+/* Quiet ghost buttons: no resting border or fill, 8px corners, neutral hover. */
+.dashboard-card__edit-btn {
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-base);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.dashboard-card__edit-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+/* Hairline separator instead of a dashed box. */
+.dashboard-hidden-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-10);
+  padding-top: var(--space-6);
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.dashboard-hidden-strip__label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+/* Scratchpad widget */
+.dashboard-scratchpad {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Tabpanel wrapper around the editable field / markdown preview (the tabs'
+   aria-controls target). display:grid keeps the single child full-width; it
+   adds no spacing of its own beyond the parent grid gap. */
+.dashboard-scratchpad__panel {
+  display: grid;
+  min-width: 0;
+}
+
+/* Depth level 1 (editor): solid one-step fill, hairline border, 8px corners.
+ * Solid rather than --surface-input-background so nothing stacks translucency
+ * over the palette's ambient page background. */
+/* Auto-grow ceiling. The widget sizes the field to its content on every input
+ * (renderer-dashboard-widgets-scratchpad.js autosizeField), the persisted rows
+ * setting is the FLOOR, and this cap is where the field stops growing and
+ * scrolls internally again instead of pushing the rail off-screen. */
+.dashboard-scratchpad .inv-text-field-control {
+  width: 100%;
+  min-height: 96px;
+  max-height: var(--home-scratchpad-max-height, 46vh);
+  overflow-y: auto;
+  resize: vertical;
+  padding: var(--space-4);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  /* Match the app's slim dark scrollbar instead of the default OS chrome. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+.dashboard-scratchpad .inv-text-field-control::-webkit-scrollbar {
+  width: 10px;
+}
+
+.dashboard-scratchpad .inv-text-field-control::-webkit-scrollbar-thumb {
+  background: var(--widget-scrollbar-color);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: padding-box;
+}
+
+.dashboard-scratchpad .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.dashboard-scratchpad__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.dashboard-scratchpad__note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.dashboard-scratchpad__note[data-state="error"] {
+  color: var(--status-fg-danger);
+}
+
+/* Scratchpad v2: named-note tabs, actions menu, trust signals */
+.dashboard-scratchpad__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+/* Note tabs follow the IDE bottom-panel tab idiom exactly: a squared,
+   borderless, fill-less segment whose only states are text color (hover) and a
+   straight 2px bottom accent bar (active). The old --radius-sm corners and
+   hover fill made the inset bar read as a rounded pill edge instead of the
+   straight underline the bottom panel draws. */
+.dashboard-scratchpad__tab {
+  flex: 0 0 auto;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dashboard-scratchpad__tab:hover {
+  color: var(--text-primary);
+}
+
+.dashboard-scratchpad__tab[aria-selected="true"] {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: 600;
+}
+
+.dashboard-scratchpad__tab:focus-visible,
+.dashboard-scratchpad__tab-add:focus-visible,
+.dashboard-scratchpad__menu-btn:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+/* The add button shares the tab footprint (same padding / font-size) so it
+   reads as a peer of the note tabs; unlike a tab it keeps a small rounded
+   hover fill (the ide-bottom-collapse precedent for auxiliary buttons in a
+   tab bar). */
+.dashboard-scratchpad__tab-add {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.dashboard-scratchpad__tab-add:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.dashboard-scratchpad__tab-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Per-tab hover controls live in a relative wrapper that hosts the label
+   button plus the absolutely-positioned close (×) and, on the active tab, a
+   rename pencil. The wrapper sizes to the label; controls overlay reserved
+   trailing padding so they never sit on the label text. */
+.dashboard-scratchpad__tab-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.dashboard-scratchpad__tab-wrap .dashboard-scratchpad__tab {
+  padding-right: var(--space-9);
+}
+
+/* The active tab reserves the wider trailing slot for pencil + × — but ONLY when
+   a × is actually present (multi-note). At the single-note floor there is no ×,
+   so it keeps the base slot and the pencil slides into the rightmost position
+   below, avoiding a long tab with empty trailing space. */
+.dashboard-scratchpad__tab-wrap:has(.dashboard-scratchpad__tab[aria-selected="true"]):has(.dashboard-scratchpad__tab-close) .dashboard-scratchpad__tab {
+  padding-right: var(--space-16);
+}
+
+/* No × (single-note floor): the rename pencil takes the rightmost control slot,
+   so the base --space-9 padding is enough and the tab hugs its label. */
+.dashboard-scratchpad__tab-wrap:not(:has(.dashboard-scratchpad__tab-close)) .dashboard-scratchpad__tab-edit {
+  right: var(--space-1);
+}
+
+.dashboard-scratchpad__tab-close,
+.dashboard-scratchpad__tab-edit {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.dashboard-scratchpad__tab-close {
+  right: var(--space-1);
+}
+
+.dashboard-scratchpad__tab-edit {
+  right: var(--space-8);
+}
+
+.dashboard-scratchpad__tab-wrap:hover .dashboard-scratchpad__tab-close,
+.dashboard-scratchpad__tab-wrap:focus-within .dashboard-scratchpad__tab-close,
+.dashboard-scratchpad__tab-wrap:hover .dashboard-scratchpad__tab-edit,
+.dashboard-scratchpad__tab-wrap:focus-within .dashboard-scratchpad__tab-edit {
+  opacity: 1;
+}
+
+.dashboard-scratchpad__tab-edit:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.dashboard-scratchpad__tab-close:hover {
+  color: var(--status-fg-danger);
+  background: color-mix(in srgb, var(--status-fg-danger) 16%, transparent);
+}
+
+.dashboard-scratchpad__tab-edit:focus-visible,
+.dashboard-scratchpad__tab-close:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+/* New-note grow-in. Reduced-motion safe: --motion-duration-fast zeroes out, so
+   the animation collapses to an instant 0ms step. */
+@keyframes dashboard-scratchpad-tab-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.dashboard-scratchpad__tab-wrap--new {
+  animation: dashboard-scratchpad-tab-in var(--transition-fast);
+}
+
+.dashboard-scratchpad__rename {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 160px;
+}
+
+/* The rename input is ALSO matched by the textarea rule above (same
+   `.dashboard-scratchpad .inv-text-field-control` scope), which sets
+   min-height:96px + resize:vertical. Those must be reset here or the inline
+   rename balloons into a textarea-sized box; the rest pins it to a tab pill. */
+.dashboard-scratchpad__rename .inv-text-field-control {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.dashboard-scratchpad__rename .inv-text-field-control:focus,
+.dashboard-scratchpad__rename .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.dashboard-scratchpad__actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+/* Tabular figures keep the n/4000 counter from reflowing the row as it ticks. */
+.dashboard-scratchpad__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-scratchpad__count[data-state="danger"] {
+  color: var(--status-fg-danger);
+}
+
+.dashboard-scratchpad__menu-btn {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-base);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.dashboard-scratchpad__menu-btn:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+/* Scratchpad v2 (Phase 4): mono font option + opt-in markdown/checklist preview */
+.dashboard-scratchpad[data-font="mono"] .inv-text-field-control,
+.dashboard-scratchpad[data-font="mono"] .dashboard-scratchpad__preview {
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+
+.dashboard-scratchpad__preview-toggle {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.dashboard-scratchpad__preview-toggle:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.dashboard-scratchpad__preview-toggle[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--border-default) 86%, transparent);
+}
+
+.dashboard-scratchpad__preview-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+/* Depth level 1 (preview): same recipe as the editor it swaps with. */
+.dashboard-scratchpad__preview {
+  display: grid;
+  gap: var(--space-1, 4px);
+  min-height: 96px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.dashboard-scratchpad__preview-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.dashboard-scratchpad__preview-heading {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-scratchpad__preview-heading[data-level="1"] {
+  font-size: var(--font-size-md, 1.05em);
+}
+
+.dashboard-scratchpad__preview-bullet {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.dashboard-scratchpad__preview-dot {
+  color: var(--text-secondary);
+}
+
+.dashboard-scratchpad__preview-blank {
+  height: var(--space-2);
+}
+
+.dashboard-scratchpad__preview-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Checklist rows — the one interactive element in the preview. */
+.dashboard-scratchpad__check {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1, 4px) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.dashboard-scratchpad__check:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.dashboard-scratchpad__check:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.dashboard-scratchpad__check-box {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.dashboard-scratchpad__check.is-checked .dashboard-scratchpad__check-box {
+  color: var(--accent);
+}
+
+.dashboard-scratchpad__check.is-checked .dashboard-scratchpad__check-label {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.dashboard-scratchpad__check-label {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Daybook: the main column is a single stack — the rail took the second
+ * column, and every remaining main-column widget is a full-width work
+ * surface (agenda, open loops). */
+.home-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* Sections hug their content instead of stretching to the row's tallest
+   * one — sparse widgets stop looking like empty towers. */
+  align-items: start;
+  /* Whitespace is the only separator now that card chrome is gone: ~32px row,
+   * ~44px column, composed from the --space-* scale (which tops out at 32px). */
+  gap: var(--space-16) calc(var(--space-16) + var(--space-6));
+}
+
+.home-dashboard-grid:empty {
+  display: none;
+}
+
+/* Open section, not a card: no border, no fill, no shadow, no hover
+ * elevation, no min-height floor. The grid gap owns all separation, so the
+ * section itself carries zero padding. */
+.dashboard-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-6);
+  padding: 0;
+  min-width: 0;
+}
+
+/* No container to tint any more — the error reads as danger-toned body copy. */
+.dashboard-card[data-widget-state="error"] .dashboard-card__body {
+  color: var(--state-danger);
+}
+
+.dashboard-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+/* The section rule: a hairline running from the title to the section's right
+ * edge. Pseudo-element so the registry's header DOM stays untouched. */
+.dashboard-card__header::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: var(--space-8);
+  height: 1px;
+  background: color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+/* The single heading system for the whole page. Size is unchanged (readability
+ * rule) — the eyebrow is quieted with color only. The mix holds >= 5:1 on all
+ * ten palettes (worst case: paper, 5.64:1 on --bg-base). */
+.dashboard-card__title {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-lg);
+  text-transform: uppercase;
+}
+
+.dashboard-card__body {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* Sections read top-down, so the empty state is left-aligned under the header
+ * (icon beside text) rather than centred inside a box. Sizes are unchanged. */
+.dashboard-empty-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  text-align: left;
+}

@@ -1,0 +1,12 @@
+{
+  "content_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-mcp-descriptor",
+  "contribution_id": "review_service",
+  "payload": {
+    "kind": "mcp_descriptor",
+    "display_name": "Review service",
+    "transport_class": "remote_http",
+    "capabilities": ["review"]
+  }
+}

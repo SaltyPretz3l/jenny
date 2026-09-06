@@ -1,0 +1,58 @@
+{
+  "budgets_schema_version": 1,
+  "stage": 5,
+  "status": "frozen",
+  "frozen": true,
+  "approved_packet": "stage5d_activation",
+  "activation_stage": 5,
+  "network": {
+    "metadata_document_max_bytes": 2097152,
+    "refresh_total_max_bytes": 16777216,
+    "redirect_max": 5,
+    "dns_answers_per_hop_max": 16,
+    "connect_timeout_ms": 10000,
+    "first_byte_timeout_ms": 15000,
+    "total_timeout_ms": 120000,
+    "tuf_refresh_timeout_ms": 60000,
+    "git_fetch_timeout_ms": 120000
+  },
+  "distribution": {
+    "solver_nodes_max": 64,
+    "dependencies_per_node_max": 16,
+    "candidates_per_plugin_max": 64,
+    "solver_decisions_max": 4096,
+    "solver_incompatibilities_max": 8192,
+    "solver_timeout_ms": 2000,
+    "tuf_root_updates_max": 32,
+    "tuf_delegated_roles_max": 64,
+    "tuf_targets_max": 10000,
+    "cache_max_bytes": 536870912,
+    "installed_store_max_bytes": 4294967296,
+    "installed_plugin_max_bytes": 536870912,
+    "prior_generations_per_plugin": 2,
+    "data_snapshots_per_plugin": 2
+  },
+  "remote_mcp": {
+    "descriptors_max": 64,
+    "tools_per_descriptor_max": 64,
+    "active_contributions_max": 256,
+    "schema_item_max_bytes": 65536,
+    "discovery_max_bytes": 4194304,
+    "inflight_global_max": 4,
+    "inflight_per_descriptor_max": 1,
+    "queue_global_max": 16,
+    "queue_per_descriptor_max": 4,
+    "response_max_bytes": 8388608,
+    "sse_line_max_bytes": 65536,
+    "sse_events_max": 10000
+  },
+  "authorization": {
+    "response_max_bytes": 65536,
+    "scopes_max": 32,
+    "flow_ttl_ms": 600000,
+    "flows_global_max": 4,
+    "flows_per_resource_max": 1,
+    "step_up_attempts_max": 2,
+    "access_token_cache_max": 64
+  }
+}

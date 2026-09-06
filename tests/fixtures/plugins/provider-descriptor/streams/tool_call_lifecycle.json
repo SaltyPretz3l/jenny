@@ -1,0 +1,631 @@
+{
+  "fixture_id": "streams/tool_call_lifecycle",
+  "schema_version": 1,
+  "description": "A function_call item arrives complete on response.output_item.done. When a response.output_item.done with item.type=='reasoning' precedes it, that reasoning item is cached against the call_id in an engine-instance-scoped map and replayed verbatim, positioned directly before the function_call item, on the NEXT HTTP request (a separate turn of the tool loop). The cache's bounds and eviction order are asserted here too.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_function_call_round_and_follow_up_output_serialization",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_reasoning_items_are_captured_and_replayed_before_their_function_call"
+  ],
+  "declarative_verdict": "no",
+  "notes": "The second clear carve-out: an opaque provider-issued blob must be cached keyed by call_id, survive across separate HTTP requests within one engine instance, be replayed at an exact list position relative to another item, be deduped by object identity, and be evicted under BOTH a factory-sized count bound and an aggregate byte ceiling. No lookup table expresses 'remember this blob and reinsert it several requests later at a position determined by a DIFFERENT event that has not happened yet'. Note also that the function_call item arrives FULLY FORMED on response.output_item.done: this parser never assembles arguments across response.function_call_arguments.delta events, and whether the real backend ever emits them could not be verified from static analysis alone.",
+  "cases": [
+    {
+      "case_id": "tool_call_then_followup_request",
+      "executable": true,
+      "binding": "tool_loop_turns",
+      "input": {
+        "turn_1": {
+          "prompt": "Read it",
+          "tools": [
+            {
+              "name": "read_file",
+              "description": "Read a file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "sse_lines": [
+            {
+              "type": "response.output_item.done",
+              "item": {
+                "type": "function_call",
+                "name": "read_file",
+                "arguments": "{\"path\":\"README.md\"}",
+                "call_id": "call_test_1"
+              }
+            },
+            {
+              "type": "response.completed",
+              "response": {
+                "usage": {
+                  "input_tokens": 5,
+                  "output_tokens": 3,
+                  "total_tokens": 8
+                }
+              }
+            }
+          ]
+        },
+        "turn_2": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "Read it"
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "name": "read_file",
+                  "arguments": {
+                    "path": "README.md"
+                  },
+                  "call_id": "call_test_1"
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call_test_1",
+              "content": "contents"
+            }
+          ],
+          "sse_lines": [
+            {
+              "type": "response.output_text.delta",
+              "delta": "Done"
+            },
+            {
+              "type": "response.completed",
+              "response": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "turn_1_stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_1",
+            "arguments": {
+              "path": "README.md"
+            },
+            "coerced": false
+          }
+        ],
+        "turn_1_result": {
+          "content": "",
+          "finish_reason": "tool_calls",
+          "tool_calls": [
+            {
+              "tool_id": "read_file",
+              "call_id": "call_test_1",
+              "arguments": {
+                "path": "README.md"
+              },
+              "coerced": false
+            }
+          ]
+        },
+        "turn_1_request_tools": [
+          {
+            "type": "function",
+            "name": "read_file",
+            "description": "Read a file",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "turn_2_request_input_items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Read it"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "name": "read_file",
+            "arguments": "{\"path\":\"README.md\"}",
+            "call_id": "call_test_1"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_test_1",
+            "output": "contents"
+          }
+        ],
+        "turn_2_result": {
+          "content": "Done",
+          "finish_reason": "stop"
+        }
+      },
+      "rule": "A function_call item arrives COMPLETE on response.output_item.done (never assembled from argument-delta events) and finish_reason is overridden to 'tool_calls'. The follow-up request re-serializes the call and its output as a paired function_call/function_call_output couple."
+    },
+    {
+      "case_id": "reasoning_item_replayed_immediately_before_its_call",
+      "executable": true,
+      "binding": "tool_loop_turns",
+      "input": {
+        "turn_1": {
+          "prompt": "go",
+          "tools": [],
+          "sse_lines": [
+            {
+              "type": "response.output_item.done",
+              "item": {
+                "type": "reasoning",
+                "id": "rs_test_1",
+                "encrypted_content": "synthetic-opaque-reasoning-blob"
+              }
+            },
+            {
+              "type": "response.output_item.done",
+              "item": {
+                "type": "function_call",
+                "name": "read_file",
+                "arguments": "{}",
+                "call_id": "call_test_9"
+              }
+            },
+            {
+              "type": "response.completed",
+              "response": {}
+            }
+          ]
+        },
+        "turn_2": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "go"
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "name": "read_file",
+                  "arguments": {},
+                  "call_id": "call_test_9"
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call_test_9",
+              "content": "contents"
+            }
+          ],
+          "sse_lines": [
+            {
+              "type": "response.output_text.delta",
+              "delta": "Done"
+            },
+            {
+              "type": "response.completed",
+              "response": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "turn_2_request_input_items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "go"
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_test_1",
+            "encrypted_content": "synthetic-opaque-reasoning-blob"
+          },
+          {
+            "type": "function_call",
+            "name": "read_file",
+            "arguments": "{}",
+            "call_id": "call_test_9"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_test_9",
+            "output": "contents"
+          }
+        ]
+      },
+      "rule": "With store:false the backend expects each replayed function_call to be preceded by the reasoning item that produced it. The cached item is spliced in at exactly the position before its call on a LATER HTTP request -- state no per-event mapping can express."
+    },
+    {
+      "case_id": "cache_bound_floors_at_thirty_two",
+      "executable": true,
+      "binding": "reasoning_cache",
+      "input": {
+        "requested_max_reasoning_items": 0,
+        "captures": []
+      },
+      "expect": {
+        "max_reasoning_items": 32
+      },
+      "rule": "Direct construction with no admitted budget keeps today's floor of 32 entries; the bound is never below it."
+    },
+    {
+      "case_id": "cache_bound_tracks_the_admitted_tool_budget",
+      "executable": true,
+      "binding": "reasoning_cache",
+      "input": {
+        "requested_max_reasoning_items": 200,
+        "captures": []
+      },
+      "expect": {
+        "max_reasoning_items": 200
+      },
+      "rule": "The factory sizes the cache from max(cloud_max_tools_per_turn, max_tools_per_turn) so one turn's whole tool budget fits: a smaller cache would silently drop the oldest calls' reasoning items partway through a long turn."
+    },
+    {
+      "case_id": "cache_bound_is_clamped_at_the_ceiling",
+      "executable": true,
+      "binding": "reasoning_cache",
+      "input": {
+        "requested_max_reasoning_items": 1000,
+        "captures": []
+      },
+      "expect": {
+        "max_reasoning_items": 512
+      },
+      "rule": "The admitted budget is clamped into [32, 512]; a hostile or misconfigured budget cannot uncap the cache."
+    },
+    {
+      "case_id": "eviction_is_fifo_by_first_capture_not_lru",
+      "executable": true,
+      "binding": "reasoning_cache",
+      "input": {
+        "requested_max_reasoning_items": 32,
+        "captures": [
+          {
+            "call_id": "c0",
+            "item": {
+              "type": "reasoning",
+              "id": "rs0"
+            }
+          },
+          {
+            "call_id": "c1",
+            "item": {
+              "type": "reasoning",
+              "id": "rs1"
+            }
+          },
+          {
+            "call_id": "c2",
+            "item": {
+              "type": "reasoning",
+              "id": "rs2"
+            }
+          },
+          {
+            "call_id": "c3",
+            "item": {
+              "type": "reasoning",
+              "id": "rs3"
+            }
+          },
+          {
+            "call_id": "c4",
+            "item": {
+              "type": "reasoning",
+              "id": "rs4"
+            }
+          },
+          {
+            "call_id": "c5",
+            "item": {
+              "type": "reasoning",
+              "id": "rs5"
+            }
+          },
+          {
+            "call_id": "c6",
+            "item": {
+              "type": "reasoning",
+              "id": "rs6"
+            }
+          },
+          {
+            "call_id": "c7",
+            "item": {
+              "type": "reasoning",
+              "id": "rs7"
+            }
+          },
+          {
+            "call_id": "c8",
+            "item": {
+              "type": "reasoning",
+              "id": "rs8"
+            }
+          },
+          {
+            "call_id": "c9",
+            "item": {
+              "type": "reasoning",
+              "id": "rs9"
+            }
+          },
+          {
+            "call_id": "c10",
+            "item": {
+              "type": "reasoning",
+              "id": "rs10"
+            }
+          },
+          {
+            "call_id": "c11",
+            "item": {
+              "type": "reasoning",
+              "id": "rs11"
+            }
+          },
+          {
+            "call_id": "c12",
+            "item": {
+              "type": "reasoning",
+              "id": "rs12"
+            }
+          },
+          {
+            "call_id": "c13",
+            "item": {
+              "type": "reasoning",
+              "id": "rs13"
+            }
+          },
+          {
+            "call_id": "c14",
+            "item": {
+              "type": "reasoning",
+              "id": "rs14"
+            }
+          },
+          {
+            "call_id": "c15",
+            "item": {
+              "type": "reasoning",
+              "id": "rs15"
+            }
+          },
+          {
+            "call_id": "c16",
+            "item": {
+              "type": "reasoning",
+              "id": "rs16"
+            }
+          },
+          {
+            "call_id": "c17",
+            "item": {
+              "type": "reasoning",
+              "id": "rs17"
+            }
+          },
+          {
+            "call_id": "c18",
+            "item": {
+              "type": "reasoning",
+              "id": "rs18"
+            }
+          },
+          {
+            "call_id": "c19",
+            "item": {
+              "type": "reasoning",
+              "id": "rs19"
+            }
+          },
+          {
+            "call_id": "c20",
+            "item": {
+              "type": "reasoning",
+              "id": "rs20"
+            }
+          },
+          {
+            "call_id": "c21",
+            "item": {
+              "type": "reasoning",
+              "id": "rs21"
+            }
+          },
+          {
+            "call_id": "c22",
+            "item": {
+              "type": "reasoning",
+              "id": "rs22"
+            }
+          },
+          {
+            "call_id": "c23",
+            "item": {
+              "type": "reasoning",
+              "id": "rs23"
+            }
+          },
+          {
+            "call_id": "c24",
+            "item": {
+              "type": "reasoning",
+              "id": "rs24"
+            }
+          },
+          {
+            "call_id": "c25",
+            "item": {
+              "type": "reasoning",
+              "id": "rs25"
+            }
+          },
+          {
+            "call_id": "c26",
+            "item": {
+              "type": "reasoning",
+              "id": "rs26"
+            }
+          },
+          {
+            "call_id": "c27",
+            "item": {
+              "type": "reasoning",
+              "id": "rs27"
+            }
+          },
+          {
+            "call_id": "c28",
+            "item": {
+              "type": "reasoning",
+              "id": "rs28"
+            }
+          },
+          {
+            "call_id": "c29",
+            "item": {
+              "type": "reasoning",
+              "id": "rs29"
+            }
+          },
+          {
+            "call_id": "c30",
+            "item": {
+              "type": "reasoning",
+              "id": "rs30"
+            }
+          },
+          {
+            "call_id": "c31",
+            "item": {
+              "type": "reasoning",
+              "id": "rs31"
+            }
+          },
+          {
+            "call_id": "c0",
+            "item": {
+              "type": "reasoning",
+              "id": "rs0-recaptured"
+            }
+          },
+          {
+            "call_id": "c32",
+            "item": {
+              "type": "reasoning",
+              "id": "rs32"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "cache_size": 32,
+        "cached_call_ids": [
+          "c1",
+          "c2",
+          "c3",
+          "c4",
+          "c5",
+          "c6",
+          "c7",
+          "c8",
+          "c9",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c20",
+          "c21",
+          "c22",
+          "c23",
+          "c24",
+          "c25",
+          "c26",
+          "c27",
+          "c28",
+          "c29",
+          "c30",
+          "c31",
+          "c32"
+        ],
+        "max_reasoning_items": 32
+      },
+      "rule": "Eviction is FIFO by FIRST capture, NOT LRU: dict.update() on an existing key does not reorder, so re-capturing c0 keeps its original position and the next insert evicts it. An LRU cache would have evicted c1 instead. Within a tool loop insertion order == call order == replay order, so the two agree in every realistic stream, and FIFO keeps the request-build path read-only and re-entrancy-safe."
+    },
+    {
+      "case_id": "aggregate_byte_ceiling_evicts_before_the_count_bound",
+      "executable": true,
+      "binding": "reasoning_cache",
+      "input": {
+        "requested_max_reasoning_items": 512,
+        "captures": [
+          {
+            "call_id": "b0",
+            "blob_chars": 3000000
+          },
+          {
+            "call_id": "b1",
+            "blob_chars": 3000000
+          },
+          {
+            "call_id": "b2",
+            "blob_chars": 3000000
+          },
+          {
+            "call_id": "b3",
+            "blob_chars": 3000000
+          }
+        ]
+      },
+      "expect": {
+        "cache_size": 2,
+        "cached_call_ids": [
+          "b2",
+          "b3"
+        ],
+        "max_reasoning_items": 512
+      },
+      "rule": "A count bound alone is not enough at 200-500 entries: reasoning items are opaque encrypted_content blobs of unbounded size, so an 8 MiB AGGREGATE byte ceiling evicts too. Four ~3 MB blobs leave only the newest two even though the count bound is 512."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "cache_persistence_posture",
+      "reason": "The cache is deliberately NOT persisted across process restart or engine reconfiguration: persisting would write provider-issued encrypted_content into a durable store and require a schema plus migration, and buys nothing because _insert_reasoning_items already ships calls with no captured item. That is a design decision about code that does not exist; there is no observable behavior to assert."
+    }
+  ]
+}

@@ -1,0 +1,417 @@
+.artifacts-detail-empty,
+.artifacts-detail-panel {
+  min-height: 0;
+}
+
+.artifacts-detail-empty {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  padding: 38px 34px;
+  border-radius: 24px;
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 40%, transparent), color-mix(in srgb, var(--surface-input-background) 88%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 8%, transparent), transparent 52%);
+  color: var(--text-secondary);
+}
+
+.artifacts-detail-empty.hidden,
+.artifacts-detail-panel.hidden,
+.artifact-editor-shell.hidden,
+.artifact-preview-content.hidden,
+.artifact-editor-fallback.hidden {
+  display: none;
+}
+
+.artifacts-detail-empty h3,
+.artifact-detail-title {
+  margin: 0;
+}
+
+.artifacts-detail-empty p {
+  margin: 0;
+  max-width: 44ch;
+  line-height: 1.7;
+}
+
+.artifacts-detail-panel {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  padding: 0;
+  animation: fade-up var(--motion-duration-emphasis) var(--motion-ease-emphasis);
+}
+
+.artifacts-detail-header {
+  display: grid;
+  gap: 14px;
+}
+
+.artifact-detail-header-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.artifact-detail-kicker {
+  color: color-mix(in srgb, var(--accent-cyan) 72%, var(--text-secondary));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.artifact-detail-title {
+  color: var(--text-primary);
+  font-family: var(--font-family-display);
+  font-size: clamp(24px, 2vw, 34px);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.artifact-detail-path {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+  font-family: var(--font-family-mono);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.artifact-detail-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-subtle));
+  background: color-mix(in srgb, var(--bg-surface) 64%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 86%, white 8%);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.artifact-preview-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.artifact-detail-meta {
+  display: grid;
+  gap: 10px;
+}
+
+.artifact-detail-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.artifact-detail-actions-primary,
+.artifact-detail-actions-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.artifact-detail-note {
+  min-height: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 78%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 44%, transparent), color-mix(in srgb, var(--surface-input-background) 90%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 7%, transparent), transparent 58%);
+  color: color-mix(in srgb, var(--text-secondary) 94%, white 2%);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.artifact-detail-note.detail-note-error {
+  color: var(--widget-stop-color);
+  border-color: color-mix(in srgb, var(--widget-stop-color) 42%, var(--border-default));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--widget-stop-bg) 18%, transparent), color-mix(in srgb, var(--surface-input-background) 92%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--widget-stop-color) 10%, transparent), transparent 54%);
+}
+
+.artifact-detail-meta-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 76%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 58%, transparent), color-mix(in srgb, var(--surface-input-background) 92%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 6%, transparent), transparent 56%);
+}
+
+.artifact-detail-meta-item-stacked {
+  padding: 12px 14px;
+}
+
+.artifact-detail-meta-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-muted) 90%, var(--text-secondary));
+}
+
+.artifact-detail-meta-value {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.artifact-editor-shell,
+.artifact-preview-image-shell,
+.artifact-image-shell {
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 46%, transparent), color-mix(in srgb, var(--surface-input-background) 96%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 52%),
+    radial-gradient(circle at bottom right, color-mix(in srgb, var(--accent-cyan) 8%, transparent), transparent 48%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+}
+
+.artifact-editor-shell {
+  display: grid;
+  min-height: 460px;
+  animation: fade-up var(--motion-duration-emphasis) var(--motion-ease-emphasis);
+}
+
+.artifact-editor-host,
+.artifact-editor-fallback {
+  width: 100%;
+  min-height: 460px;
+}
+
+.artifact-editor-host.artifact-editor-host-fallback {
+  display: none;
+}
+
+.artifact-editor-fallback {
+  resize: vertical;
+  padding: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: 13px/1.7 var(--font-family-mono);
+}
+
+.artifact-preview-image {
+  display: block;
+  width: 100%;
+  max-height: min(62vh, 720px);
+  object-fit: contain;
+  background: color-mix(in srgb, var(--bg-base) 24%, transparent);
+}
+
+.artifact-preview-mermaid-shell {
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 40%, white 16%), color-mix(in srgb, var(--surface-input-background) 82%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 7%, transparent), transparent 54%);
+}
+
+.artifact-preview-mermaid-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex: 0 0 auto; /* fixed chrome: never shrinks when the fill chain makes this a flex item */
+}
+
+.artifact-preview-mermaid-toggle {
+  border: 1px solid color-mix(in srgb, var(--border-default) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 78%, white 18%);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.artifact-preview-mermaid-toggle.active {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-default));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, white 12%), color-mix(in srgb, var(--accent-cyan) 6%, transparent)),
+    color-mix(in srgb, white 86%, transparent);
+}
+
+.artifact-preview-mermaid-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.artifact-preview-mermaid-host {
+  position: relative;
+  min-height: 180px;
+  padding: 16px;
+}
+
+.artifact-preview-mermaid-host .mermaid-viewport {
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 220px;
+  /* WS2: the panel host renders full height (no inline 340/320-style cap) —
+     the panel scrolls and the diagram keeps zoom/pan/fullscreen. */
+  max-height: none;
+  width: 100%;
+}
+
+.artifact-preview-mermaid-host .mermaid-viewport:active {
+  cursor: grabbing;
+}
+
+.artifact-preview-mermaid-host .mermaid-viewport svg {
+  transform-origin: center center;
+  /* Deliberately snappier than --motion-duration-fast: tracks live pan/zoom
+     input, so a longer duration reads as lag (same rule as markdown.css). */
+  transition: transform 80ms ease-out;
+  max-width: 100%;
+  max-height: none;
+  height: auto !important;
+  width: auto !important;
+  display: block;
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-preview-mermaid-host .mermaid-viewport svg {
+    transition: none;
+  }
+}
+
+/* WS2 registry kinds: sanitized html/svg preview shell + chart stub host. */
+.artifact-preview-web-shell {
+  border-radius: 24px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  background: color-mix(in srgb, var(--surface-input-background) 82%, transparent);
+}
+
+.artifact-preview-chart-host {
+  min-height: 180px;
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  background: color-mix(in srgb, var(--surface-input-background) 82%, transparent);
+}
+
+.artifact-preview-mermaid-host .mermaid-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 2;
+  background: color-mix(in srgb, var(--bg-surface) 86%, rgba(12, 20, 31, 0.96));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--border-default) 82%, transparent);
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.artifact-preview-mermaid-host .mermaid-control-btn,
+.artifact-preview-mermaid-host .mermaid-zoom-label {
+  color: var(--text-secondary);
+}
+
+.artifact-preview-mermaid-host .mermaid-control-btn {
+  background: transparent;
+  border: none;
+  font-size: 15px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.artifact-preview-mermaid-host .mermaid-control-btn:hover,
+.artifact-preview-mermaid-host .mermaid-control-btn.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.artifact-preview-mermaid-host .mermaid-zoom-label {
+  min-width: 38px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.artifact-preview-mermaid-host iframe {
+  display: block;
+  width: 100%;
+  border: none;
+  background: color-mix(in srgb, white 90%, var(--bg-surface) 10%);
+  min-width: 280px;
+  min-height: 180px;
+  border-radius: 18px;
+  transition: height var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.artifact-preview-mermaid-source {
+  margin-top: 12px;
+}
+
+.artifact-preview-pre {
+  margin: 0;
+  min-height: 240px;
+  max-height: 540px;
+  padding: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font: 13px/1.7 var(--font-family-mono);
+  border-radius: 24px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 44%, transparent), color-mix(in srgb, var(--surface-input-background) 94%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 52%);
+}
+
+.artifacts-empty {
+  padding: 22px 20px;
+  border-radius: 20px;
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 32%, transparent);
+  box-shadow: var(--shadow-soft);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}

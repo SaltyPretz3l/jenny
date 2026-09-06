@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "updatedAt": "2026-09-01",
+  "_comment": "Per-family speculative-decoding eligibility for the managed llama-server. matchPrefixes use the canonical token form of sidecar/ai/app_profiles canonicalize_model_name (lowercase, non-alnum runs -> '-'). Families must stay in sync with sidecar/ai/app_profiles/__init__.py::_REGISTRY; tests/sidecar/ai/app_profiles/test_acceleration_catalog_parity.py enforces it. mtp is a tri-state claim: 'yes' = verified, 'unverified' = selectable only with allow_unverified (benchmark profiles), 'no' = never. mtpShape 'separate' means the drafter ships as its own GGUF matched by drafterPattern in the model directory. vramHeadroomMb is the extra GPU residency the mode costs.",
+  "defaults": { "draftNMax": 4, "draftNMaxMin": 1, "draftNMaxMax": 6, "vramHeadroomMb": 2048 },
+  "families": [
+    {
+      "family": "gemma4",
+      "matchPrefixes": ["gemma4", "gemma-4"],
+      "mtp": "yes",
+      "mtpShape": "separate",
+      "drafterPattern": "mtp-*.gguf",
+      "ngram": true,
+      "vramHeadroomMb": 512,
+      "evidence": "unsloth gemma-4-12B-it-qat-GGUF ships mtp-gemma-4-12B-it.gguf (Q4_0, ~254 MB) and documents --spec-type draft-mtp --spec-draft-n-max 4"
+    },
+    {
+      "family": "ornith15",
+      "matchPrefixes": ["ornith15", "ornith-1-5"],
+      "mtp": "unverified",
+      "mtpShape": "native",
+      "ngram": true,
+      "vramHeadroomMb": 2048,
+      "evidence": "Qwen-3.5 base family has native MTP heads; published Ornith 1.5 GGUF not yet confirmed to carry them"
+    },
+    {
+      "family": "qwen38",
+      "matchPrefixes": ["qwen3-8"],
+      "mtp": "unverified",
+      "mtpShape": "native",
+      "ngram": true,
+      "vramHeadroomMb": 2048,
+      "evidence": ""
+    },
+    {
+      "family": "qwen36",
+      "matchPrefixes": ["qwen3-6"],
+      "mtp": "no",
+      "mtpShape": "native",
+      "ngram": true,
+      "vramHeadroomMb": 2048,
+      "evidence": "MoE variants show no net MTP speedup on consumer GPUs"
+    }
+  ]
+}

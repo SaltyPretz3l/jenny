@@ -1,0 +1,276 @@
+{
+  "fixture_id": "streams/tool_call_argument_edge_cases",
+  "schema_version": 1,
+  "description": "Per-item validation/coercion rules applied to a single response.output_item.done function_call item, the per-stream duplicate guard that sits behind them, and one cross-item structural filter applied to an assembled request's whole input-item list.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_function_call_missing_call_id_is_dropped_with_a_diagnostic_warning",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_function_call_arguments_delivered_as_dict_are_preserved",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_malformed_function_arguments_are_coerced",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_unpaired_function_calls_and_outputs_are_dropped",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_identical_duplicate_function_call_events_execute_once",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_duplicate_with_dict_and_json_string_arguments_is_still_one_call",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_conflicting_duplicate_call_id_fails_closed"
+  ],
+  "declarative_verdict": "partially",
+  "notes": "The per-item coercion rules (missing-field drop, dict passthrough, malformed-JSON-to-empty-plus-flag) are expressible as a small fixed 'try shape A, else parse shape B, else default+flag' primitive IF a descriptor interpreter shipped that primitive as generic machinery. The cross-item pairing filter and the per-stream duplicate guard are folds over a whole list/stream and read as generic Responses-shape invariants, so they belong in a generic engine's fixed code rather than per-provider descriptor data.",
+  "cases": [
+    {
+      "case_id": "missing_call_id_is_dropped_with_a_payload_free_diagnostic",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"README.md\"}"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"tool_calls": [], "finish_reason": "stop", "content": ""},
+        "diagnostics": {"tool_call_count": 0, "duplicate_function_call_event_count": 0}
+      },
+      "rule": "name AND call_id are both required; missing either drops the item (silently from the model's perspective) and logs a bounded, argument-free diagnostic that never carries field values."
+    },
+    {
+      "case_id": "dict_arguments_are_preserved_without_reserialization",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": {"path": "README.md", "limit": 20},
+              "call_id": "call_test_dict"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_dict",
+            "arguments": {"path": "README.md", "limit": 20},
+            "coerced": false
+          }
+        ],
+        "result": {"finish_reason": "tool_calls"}
+      },
+      "rule": "Arguments already delivered as a JSON object must be used as-is: re-serializing through str() would yield a Python repr that fails JSON parsing and silently discards the model's real arguments."
+    },
+    {
+      "case_id": "malformed_arguments_are_coerced_to_empty_with_a_flag",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "not-json",
+              "call_id": "call_test_bad"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_bad",
+            "arguments": {},
+            "coerced": true
+          }
+        ],
+        "result": {"finish_reason": "tool_calls"}
+      },
+      "rule": "A string that fails JSON parsing becomes {} plus coerced=True rather than failing the turn, so downstream can tell an unparseable-args call apart from a genuinely empty-args one."
+    },
+    {
+      "case_id": "exact_duplicate_function_call_event_executes_once",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"README.md\"}",
+              "call_id": "call_test_dup"
+            }
+          },
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"README.md\"}",
+              "call_id": "call_test_dup"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_dup",
+            "arguments": {"path": "README.md"},
+            "coerced": false
+          }
+        ],
+        "result": {
+          "finish_reason": "tool_calls",
+          "tool_calls": [
+            {
+              "tool_id": "read_file",
+              "call_id": "call_test_dup",
+              "arguments": {"path": "README.md"},
+              "coerced": false
+            }
+          ]
+        },
+        "diagnostics": {"tool_call_count": 1, "duplicate_function_call_event_count": 1}
+      },
+      "rule": "Completed function_call events are deduped PER STREAM by (call_id, name, decoded arguments, coerced). An exact repeat executes ONCE and is counted in diagnostics; scoping to one response is deliberate because call_id is only unique within a response and the id legitimately reappears in the next request's replay."
+    },
+    {
+      "case_id": "dict_and_json_string_duplicate_is_still_one_call",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"limit\":20,\"path\":\"README.md\"}",
+              "call_id": "call_test_shape"
+            }
+          },
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": {"path": "README.md", "limit": 20},
+              "call_id": "call_test_shape"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {
+            "kind": "tool_call",
+            "tool_id": "read_file",
+            "call_id": "call_test_shape",
+            "arguments": {"limit": 20, "path": "README.md"},
+            "coerced": false
+          }
+        ],
+        "diagnostics": {"tool_call_count": 1, "duplicate_function_call_event_count": 1}
+      },
+      "rule": "The fingerprint is computed from ALREADY-DECODED arguments with sort_keys, so the two real wire shapes -- a JSON string and an equivalent dict, in any key order -- compare equal and do not double-execute."
+    },
+    {
+      "case_id": "conflicting_duplicate_call_id_fails_closed",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"README.md\"}",
+              "call_id": "call_test_conflict"
+            }
+          },
+          {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "function_call",
+              "name": "read_file",
+              "arguments": "{\"path\":\"OTHER.md\"}",
+              "call_id": "call_test_conflict"
+            }
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "GenerationError",
+          "message": "[CMP-AI-0005] ChatGPT stream emitted a conflicting duplicate function_call"
+        }
+      },
+      "rule": "A repeat of a call_id with DIFFERENT arguments is not a duplicate, it is a contradiction: it raises a terminal GenerationError with no tool dispatched. GenerationError rather than a retryable ProviderHttpError, because retrying would re-run against a backend deterministically emitting the conflict."
+    },
+    {
+      "case_id": "unpaired_call_and_output_are_dropped_from_the_request",
+      "executable": true,
+      "binding": "input_items",
+      "input": {
+        "prompt": "",
+        "system": "",
+        "messages": [
+          {"role": "user", "content": "go"},
+          {
+            "role": "assistant",
+            "content": "half-finished",
+            "tool_calls": [
+              {"name": "orphan_call", "arguments": {}, "call_id": "call_test_a"}
+            ]
+          },
+          {"role": "tool", "tool_call_id": "call_test_b", "content": "orphan output"}
+        ]
+      },
+      "expect": {
+        "instructions": "",
+        "items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "go"}]
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "half-finished"}]
+          }
+        ]
+      },
+      "rule": "A function_call or function_call_output whose call_id has no matching counterpart ANYWHERE in the assembled list is dropped, because the backend rejects the request otherwise. A whole-list structural filter, not a per-item rule; the surviving message items prove nothing else was collateral."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "tracked_call_id_bound",
+      "reason": "The per-stream duplicate guard tracks at most 1024 call ids and, on overflow, STOPS tracking new ids rather than evicting an existing one (evicting would silently re-open the double-execution window for the evicted call). Reaching that bound needs a 1024-call stream, which is a load fixture rather than a behavior fixture; the bound is owned by the engine's own suite."
+    }
+  ]
+}

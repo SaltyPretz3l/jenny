@@ -1,0 +1,108 @@
+{
+  "contract": "PluginDataStateV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "publisher_id",
+      "plugin_id",
+      "data_domain_id",
+      "data_schema_version",
+      "data_generation_id",
+      "migration_executor_tier",
+      "mutation_watermark",
+      "rollback_barrier",
+      "snapshot_references"
+    ],
+    "max_keys": 9,
+    "additional_properties": "reject",
+    "properties": {
+      "publisher_id": { "type": "ref", "ref": "publisher_id" },
+      "plugin_id": { "type": "ref", "ref": "plugin_id" },
+      "data_domain_id": {
+        "type": "string",
+        "format": "nfc_identifier"
+      },
+      "data_schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000000
+      },
+      "data_generation_id": { "type": "ref", "ref": "generation_id" },
+      "migration_executor_tier": {
+        "type": "enum",
+        "values": ["declarative", "restricted", "full_host"]
+      },
+      "mutation_watermark": {
+        "type": "object",
+        "required": ["sequence", "recorded_at"],
+        "max_keys": 2,
+        "additional_properties": "reject",
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "recorded_at": { "type": "ref", "ref": "iso8601_utc" }
+        }
+      },
+      "rollback_barrier": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "none": {
+            "type": "object",
+            "required": ["kind"],
+            "max_keys": 1,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "none" }
+            }
+          },
+          "erected": {
+            "type": "object",
+            "required": [
+              "kind",
+              "erected_by_operation_id",
+              "source_generation_id",
+              "target_generation_id",
+              "erected_at",
+              "reason"
+            ],
+            "max_keys": 6,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "erected" },
+              "erected_by_operation_id": { "type": "ref", "ref": "operation_id" },
+              "source_generation_id": { "type": "ref", "ref": "generation_id" },
+              "target_generation_id": { "type": "ref", "ref": "generation_id" },
+              "erected_at": { "type": "ref", "ref": "iso8601_utc" },
+              "reason": {
+                "type": "enum",
+                "values": ["incompatible_migration_write", "downgrade_validation_failed"]
+              }
+            }
+          }
+        }
+      },
+      "snapshot_references": {
+        "type": "array",
+        "max_items": 8,
+        "unique_by": ["operation_id"],
+        "items": {
+          "type": "object",
+          "required": ["operation_id", "generation_id", "created_at"],
+          "max_keys": 3,
+          "additional_properties": "reject",
+          "properties": {
+            "operation_id": { "type": "ref", "ref": "operation_id" },
+            "generation_id": { "type": "ref", "ref": "generation_id" },
+            "created_at": { "type": "ref", "ref": "iso8601_utc" }
+          }
+        }
+      }
+    }
+  }
+}

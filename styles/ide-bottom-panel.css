@@ -1,0 +1,176 @@
+/* styles/ide-bottom-panel.css — Workspace IDE bottom panel (Terminal / Problems /
+ * Run output). The panel nests inside .ide-main between #ideEditorStage and
+ * #ideStatusBar; the editor stage flexes and this panel takes a persisted px
+ * height via --ide-bottom-height. Re-themes via palette CSS vars. */
+
+:root {
+  --ide-bottom-height: 220px;
+}
+
+/* Horizontal resizer on the panel's TOP edge (drag up = taller). Sits as a
+ * flex-none sibling just above the panel; the negative margin overlaps the
+ * panel's top border for a fatter grab zone. Hidden while collapsed. */
+.ide-bottom-resizer {
+  flex: 0 0 auto;
+  height: 6px;
+  margin-bottom: -3px;
+  cursor: row-resize;
+}
+
+.ide-bottom-resizer.hidden {
+  display: none;
+}
+
+.ide-bottom-resizer:hover {
+  background: var(--line);
+}
+
+.ide-bottom-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-bottom-panel {
+  flex: 0 0 var(--ide-bottom-height, 220px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--line);
+}
+
+.ide-bottom-panel.hidden {
+  display: none;
+}
+
+/* Fade the panel content in when opened; opacity only — a transform slide
+   would fight the grid reflow that opening the panel causes. */
+.ide-bottom-panel:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Tab strip: view tabs + a trailing collapse control. */
+.ide-bottom-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  gap: 2px;
+  min-height: 30px;
+  padding: 0 6px;
+  background: var(--bg-surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Shared inner role="tablist" wrapper for the role="toolbar" tab bars (the bottom
+ * panel tabs, the rail activity bar, and the secondary-sidebar header). It exists
+ * only so a tablist contains ONLY role=tab children (the collapse/toggle/flip
+ * buttons stay as toolbar siblings); display:contents keeps each bar's flex layout
+ * intact. Homed here (an IDE sheet with headroom) rather than ide-view.css. */
+.ide-tablist-group {
+  display: contents;
+}
+
+.ide-bottom-tab {
+  transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ide-bottom-tab:hover {
+  color: var(--text-primary);
+}
+
+.ide-bottom-tab--active {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.ide-bottom-collapse {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ide-bottom-collapse:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-bottom-tab:focus-visible,
+.ide-bottom-collapse:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Shared content host. Matches the old .ide-rail-panel scroll context exactly
+ * (flex:1 / min-height:0 / overflow-y:auto as a BLOCK, not display:flex): the
+ * flex layout of .ide-bottom-panel gives it a definite height, so the Terminal
+ * (.ide-terminal-panel { height:100% } + its own scrollback scroll) fills it and
+ * the Problems list (.ide-prb, block flow) scrolls within it — the same way both
+ * worked when they lived in the rail. */
+.ide-bottom-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Collapsed-state handle: a thin always-flex-none bar pinned just above the
+ * statusbar while the panel is collapsed. Clicking it reopens the panel on the
+ * last active view. Visibility is the inverse of the panel (applyOpenState
+ * toggles .hidden on whichever is showing). */
+.ide-bottom-handle {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0 6px;
+  background: var(--bg-surface-2);
+  border-top: 1px solid var(--line);
+}
+
+.ide-bottom-handle.hidden {
+  display: none;
+}
+
+.ide-bottom-handle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ide-bottom-handle-btn:hover {
+  color: var(--text-primary);
+}
+
+.ide-bottom-handle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Narrow windows: the panel already lives in .ide-main, so the shell's 860px
+ * grid query needs no change — just cap the height so it never crowds the editor. */
+@media (max-width: 860px) {
+  .ide-bottom-panel {
+    max-height: 50%;
+  }
+}

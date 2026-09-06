@@ -1,0 +1,310 @@
+[build-system]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "companion-sidecar"
+version = "1.0.0"
+description = "Python AI sidecar for the Companion desktop app"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "defusedxml==0.7.1",
+    "filelock>=3.16.0,<4.0",
+    "httpx>=0.27.0,<1.0",
+    "jinja2>=3.1.0,<4.0",
+    "openpyxl==3.1.5",
+    "psutil>=7.2.0,<8.0",
+    "pydantic>=2.0,<3.0",
+    "PyYAML>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+ollama = ["ollama>=0.4.0"]
+content = [
+    "html2text==2025.4.15",
+]
+media = [
+    "Pillow==12.2.0",
+    "PyMuPDF==1.27.2.2",
+]
+spreadsheet = [
+    "defusedxml==0.7.1",
+    "openpyxl==3.1.5",
+]
+office = [
+    "defusedxml==0.7.1",
+]
+dev = [
+    "html2text==2025.4.15",
+    "Pillow==12.2.0",
+    "PyMuPDF==1.27.2.2",
+    "defusedxml==0.7.1",
+    "openpyxl==3.1.5",
+    "pandas==3.0.1",
+    "numpy==2.4.3",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.6",
+    "ruff>=0.8.0",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pyinstaller>=6.16.0,<7.0",
+]
+packaging = [
+    "pyinstaller>=6.16.0,<7.0",
+]
+all = [
+    "ollama>=0.4.0",
+    "html2text==2025.4.15",
+    "Pillow==12.2.0",
+    "PyMuPDF==1.27.2.2",
+    "defusedxml==0.7.1",
+    "openpyxl==3.1.5",
+    "pandas==3.0.1",
+    "numpy==2.4.3",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.6",
+    "ruff>=0.8.0",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pyinstaller>=6.16.0,<7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["sidecar*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/sidecar"]
+addopts = "-v --tb=short --strict-markers"
+# Pin asyncio handling explicitly so a future async test can't silently no-op:
+# strict mode requires @pytest.mark.asyncio, so an unmarked `async def test_`
+# is reported (errored/skipped) rather than collected-and-never-awaited. There
+# are zero async tests today, so this only closes the latent trap.
+asyncio_mode = "strict"
+# The opt-in real-Ollama smokes under tests/sidecar/live/ self-skip via skipif,
+# but excluding the dir from recursive collection keeps them out of the normal
+# `pytest tests/sidecar` / coverage lane entirely. The live lane invokes the
+# file by explicit path (scripts/tests/run-live-ollama.js), which still collects.
+# norecursedirs REPLACES pytest's built-in exclusion list rather than extending
+# it, so the usual build/cache dirs are re-listed alongside "live" to keep them
+# from being recursed if one ever lands under tests/sidecar.
+norecursedirs = ["live", "*.egg", ".*", "build", "dist", "node_modules", "venv"]
+tmp_path_retention_count = 0
+tmp_path_retention_policy = "none"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests",
+    "slow: slow tests",
+]
+
+[tool.coverage.report]
+# Single source of truth for the sidecar coverage floor (Phase 3 of the
+# test-coverage ratchet). pytest-cov reads this when --cov-fail-under is absent,
+# so package.json (test:sidecar:cov) and scripts/checks/run_ci.py no longer pass
+# the flag inline. Raised 70 -> 75 on 2026-06-13 after stable baselines (measured
+# sidecar coverage ~86.3%, an ~11pp buffer); next rung 78 after more soak. See
+# docs/plans/TEST_COVERAGE_RATCHET.md.
+fail_under = 75
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "PL", "B", "I"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.pylint]
+max-statements = 50
+max-public-methods = 15
+
+[tool.ruff.lint.isort]
+known-first-party = ["sidecar"]
+
+[tool.ruff.lint.per-file-ignores]
+# Temporary legacy Ruff allowlist: these files predate the stricter make lint
+# target. Keep this list shrinking as focused refactors retire each exception.
+"sidecar/__main__.py" = ["PLC0415"]
+"sidecar/ai/app_profiles/__init__.py" = ["C901", "PLC0415", "PLR0912"]
+"sidecar/ai/app_profiles/gemma4.py" = ["E501"]
+"sidecar/ai/container.py" = ["PLC0415"]
+"sidecar/ai/context/builder.py" = ["C901", "PLC0414", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/ai/context/builder_render.py" = ["E501", "PLC0415", "PLR2004"]
+"sidecar/ai/context/builder_shared.py" = ["F401"]
+"sidecar/ai/context/builder_skills.py" = ["PLC0415"]
+"sidecar/ai/context/cache_detection.py" = ["C901", "PLR0911", "PLR2004"]
+"sidecar/ai/context/compaction.py" = ["PLR0913", "PLR2004"]
+"sidecar/ai/context/messages.py" = ["C901", "PLC0415", "PLR0912"]
+"sidecar/ai/context/runtime_overlays.py" = ["PLC0415"]
+"sidecar/ai/context/token_budget.py" = ["PLC0415", "PLR2004"]
+"sidecar/ai/context/tokenizers.py" = ["PLC0415"]
+"sidecar/ai/dependency_status.py" = ["PLC0415"]
+"sidecar/ai/engines/mock.py" = ["PLR0915"]
+"sidecar/ai/engines/factory.py" = ["C901", "PLR0911", "PLR0912"]
+"sidecar/ai/engines/ollama.py" = ["PLR0913", "PLR1714", "PLR2004"]
+"sidecar/ai/engines/ollama_generation.py" = ["C901", "PLR0912", "PLR0913", "PLR2004"]
+"sidecar/ai/engines/ollama_metadata.py" = ["C901", "PLR0911", "PLR0912"]
+"sidecar/ai/engines/ollama_runtime.py" = ["C901", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/ai/engines/ollama_telemetry.py" = ["PLC0415", "PLR0913"]
+"sidecar/ai/engines/provider_http.py" = ["C901", "PLR0911", "PLR0912", "PLR0913", "PLR2004"]
+"sidecar/ai/mcp/builtin_server.py" = ["PLR0915"]
+"sidecar/ai/mcp/transport_stdio.py" = ["E501"]
+"sidecar/ai/memory/embedding.py" = ["B905", "PLC0415"]
+"sidecar/ai/memory/families.py" = ["E501"]
+"sidecar/ai/memory/recall_scoring.py" = ["PLR0913"]
+"sidecar/ai/memory/store.py" = ["E501", "PLC0414"]
+"sidecar/ai/memory/store_approved.py" = ["E501", "PLR0913"]
+"sidecar/ai/memory/store_migrations.py" = ["E501", "PLR0911", "PLR2004"]
+"sidecar/ai/memory/store_pending.py" = ["E501", "PLR0913"]
+"sidecar/ai/repo_delta/git_delta.py" = ["PLR0913"]
+"sidecar/ai/routing/chat_decision.py" = ["PLC0415", "PLR0913", "PLR0915"]
+"sidecar/ai/routing/generation_runtime.py" = ["PLR0913"]
+"sidecar/ai/routing/generation_runtime_stream.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/ai/routing/harness_helpers.py" = ["E501"]
+"sidecar/ai/routing/loop_stop.py" = ["PLR2004"]
+"sidecar/ai/routing/retry.py" = ["E501", "PLR0913"]
+"sidecar/ai/routing/router.py" = ["PLR0913"]
+"sidecar/ai/routing/tool_execution.py" = ["C901", "PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLW0603"]
+"sidecar/ai/routing/tool_execution_snapshots.py" = ["PLR0911"]
+"sidecar/ai/routing/tool_execution_tool_handlers.py" = ["PLC0415", "PLR0913"]
+"sidecar/ai/routing/tool_loop.py" = ["PLC0415", "PLR0911", "PLR0913", "PLR2004"]
+"sidecar/ai/routing/tool_loop_calls.py" = ["PLC0415"]
+"sidecar/ai/routing/tool_loop_finalize.py" = ["PLC0415"]
+"sidecar/ai/routing/tool_loop_recovery.py" = ["PLC0415"]
+"sidecar/ai/routing/tool_loop_run.py" = ["PLC0415"]
+"sidecar/ai/routing/tool_resolution.py" = ["PLR0913"]
+"sidecar/ai/tools/assembly.py" = ["C901", "E501", "PLR0911", "PLR0912"]
+"sidecar/ai/tools/builtins/artifacts.py" = ["E501"]
+"sidecar/ai/tools/builtins/edit_file.py" = ["PLR0911"]
+"sidecar/ai/tools/builtins/file_state.py" = ["PLR0911"]
+"sidecar/ai/tools/builtins/filesystem.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLW0603"]
+"sidecar/ai/tools/builtins/filesystem_content.py" = ["C901", "E501", "PLR0912"]
+"sidecar/ai/tools/builtins/git_ops.py" = ["E501"]
+"sidecar/ai/tools/builtins/git_tracking.py" = ["PLC0415", "PLR0911", "PLR2004"]
+"sidecar/ai/tools/builtins/grep_search.py" = ["PLR0913"]
+"sidecar/ai/tools/builtins/mermaid.py" = ["C901", "PLR0911"]
+"sidecar/ai/tools/builtins/python_runtime/_exec_wrapper.py" = ["PLC0415", "PLW0603"]
+"sidecar/ai/tools/builtins/python_runtime/interpreter.py" = ["B904", "E501"]
+"sidecar/ai/tools/builtins/python_runtime/sandbox.py" = ["PLC0415", "PLW1509"]
+"sidecar/ai/tools/builtins/python_runtime/tool.py" = ["E501", "PLW0603"]
+"sidecar/ai/tools/builtins/shell.py" = ["C901", "E501", "PLR0912"]
+"sidecar/ai/tools/builtins/shell_background.py" = ["PLR0913", "PLW1509"]
+"sidecar/ai/tools/builtins/shell_security.py" = ["PLR0911"]
+"sidecar/ai/tools/builtins/web.py" = ["PLC0415", "PLR1714", "PLR2004", "PLW0603"]
+"sidecar/ai/tools/builtins/web_ddg.py" = ["C901", "PLC0415", "PLR2004"]
+"sidecar/ai/tools/builtins/web_extract.py" = ["PLR2004"]
+"sidecar/ai/tools/builtins/web_http.py" = ["C901", "PLR0912", "PLR0913"]
+"sidecar/ai/tools/catalog.py" = ["PLR0911", "PLR2004"]
+"sidecar/ai/tools/contracts.py" = ["C901", "PLR0912"]
+"sidecar/ai/tools/inband_parser.py" = ["C901"]
+"sidecar/ai/tools/registry.py" = ["PLC0415"]
+"sidecar/ai/tools/tool_search.py" = ["C901", "PLR0912"]
+"sidecar/runtime/approval.py" = ["PLR0913"]
+"sidecar/runtime/approval_plan.py" = ["PLR0913"]
+"sidecar/runtime/background_worker.py" = ["PLR2004"]
+"sidecar/runtime/capabilities.py" = ["PLR0911"]
+"sidecar/runtime/chat.py" = ["C901", "F841", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/chat_decision_render.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/chat_helpers.py" = ["PLC0415", "PLR0913"]
+"sidecar/runtime/chat_message_validation.py" = ["E501"]
+"sidecar/runtime/chat_models.py" = ["E501", "PLR0913"]
+"sidecar/runtime/chat_normalization.py" = ["PLR0911", "PLR2004"]
+"sidecar/runtime/chat_response_builders.py" = ["PLR0913"]
+"sidecar/runtime/chat_resume.py" = ["C901", "F841", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/chat_router.py" = ["C901", "F841", "PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/chat_serialization.py" = ["C901", "PLR0911", "PLR0912"]
+"sidecar/runtime/chat_streaming.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/chat_vision.py" = ["PLR0913"]
+"sidecar/runtime/diagnostics.py" = ["B039", "PLR0911", "PLR0913", "PLR2004", "PLW0603"]
+"sidecar/runtime/hardware_profile.py" = ["PLC0415", "PLR0915", "PLR2004"]
+"sidecar/runtime/hardware_vram_usage.py" = ["PLR2004"]
+"sidecar/runtime/harness_snapshot.py" = ["C901", "E501", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/ipc_payloads.py" = ["PLR2004"]
+"sidecar/runtime/local_engine/reasoning.py" = ["PLR0913"]
+"sidecar/runtime/local_engine/request_context.py" = ["PLR0913"]
+"sidecar/runtime/memory.py" = ["E501"]
+"sidecar/runtime/memory_suggestions.py" = ["C901", "E501", "PLR0912", "PLR0915", "PLR2004", "PLW0108"]
+"sidecar/runtime/monitor_manager.py" = ["PLC0414"]
+"sidecar/runtime/monitor_manager_polling.py" = ["PLC0415"]
+"sidecar/runtime/monitor_manager_streaming.py" = ["PLC0415"]
+"sidecar/runtime/multiplexer.py" = ["PLR0913"]
+"sidecar/runtime/reasoning_status.py" = ["E501", "PLR2004", "PLW2901"]
+"sidecar/runtime/request_dispatch.py" = ["C901", "E501", "PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/request_dispatch_chat.py" = ["C901", "E501", "PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/request_dispatch_chat_support.py" = ["C901", "E501", "PLC0415", "PLR0911", "PLR0912", "PLR0913"]
+"sidecar/runtime/request_dispatch_harness.py" = ["PLR0913"]
+"sidecar/runtime/request_dispatch_memory.py" = ["C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+"sidecar/runtime/request_dispatch_suggestions.py" = ["PLR0913"]
+"sidecar/runtime/runtime_gap.py" = ["PLR0911"]
+"sidecar/runtime/telemetry.py" = ["PLC0415"]
+"sidecar/runtime/turn_diagnostics.py" = ["C901", "PLR0913"]
+"sidecar/server.py" = ["C901", "PLR0912", "PLR0915"]
+"sidecar/runtime/vllm_engine_support.py" = ["C901", "PLR0912"]
+# Tests-only stylistic relaxations applied broadly across tests/sidecar/. The
+# architectural rules (C901, PLC0415, PLR0913, PLW0108) live below as targeted
+# per-file legacy exceptions so future drift surfaces immediately when a new or
+# split test file would violate them. Shrink the wildcard further as test
+# refactors retire each per-file exception (Phase 13A C.A.8 narrowing).
+"tests/sidecar/**/*.py" = ["E501", "PLR2004"]
+"tests/sidecar/ai/app_profiles/test_app_profiles.py" = ["PLC0415"]
+"tests/sidecar/ai/context/test_builder.py" = ["PLC0415"]
+"tests/sidecar/ai/context/test_compaction.py" = ["PLC0415"]
+"tests/sidecar/ai/context/test_message_utils.py" = ["PLC0415"]
+"tests/sidecar/ai/context/test_token_budget.py" = ["PLC0415"]
+"tests/sidecar/ai/context/vcr_adapter.py" = ["PLR0913"]
+"tests/sidecar/ai/engines/test_provider_http.py" = ["PLW0108"]
+"tests/sidecar/ai/mcp/test_transport_stdio.py" = ["PLW0108"]
+"tests/sidecar/ai/mcp/test_transport_stdio_cleanup.py" = ["PLC0415"]
+"tests/sidecar/ai/memory/test_store.py" = ["PLR0913"]
+"tests/sidecar/ai/routing/test_agent_executor.py" = ["PLC0415", "PLR0913", "PLW0108"]
+"tests/sidecar/ai/routing/test_generation_runtime.py" = ["PLW0108"]
+"tests/sidecar/ai/routing/test_stuck_loop_detector.py" = ["PLR0913"]
+"tests/sidecar/ai/routing/test_tool_loop.py" = ["PLC0415"]
+"tests/sidecar/ai/routing/test_tool_observation.py" = ["PLR0913"]
+"tests/sidecar/ai/test_container.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/builtins/test_filesystem_h7.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/builtins/test_grep_search.py" = ["C901"]
+"tests/sidecar/ai/tools/builtins/test_python_runtime.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/builtins/test_shell.py" = ["C901"]
+"tests/sidecar/ai/tools/builtins/test_shell_integration.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/test_assembly.py" = ["PLR0913"]
+"tests/sidecar/ai/tools/test_prompt_marker_guard.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/test_registry.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/test_sanitization_upgrade.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/test_tool_search.py" = ["PLC0415"]
+"tests/sidecar/ai/tools/test_web.py" = ["PLC0415"]
+"tests/sidecar/replay/replay_engine.py" = ["PLW0108"]
+"tests/sidecar/runtime/test_approval_plan.py" = ["PLC0415"]
+"tests/sidecar/runtime/test_background_worker.py" = ["PLW0108"]
+"tests/sidecar/runtime/test_monitor_manager_dark_paths.py" = ["PLW0108"]
+"tests/sidecar/runtime/test_chat.py" = ["PLR0913"]
+"tests/sidecar/runtime/test_hardware_profile.py" = ["PLC0415", "PLW0108"]
+"tests/sidecar/runtime/test_harness_snapshot.py" = ["PLC0415"]
+"tests/sidecar/runtime/test_provider_capability_profile.py" = ["PLC0415"]
+"tests/sidecar/test_packaging_scripts.py" = ["PLC0415"]
+"tests/sidecar/test_sidecar_entrypoint.py" = ["PLC0415"]
+"tests/sidecar/test_workspace_manifest_check.py" = ["PLR0913"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_untyped_defs = false
+warn_unused_configs = true
+
+# Optional/heavy deps that are not part of the locked runtime and ship no type
+# stubs. They are imported defensively (lazy, inside try/except) so a missing
+# install degrades gracefully; mypy must not fail the gate when they are absent
+# from the checking environment. (transformers is the FIM/tokenizer backend.)
+[[tool.mypy.overrides]]
+module = ["transformers", "transformers.*"]
+ignore_missing_imports = true

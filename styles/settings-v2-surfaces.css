@@ -1,0 +1,142 @@
+/* settings-v2-surfaces.css — Styling for new Settings v2 read-only surfaces.
+ *
+ * Matches the v2 contract: foundation tokens (no hardcoded values), card
+ * pattern from memory-view / artifacts-studio, kicker for subsection titles,
+ * status-dot for tone, .empty-state-claim for empty surfaces.
+ */
+
+/* ── Setup progress card (Account section) ────────────────────────────── */
+.settings-progress-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--settings-shell-panel-bg) 64%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: none;
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-progress-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-progress-percent {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-3xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-progress-bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--border-default) 40%, transparent);
+  overflow: hidden;
+}
+
+
+.settings-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--state-success) 0%,
+    color-mix(in srgb, var(--state-success) 40%, var(--accent-cyan)) 50%,
+    var(--state-success) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sheen var(--motion-duration-sheen) linear infinite;
+  transition: width var(--motion-duration-regular) var(--motion-ease-emphasis);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-progress-fill {
+    transition: none;
+    animation: none;
+    background-size: auto;
+  }
+}
+
+.settings-progress-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-progress-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-progress-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-input-background) 30%, transparent);
+  border: 1px solid var(--border-subtle);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
+              background-color var(--motion-duration-fast) var(--motion-ease-standard),
+              box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-progress-item:hover {
+  border-color: color-mix(in srgb, var(--accent-cyan) 30%, var(--border-subtle));
+  background: color-mix(in srgb, var(--surface-input-background) 40%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-cyan) 6%, transparent);
+}
+
+.settings-progress-item[data-status="done"] {
+  background: color-mix(in srgb, var(--state-success-bg) 40%, transparent);
+  border-color: color-mix(in srgb, var(--state-success) 30%, transparent);
+}
+
+.settings-progress-item[data-status="done"]:hover {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success-bg) 60%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--state-success) 8%, transparent);
+}
+
+.settings-progress-item[data-status="error"] {
+  background: color-mix(in srgb, var(--state-danger-bg) 36%, transparent);
+  border-color: color-mix(in srgb, var(--state-danger) 30%, transparent);
+}
+
+.settings-progress-item[data-status="error"]:hover {
+  border-color: var(--state-danger);
+  background: color-mix(in srgb, var(--state-danger-bg) 56%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--state-danger) 8%, transparent);
+}
+
+.settings-progress-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.settings-progress-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.settings-progress-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-kicker-sm);
+}

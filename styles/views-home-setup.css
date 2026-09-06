@@ -1,0 +1,517 @@
+/* Home setup CARD styles were removed with the card itself (it could never
+   retire itself on a cloud engine). What remains is the focused setup SCENE
+   chrome, rendered inside the step-modal body by the first-run checklist and by
+   Settings' Resume/Help/Reset entry points. */
+
+/* ── Phase 7B — focused setup scenes (rendered inside step-modal body) ── */
+.setup-scene-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* Capabilities scene — grouped Tools / Memory / Planning toggles. Scoped under
+   .setup-cap-body so the toggle label/description rules (which only ship globally
+   for label, and settings-scoped for description) render correctly here without
+   touching the calendar/diagnostic/settings toggle surfaces. */
+.setup-cap-body {
+  gap: var(--space-5);
+}
+
+.setup-cap-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setup-cap-group-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.setup-cap-group-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.setup-cap-body .inv-toggle {
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.setup-cap-body .inv-toggle-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.setup-cap-body .inv-toggle-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.setup-cap-body .inv-toggle-description {
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  max-width: 52ch;
+  color: var(--text-muted);
+}
+
+.setup-scene-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.setup-scene-progress {
+  margin-top: var(--space-2);
+}
+
+.setup-scene-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setup-scene-status-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.setup-scene-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.setup-workspace-inline-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--state-danger) 55%, transparent);
+  border-radius: var(--radius-base);
+  color: var(--state-danger);
+  background: color-mix(in srgb, var(--state-danger) 10%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/* Phase 7B inventory primitives — text/url/select fields & action button. */
+.inv-text-field,
+.inv-url-field,
+.inv-select-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inv-text-field-label,
+.inv-url-field-label,
+.inv-select-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.inv-text-field-control,
+.inv-url-field-control,
+.inv-select-field-control {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--widget-button-secondary-border);
+  background: color-mix(in srgb, var(--surface-input-background) 92%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* A native <select> is intrinsically as wide as its WIDEST option, and grid or
+ * flex items floor at min-content - so any scoped override that drops the
+ * `width: 100%` above (the Home ask panel does exactly that) pushes the select
+ * out of its container instead of ellipsizing inside it. Releasing the floor
+ * here makes every popover-hosted select shrinkable by default; it is inert
+ * wherever the 100% width still applies. */
+.inv-select-field,
+.inv-select-field-control {
+  min-width: 0;
+}
+
+.inv-text-field-control:focus,
+.inv-url-field-control:focus,
+.inv-select-field-control:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 1px;
+}
+
+.inv-text-field-hint,
+.inv-url-field-hint,
+.inv-select-field-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.inv-text-field--multiline .inv-text-field-control {
+  min-height: 64px;
+  resize: vertical;
+}
+
+/* Setup action buttons use the shared .btn primitive through the inventory actionButton() helper. */
+
+/* ── Guided first-run flow — welcome + hardware-scan/recommend scenes ── */
+.setup-welcome-lede {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.setup-welcome-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.55;
+}
+
+.setup-hw-report {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-radius: var(--radius-base);
+  background: color-mix(in srgb, var(--surface-input-background) 60%, transparent);
+  padding: var(--space-4);
+}
+
+.setup-hw-report li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: 13px;
+}
+
+.setup-hw-report-key {
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.setup-hw-report-val {
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.setup-hw-pick {
+  border-radius: var(--radius-base);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  /* The highlighted card needs a near-opaque fill. The modal sits on a
+     blur(14px) glass backdrop, so a translucent fill (the old accent-10%-on-
+     transparent ≈ 0.1 alpha) let bright blurred content bleed through and
+     washed out the white text. --surface-input-background is a defined,
+     per-palette, ~0.92-opaque token (--surface-elevated is never defined). */
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-input-background));
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setup-hw-pick-badge {
+  align-self: flex-start;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+  color: var(--widget-button-primary-color);
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-4);
+}
+
+.setup-hw-pick-name {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.setup-hw-pick-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.setup-hw-pick-reason {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.setup-hw-options > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-link);
+  user-select: none;
+}
+
+.setup-hw-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.setup-hw-option {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 10px;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--widget-button-secondary-border);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.setup-hw-option input[type="radio"] { accent-color: var(--accent); margin: 0; }
+
+.setup-hw-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--widget-button-secondary-border));
+}
+
+/* The chosen row gets an accent ring so the active selection is obvious. */
+.setup-hw-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.setup-hw-option-name { color: var(--text-primary); font-weight: 600; }
+.setup-hw-option-meta { color: var(--text-secondary); font-size: 11px; }
+
+.setup-hw-option-badge {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-4);
+  white-space: nowrap;
+}
+/* --widget-button-primary-color is the app's on-accent foreground token (the
+   text color paired with the accent-derived .btn--primary fill). */
+.setup-hw-option-badge--rec { background: var(--accent); color: var(--widget-button-primary-color); }
+.setup-hw-option-badge--fits { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--text-primary); }
+.setup-hw-option-badge--cpu { background: color-mix(in srgb, var(--text-secondary) 30%, transparent); color: var(--text-primary); }
+.setup-hw-option-badge--over { background: color-mix(in srgb, var(--state-danger) 20%, transparent); color: var(--state-danger); }
+
+.setup-hw-ollama {
+  border-radius: var(--radius-base);
+  padding: var(--space-4);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.setup-hw-ollama p { margin: 0 0 var(--space-2); }
+.setup-hw-ollama--ok { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-primary); }
+.setup-hw-ollama--missing,
+.setup-hw-ollama--manual { background: color-mix(in srgb, var(--surface-input-background) 60%, transparent); }
+
+.setup-hw-optin {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.setup-hw-optin input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+
+.setup-hw-provenance {
+  margin-top: var(--space-2);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.setup-hw-provenance code { font-size: 11px; }
+
+.setup-hw-catalog {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.setup-hw-empty,
+.setup-hw-scanning,
+.setup-hw-error { color: var(--text-secondary); font-size: 13px; }
+
+.setup-hw-progress-label { margin: 0 0 var(--space-3); font-size: 13px; color: var(--text-primary); }
+.setup-hw-progress-bar {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-secondary) 22%, transparent);
+  overflow: hidden;
+}
+.setup-hw-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--transition-regular);
+}
+.setup-hw-progress-pct {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* Setup checklist hub: hierarchy comes from type and thin rules, not cards. */
+.setup-hub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.setup-hub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.setup-hub-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 64px;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.setup-hub-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+.setup-hub-glyph--success { color: var(--state-success); }
+.setup-hub-glyph--pending { color: var(--accent); }
+.setup-hub-glyph--muted { color: var(--state-muted); }
+.setup-hub-glyph--danger { color: var(--state-danger); }
+.setup-hub-glyph--warning { color: var(--state-warning); }
+
+.setup-hub-row-copy { min-width: 0; }
+
+.setup-hub-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 650;
+}
+
+.setup-hub-required {
+  color: var(--state-warning);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.setup-hub-row-description {
+  overflow: hidden;
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-hub-row-actions,
+.setup-hub-warning-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-hub-warning-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.setup-hub-warning-actions .btn { white-space: nowrap; }
+
+.setup-hub-skipped-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.setup-hub-health {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.setup-hub-finish-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--state-warning-border);
+  border-radius: var(--radius-base);
+  background: var(--state-warning-bg);
+  color: var(--status-fg-warning);
+}
+
+.setup-hub-warning-copy strong { color: var(--text-primary); }
+.setup-hub-warning-copy p { margin: var(--space-1) 0 0; }
+.setup-hub-warning-dismiss { color: var(--text-muted); }
+
+@media (max-width: 620px) {
+  .setup-hub-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .setup-hub-row-actions { grid-column: 2; justify-content: flex-start; }
+}
+
+/* Setup model-library step: the grid/card visuals come from the globally
+   linked settings-model-library.css; only the scene's own chrome lives here. */
+.setup-model-library-summary { margin-bottom: var(--space-2); }
+
+.setup-model-library-status {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.setup-model-library-status:empty { display: none; }
+
+.setup-model-library-card-message {
+  margin: var(--space-2) 0 0;
+  color: var(--state-danger);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}

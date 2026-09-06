@@ -1,0 +1,111 @@
+[
+  {
+    "id": "user_stream_29",
+    "role": "user",
+    "content": "Prepare the implementation plan for approval",
+    "status": "complete"
+  },
+  {
+    "id": "tool_use_stream_29",
+    "role": "assistant",
+    "kind": "tool_use",
+    "status": "complete",
+    "tool_call": {
+      "call_id": "call-29-1",
+      "tool_name": "exit_plan_mode",
+      "parent_stream_id": "stream_29",
+      "status": "pending_approval",
+      "approval_state": "pending",
+      "input": {
+        "title": "Pin plan approval parity",
+        "summary": "Lock the live and hydrated plan card to one terminal row.",
+        "steps": [
+          "Author scenario 29 fixture",
+          "Verify live and hydrated row parity",
+          "Run focused timeline regressions"
+        ],
+        "notes": "Keep every pre-existing fixture byte-identical.",
+        "verification": "Run the timeline replay acceptance suite."
+      },
+      "summary": "Request approval for Pin plan approval parity"
+    }
+  },
+  {
+    "id": "plan_document_plan-29-1",
+    "role": "assistant",
+    "kind": "plan_document",
+    "content": "Plan: Pin plan approval parity\nDecision: pending",
+    "status": "complete",
+    "plan_document": {
+      "plan_id": "plan-29-1",
+      "tool_call_id": "call-29-1",
+      "approval_id": "approval-29-1",
+      "state": "pending",
+      "title": "Pin plan approval parity",
+      "summary": "Lock the live and hydrated plan card to one terminal row.",
+      "steps": [
+        "Author scenario 29 fixture",
+        "Verify live and hydrated row parity",
+        "Run focused timeline regressions"
+      ],
+      "notes": "Keep every pre-existing fixture byte-identical.",
+      "verification": "Run the timeline replay acceptance suite.",
+      "feedback": "",
+      "files_read": [
+        "tests/timeline-replay-corpus.test.js",
+        "renderer/chat/renderer-turn-reducer-canonical-rows.js"
+      ],
+      "parent_stream_id": "stream_29",
+      "plan_edited": false,
+      "render_collapsed": false
+    }
+  },
+  {
+    "id": "tool_result_stream_29",
+    "role": "assistant",
+    "kind": "tool_result",
+    "status": "complete",
+    "tool_result": {
+      "call_id": "call-29-1",
+      "tool_name": "exit_plan_mode",
+      "output_text": "Plan approved.",
+      "summary": "Plan approved",
+      "parent_stream_id": "stream_29",
+      "is_error": false,
+      "metadata": {
+        "result_kind": "plan_mode_transition",
+        "plan_decision": "approved"
+      }
+    }
+  },
+  {
+    "id": "plan_document_plan-29-1",
+    "role": "assistant",
+    "kind": "plan_document",
+    "content": "Plan: Pin plan approval parity\nDecision: approved",
+    "status": "complete",
+    "plan_document": {
+      "plan_id": "plan-29-1",
+      "tool_call_id": "call-29-1",
+      "approval_id": "approval-29-1",
+      "state": "approved",
+      "title": "Pin plan approval parity",
+      "summary": "Lock the live and hydrated plan card to one terminal row.",
+      "steps": [
+        "Author scenario 29 fixture",
+        "Verify live and hydrated row parity",
+        "Run focused timeline regressions"
+      ],
+      "notes": "Keep every pre-existing fixture byte-identical.",
+      "verification": "Run the timeline replay acceptance suite.",
+      "feedback": "",
+      "files_read": [
+        "tests/timeline-replay-corpus.test.js",
+        "renderer/chat/renderer-turn-reducer-canonical-rows.js"
+      ],
+      "parent_stream_id": "stream_29",
+      "plan_edited": false,
+      "render_collapsed": true
+    }
+  }
+]

@@ -1,0 +1,80 @@
+/* ============================================================================
+ * Chat Timeline design tokens — the single visual contract for everything
+ * rendered inside the chat timeline (settled transcript + active-turn deck).
+ *
+ * Contract (Quiet & Typographic overhaul, 2026-07-05):
+ *  - Every timeline font-size resolves through a --tl-font-* token.
+ *  - Chat type scales on --chat-zoom-factor ONLY. It deliberately does NOT
+ *    compound with the global --font-scale axis (see the hero-avatar comment
+ *    in chat-thread.css for the original decision).
+ *  - Font weights in the timeline: 400 body / 500 UI labels / 600 emphasis.
+ *  - Radii: --tl-radius-panel (8px) for panels+cards, --tl-radius-control
+ *    (6px) for small controls, --tl-radius-chip (pill) for chips. No others.
+ *  - Machinery status colors derive exclusively from --tl-status-* (which
+ *    alias the app-wide --state-* semantic tokens). Component namespaces
+ *    (--reasoning-accent, --tool-call-accent, --marker-accent, deck colors)
+ *    must re-derive from these, never define their own colors.
+ *  - Metrics (--tl-row-h, gaps) are the density axis: comfortable defaults
+ *    here; the IDE chat dock overrides them to the compact profile.
+ * ========================================================================= */
+
+:root {
+  /* --- Type scale (zoom-only; base px chosen to match the pre-overhaul
+   *     dominant sizes so unmigrated call sites converge, not jump) --- */
+  --tl-font-prose: calc(15px * var(--chat-zoom-factor, 1));
+  --tl-font-detail: calc(13px * var(--chat-zoom-factor, 1)); /* expanded machinery panels */
+  --tl-font-ui: calc(12px * var(--chat-zoom-factor, 1));
+  --tl-font-meta: calc(11px * var(--chat-zoom-factor, 1));
+  --tl-font-code: calc(12px * var(--chat-zoom-factor, 1));
+
+  --tl-weight-body: 400;
+  --tl-weight-label: 500;
+  --tl-weight-emphasis: 600;
+
+  /* --- Radii --- */
+  --tl-radius-panel: var(--radius-base);
+  --tl-radius-control: var(--radius-sm);
+  --tl-radius-chip: var(--radius-pill);
+
+  /* --- Surfaces (palette-safe: text/bg mixes, no literals) --- */
+  --tl-row-hover: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --tl-panel-bg: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+  --tl-panel-border: var(--line);
+  --tl-code-bg: var(--widget-tool-code-bg);
+  --tl-user-bubble-bg: color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface));
+
+  /* --- Status (sole color source for machinery rows/dots/badges) --- */
+  --tl-status-ok: var(--state-success);
+  --tl-status-warn: var(--state-warning);
+  --tl-status-error: var(--state-danger);
+  --tl-status-active: var(--state-info);
+  --tl-status-pending: var(--state-pending);
+  --tl-status-muted: var(--state-muted);
+
+  /* --- Metrics (comfortable profile; IDE dock overrides to compact) --- */
+  --tl-row-h: 30px;          /* machinery one-liner min-height */
+  --tl-row-gap: var(--space-1);
+  /* Comfortable turn rhythm: 40px between turns lets the quiet one-liner
+     machinery read as part of its turn instead of bleeding into the next.
+     The IDE dock compact profile overrides this back down to 24px. */
+  --tl-turn-gap: 40px;
+  --tl-cluster-gap: var(--space-8); /* prose <-> machinery-cluster spacing */
+  --tl-dot-size: 6px;        /* status dot in machinery rows */
+  --tl-detail-indent: 22px;
+  --tl-detail-gap: var(--space-4);
+  --tl-detail-clamp-lines: 14;
+}
+
+/* --- Compact density profile — the IDE chat dock (adaptive density axis) ---
+ * The dock can grow adaptively, but keeps the compact metric profile so only
+ * the METRIC tokens tighten;
+ * type, weights, radii, and status colors stay identical to the main
+ * timeline (one grammar, two densities). Scoped on the dock container so
+ * everything the dock hosts (transcript + in-flow deck) inherits it. */
+#ideChatDock {
+  --tl-row-h: 26px;
+  --tl-turn-gap: 24px;
+  --tl-cluster-gap: var(--space-6);
+  --tl-detail-indent: 18px;
+  --tl-detail-clamp-lines: 10;
+}

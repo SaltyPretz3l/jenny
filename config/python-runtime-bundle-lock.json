@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "python": {
+    "version": "3.13.14",
+    "implementation": "cpython",
+    "architecture": "x64",
+    "platform": "win_amd64",
+    "abi": "cp313",
+    "embed_url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
+    "embed_sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907",
+    "max_archive_bytes": 67108864,
+    "executable": "python.exe",
+    "stdlib_archive": "python313.zip",
+    "path_file": "python313._pth"
+  },
+  "runtime_packages": [
+    "pandas==3.0.1",
+    "numpy==2.4.3",
+    "matplotlib==3.10.8",
+    "seaborn==0.13.2",
+    "scipy==1.17.1",
+    "tabulate==0.10.0"
+  ],
+  "bootstrap_packages": [
+    "pip==26.1.2"
+  ],
+  "build_lock": "requirements-build-lock.txt",
+  "runtime_lock": "requirements-python-runtime-lock.txt",
+  "embed_manifest": "python-embed-manifest.json",
+  "wheelhouse_manifest": "wheelhouse-manifest.json"
+}

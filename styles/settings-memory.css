@@ -1,0 +1,114 @@
+.memory-settings-card { container-type: inline-size; }
+
+.memory-group-header,
+.memory-record,
+.memory-record-heading,
+.memory-record-actions,
+.memory-provenance-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.memory-group-header,
+.memory-record { justify-content: space-between; }
+
+.memory-page-filters,
+.memory-record-actions,
+.memory-provenance-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.memory-page-filters { align-items: flex-end; }
+.memory-record-list { display: grid; }
+
+.memory-record {
+  padding-block: var(--space-4);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.memory-record + .memory-record { border-top: 1px solid var(--border-subtle); }
+.memory-record:hover { background-color: var(--surface-popover-row-hover); }
+
+.memory-record-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.memory-record-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.memory-record-heading {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.memory-record-title,
+.memory-record-main p,
+.memory-provenance p { margin: 0; }
+
+.memory-record-main p,
+.memory-provenance { overflow-wrap: anywhere; }
+
+.memory-provenance-trigger {
+  width: fit-content;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.memory-provenance-panel {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.memory-provenance--removed {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.memory-list-status:empty,
+.memory-more-host:empty { display: none; }
+.memory-more-host { margin-block-start: var(--space-3); }
+
+.memory-page-empty {
+  padding-block: var(--space-5);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.memory-health-list {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+@media (max-width: 760px) {
+  .memory-group-header,
+  .memory-record { flex-direction: column; }
+  .memory-page-filters {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .memory-record-actions { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-record { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .memory-record + .memory-record { border-top-color: CanvasText; }
+  .memory-provenance-trigger:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}

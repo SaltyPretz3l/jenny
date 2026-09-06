@@ -1,0 +1,254 @@
+/* styles/ide-explorer.css - Workspace IDE explorer readability layer (W3):
+ * panel header actions, inline-SVG file-type icon colors, and CSS-only
+ * indent guides painted from the existing --ide-tree-depth custom property.
+ * Loaded via @import in styles.css right after ide-view.css. */
+
+/* ── Explorer header (title + refresh / collapse-all) ── */
+
+.ide-tree-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-tree-header-title {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ide-tree-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ide-tree-header-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ide-tree-header-button:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-tree-generated-toggle {
+  width: auto;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.ide-tree-generated-toggle--active {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-tree-header-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-tree-header-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ide-tree-import-strip {
+  --ide-tree-import-progress: 0%;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 4px 8px 6px 12px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-input-background);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ide-tree-import-strip::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--ide-tree-import-progress);
+  height: 3px;
+  background: var(--accent);
+  content: '';
+}
+
+.ide-tree-import-strip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-tree-import-strip-cancel {
+  flex: 0 0 auto;
+  padding: 1px 2px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ide-tree-import-strip-cancel:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.ide-tree-import-strip-cancel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── File-type icons (renderer-ide-icons.js inline SVG) ── */
+
+.ide-tree-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.ide-tree-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ide-tree-icon--folder { color: var(--accent); }
+.ide-tree-icon--js { color: var(--accent-amber); }
+.ide-tree-icon--ts { color: var(--accent-cyan); }
+.ide-tree-icon--py { color: var(--text-success-soft); }
+.ide-tree-icon--shell { color: var(--text-secondary); }
+.ide-tree-icon--html { color: var(--text-danger-soft); }
+.ide-tree-icon--css { color: var(--accent-strong); }
+.ide-tree-icon--json { color: var(--accent-amber); }
+.ide-tree-icon--md { color: var(--accent-cyan); }
+.ide-tree-icon--image { color: var(--text-success-soft); }
+.ide-tree-icon--config { color: var(--text-muted); }
+.ide-tree-icon--diagram { color: var(--accent-strong); }
+.ide-tree-icon--file { color: var(--text-muted); }
+
+/* ── Indent guides ──
+ * One 1px vertical line per ancestor depth, painted as a horizontally
+ * repeating gradient clipped to depth * 14px (the per-level indent used by
+ * the row padding in ide-view.css). background-image only - row hover and
+ * selection keep using background-color underneath. */
+
+.ide-tree-row,
+.ide-tree-status {
+  background-image: repeating-linear-gradient(
+    to right,
+    color-mix(in srgb, var(--text-muted) 28%, transparent) 0 1px,
+    transparent 1px 14px
+  );
+  background-repeat: no-repeat;
+  background-position: 15px 0;
+  background-size: calc(var(--ide-tree-depth, 0) * 14px) 100%;
+}
+
+.ide-tree--qol .ide-tree-row--edit {
+  flex-wrap: wrap;
+}
+
+.ide-tree-edit-error {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-top: 2px;
+  color: var(--text-danger-emphasis);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.ide-tree-edit-field .inv-text-field-control.ide-tree-edit-field--invalid,
+.ide-tree-edit-field .inv-text-field-control.ide-tree-edit-field--invalid:focus-visible {
+  border-color: var(--text-danger-emphasis);
+  outline: 1px solid color-mix(in srgb, var(--text-danger-emphasis) 70%, transparent);
+  outline-offset: -1px;
+}
+
+/* Internal move feedback stays local to the Explorer tree. */
+.ide-tree-row--dragging { opacity: .45; }
+
+.ide-tree-row--cut { opacity: .55; }
+
+.ide-tree-row--drop-target {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.ide-tree--drop-root {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1.5px;
+}
+
+.ide-tree-row--spring {
+  animation: ide-tree-spring 1.2s ease-in-out infinite;
+}
+
+@keyframes ide-tree-spring {
+  0%, 100% { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
+  50% { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+}
+
+.ide-tree-drag-ghost {
+  position: fixed;
+  top: -100px;
+  left: 0;
+  z-index: 1000;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 9px;
+  color: var(--text-primary);
+  font-size: 12px;
+  background: var(--surface-card-background, var(--surface-input-background));
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  box-shadow: var(--shadow-elevation-2);
+  pointer-events: none;
+}
+
+.ide-tree-drag-ghost-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  place-items: center;
+  color: var(--surface-input-background);
+  font-weight: 700;
+  background: var(--accent);
+  border-radius: 999px;
+}

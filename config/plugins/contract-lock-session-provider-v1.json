@@ -1,0 +1,8 @@
+{
+  "lock_schema_version": 1,
+  "contracts": {
+    "config/plugins/extensions/session-provider-v1/_common.schema.json": "521041737f968d32057b6a481b156eb068922bc15de4f725846f342b15820586",
+    "config/plugins/extensions/session-provider-v1/plugin-session-provider-descriptor.schema.json": "34fd275461bd1e07aa10c7558ce2f9feecfbfd81044fe7a52dfc6de32bc74084",
+    "config/plugins/extensions/session-provider-v1/plugin-session-provider-view-call.schema.json": "ec1369a7cc0082f84b6790dec476fe437bc48c5f583b26a40db2e7fe0bf12230"
+  }
+}

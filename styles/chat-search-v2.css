@@ -1,0 +1,133 @@
+/*
+ * styles/chat-search-v2.css
+ *
+ * Track F1 + E6: in-conversation search overlay (Ctrl+F).
+ * Owns the search bar layout (anchored top of #chatThreadStage,
+ * non-modal) and the highlight pseudo-elements painted via the
+ * CSS Custom Highlight API.
+ */
+
+.chat-search-overlay-host {
+  position: relative;
+  z-index: var(--z-chat-search, 5);
+  margin: 0;
+  padding: 0;
+}
+
+.chat-search-overlay-host[hidden] {
+  display: none !important;
+}
+
+.chat-search-bar {
+  /* Enter-only: replays each time the host's [hidden] flips off (Ctrl+F). */
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--chat-search-bg, var(--surface-toolbar-background));
+  color: var(--chat-search-fg, var(--text-primary));
+  border-bottom: 1px solid var(--chat-search-border, var(--border-subtle));
+  box-shadow: 0 2px 8px var(--chat-search-shadow, rgba(0, 0, 0, 0.08));
+  font: var(--chat-search-font, 14px/1.4 var(--font-family-body, system-ui, sans-serif));
+}
+
+.chat-search-bar-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--chat-search-input-border, var(--border-default));
+  border-radius: 6px;
+  background: var(--chat-search-input-bg, var(--surface-input-background));
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.chat-search-bar-input:focus-visible {
+  border-color: var(--chat-search-focus-ring, var(--focus-outline));
+  box-shadow: 0 0 0 2px var(--chat-search-focus-ring-soft, var(--border-focus));
+}
+
+.chat-search-bar-toggles,
+.chat-search-bar-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.chat-search-bar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.92em;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-search-bar-button:hover {
+  background: var(--chat-search-button-hover-bg, var(--tl-row-hover));
+}
+
+.chat-search-bar-button:focus-visible {
+  outline: 2px solid var(--chat-search-focus-ring, var(--focus-outline));
+  outline-offset: 1px;
+}
+
+.chat-search-bar-toggle[aria-pressed="true"] {
+  background: var(--chat-search-toggle-on-bg, rgba(59, 130, 246, 0.15));
+  border-color: var(--chat-search-toggle-on-border, rgba(59, 130, 246, 0.45));
+  color: var(--chat-search-toggle-on-fg, var(--accent));
+}
+
+.chat-search-bar-count {
+  flex: 0 0 auto;
+  min-width: 6ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88em;
+  color: var(--chat-search-count-fg, var(--text-muted));
+  user-select: none;
+}
+
+.chat-search-bar-close {
+  font-size: 1.2em;
+  line-height: 1;
+}
+
+/* Highlight pseudo-elements painted via the CSS Custom Highlight API.
+ * The Highlight registry is populated from
+ * renderer-chat-search-highlight.js â€” these rules style the painted
+ * regions. Electron 40 / Chromium 128+ supports them natively. */
+::highlight(chat-search-match) {
+  background-color: var(--chat-search-match-bg, rgba(255, 235, 59, 0.45));
+  color: inherit;
+}
+
+::highlight(chat-search-current) {
+  background-color: var(--chat-search-current-bg, rgba(255, 152, 0, 0.7));
+  color: inherit;
+}
+
+/* The bar chrome above is palette-driven (foundation tokens + the 11 palette
+ * sheets), so it must NOT be re-themed off the OS colour scheme — palette and
+ * OS scheme disagree routinely and the override painted a light bar behind
+ * palette-coloured text. The highlight paints stay scheme-tuned because the
+ * Highlight API regions sit on message text and have no palette token yet. */
+@media (prefers-color-scheme: dark) {
+  ::highlight(chat-search-match) {
+    background-color: var(--chat-search-match-bg-dark, rgba(250, 204, 21, 0.4));
+  }
+  ::highlight(chat-search-current) {
+    background-color: var(--chat-search-current-bg-dark, rgba(251, 146, 60, 0.7));
+  }
+}

@@ -1,0 +1,202 @@
+.composer-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  padding: 0 2px;
+  margin-top: var(--space-3);
+  border-top: none;
+  color: var(--composer-secondary-control-color);
+  font-size: 12px;
+}
+
+.composer-toggle-slot,
+.composer-context-usage-slot {
+  display: flex;
+  align-items: center;
+  min-height: var(--composer-secondary-meta-height);
+  min-width: 0;
+}
+
+.composer-context-usage-slot {
+  position: relative;
+}
+
+.composer-jump-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.composer-wayfinder-host {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(280px, 100%);
+}
+
+.composer-meta > .composer-wayfinder-host {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: calc(-1 * var(--space-1, 4px));
+}
+
+.composer-wayfinder-host[hidden] {
+  display: none !important;
+}
+
+/* Re-showing the host restarts this brief arrival cue without script state. */
+@keyframes chat-wayfinder-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+
+.composer-wayfinder-host:not([hidden]) {
+  animation: chat-wayfinder-enter var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+
+.composer-wayfinder-host .chat-wayfinder-affordance {
+  display: inline-flex;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.composer-wayfinder-host .chat-wayfinder-button {
+  --composer-wayfinder-accent: var(--accent-cyan);
+
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--composer-secondary-control-size);
+  max-width: min(260px, calc(100vw - 48px));
+  padding: 0 var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--composer-wayfinder-accent) 30%, var(--composer-secondary-control-border));
+  border-radius: var(--radius-pill);
+  background: var(--composer-secondary-control-bg);
+  box-shadow: var(--composer-secondary-control-shadow);
+  color: var(--composer-secondary-control-color);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0;
+  transition: var(--composer-control-transition);
+}
+
+.composer-wayfinder-host .chat-wayfinder-button:hover:not(:disabled) {
+  border-color: var(--composer-secondary-control-hover-border);
+  background: var(--composer-secondary-control-hover-bg);
+  color: var(--composer-secondary-control-hover-color);
+  box-shadow: var(--composer-secondary-control-hover-shadow);
+  transform: translateY(-1px);
+}
+
+.composer-wayfinder-host .chat-wayfinder-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.composer-wayfinder-host .chat-wayfinder-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-wayfinder-host .chat-wayfinder-button[data-chat-wayfinder-state="prompt"] {
+  --composer-wayfinder-accent: var(--accent);
+}
+
+.composer-wayfinder-host .chat-wayfinder-button[data-chat-wayfinder-state="latest"] {
+  --composer-wayfinder-accent: var(--state-success);
+}
+
+.composer-wayfinder-host .chat-wayfinder-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--composer-wayfinder-accent) 12%, transparent);
+  color: var(--composer-wayfinder-accent);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.composer-wayfinder-host .chat-wayfinder-copy {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.composer-wayfinder-host .chat-wayfinder-label,
+.composer-wayfinder-host .chat-wayfinder-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-wayfinder-host .chat-wayfinder-label {
+  min-width: 0;
+  font-weight: 650;
+}
+
+.composer-wayfinder-host .chat-wayfinder-detail {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-wayfinder-host:not([hidden]) {
+    animation: none;
+  }
+
+  .composer-wayfinder-host .chat-wayfinder-button {
+    transition: none;
+  }
+
+  .composer-wayfinder-host .chat-wayfinder-button:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+.composer-input::-webkit-scrollbar {
+  width: 6px;
+}
+
+.composer-input::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-pill);
+  background: var(--widget-composer-scrollbar-color);
+}
+
+.composer-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+.inv-context-details-popover {
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px;
+  line-height: 1.45;
+  overscroll-behavior: contain;
+}
+
+.inv-context-details-popover h3 {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+}
+
+.inv-context-details-popover p {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.inv-context-details-actions {
+  display: flex;
+  margin-bottom: 8px;
+}
+
+.inv-context-details-popover .inv-context-details-status {
+  min-height: 1.2em;
+  margin-bottom: 0;
+}

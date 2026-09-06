@@ -1,0 +1,33 @@
+{
+  "contract": "PluginManifestV3", "contract_version": 3, "frozen": true,
+  "defs": {
+    "contribution": {
+      "type": "object", "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"], "max_keys": 5, "additional_properties": "reject",
+      "properties": {
+        "kind": { "type": "enum", "values": ["skill", "prompt", "theme", "settings_schema", "command", "workflow", "mcp_descriptor"] },
+        "contribution_id": { "type": "ref", "ref": "contribution_id" },
+        "name": { "type": "ref", "ref": "display_string" },
+        "content_path": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$", "max_utf8_bytes": 240 },
+        "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+      }
+    },
+    "dependency": {
+      "type": "tagged_union", "tag_field": "kind", "variants": {
+        "required": { "type": "object", "required": ["kind", "publisher_id", "plugin_id", "version_range"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "required" }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "version_range": { "type": "ref", "ref": "semver_range" } } },
+        "peer": { "type": "object", "required": ["kind", "publisher_id", "plugin_id", "version_range"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "peer" }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "version_range": { "type": "ref", "ref": "semver_range" } } },
+        "optional": { "type": "object", "required": ["kind", "publisher_id", "plugin_id", "version_range"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "optional" }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "version_range": { "type": "ref", "ref": "semver_range" } } },
+        "capability": { "type": "object", "required": ["kind", "capability_id", "version_range"], "max_keys": 3, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "capability" }, "capability_id": { "type": "ref", "ref": "bounded_id" }, "version_range": { "type": "ref", "ref": "semver_range" } } }
+      }
+    }
+  },
+  "root": {
+    "type": "object", "required": ["manifest_schema_version", "publisher_id", "plugin_id", "name", "version", "contract_versions", "contributions", "dependencies", "requested_permissions"], "max_keys": 9, "additional_properties": "reject",
+    "properties": {
+      "manifest_schema_version": { "type": "const", "value": 3 }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "name": { "type": "ref", "ref": "display_string" }, "version": { "type": "string", "format": "semver" },
+      "contract_versions": { "type": "object", "required": ["manifest", "declarative_content", "operation_receipt", "cleanup_state"], "max_keys": 7, "additional_properties": "ignore", "properties": { "manifest": { "type": "const", "value": 3 }, "declarative_content": { "type": "const", "value": 3 }, "operation_receipt": { "type": "const", "value": 1 }, "cleanup_state": { "type": "const", "value": 1 } } },
+      "contributions": { "type": "array", "max_items": 32, "unique_by": ["contribution_id"], "items": { "type": "ref", "ref": "contribution" } },
+      "dependencies": { "type": "array", "max_items": 16, "unique_by": [], "items": { "type": "ref", "ref": "dependency" } },
+      "requested_permissions": { "type": "array", "max_items": 1, "unique_by": [], "items": { "type": "enum", "values": ["network.remote_mcp"] } }
+    }
+  }
+}

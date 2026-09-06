@@ -1,0 +1,27 @@
+{
+  "schema_version": 20,
+  "session": {
+    "id": "session_v20_current",
+    "title": "Current tool overrides v20",
+    "session_type": "chat",
+    "plugin_session": null,
+    "created_at": "2026-08-18T12:00:00.000Z",
+    "updated_at": "2026-08-18T12:00:00.000Z",
+    "session_incarnation": "inc_v20_chat",
+    "tool_category_overrides": {
+      "files": false,
+      "web": true,
+      "local_browser": false,
+      "python": false,
+      "terminal": true
+    },
+    "messages": [
+      { "id": "user_v20_1", "role": "user", "content": "Hello v20", "status": "complete" }
+    ],
+    "message_count": 1,
+    "message_seq_counter": 1,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 0,
+    "turn_events": []
+  }
+}

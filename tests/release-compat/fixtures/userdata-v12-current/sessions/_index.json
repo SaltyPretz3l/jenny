@@ -1,0 +1,33 @@
+{
+  "schema_version": 12,
+  "sessions": {
+    "sess_v12_current": {
+      "id": "sess_v12_current",
+      "title": "v12 current branch session",
+      "session_type": "chat",
+      "created_at": "2026-05-12T14:00:00.000Z",
+      "updated_at": "2026-05-12T14:05:00.000Z",
+      "session_start_date": "2026-05-12",
+      "message_count": 2,
+      "last_message_preview": "A branched assistant reply",
+      "last_model_used": "qwen2.5-coder:14b",
+      "preferred_model": "qwen2.5-coder:14b",
+      "reasoning_effort": "default",
+      "conversation_mode": "chat",
+      "pending_question_batch": null,
+      "interactive_sequence_state": "idle",
+      "interactive_round_count": 0,
+      "plan_mode": false,
+      "context_preferences": {},
+      "linked_session_ids": [
+        "sess_parent"
+      ],
+      "branch_origin": {
+        "source_session_id": "sess_parent",
+        "source_message_id": "msg_parent_2",
+        "source_title": "Parent Session",
+        "created_at": "2026-05-12T14:05:00.000Z"
+      }
+    }
+  }
+}

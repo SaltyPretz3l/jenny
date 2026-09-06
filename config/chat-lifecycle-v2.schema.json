@@ -1,0 +1,90 @@
+{
+  "contract_version": 1,
+  "identifier": {
+    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$",
+    "max_utf8_bytes": 128
+  },
+  "structure": {
+    "max_depth": 12,
+    "max_nodes": 2048,
+    "max_object_keys": 128,
+    "max_array_items": 128,
+    "max_diagnostic_path_utf8_bytes": 240,
+    "max_payload_utf8_bytes": 32768
+  },
+  "chat_start": {
+    "max_payload_utf8_bytes": 9437184,
+    "max_attachments": 64,
+    "max_mentions": 128,
+    "allowed_fields": [
+      "sessionId",
+      "prompt",
+      "visiblePrompt",
+      "traceId",
+      "preferredModel",
+      "reasoningEffort",
+      "attachments",
+      "interactiveResponse",
+      "interactiveRoundCount",
+      "planMode",
+      "contextPreferences",
+      "activeFileContext",
+      "mentionContents",
+      "toolPreferences",
+      "approvalMode",
+      "debugOptions",
+      "clientTiming",
+      "pluginCommandInvocation",
+      "skillInvocation",
+      "editedMessageId",
+      "failureRetry"
+    ],
+    "identifier_fields": ["sessionId", "traceId", "editedMessageId"],
+    "string_fields": ["prompt", "visiblePrompt", "preferredModel", "reasoningEffort", "approvalMode"],
+    "object_fields": [
+      "interactiveResponse",
+      "contextPreferences",
+      "activeFileContext",
+      "toolPreferences",
+      "debugOptions",
+      "clientTiming",
+      "pluginCommandInvocation",
+      "skillInvocation"
+    ],
+    "array_fields": ["attachments", "mentionContents"]
+  },
+  "terminal": {
+    "statuses": [
+      "streaming",
+      "complete",
+      "error",
+      "cancelled",
+      "denied",
+      "timeout",
+      "preempted",
+      "interrupted",
+      "unknown"
+    ],
+    "terminal_statuses": [
+      "complete",
+      "error",
+      "cancelled",
+      "denied",
+      "timeout",
+      "preempted",
+      "interrupted"
+    ],
+    "aliases": {
+      "completed": "complete",
+      "done": "complete",
+      "success": "complete",
+      "succeeded": "complete",
+      "canceled": "cancelled",
+      "aborted": "cancelled",
+      "runtime_error": "error",
+      "errored": "error",
+      "failed": "error",
+      "failure": "error"
+    }
+  }
+}

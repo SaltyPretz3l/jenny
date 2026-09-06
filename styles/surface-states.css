@@ -1,0 +1,29 @@
+/* ── Surface State Attributes ── */
+
+/* Surface state accent variable — consumed by child elements */
+[data-surface-state~="active"] { --surface-state-accent: var(--accent-cyan); }
+[data-surface-state~="busy"]   { --surface-state-accent: var(--accent-amber); }
+[data-surface-state~="error"]  { --surface-state-accent: var(--state-danger); }
+
+/* Subtle border glow on busy surfaces */
+[data-surface-state~="busy"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-amber) 18%, transparent);
+  transition: box-shadow var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+/* Chat reasoning/streaming should not draw the generic amber frame. */
+#chatThreadStage[data-surface-state~="busy"],
+#composerWrap[data-surface-state~="busy"] {
+  box-shadow: none;
+}
+
+/* Error accent border */
+[data-surface-state~="error"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-danger) 18%, transparent);
+  transition: box-shadow var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+/* Reduced motion: skip glow transition */
+@media (prefers-reduced-motion: reduce) {
+  [data-surface-state] { transition: none; }
+}

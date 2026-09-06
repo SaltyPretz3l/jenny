@@ -1,0 +1,130 @@
+{
+  "contract": "PluginAuditEventV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "audit_schema_version",
+      "event_id",
+      "sequence",
+      "recorded_at",
+      "actor",
+      "action",
+      "outcome",
+      "commit_epoch",
+      "lifecycle_epoch"
+    ],
+    "max_keys": 12,
+    "additional_properties": "reject",
+    "properties": {
+      "audit_schema_version": { "type": "const", "value": 1 },
+      "event_id": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "max_utf8_bytes": 64
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "recorded_at": { "type": "ref", "ref": "iso8601_utc" },
+      "actor": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "user": {
+            "type": "object",
+            "required": ["kind"],
+            "max_keys": 1,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "user" }
+            }
+          },
+          "system": {
+            "type": "object",
+            "required": ["kind", "component"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "system" },
+              "component": {
+                "type": "enum",
+                "values": ["lifecycle", "recovery", "gc", "policy", "verifier", "supervisor"]
+              }
+            }
+          },
+          "managed_policy": {
+            "type": "object",
+            "required": ["kind"],
+            "max_keys": 1,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "managed_policy" }
+            }
+          }
+        }
+      },
+      "action": {
+        "type": "enum",
+        "values": [
+          "install",
+          "enable",
+          "disable",
+          "update",
+          "rollback",
+          "uninstall",
+          "quarantine",
+          "release_quarantine",
+          "grant_change",
+          "consent_change",
+          "recovery",
+          "gc",
+          "safe_mode"
+        ]
+      },
+      "outcome": {
+        "type": "enum",
+        "values": ["committed", "failed", "indeterminate", "blocked", "degraded"]
+      },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "lifecycle_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "operation_id": { "type": "ref", "ref": "operation_id" },
+      "subject": { "type": "ref", "ref": "audit_subject" },
+      "detail": { "type": "ref", "ref": "audit_detail" }
+    }
+  },
+  "defs": {
+    "audit_subject": {
+      "type": "object",
+      "required": ["publisher_id", "plugin_id"],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "publisher_id": { "type": "ref", "ref": "publisher_id" },
+        "plugin_id": { "type": "ref", "ref": "plugin_id" },
+        "contribution_id": { "type": "ref", "ref": "contribution_id" }
+      }
+    },
+    "audit_detail": {
+      "type": "object",
+      "required": ["code"],
+      "max_keys": 2,
+      "additional_properties": "reject",
+      "properties": {
+        "code": { "type": "string", "format": "nfc_identifier" },
+        "reason": {
+          "type": "string",
+          "pattern": "^[\\x20-\\x7E]{0,200}$",
+          "max_utf8_bytes": 200
+        }
+      }
+    }
+  }
+}

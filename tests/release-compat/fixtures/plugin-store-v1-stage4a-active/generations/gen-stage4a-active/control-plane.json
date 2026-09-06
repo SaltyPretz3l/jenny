@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-08-03T00:00:00Z",
+  "data_schema_refs": [],
+  "generation_id": "gen-stage4a-active",
+  "generation_schema_version": 1,
+  "graph_hash": "fe8c32bd7be540b8da0fe23fb6918bf818a4f5b65d917c34dd6f6534acad1685",
+  "plugins": [
+    {
+      "artifact_digest": "578256f0db0badf7f19a0416b92e5a89d684bbe21ae44128b8f8133d76982923",
+      "checksum": "6c83d1418b66a22aa2bfa44260cfc46b3bb1e6f797ac17210787a63b8d8a6c21",
+      "depends_on": [],
+      "desired_state": "active",
+      "display_name": "Release Fixture",
+      "effective_state": "active",
+      "plugin_id": "release-fixture",
+      "publisher_id": "jenny-official",
+      "publisher_key_id": "7ed60652328f0fbbdb7417c97a9fbd4f2f54ef223af774e9d83ddf213a1291f5",
+      "resolved_version": "1.0.0"
+    }
+  ],
+  "policy_grant_ref": {
+    "grant_set_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "policy_revision": 1,
+    "policy_snapshot_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+  }
+}

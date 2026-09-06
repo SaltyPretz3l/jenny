@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose an improvement or new capability
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Jenny is deliberately scoped: a **local-first** harness for small-to-mid local models — coding workflows, data-viz artifacts, and well-bounded tool calls, with a light companion shell. Features that require cloud services, accounts, or telemetry are out of scope, and previously removed surfaces (cloud companions, speech, computer-use) stay removed. For anything large, please open an issue **before** writing code — see CONTRIBUTING.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation where Jenny currently falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: What should happen instead? Keep it concrete.
+    validations:
+      required: true
+  - type: textarea
+    id: local-first-fit
+    attributes:
+      label: Local-first fit
+      description: How does this work fully offline with a local model? Anything it would need beyond the user's machine?

@@ -1,0 +1,280 @@
+{
+  "contract": "PluginDeclarativeContentV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "bounded_text": {
+      "type": "string",
+      "max_utf8_bytes": 16384
+    },
+    "display_text": {
+      "type": "string",
+      "pattern": "^[\\x20-\\x7E]{1,120}$",
+      "max_utf8_bytes": 120
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "max_utf8_bytes": 64
+    },
+    "placeholder": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "max_utf8_bytes": 64
+    },
+    "theme_token": {
+      "type": "string",
+      "pattern": "^(?:color|surface|text|border|spacing|radius|font|motion)\\.[a-z0-9_.-]{1,56}$",
+      "max_utf8_bytes": 64
+    },
+    "theme_value": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9#._% +\\-]{1,200}$",
+      "max_utf8_bytes": 200
+    },
+    "setting_field": {
+      "type": "tagged_union",
+      "tag_field": "type",
+      "variants": {
+        "boolean": {
+          "type": "object",
+          "required": ["type", "key", "label", "default"],
+          "max_keys": 4,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "boolean" },
+            "key": { "type": "ref", "ref": "identifier" },
+            "label": { "type": "ref", "ref": "display_text" },
+            "default": { "type": "boolean" }
+          }
+        },
+        "string": {
+          "type": "object",
+          "required": ["type", "key", "label", "default", "max_length"],
+          "max_keys": 5,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "string" },
+            "key": { "type": "ref", "ref": "identifier" },
+            "label": { "type": "ref", "ref": "display_text" },
+            "default": { "type": "string", "max_utf8_bytes": 1024 },
+            "max_length": { "type": "integer", "minimum": 0, "maximum": 1024 }
+          }
+        },
+        "integer": {
+          "type": "object",
+          "required": ["type", "key", "label", "default", "minimum", "maximum"],
+          "max_keys": 6,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "integer" },
+            "key": { "type": "ref", "ref": "identifier" },
+            "label": { "type": "ref", "ref": "display_text" },
+            "default": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+            "minimum": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+            "maximum": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
+          }
+        },
+        "enum": {
+          "type": "object",
+          "required": ["type", "key", "label", "default", "values"],
+          "max_keys": 5,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "enum" },
+            "key": { "type": "ref", "ref": "identifier" },
+            "label": { "type": "ref", "ref": "display_text" },
+            "default": { "type": "ref", "ref": "identifier" },
+            "values": {
+              "type": "array",
+              "max_items": 32,
+              "items": { "type": "ref", "ref": "identifier" }
+            }
+          }
+        }
+      }
+    },
+    "workflow_node": {
+      "type": "tagged_union",
+      "tag_field": "type",
+      "variants": {
+        "prompt": {
+          "type": "object",
+          "required": ["type", "node_id", "target_contribution_id", "input_placeholders", "max_attempts"],
+          "max_keys": 5,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "prompt" },
+            "node_id": { "type": "ref", "ref": "identifier" },
+            "target_contribution_id": { "type": "ref", "ref": "contribution_id" },
+            "input_placeholders": {
+              "type": "array",
+              "max_items": 16,
+              "items": { "type": "ref", "ref": "placeholder" }
+            },
+            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }
+          }
+        },
+        "tool": {
+          "type": "object",
+          "required": ["type", "node_id", "tool_id", "input_placeholders", "max_attempts"],
+          "max_keys": 5,
+          "additional_properties": "reject",
+          "properties": {
+            "type": { "type": "const", "value": "tool" },
+            "node_id": { "type": "ref", "ref": "identifier" },
+            "tool_id": { "type": "ref", "ref": "identifier" },
+            "input_placeholders": {
+              "type": "array",
+              "max_items": 16,
+              "items": { "type": "ref", "ref": "placeholder" }
+            },
+            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }
+          }
+        }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "content_schema_version",
+      "publisher_id",
+      "plugin_id",
+      "contribution_id",
+      "payload"
+    ],
+    "max_keys": 5,
+    "additional_properties": "reject",
+    "properties": {
+      "content_schema_version": { "type": "const", "value": 1 },
+      "publisher_id": { "type": "ref", "ref": "publisher_id" },
+      "plugin_id": { "type": "ref", "ref": "plugin_id" },
+      "contribution_id": { "type": "ref", "ref": "contribution_id" },
+      "payload": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "skill": {
+            "type": "object",
+            "required": ["kind", "instructions"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "skill" },
+              "instructions": { "type": "ref", "ref": "bounded_text" }
+            }
+          },
+          "prompt": {
+            "type": "object",
+            "required": ["kind", "template"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "prompt" },
+              "template": { "type": "ref", "ref": "bounded_text" }
+            }
+          },
+          "theme": {
+            "type": "object",
+            "required": ["kind", "tokens"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "theme" },
+              "tokens": {
+                "type": "array",
+                "max_items": 64,
+                "unique_by": ["token"],
+                "items": {
+                  "type": "object",
+                  "required": ["token", "value"],
+                  "max_keys": 2,
+                  "additional_properties": "reject",
+                  "properties": {
+                    "token": { "type": "ref", "ref": "theme_token" },
+                    "value": { "type": "ref", "ref": "theme_value" }
+                  }
+                }
+              }
+            }
+          },
+          "settings_schema": {
+            "type": "object",
+            "required": ["kind", "fields"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "settings_schema" },
+              "fields": {
+                "type": "array",
+                "max_items": 32,
+                "unique_by": ["key"],
+                "items": { "type": "ref", "ref": "setting_field" }
+              }
+            }
+          },
+          "command": {
+            "type": "object",
+            "required": ["kind", "target_kind", "target_contribution_id"],
+            "max_keys": 3,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "command" },
+              "target_kind": { "type": "enum", "values": ["prompt", "workflow"] },
+              "target_contribution_id": { "type": "ref", "ref": "contribution_id" }
+            }
+          },
+          "workflow": {
+            "type": "object",
+            "required": ["kind", "entry_node_id", "nodes", "edges", "total_timeout_ms"],
+            "max_keys": 5,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "workflow" },
+              "entry_node_id": { "type": "ref", "ref": "identifier" },
+              "nodes": {
+                "type": "array",
+                "max_items": 32,
+                "unique_by": ["node_id"],
+                "items": { "type": "ref", "ref": "workflow_node" }
+              },
+              "edges": {
+                "type": "array",
+                "max_items": 64,
+                "unique_by": ["from_node_id", "to_node_id"],
+                "items": {
+                  "type": "object",
+                  "required": ["from_node_id", "to_node_id"],
+                  "max_keys": 2,
+                  "additional_properties": "reject",
+                  "properties": {
+                    "from_node_id": { "type": "ref", "ref": "identifier" },
+                    "to_node_id": { "type": "ref", "ref": "identifier" }
+                  }
+                }
+              },
+              "total_timeout_ms": { "type": "integer", "minimum": 1, "maximum": 300000 }
+            }
+          },
+          "mcp_descriptor": {
+            "type": "object",
+            "required": ["kind", "display_name", "transport_class", "capabilities"],
+            "max_keys": 4,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "mcp_descriptor" },
+              "display_name": { "type": "ref", "ref": "display_text" },
+              "transport_class": { "type": "enum", "values": ["native_stdio", "remote_http"] },
+              "capabilities": {
+                "type": "array",
+                "max_items": 32,
+                "items": { "type": "ref", "ref": "identifier" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

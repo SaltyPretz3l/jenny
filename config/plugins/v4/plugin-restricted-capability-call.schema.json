@@ -1,0 +1,9 @@
+{
+  "contract": "PluginRestrictedCapabilityCallV4", "contract_version": 4, "frozen": true,
+  "root": {
+    "type": "object", "required": ["call_schema_version", "call_id", "invocation_id", "operation_id", "cancellation_id", "process_instance_id", "channel_id", "commit_epoch", "lifecycle_epoch", "capability", "token_id", "argument_digest", "payload_json"], "max_keys": 13, "additional_properties": "reject",
+    "properties": {
+      "call_schema_version": { "type": "const", "value": 4 }, "call_id": { "type": "ref", "ref": "operation_id" }, "invocation_id": { "type": "ref", "ref": "operation_id" }, "operation_id": { "type": "ref", "ref": "operation_id" }, "cancellation_id": { "type": "ref", "ref": "operation_id" }, "process_instance_id": { "type": "ref", "ref": "operation_id" }, "channel_id": { "type": "ref", "ref": "operation_id" }, "commit_epoch": { "type": "ref", "ref": "commit_epoch" }, "lifecycle_epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "capability": { "type": "enum", "values": ["stream.emit_progress", "stream.emit_data", "control.cancelled", "network.request", "secret.use_handle", "clock.deadline_remaining"] }, "token_id": { "type": "ref", "ref": "sha256_hex" }, "argument_digest": { "type": "ref", "ref": "sha256_hex" }, "payload_json": { "type": "string", "max_utf8_bytes": 65536 }
+    }
+  }
+}

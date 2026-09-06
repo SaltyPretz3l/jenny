@@ -1,0 +1,51 @@
+# Public-repo CI: the portable gate for the distributed source tree.
+# The private development repo runs the full policy/coverage lanes (ci.yml),
+# which depend on source-repo-only files that the distribution deliberately
+# drops. This workflow runs exactly the checks the shipped tree is
+# contractually expected to pass — see docs/BUILDING.md and
+# CONTRIBUTING.md. Scope changes here must keep a fresh `npm run dist:export`
+# green end-to-end before landing.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Portable gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Install Python package + test extras into .venv
+        # test:dist resolves <root>/.venv/bin/python first; installing there
+        # keeps the runner identical to a contributor's local setup.
+        run: |
+          python -m venv .venv
+          ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/python -m pip install -e ".[dev]"
+      - name: Lint
+        run: npm run lint
+      - name: Release metadata
+        run: ./.venv/bin/python -B scripts/checks/check_release_metadata.py
+      - name: Distribution verification suite
+        run: npm run test:dist

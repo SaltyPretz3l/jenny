@@ -1,0 +1,40 @@
+/* —— Mid-turn response-loop phases (response_loop_display_v2) —— */
+
+/*
+ * The [data-assistant-phase] attribute is emitted on assistant_text rows ONLY
+ * when the shared display flag is on (see buildRowWrapperMarkup in
+ * renderer-turn-row-list-utils.js), so every rule here is self-gating: flag-off
+ * markup never carries the attribute and renders exactly as before.
+ *
+ * De-emphasis is a TEXT-COLOR shift to var(--text-secondary), never a container
+ * opacity — opacity washes out links, inline media, and code alike, and stacks
+ * badly with nested streaming bubbles. Code spans/blocks are exempted back to
+ * the primary foreground so snippets stay readable while prose recedes. The
+ * terminal final_answer carries the attribute too but keeps full emphasis.
+ */
+
+.chat-row[data-assistant-phase="commentary"] .chat-bubble-markdown,
+.chat-row[data-assistant-phase="intermediate"] .chat-bubble-markdown {
+  color: var(--text-secondary);
+}
+
+/* Readability over de-emphasis: code keeps the primary foreground. */
+.chat-row[data-assistant-phase="commentary"] .chat-bubble-markdown :is(pre, code),
+.chat-row[data-assistant-phase="intermediate"] .chat-bubble-markdown :is(pre, code) {
+  color: var(--text-primary);
+}
+
+/* Explicit full emphasis for the terminal answer, defending against any future
+ * cascade drift that might otherwise dim it. */
+.chat-row[data-assistant-phase="final_answer"] .chat-bubble-markdown {
+  color: inherit;
+}
+
+/*
+ * The commentary kicker is a screen-reader-only affordance (its child carries
+ * .sr-only); the visible signal is the dimmed bubble text above. Keep it inline
+ * so it never reserves layout space of its own.
+ */
+.chat-commentary-kicker {
+  display: inline;
+}

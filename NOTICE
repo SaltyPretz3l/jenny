@@ -1,0 +1,36 @@
+# Third-Party Notices
+
+Jenny is licensed under the MIT License (see LICENSE).
+
+This repository vendors the following third-party code:
+
+## pretext (vendor/pretext-layout.umd.js)
+
+- Upstream: https://github.com/chenglou/pretext
+- License: MIT License, Copyright (c) chenglou
+- Description: Fast, accurate & comprehensive text measurement & layout.
+- The file `vendor/pretext-layout.umd.js` is a UMD build of the upstream
+  library, vendored unmodified apart from bundling.
+
+## Tabler Icons (renderer/inventory/assets/search.svg)
+
+- Upstream: https://github.com/tabler/tabler-icons/tree/v3.46.0
+- License: MIT License, Copyright (c) 2020-2026 Paweł Kuna
+- Description: The outline Search icon used by the shared Chats and Settings
+  search-field treatment.
+- The file `renderer/inventory/assets/search.svg` is derived from the upstream
+  v3.46.0 Search icon and modified only to embed its attribution and license
+  notice.
+
+## Local-only reference checkouts (not distributed)
+
+Directories under `vendor/` that are listed in `.gitignore`
+(e.g. `vendor/unsloth/`) are local research checkouts. They are not tracked
+in this repository, are excluded from the GitHub stage manifest
+(`scripts/packaging/github_stage_manifest.json`), and are not part of any
+Jenny distribution. Their licenses are governed by their upstream projects.
+
+Runtime dependencies installed via npm (`package.json`) and pip
+(from `pyproject.toml`) carry their own licenses; see each package's
+metadata. The packaged application emits an SBOM for the Python sidecar
+during release builds (`npm run sbom:sidecar`).

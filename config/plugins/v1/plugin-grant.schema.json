@@ -1,0 +1,203 @@
+{
+  "contract": "PluginGrantV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "capability": {
+      "type": "enum",
+      "values": [
+        "chat.read",
+        "chat.write",
+        "fs.workspace.read",
+        "fs.workspace.write",
+        "network.fetch",
+        "mcp.stdio",
+        "ui.view",
+        "tool.execute",
+        "full_host.enable",
+        "secret_value_delivery",
+        "publisher_retrust",
+        "downgrade.explicit",
+        "quarantine.release"
+      ]
+    },
+    "principal": {
+      "type": "object",
+      "required": ["publisher_id", "plugin_id", "contribution_id"],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "publisher_id": { "type": "ref", "ref": "publisher_id" },
+        "plugin_id": { "type": "ref", "ref": "plugin_id" },
+        "contribution_id": { "type": "ref", "ref": "contribution_id" }
+      }
+    },
+    "channel": {
+      "type": "tagged_union",
+      "tag_field": "kind",
+      "variants": {
+        "process": {
+          "type": "object",
+          "required": ["kind", "process_id"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "process" },
+            "process_id": { "type": "string", "format": "nfc_identifier" }
+          }
+        },
+        "view_instance": {
+          "type": "object",
+          "required": ["kind", "view_instance_id"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "view_instance" },
+            "view_instance_id": {
+              "type": "string",
+              "format": "nfc_identifier"
+            }
+          }
+        },
+        "sidecar_channel": {
+          "type": "object",
+          "required": ["kind", "channel_id"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "sidecar_channel" },
+            "channel_id": { "type": "string", "format": "nfc_identifier" }
+          }
+        }
+      }
+    },
+    "use_budget": {
+      "type": "object",
+      "required": ["max_uses", "uses_remaining"],
+      "max_keys": 2,
+      "additional_properties": "reject",
+      "properties": {
+        "max_uses": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "uses_remaining": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "destination": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x7E]{1,253}$",
+      "max_utf8_bytes": 253
+    },
+    "operation_token": {
+      "type": "object",
+      "required": [
+        "token_id",
+        "principal",
+        "artifact_digest",
+        "generation_id",
+        "commit_epoch",
+        "channel",
+        "purpose",
+        "nonce",
+        "operation_id",
+        "expires_at_monotonic_ms",
+        "use_budget"
+      ],
+      "max_keys": 13,
+      "additional_properties": "reject",
+      "properties": {
+        "token_id": { "type": "string", "format": "nfc_identifier" },
+        "principal": { "type": "ref", "ref": "principal" },
+        "artifact_digest": { "type": "ref", "ref": "sha256_hex" },
+        "generation_id": { "type": "ref", "ref": "generation_id" },
+        "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+        "channel": { "type": "ref", "ref": "channel" },
+        "workspace_incarnation_id": {
+          "type": "string",
+          "format": "nfc_identifier"
+        },
+        "purpose": {
+          "type": "enum",
+          "values": [
+            "tool_execution",
+            "network_fetch",
+            "mcp_stdio",
+            "ui_view",
+            "secret_delivery",
+            "full_host_call"
+          ]
+        },
+        "destination": { "type": "ref", "ref": "destination" },
+        "nonce": { "type": "ref", "ref": "sha256_hex" },
+        "operation_id": { "type": "ref", "ref": "operation_id" },
+        "expires_at_monotonic_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "use_budget": { "type": "ref", "ref": "use_budget" }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "grant_schema_version",
+      "grant_id",
+      "principal",
+      "capability",
+      "scope",
+      "granted_at",
+      "commit_epoch",
+      "revoked",
+      "operation_token"
+    ],
+    "max_keys": 10,
+    "additional_properties": "reject",
+    "properties": {
+      "grant_schema_version": { "type": "const", "value": 1 },
+      "grant_id": { "type": "string", "format": "nfc_identifier" },
+      "principal": { "type": "ref", "ref": "principal" },
+      "capability": { "type": "ref", "ref": "capability" },
+      "scope": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "global": {
+            "type": "object",
+            "required": ["kind"],
+            "max_keys": 1,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "global" }
+            }
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "kind",
+              "workspace_incarnation_id",
+              "root_generation_id"
+            ],
+            "max_keys": 3,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "workspace" },
+              "workspace_incarnation_id": {
+                "type": "string",
+                "format": "nfc_identifier"
+              },
+              "root_generation_id": { "type": "ref", "ref": "generation_id" }
+            }
+          }
+        }
+      },
+      "granted_at": { "type": "ref", "ref": "iso8601_utc" },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "revoked": { "type": "boolean" },
+      "operation_token": { "type": "ref", "ref": "operation_token" }
+    }
+  }
+}

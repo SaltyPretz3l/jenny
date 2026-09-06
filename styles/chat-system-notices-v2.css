@@ -1,0 +1,278 @@
+/* Origin-chip and generic/error system-notice refinements; orphan_carry is styled in chat-tool-markers.css. */
+
+/* ── Origin chip refinements ─────────────────────────────────────── */
+
+.origin-chip {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 22%, transparent);
+  transition:
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.origin-chip:hover {
+  background: color-mix(in srgb, var(--accent-cyan) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 34%, transparent);
+}
+
+/* ── Generic system_notice V2 banner treatment ───────────────────── */
+
+.chat-row[data-row-kind="system_notice"] .chat-system-notice {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid color-mix(in srgb, var(--text-muted) 38%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+  line-height: 1.45;
+}
+
+/* Error variant (assistant_error subkind path) — preserve the danger
+ * surface from chat-thread.css; re-align radius and rail to V2. */
+.chat-row[data-row-kind="system_notice"] .chat-error-row {
+  border-radius: var(--radius-sm);
+  border-left: 2px solid color-mix(in srgb, var(--text-danger-emphasis) 55%, transparent);
+}
+
+/* Context-compacted subkind — shared by the V2 row and legacy article paths. */
+.context-compacted-notice {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--accent-cyan);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-cyan) 6%, var(--bg-surface));
+  color: var(--text-muted);
+  font-size: var(--tl-font-ui);
+  line-height: 1.45;
+}
+
+.context-compacted-notice-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.context-compacted-notice-count {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-cyan) 12%, transparent);
+  color: var(--accent-cyan);
+  font-size: var(--tl-font-meta);
+}
+
+.context-compacted-notice-meta {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-compacted-notice-details {
+  margin-top: var(--space-1);
+}
+
+.context-compacted-notice-details > summary {
+  width: max-content;
+  cursor: pointer;
+}
+
+.context-compacted-notice-details ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+}
+
+.chat-row[data-row-kind="system_notice"] .chat-error-row--recovery {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* ── Unified timeline error card (EH-W3) ─────────────────────────────
+ * One card for every turn-level error, rendered by
+ * renderTimelineErrorCard() in renderer-error-recovery-utils.js.
+ * Unscoped on purpose: the card appears inside system_notice rows AND
+ * the legacy article pipeline (transcript-thinking adapter). */
+
+.chat-error-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--tl-radius-panel);
+  border: 1px solid var(--state-danger-border);
+  background: var(--state-danger-bg);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+  line-height: 1.45;
+}
+
+/* Calm = user-initiated stop (cancelled / denied / aborted): muted
+ * chrome, no danger accent. */
+.chat-error-card--calm {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-surface));
+  color: var(--text-muted);
+}
+
+.chat-error-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.chat-error-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-danger-emphasis);
+}
+
+.chat-error-card--calm .chat-error-card-icon {
+  color: var(--text-muted);
+}
+
+.chat-error-card-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+/* Human title leads; the diagnostic code chip recedes to the right as
+ * metadata (head children are ordered icon -> title -> code in the JS). */
+.chat-error-card-head .chat-error-card-code {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+/* The code chip becomes a deep link into the Logs > Activity tab when the
+ * turn has a diagnostic event (role=link is only emitted with a stream id).
+ * Mirrors the .tool-path-chip affordance: quiet until hover/focus, then
+ * underlined — tone/colour stay exactly as the badge/legacy row set them. */
+.chat-error-card-code[role="link"],
+.chat-error-code[role="link"] {
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--transition-fast);
+}
+
+.chat-error-card-code[role="link"]:hover,
+.chat-error-card-code[role="link"]:focus-visible,
+.chat-error-code[role="link"]:hover,
+.chat-error-code[role="link"]:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.chat-error-card-code[role="link"]:focus-visible,
+.chat-error-code[role="link"]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.chat-error-card--calm .chat-error-card-title {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.chat-error-card-message {
+  overflow-wrap: anywhere;
+}
+
+.chat-error-card-hint {
+  color: var(--text-secondary);
+}
+
+.chat-error-card-details-summary {
+  transition: color var(--transition-fast);
+  width: max-content;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.chat-error-card-details-summary:hover {
+  color: var(--text-secondary);
+}
+
+.chat-error-card-raw {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-error-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+
+/* Actions demoted past the 2-button cap live inside the Details disclosure as
+ * quiet text links — same buildActionButton() wiring, link chrome instead of
+ * button chrome so the main row keeps a single primary + View in logs. */
+.chat-error-card-details-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+.chat-error-card .inv-error-action.chat-error-card-details-action {
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--tl-font-meta);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+
+.chat-error-card .inv-error-action.chat-error-card-details-action:hover,
+.chat-error-card .inv-error-action.chat-error-card-details-action:focus-visible {
+  color: var(--text-primary);
+  text-decoration-color: currentColor;
+  background: none;
+}
+
+.chat-error-card .inv-error-action {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--tl-font-ui);
+}
+
+/* ── Truncation marker (EH-W5) ───────────────────────────────────────
+ * Hairline + muted label appended to rows whose streamed tail was
+ * discarded by a stream_reset. Subtle by design: a clean recovery
+ * shows only this. */
+
+.chat-truncation-marker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  user-select: none;
+}
+
+.chat-truncation-marker-rule {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .origin-chip {
+    transition: none;
+  }
+}

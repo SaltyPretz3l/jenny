@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "inband_json_tool_call",
+    "provider": "provider_neutral",
+    "model": "synthetic-local",
+    "description": "Provider-neutral visible-text-only stream containing a <tool_call>{...}</tool_call> XML payload. The engine yields one streamed text chunk and returns a GenerationResult with no native tool_calls; the routing layer flushes the buffered text as one TokenDeltaEvent because no native tool_calls block the flush. The in-band parser is invoked upstream from stream_generate_with_tools on the assembled visible text and is not asserted at this layer.",
+    "target_phase": 3
+  },
+  "raw_chunks": [
+    {
+      "synthetic_text": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>"
+    }
+  ],
+  "expected_engine_events": [
+    {
+      "_class": "StreamingEvent",
+      "kind": "content",
+      "text": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>"
+    }
+  ],
+  "expected_loop_events": [
+    {
+      "_class": "TokenDeltaEvent",
+      "delta": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>",
+      "token_index": 1
+    }
+  ],
+  "expected_notifications": [
+    {
+      "method": "chat.token",
+      "params": {
+        "delta": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>",
+        "role": "assistant",
+        "sequence": 1
+      }
+    }
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "assistant_text_segment",
+      "status": "",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "text": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>",
+        "assistant_phase": "final_answer",
+        "segment_id": "assistant_t_replay_seg_0",
+        "segment_group_index": 0,
+        "canonical_event_type": "text_part_completed",
+        "canonical_part_id": "t_replay:text_part:1",
+        "canonical_seq": 1
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "I'll search for Python files.\n<tool_call>\n{\"name\": \"glob_files\", \"arguments\": {\"pattern\": \"*.py\"}}\n</tool_call>",
+    "thinking_text": "",
+    "finish_reason": "stop",
+    "tool_calls": []
+  }
+}

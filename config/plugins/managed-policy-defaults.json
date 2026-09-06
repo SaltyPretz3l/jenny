@@ -1,0 +1,21 @@
+{
+  "managed_policy_defaults_schema_version": 1,
+  "bundle_max_bytes": 262144,
+  "poll_interval_ms": 30000,
+  "default_privileged_execution": "allow",
+  "default_installation": "allow_inactive",
+  "default_update_ring": "stable",
+  "default_audit_max_entries": 1000,
+  "windows": {
+    "registry_key": "HKLM\\SOFTWARE\\Policies\\Jenny",
+    "value_name": "ManagedPolicyBundle"
+  },
+  "macos": {
+    "managed_preferences_domain": "/Library/Managed Preferences/com.jenny.shell",
+    "key": "ManagedPolicyBundle"
+  },
+  "linux": {
+    "policy_file": "/etc/jenny/managed-policy.json",
+    "requires_root_owner": true
+  }
+}

@@ -1,0 +1,556 @@
+{
+  "cases": [
+    {
+      "id": "w11_declarative_skill_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "skill-alpha",
+        "payload": {
+          "kind": "skill",
+          "instructions": "Use the widget tool carefully."
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_prompt_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "prompt-alpha",
+        "payload": {
+          "kind": "prompt",
+          "template": "Summarize {{input}}."
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_theme_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "theme-alpha",
+        "payload": {
+          "kind": "theme",
+          "tokens": [
+            {
+              "token": "color.accent",
+              "value": "#d4af37"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_settings_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "settings-alpha",
+        "payload": {
+          "kind": "settings_schema",
+          "fields": [
+            {
+              "type": "boolean",
+              "key": "enabled",
+              "label": "Enabled",
+              "default": false
+            },
+            {
+              "type": "string",
+              "key": "label",
+              "label": "Label",
+              "default": "",
+              "max_length": 80
+            },
+            {
+              "type": "integer",
+              "key": "count",
+              "label": "Count",
+              "default": 1,
+              "minimum": 0,
+              "maximum": 10
+            },
+            {
+              "type": "enum",
+              "key": "mode",
+              "label": "Mode",
+              "default": "safe",
+              "values": [
+                "safe",
+                "fast"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_command_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "command-alpha",
+        "payload": {
+          "kind": "command",
+          "target_kind": "prompt",
+          "target_contribution_id": "prompt-alpha"
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_workflow_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "workflow-alpha",
+        "payload": {
+          "kind": "workflow",
+          "entry_node_id": "start",
+          "nodes": [
+            {
+              "type": "prompt",
+              "node_id": "start",
+              "target_contribution_id": "prompt-alpha",
+              "input_placeholders": [
+                "input"
+              ],
+              "max_attempts": 1
+            },
+            {
+              "type": "tool",
+              "node_id": "finish",
+              "tool_id": "workspace_read",
+              "input_placeholders": [
+                "input"
+              ],
+              "max_attempts": 2
+            }
+          ],
+          "edges": [
+            {
+              "from_node_id": "start",
+              "to_node_id": "finish"
+            }
+          ],
+          "total_timeout_ms": 300000
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_mcp_metadata_valid",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "mcp-alpha",
+        "payload": {
+          "kind": "mcp_descriptor",
+          "display_name": "Widget metadata",
+          "transport_class": "native_stdio",
+          "capabilities": [
+            "lookup"
+          ]
+        }
+      }
+    },
+    {
+      "id": "w11_declarative_missing_payload",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "skill-alpha"
+      }
+    },
+    {
+      "id": "w11_declarative_outer_kind_rejected",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "skill-alpha",
+        "payload": {
+          "kind": "skill",
+          "instructions": "Safe"
+        },
+        "kind": "skill"
+      }
+    },
+    {
+      "id": "w11_declarative_payload_unknown_field",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "mcp-alpha",
+        "payload": {
+          "kind": "mcp_descriptor",
+          "display_name": "Widget metadata",
+          "transport_class": "native_stdio",
+          "capabilities": [],
+          "endpoint": "https://example.invalid"
+        }
+      }
+    },
+    {
+      "id": "w11_trust_roots_valid",
+      "contract": "PluginPublisherTrustRootsV1",
+      "value": {
+        "trust_roots_schema_version": 1,
+        "updated_at": "2026-08-02T00:00:00Z",
+        "publishers": [
+          {
+            "publisher_id": "jenny-official",
+            "current_key_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "established_at": "2026-08-02T00:00:00Z",
+            "keys": [
+              {
+            "key_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "algorithm": "ed25519",
+                "public_key_spki_der_base64": "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+                "status": "active",
+                "added_at": "2026-08-02T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "w11_trust_roots_missing_current_key",
+      "contract": "PluginPublisherTrustRootsV1",
+      "value": {
+        "trust_roots_schema_version": 1,
+        "updated_at": "2026-08-02T00:00:00Z",
+        "publishers": [
+          {
+            "publisher_id": "jenny-official",
+            "established_at": "2026-08-02T00:00:00Z",
+            "keys": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "w11_receipt_generation_required",
+      "contract": "PluginOperationReceiptV1",
+      "value": {
+        "operation_id": "op-w11",
+        "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lifecycle_epoch": 1,
+        "commit_epoch": 1,
+        "status": "pending",
+        "created_at": "2026-08-02T00:00:00Z",
+        "updated_at": "2026-08-02T00:00:00Z",
+        "retain_until": "9999-12-31T23:59:59Z"
+      }
+    },
+    {
+      "id": "w11_terminal_receipt_retention_required",
+      "contract": "PluginOperationReceiptV1",
+      "value": {
+        "operation_id": "op-terminal-w11",
+        "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "generation_id": "gen-w11",
+        "lifecycle_epoch": 1,
+        "commit_epoch": 1,
+        "status": "committed",
+        "created_at": "2026-08-02T00:00:00Z",
+        "updated_at": "2026-08-02T00:00:00Z"
+      }
+    },
+    {
+      "id": "w11_generation_metadata_required",
+      "contract": "PluginGenerationV1",
+      "value": {
+        "generation_id": "gen-w11",
+        "generation_schema_version": 1,
+        "created_at": "2026-08-02T00:00:00Z",
+        "graph_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "plugins": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "resolved_version": "1.0.0",
+            "publisher_key_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "artifact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "desired_state": "installed_disabled",
+            "effective_state": "installed_disabled",
+            "checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "depends_on": []
+          }
+        ],
+        "policy_grant_ref": {
+          "policy_snapshot_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "policy_revision": 1,
+          "grant_set_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "data_schema_refs": []
+      }
+    },
+    {
+      "id": "w11_manifest_unicode_display_names_valid",
+      "contract": "PluginManifestV1",
+      "value": {
+        "manifest_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "name": "Caf\u00e9 \u65e5\u672c\u8a9e",
+        "version": "1.0.0",
+        "contract_versions": {
+          "manifest": 1,
+          "declarative_content": 1,
+          "operation_receipt": 1,
+          "cleanup_state": 1
+        },
+        "contributions": [
+          {
+            "kind": "skill",
+            "contribution_id": "skill-main",
+            "name": "R\u00e9sum\u00e9",
+            "content_path": "content/skill-main.json",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "requested_permissions": []
+      }
+    },
+    {
+      "id": "w11_manifest_display_name_nfd_rejected",
+      "contract": "PluginManifestV1",
+      "value": {
+        "manifest_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "name": "Cafe\u0301",
+        "version": "1.0.0",
+        "contract_versions": {
+          "manifest": 1,
+          "declarative_content": 1,
+          "operation_receipt": 1,
+          "cleanup_state": 1
+        },
+        "contributions": [],
+        "requested_permissions": []
+      }
+    },
+    {
+      "id": "w11_manifest_display_name_bidi_rejected",
+      "contract": "PluginManifestV1",
+      "value": {
+        "manifest_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "name": "Acme\u202eLabs",
+        "version": "1.0.0",
+        "contract_versions": {
+          "manifest": 1,
+          "declarative_content": 1,
+          "operation_receipt": 1,
+          "cleanup_state": 1
+        },
+        "contributions": [],
+        "requested_permissions": []
+      }
+    },
+    {
+      "id": "w11_generation_unicode_display_name_valid",
+      "contract": "PluginGenerationV1",
+      "value": {
+        "generation_id": "gen-unicode",
+        "generation_schema_version": 1,
+        "created_at": "2026-08-02T00:00:00Z",
+        "graph_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "plugins": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "display_name": "Caf\u00e9 \u65e5\u672c\u8a9e",
+            "resolved_version": "1.0.0",
+            "publisher_key_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "artifact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "desired_state": "installed_disabled",
+            "effective_state": "installed_disabled",
+            "checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "depends_on": []
+          }
+        ],
+        "policy_grant_ref": {
+          "policy_snapshot_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "policy_revision": 1,
+          "grant_set_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "data_schema_refs": []
+      }
+    },
+    {
+      "id": "w11_generation_display_name_zero_width_rejected",
+      "contract": "PluginGenerationV1",
+      "value": {
+        "generation_id": "gen-zero-width",
+        "generation_schema_version": 1,
+        "created_at": "2026-08-02T00:00:00Z",
+        "graph_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "plugins": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "display_name": "Acme\u200bLabs",
+            "resolved_version": "1.0.0",
+            "publisher_key_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "artifact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "desired_state": "installed_disabled",
+            "effective_state": "installed_disabled",
+            "checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "depends_on": []
+          }
+        ],
+        "policy_grant_ref": {
+          "policy_snapshot_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "policy_revision": 1,
+          "grant_set_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "data_schema_refs": []
+      }
+    },
+    {
+      "id": "w11_unpaired_surrogate_rejected",
+      "contract": "PluginDeclarativeContentV1",
+      "value": {
+        "content_schema_version": 1,
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "contribution_id": "skill-alpha",
+        "payload": {
+          "kind": "skill",
+          "instructions": "\ud800"
+        }
+      }
+    }
+  ],
+  "expectations": {
+    "w11_declarative_skill_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_prompt_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_theme_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_settings_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_command_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_workflow_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_mcp_metadata_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_declarative_missing_payload": {
+      "ok": false,
+      "error_code": "missing_required_field",
+      "error_path": "payload"
+    },
+    "w11_declarative_outer_kind_rejected": {
+      "ok": false,
+      "error_code": "max_keys_exceeded",
+      "error_path": ""
+    },
+    "w11_declarative_payload_unknown_field": {
+      "ok": false,
+      "error_code": "max_keys_exceeded",
+      "error_path": "payload"
+    },
+    "w11_trust_roots_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_trust_roots_missing_current_key": {
+      "ok": false,
+      "error_code": "missing_required_field",
+      "error_path": "publishers[0].current_key_id"
+    },
+    "w11_receipt_generation_required": {
+      "ok": false,
+      "error_code": "missing_required_field",
+      "error_path": "generation_id"
+    },
+    "w11_terminal_receipt_retention_required": {
+      "ok": false,
+      "error_code": "missing_required_field",
+      "error_path": "retain_until"
+    },
+    "w11_generation_metadata_required": {
+      "ok": false,
+      "error_code": "missing_required_field",
+      "error_path": "plugins[0].display_name"
+    },
+    "w11_manifest_unicode_display_names_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_manifest_display_name_nfd_rejected": {
+      "ok": false,
+      "error_code": "not_nfc_normalized",
+      "error_path": "name"
+    },
+    "w11_manifest_display_name_bidi_rejected": {
+      "ok": false,
+      "error_code": "forbidden_codepoint",
+      "error_path": "name"
+    },
+    "w11_generation_unicode_display_name_valid": {
+      "ok": true,
+      "error_code": null,
+      "error_path": null
+    },
+    "w11_generation_display_name_zero_width_rejected": {
+      "ok": false,
+      "error_code": "forbidden_codepoint",
+      "error_path": "plugins[0].display_name"
+    },
+    "w11_unpaired_surrogate_rejected": {
+      "ok": false,
+      "error_code": "invalid_unicode_scalar",
+      "error_path": "payload.instructions"
+    }
+  }
+}

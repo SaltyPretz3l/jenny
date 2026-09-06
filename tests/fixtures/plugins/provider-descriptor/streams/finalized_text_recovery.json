@@ -1,0 +1,97 @@
+{
+  "fixture_id": "streams/finalized_text_recovery",
+  "schema_version": 1,
+  "description": "response.output_text.done never itself emits an output event -- it only records a keyed (output_index, content_index) -> text entry used at TERMINAL time to recover an answer when the streamed delta buffer is blank. A turn-level, two-buffer priority resolution performed once at finalize(), not a per-event mapping.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_finalized_text_event_does_not_duplicate_streamed_deltas",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_done_only_finalized_text_is_recovered_and_diagnosed",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_genuinely_textless_completion_is_distinguishable_in_diagnostics"
+  ],
+  "declarative_verdict": "no",
+  "notes": "Which buffer wins ('delta' vs 'output_text_done' vs 'none') is a fold over the WHOLE turn evaluated once at the terminal event, not a mapping from any single provider event. See _CompletionShape.resolve_text in sidecar/ai/engines/chatgpt_subscription_stream.py.",
+  "cases": [
+    {
+      "case_id": "done_event_does_not_duplicate_deltas",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.output_text.delta", "delta": "Hello"},
+          {"type": "response.output_text.delta", "delta": " world"},
+          {
+            "type": "response.output_text.done",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "Hello world"
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {"kind": "content", "text": "Hello"},
+          {"kind": "content", "text": " world"}
+        ],
+        "result": {"content": "Hello world", "finish_reason": "stop", "usage": null},
+        "diagnostics": {
+          "output_text_delta_count": 2,
+          "output_text_delta_chars": 11,
+          "output_text_done_count": 1,
+          "output_text_done_chars": 11,
+          "terminal_text_source": "delta"
+        }
+      },
+      "rule": "When the delta buffer has non-blank text it WINS: the done event contributes no stream item and no duplicated content, only diagnostics."
+    },
+    {
+      "case_id": "done_only_text_is_recovered_at_finalize",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.done",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "Recovered answer."
+          },
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "Recovered answer.", "finish_reason": "stop"},
+        "diagnostics": {
+          "output_text_delta_count": 0,
+          "output_text_delta_chars": 0,
+          "output_text_done_count": 1,
+          "output_text_done_chars": 17,
+          "tool_call_count": 0,
+          "terminal_event_type": "response.completed",
+          "terminal_text_source": "output_text_done",
+          "finish_reason": "stop"
+        }
+      },
+      "rule": "With a blank delta buffer the recorded done text is recovered as the answer AFTER the stream is exhausted, so nothing was streamed at the time -- the recovery is invisible to the incremental consumer and only visible in the final result."
+    },
+    {
+      "case_id": "genuinely_textless_completion_is_distinguishable",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [{"type": "response.completed", "response": {}}]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "", "thinking_text": "", "finish_reason": "stop"},
+        "diagnostics": {
+          "output_text_done_count": 0,
+          "terminal_text_source": "none",
+          "output_text_delta_count": 0
+        }
+      },
+      "rule": "'none' is a distinct third outcome from 'delta' and 'output_text_done': a turn that genuinely produced no text is diagnosable apart from one whose text was lost."
+    }
+  ],
+  "non_executable": []
+}

@@ -1,0 +1,30 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ROOT = path.resolve(__dirname, '..');
+
+test('Diagnostics uses the three canonical stylesheets and adaptive product tokens', () => {
+  const styleNames = ['diagnostics-page.css', 'diagnostics-activity.css', 'diagnostics-health.css'];
+  const styleByName = Object.fromEntries(styleNames.map((name) => [name, fs.readFileSync(path.join(ROOT, 'styles', name), 'utf8')]));
+  const styles = styleNames.map((name) => styleByName[name]).join('\n');
+  const imports = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf8');
+  assert.match(imports, /diagnostics-page\.css/); assert.match(imports, /diagnostics-activity\.css/); assert.match(imports, /diagnostics-health\.css/);
+  assert.ok(imports.indexOf('diagnostics-page.css') < imports.indexOf('diagnostics-activity.css'));
+  assert.ok(imports.indexOf('diagnostics-activity.css') < imports.indexOf('diagnostics-health.css'));
+  assert.doesNotMatch(imports, /logs-page|settings-observability/);
+  assert.doesNotMatch(styles, /#[0-9a-f]{3,8}\b/i);
+  assert.doesNotMatch(styles, /var\(--font-mono\)/);
+  assert.doesNotMatch(styles, /backdrop-filter|font-family:\s*var\(--font-family-emotive\)/);
+  assert.match(styles, /var\(--border-subtle\)/);
+  assert.match(styles, /prefers-reduced-motion/);
+  assert.match(styles, /forced-colors:\s*active/);
+  assert.match(styleByName['diagnostics-activity.css'], /border-inline-start-color:\s*var\(--state-warning\)/);
+  assert.match(styleByName['diagnostics-activity.css'], /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(320px, 32%\)/);
+  assert.match(styleByName['diagnostics-activity.css'], /min-width:\s*1241px[\s\S]*diagnostics-activity-scope[\s\S]*diagnostics-activity-console[^{]*\{[^}]*grid-row:\s*3/);
+  assert.match(styleByName['diagnostics-activity.css'], /max-width:\s*1240px/);
+  assert.match(styleByName['diagnostics-activity.css'], /min-height:\s*31px/);
+  assert.match(styleByName['diagnostics-activity.css'], /inventory\/assets\/search\.svg/);
+  assert.doesNotMatch(styleByName['diagnostics-health.css'], /\.diagnostics-issue\s*\{[^}]*border-(?:left|inline-start)/s);
+});

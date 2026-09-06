@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "reasoning_only_completion",
+    "provider": "vllm",
+    "model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "description": "vLLM stream that emits only delta.reasoning_content with no delta.content and no tool_calls. Phase 4 target: routing layer fails closed with a StopEvent (CMP-STREAM-REASONING-ONLY) and surfaces a chat.error notification. Today: routing layer emits the ThinkingEvents but does not fail closed.",
+    "target_phase": 4
+  },
+  "raw_chunks": [
+    {"sse": "data: {\"choices\": [{\"delta\": {\"reasoning_content\": \"I should explain this carefully.\"}}]}"},
+    {"sse": "data: {\"choices\": [{\"delta\": {\"reasoning_content\": \"Actually, I am not sure what to do.\"}, \"finish_reason\": \"stop\"}]}"},
+    {"sse": "data: [DONE]"}
+  ],
+  "expected_engine_events": [
+    {"_class": "ThinkingDelta", "text": "I should explain this carefully.", "is_complete": false},
+    {"_class": "ThinkingDelta", "text": "Actually, I am not sure what to do.", "is_complete": true}
+  ],
+  "expected_loop_events": [
+    {
+      "_class": "ThinkingEvent",
+      "thinking_id": "think_req_replay_model",
+      "delta": "I should explain this carefully.",
+      "kind": "reasoning",
+      "persist": false,
+      "thinking_budget_chars": 65536
+    },
+    {
+      "_class": "ThinkingEvent",
+      "thinking_id": "think_req_replay_model",
+      "delta": "Actually, I am not sure what to do.",
+      "kind": "reasoning",
+      "persist": true,
+      "thinking_budget_chars": 65536
+    },
+    {
+      "_class": "StopEvent",
+      "reason": "Reasoning-only completion (no visible text and no tool call)",
+      "code": "CMP-STREAM-REASONING-ONLY",
+      "user_hint": ""
+    }
+  ],
+  "expected_notifications": [
+    {
+      "method": "chat.thinking",
+      "params": {
+        "delta": "I should explain this carefully.",
+        "thinking_id": "think_req_replay_model",
+        "kind": "reasoning",
+        "persist": false
+      }
+    },
+    {
+      "method": "chat.thinking",
+      "params": {
+        "delta": "Actually, I am not sure what to do.",
+        "thinking_id": "think_req_replay_model",
+        "kind": "reasoning",
+        "persist": true
+      }
+    },
+    {
+      "method": "chat.error",
+      "params": {
+        "code": "CMP-STREAM-REASONING-ONLY",
+        "message": "Reasoning-only completion (no visible text and no tool call)",
+        "retryable": false
+      }
+    }
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "reasoning_phase",
+      "status": "completed",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "phase_reasoning_t_replay_1",
+      "payload": {
+        "phase_id": "phase_reasoning_t_replay_1",
+        "phase_kind": "reasoning",
+        "thinking_id": "t_replay:reasoning_part:1",
+        "render_collapsed": false,
+        "entries": [
+          {
+            "id": "reasoning_t_replay_1_1",
+            "text": "I should explain this carefully.",
+            "thinkingId": "t_replay:reasoning_part:1"
+          },
+          {
+            "id": "reasoning_t_replay_1_2",
+            "text": "Actually, I am not sure what to do.",
+            "thinkingId": "t_replay:reasoning_part:1"
+          }
+        ],
+        "chunk_count": 2,
+        "completed": true,
+        "canonical_event_type": "reasoning_part_completed",
+        "canonical_part_id": "t_replay:reasoning_part:1",
+        "canonical_seq": 1
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "",
+    "thinking_text": "Actually, I am not sure what to do.",
+    "finish_reason": "stop",
+    "tool_calls": []
+  }
+}

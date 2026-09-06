@@ -1,0 +1,194 @@
+"""Error code constants for sidecar subsystems."""
+
+from __future__ import annotations
+
+CMP_TOOL_APPROVAL_DENIED = "CMP-TOOL-0001"
+CMP_TOOL_DISABLED = "CMP-TOOL-0002"
+CMP_TOOL_OUTSIDE_WORKSPACE = "CMP-TOOL-0003"
+CMP_TOOL_INVALID_PATH = "CMP-TOOL-0004"
+CMP_TOOL_UNKNOWN = "CMP-TOOL-0005"
+CMP_TOOL_IO_FAILED = "CMP-TOOL-0006"
+CMP_TOOL_COMMAND_BLOCKED = "CMP-TOOL-0007"
+CMP_TOOL_EXECUTION_FAILED = "CMP-TOOL-0008"
+CMP_TOOL_COERCED_ARGS_REJECTED = "CMP-TOOL-0010"
+CMP_TOOL_PYTHON_NOT_AVAILABLE = "CMP-TOOL-0011"
+CMP_TOOL_PYTHON_EXECUTION_FAILED = "CMP-TOOL-0012"
+CMP_TOOL_CAP_EXCEEDED = "CMP-TOOL-0013"
+CMP_TOOL_TODO_INVALID = "CMP-TOOL-0014"
+CMP_TOOL_TODO_OVERFLOW = "CMP-TOOL-0015"
+CMP_TOOL_BACKGROUND_NOT_FOUND = "CMP-TOOL-0016"
+CMP_TOOL_READ_SNAPSHOT_REQUIRED = "CMP-TOOL-0018"
+CMP_TOOL_STALE_READ_SNAPSHOT = "CMP-TOOL-0019"
+CMP_TOOL_MERMAID_VALIDATION = "CMP-TOOL-0020"
+CMP_TOOL_MERMAID_UNSUPPORTED_TYPE = "CMP-TOOL-0021"
+CMP_TOOL_MERMAID_FORMAT = "CMP-TOOL-0022"
+CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE = "CMP-TOOL-0023"
+CMP_TOOL_MERMAID_INTERNAL = "CMP-TOOL-0024"
+CMP_TOOL_APPLY_PATCH_PARSE_FAILED = "CMP-TOOL-0025"
+CMP_TOOL_APPLY_PATCH_PREIMAGE_MISMATCH = "CMP-TOOL-0026"
+CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK = "CMP-TOOL-0027"
+CMP_TOOL_APPLY_PATCH_TARGET_EXISTS = "CMP-TOOL-0028"
+CMP_TOOL_APPLY_PATCH_TARGET_MISSING = "CMP-TOOL-0029"
+CMP_TOOL_SUBAGENT_INVALID_PROMPT = "CMP-TOOL-0030"
+CMP_TOOL_SUBAGENT_INVALID_GRANTS = "CMP-TOOL-0031"
+CMP_TOOL_SUBAGENT_DEPTH_LIMIT = "CMP-TOOL-0032"
+CMP_TOOL_SUBAGENT_MUTATING_REQUIRES_WORKTREE = "CMP-TOOL-0033"
+CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED = "CMP-TOOL-0034"
+CMP_TOOL_RICH_FILES_MIME_MISMATCH = "CMP-TOOL-0035"
+CMP_TOOL_RICH_FILES_TOO_LARGE = "CMP-TOOL-0036"
+CMP_TOOL_RICH_FILES_UNSUPPORTED = "CMP-TOOL-0037"
+CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING = "CMP-TOOL-0038"
+CMP_TOOL_POLICY_DENIED = "CMP-TOOL-0039"
+CMP_TOOL_SKILL_NOT_FOUND = "CMP-TOOL-0040"
+CMP_TOOL_COMMAND_ABORTED = "CMP-TOOL-0041"
+# Emitted per call when an approval resume executes a narrower window than the
+# batch the model requested: every sibling admitted into the turn budget but
+# left outside the resume window gets this explicit terminal instead of
+# vanishing, so the model learns the call was discarded and the turn budget is
+# reconciled. See sidecar/runtime/chat_resume.py.
+CMP_TOOL_APPROVAL_WINDOW_DROPPED = "CMP-TOOL-0042"
+CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND = "CMP-TOOL-0043"
+# Settled before dispatch when a model echoes the schema example instead of
+# supplying real arguments -- e.g. a structurally valid apply_patch call
+# carrying {"patch": "<string>"} copied verbatim from the tool-use nudge.
+# Rejected in pre_filter_tool_calls so the call never reaches the
+# pre-mutation auto-checkpoint or the dispatcher.
+# See sidecar/ai/routing/tool_call_execution.py.
+CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED = "CMP-TOOL-0044"
+CMP_TOOL_PRECONDITION_UNMET = "CMP-TOOL-0045"
+CMP_MEMORY_FAILED = "CMP-MEM-0001"
+CMP_MEMORY_FINGERPRINT_CONFLICT = "CMP-MEM-0002"
+CMP_MEMORY_INVALID_KIND = "CMP-MEM-0003"
+CMP_MEMORY_NOT_FOUND = "CMP-MEM-0004"
+CMP_MEMORY_SCHEMA_MIGRATION = "CMP-MEM-0005"
+CMP_MEMORY_FAMILY_UNRESOLVED = "CMP-MEM-0006"
+CMP_MEMORY_CAPACITY_EXCEEDED = "CMP-MEM-0007"
+CMP_MEMORY_ROW_QUARANTINED = "CMP-MEM-0008"
+CMP_MEMORY_BACKGROUND_TIMEOUT = "CMP-MEM-0009"
+CMP_MODE_TOOL_BLOCKED = "CMP-MODE-0002"
+
+CMP_MCP_CONFIG_INVALID = "CMP-MCP-0001"
+CMP_MCP_SSE_DISABLED = "CMP-MCP-0002"
+CMP_MCP_TOOL_NOT_FOUND = "CMP-MCP-0003"
+CMP_MCP_SERVER_FAILED = "CMP-MCP-0004"
+CMP_MCP_PROTOCOL_FAILED = "CMP-MCP-0005"
+CMP_MCP_RESOURCE_UNSUPPORTED = "CMP-MCP-0006"
+CMP_MCP_RESOURCE_NOT_FOUND = "CMP-MCP-0007"
+CMP_MCP_RESOURCE_INVALID = "CMP-MCP-0008"
+CMP_MCP_TOOL_SURFACE_CHANGED = "CMP-MCP-0009"
+
+CMP_CTX_SKILL_INVALID = "CMP-CTX-0001"
+CMP_CTX_BUDGET_EXHAUSTED = "CMP-CTX-0002"
+
+# Configuration / setup preconditions — a required setting is missing (e.g. no
+# workspace root for file/terminal tools), not a runtime fault. Distinct from the
+# CTX family so recovery routes to Settings ("set a workspace root") instead of
+# borrowing the context-window "start a new session / simplify the request" copy.
+# Consumed by the JS chat-error-recovery `setup` recovery class.
+CMP_CFG_WORKSPACE_MISSING = "CMP-CFG-0001"
+
+CMP_LOOP_MAX_ITERATIONS = "CMP-LOOP-0001"
+CMP_LOOP_INVALID_TOOL_CALL = "CMP-LOOP-0002"
+CMP_LOOP_GENERATION_FAILED = "CMP-LOOP-0003"
+CMP_LOOP_WALL_CLOCK_EXCEEDED = "CMP-LOOP-0010"
+CMP_LOOP_BUDGET_EXCEEDED = "CMP-LOOP-0011"
+CMP_LOOP_TOOL_INTERRUPTED = "CMP-LOOP-0013"
+CMP_LOOP_CYCLE_DETECTED = "CMP-LOOP-0014"
+CMP_LOOP_ENGINE_STALLED = "CMP-LOOP-0015"
+CMP_LOOP_TOOL_INPUT_VALIDATION = "CMP-LOOP-0016"
+
+# Phase 6 (Internal Tool/Observation Audit Layer) — semantic stuck-loop codes.
+# Surfaced by ``StopController`` when ``stuck_loop_detector.detect_stuck_loop``
+# fires on the recent ``ToolObservationStore`` window. The existing syntactic
+# ``CMP_LOOP_CYCLE_DETECTED`` still fires first; these codes only appear when
+# the syntactic detector misses a semantic pattern (repeated observation,
+# repeated errors, alternating cycle). See
+# docs/superpowers/plans/2026-05-01-deterministic-local-harness-phase-6-plan.md.
+CMP_LOOP_REPEATED_ERRORS = "CMP-LOOP-0017"
+CMP_LOOP_REPEATED_OBSERVATIONS = "CMP-LOOP-0018"
+CMP_LOOP_STUCK_SUSPECTED = "CMP-LOOP-0019"
+
+# Phase 4 (Provider Stream Normalizer) — fail-closed for reasoning-only completions.
+# Surfaced via the routing-layer ``StopEvent`` and the chat ``CHAT_ERROR_METHOD``
+# notification when a turn produced reasoning deltas but no visible text and no
+# tool call. See docs/superpowers/plans/2026-05-01-deterministic-local-harness-phase-4-plan.md.
+CMP_STREAM_REASONING_ONLY = "CMP-STREAM-REASONING-ONLY"
+
+# Surfaced when a provider stream ends without terminal evidence — EOF with no
+# ``done`` chunk (Ollama) or no ``[DONE]`` sentinel (vLLM) — or when an in-band
+# error frame arrives mid-stream. Both previously fell through to a synthesized
+# ``finish_reason="stop"``, so a truncated answer was indistinguishable from a
+# complete one. See sidecar/ai/routing/provider_stream_normalizer.py.
+CMP_STREAM_INCOMPLETE = "CMP-STREAM-INCOMPLETE"
+
+# Phase 5 (Gated Native Tools With Fallback) — route-policy + approval-rejection codes.
+# Surfaced via the synthetic ``ToolExecutionOutcome`` (CMP_ROUTE_TOOL_DISABLED,
+# CMP_APPROVAL_REJECTED) on the existing ``tool.result`` notification, or via
+# the routing-layer ``StopEvent`` for ``CMP_ROUTE_FAIL_CLOSED``.
+# See docs/superpowers/plans/2026-05-01-deterministic-local-harness-phase-5-plan.md.
+CMP_ROUTE_TOOL_DISABLED = "CMP-ROUTE-TOOL-DISABLED"
+CMP_ROUTE_FAIL_CLOSED = "CMP-ROUTE-FAIL-CLOSED"
+CMP_APPROVAL_REJECTED = "CMP-APPROVAL-REJECTED"
+
+CMP_AI_MODEL_NOT_LOADED = "CMP-AI-0001"
+CMP_AI_ENGINE_CONNECTION = "CMP-AI-0002"
+CMP_AI_RATE_LIMIT = "CMP-AI-0003"
+CMP_AI_GENERATION = "CMP-AI-0005"
+CMP_AI_UNSUPPORTED_MODAL = "CMP-AI-0006"
+
+CMP_CHAT_INVALID_PARAMS = "CMP-CHAT-0001"
+CMP_CHAT_STREAM_FAILED = "CMP-CHAT-0002"
+
+# Frozen plugin-platform allocations mirrored from services/backend/error-codes.js.
+# Keep names semantic so sidecar runtime code never inlines CMP-PLUGIN strings.
+CMP_PLUGIN_GENERATION_INVALID = "CMP-PLUGIN-0007"
+CMP_PLUGIN_EPOCH_REGRESSION = "CMP-PLUGIN-0009"
+CMP_PLUGIN_LEASE_BUSY = "CMP-PLUGIN-0010"
+CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT = "CMP-PLUGIN-0011"
+CMP_PLUGIN_OUTCOME_INDETERMINATE = "CMP-PLUGIN-0013"
+CMP_PLUGIN_POLICY_BLOCKED = "CMP-PLUGIN-0015"
+CMP_PLUGIN_SAFE_MODE_ACTIVE = "CMP-PLUGIN-0021"
+CMP_PLUGIN_FEATURE_DISABLED = "CMP-PLUGIN-0022"
+CMP_PLUGIN_SOURCE_UNAVAILABLE = "CMP-PLUGIN-0026"
+CMP_PLUGIN_UPDATE_METADATA_INVALID = "CMP-PLUGIN-0027"
+CMP_PLUGIN_ROLLBACK_OR_FREEZE_DETECTED = "CMP-PLUGIN-0028"
+CMP_PLUGIN_ADVISORY_BLOCKED = "CMP-PLUGIN-0029"
+CMP_PLUGIN_REMOTE_AUTH_REQUIRED = "CMP-PLUGIN-0030"
+CMP_PLUGIN_REMOTE_AUTH_FAILED = "CMP-PLUGIN-0031"
+CMP_PLUGIN_REMOTE_PROTOCOL_UNSUPPORTED = "CMP-PLUGIN-0032"
+CMP_PLUGIN_REMOTE_TRANSPORT_FAILED = "CMP-PLUGIN-0033"
+CMP_PLUGIN_OPERATION_CANCELLED = "CMP-PLUGIN-0034"
+CMP_PLUGIN_RESOURCE_LIMIT_EXCEEDED = "CMP-PLUGIN-0035"
+CMP_PLUGIN_HOST_FAILED = "CMP-PLUGIN-0036"
+
+CMP_BACKGROUND_INVALID_PARAMS = "CMP-BG-0001"
+
+CMP_SRV_INITIALIZE_FAILED = "CMP-SRV-0001"
+
+# Shared runtime resource ceiling code for active-turn and worker caps.
+# Additional per-process limits should reuse this code when they surface the
+# same "resource exhausted" failure shape.
+CMP_RESOURCE_EXCEEDED = "CMP-RUNTIME-0001"
+
+CMP_PROTO_VERSION_MISMATCH = "CMP-PROTO-0001"
+CMP_PROTO_DUPLICATE_REQUEST_ID = "CMP-PROTO-0002"
+CMP_PROTO_INVALID_ENVELOPE = "CMP-PROTO-0003"
+
+CMP_HARNESS_TURN_NOT_FOUND = "CMP-HARN-0001"
+
+CMP_WEB_SSRF_BLOCKED = "CMP-WEB-0001"
+CMP_WEB_RATE_LIMITED = "CMP-WEB-0002"
+CMP_WEB_FETCH_FAILED = "CMP-WEB-0004"
+CMP_WEB_REDIRECT_BLOCKED = "CMP-WEB-0005"
+CMP_WEB_CONTENT_TOO_LARGE = "CMP-WEB-0006"
+CMP_WEB_INVALID_URL = "CMP-WEB-0007"
+
+CMP_CACHE_BREAK_DETECTED = "CMP-CACHE-0001"
+
+CMP_TSRCH_INVALID_QUERY = "CMP-TSRCH-0002"
+CMP_TSRCH_DEFERRED_TOOL = "CMP-TSRCH-0003"
+
+CMP_CLOUD_RATE_LIMITED = "CMP-CLOUD-1001"
+CMP_CLOUD_NETWORK_ERROR = "CMP-CLOUD-1002"
+CMP_CLOUD_HTTP_ERROR = "CMP-CLOUD-1003"
+CMP_CLOUD_RESPONSE_PARSE = "CMP-CLOUD-1004"

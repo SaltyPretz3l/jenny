@@ -1,0 +1,215 @@
+/* Settings > Plugins & Extensions.
+ * Rows and groups use shared settings primitives; this file owns only plugin
+ * controls, forms, details, command input, and theme integration.
+ */
+
+.plugins-settings-row-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+#pluginsHeaderActionsHost {
+  margin-left: auto;
+}
+
+.plugins-drop-zone {
+  margin-top: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+}
+
+.plugins-drop-zone.is-active {
+  border-color: var(--accent);
+  background: var(--surface-prompt-chip-hover);
+  color: var(--text-secondary);
+}
+
+.plugins-advanced-disclosure {
+  padding-top: var(--space-3);
+}
+
+/* Skill descriptions run long: stack the name over "/command · description"
+   instead of the one-line plugin idiom, and keep the switch column narrow. */
+.skills-settings-row .settings-field-row-text,
+.skills-folders-summary .settings-field-row-text,
+.skills-folders-disclosure .settings-field-row-text {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.skills-settings-row .inv-toggle,
+.skills-folder-row-controls .inv-toggle {
+  flex: none;
+}
+
+.skills-settings-row .settings-field-row-text small,
+.skills-folders-summary .settings-field-row-text small,
+.skills-folders-disclosure .settings-field-row-text small {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+}
+
+.settings-field-row--muted .settings-field-row-text,
+.settings-field-row--muted .settings-field-row-text strong {
+  color: var(--text-muted);
+}
+
+.skills-folders-disclosure {
+  margin-top: var(--space-2);
+  padding-left: var(--space-5);
+}
+
+.skills-folder-row-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.plugins-safe-mode-banner {
+  border: 1px solid var(--status-border-warning);
+  border-radius: var(--radius-md);
+  background: var(--status-bg-warning);
+  padding: var(--space-5) var(--space-6);
+}
+
+.plugins-safe-mode-banner .settings-field-label,
+.plugins-safe-mode-banner .settings-field-description {
+  color: var(--status-fg-warning);
+}
+
+.plugins-settings-error {
+  color: var(--text-danger-soft);
+}
+
+.plugin-catalog-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.plugin-catalog-row > .settings-field-row-text {
+  min-width: 0;
+}
+
+/* The shared row primitive styles descriptions but not <small>, so plugin and
+   MCP row metadata needs secondary typography. */
+.plugins-settings-row .settings-field-row-text small,
+.plugin-catalog-row .settings-field-row-text small,
+.mcp-servers-row .settings-field-row-text small {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+}
+
+#pluginsSettingsHost:empty,
+#pluginsSourcesHost:empty,
+#mcpServersHost:empty {
+  display: none;
+}
+
+.plugins-mirror-form {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+}
+
+.plugins-sources-actions {
+  margin-top: var(--space-4);
+}
+
+.plugin-detail-evidence dl {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.plugin-detail-evidence dl > div {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-16) * 3 + var(--space-7)), auto) 1fr;
+  gap: var(--space-6);
+}
+
+.plugin-detail-evidence dt {
+  color: var(--text-muted);
+}
+
+.plugin-detail-evidence dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.plugin-detail-contribution {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.plugin-settings-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--settings-shell-muted-border);
+  border-radius: var(--radius-md);
+}
+
+/* Theme variables are set only on #chatView. The approval surface is excluded
+   so trust/security chrome always remains core-owned. */
+#chatView[data-plugin-theme] {
+  background: var(--plugin-surface-chat);
+  color: var(--plugin-text-primary);
+}
+
+#chatView[data-plugin-theme] .chat-thread-stage,
+#chatView[data-plugin-theme] .chat-thread-shell,
+#chatView[data-plugin-theme] .chat-thread-scroll {
+  background: var(--plugin-surface-chat);
+}
+
+#chatView[data-plugin-theme] .chat-entry.user .chat-bubble {
+  background: var(--plugin-surface-message-user);
+  color: var(--plugin-text-primary);
+  border-color: var(--plugin-border-default);
+}
+
+#chatView[data-plugin-theme] .chat-entry.assistant:not(.tool-entry) .chat-bubble {
+  background: var(--plugin-surface-message-assistant);
+  color: var(--plugin-text-primary);
+}
+
+#chatView[data-plugin-theme] .chat-entry.assistant:not(.tool-entry) a {
+  color: var(--plugin-text-link);
+}
+
+#chatView[data-plugin-theme] .chat-entry.assistant:not(.tool-entry) .chat-hover-meta {
+  color: var(--plugin-text-muted);
+}
+
+#chatView[data-plugin-theme] .tool-call-row:not([data-tool-status="awaiting_approval"]):not([data-tool-status="pending_approval"]),
+#chatView[data-plugin-theme] .tool-call-block:not([data-tool-status="awaiting_approval"]):not([data-tool-status="pending_approval"]) {
+  background: var(--plugin-surface-tool);
+  border-color: var(--plugin-border-default);
+  color: var(--plugin-text-primary);
+}
+
+#chatView[data-plugin-theme] .chat-entry:focus-visible,
+#chatView[data-plugin-theme] a:focus-visible {
+  outline-color: var(--plugin-border-focus);
+}
+
+@media (max-width: 640px) {
+  .plugins-settings-row { align-items: flex-start; }
+  .plugins-settings-row-controls { justify-content: flex-start; }
+}

@@ -1,0 +1,173 @@
+:root {
+  --activity-duration-fast: var(--motion-duration-fast);
+  --activity-duration-regular: var(--motion-duration-regular);
+  --activity-pending-border: rgba(129, 148, 236, 0.42);
+  --activity-success-border: rgba(95, 224, 154, 0.36);
+  --activity-error-border: rgba(242, 92, 110, 0.34);
+}
+
+.settings-card,
+.settings-badge,
+.settings-note,
+.select-shell,
+.composer-select-shell,
+.settings-primary,
+.settings-secondary,
+.settings-danger,
+.composer,
+.inv-status-row {
+  transition:
+    border-color var(--activity-duration-regular) var(--motion-ease-standard),
+    box-shadow var(--activity-duration-regular) var(--motion-ease-standard),
+    background-color var(--activity-duration-regular) var(--motion-ease-standard),
+    color var(--activity-duration-fast) var(--motion-ease-standard),
+    opacity var(--activity-duration-fast) var(--motion-ease-standard),
+    transform var(--activity-duration-fast) var(--motion-ease-standard);
+}
+
+[data-activity-state="pending"][data-activity-emphasis="subtle"] {
+  border-color: var(--activity-pending-border);
+  box-shadow: 0 0 0 1px var(--widget-activity-pending-glow);
+}
+
+[data-activity-state="pending"][data-activity-emphasis="visible"] {
+  border-color: var(--activity-pending-border);
+  box-shadow:
+    0 0 0 1px var(--widget-activity-pending-glow),
+    0 12px 28px var(--widget-activity-pulse-color);
+}
+
+[data-activity-state="pending"][data-activity-emphasis="strong"] {
+  border-color: var(--widget-activity-pending-border);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-activity-pulse-color) 72%, transparent),
+    0 10px 22px color-mix(in srgb, var(--widget-activity-pulse-color) 52%, transparent);
+  animation: activity-pulse var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
+}
+
+[data-activity-state="success"] {
+  border-color: var(--activity-success-border);
+  box-shadow: 0 0 0 1px rgba(95, 224, 154, 0.08);
+}
+
+[data-activity-state="error"] {
+  border-color: var(--activity-error-border);
+  box-shadow: 0 0 0 1px rgba(242, 92, 110, 0.1);
+}
+
+[data-activity-state="settle"] {
+  opacity: 0.92;
+}
+
+.settings-badge[data-activity-state="pending"],
+.settings-note[data-activity-state="pending"],
+.composer-status-notice[data-activity-state="pending"] {
+  color: var(--widget-activity-pending-color);
+}
+
+.settings-badge[data-activity-state="pending"],
+.settings-badge[data-activity-state="success"],
+.settings-badge[data-activity-state="error"] {
+  transform: translateY(-1px);
+}
+
+.settings-note[data-activity-state="pending"] {
+  background: linear-gradient(90deg, transparent, var(--widget-activity-pulse-color), transparent);
+  background-size: 220% 100%;
+  animation: activity-sheen var(--motion-duration-sheen) linear infinite;
+}
+
+.settings-note[data-activity-state="success"] {
+  color: var(--widget-activity-success-color);
+}
+
+.settings-note[data-activity-state="error"] {
+  color: var(--widget-activity-error-color);
+}
+
+.settings-card[data-activity-state="pending"][data-activity-emphasis="strong"] {
+  background:
+    radial-gradient(circle at top right, rgba(110, 138, 255, 0.16), transparent 36%),
+    linear-gradient(180deg, rgba(28, 31, 44, 0.94), rgba(20, 22, 33, 0.98));
+}
+
+.settings-primary[data-busy="true"],
+.settings-secondary[data-busy="true"],
+.settings-danger[data-busy="true"] {
+  transform: translateY(-1px);
+}
+
+.composer[data-activity-state="pending"][data-activity-emphasis="strong"]::after {
+  border-color: var(--widget-activity-pending-border);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-activity-pulse-color) 78%, transparent),
+    0 10px 24px color-mix(in srgb, var(--widget-activity-pulse-color) 36%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* The status row is flat. The unscoped [data-activity-state] rules above tint
+   a border and draw a 1px ring — harmless on a card, but on a borderless row
+   they would conjure a container out of nothing. Hold the row flat and let
+   activity state colour the dot, which is the signal it was always standing in
+   for. Attribute+class beats the bare attribute selectors regardless of order. */
+.inv-status-row[data-activity-state] {
+  border: 0;
+  box-shadow: none;
+}
+
+.inv-status-row[data-activity-state="pending"] {
+  --inv-status-accent: var(--widget-activity-pending-color, var(--accent-cyan));
+}
+
+.inv-status-row[data-activity-state="success"] {
+  --inv-status-accent: var(--widget-tool-success-color);
+}
+
+.inv-status-row[data-activity-state="error"] {
+  --inv-status-accent: var(--text-danger-emphasis);
+}
+
+@keyframes activity-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--widget-activity-pulse-color) 72%, transparent),
+      0 8px 18px color-mix(in srgb, var(--widget-activity-pending-glow) 82%, transparent);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px var(--widget-activity-pending-border),
+      0 14px 28px color-mix(in srgb, var(--widget-activity-pulse-color) 64%, transparent);
+  }
+}
+
+@keyframes activity-sheen {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 220% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-card,
+  .settings-badge,
+  .settings-note,
+  .select-shell,
+  .composer-select-shell,
+  .settings-primary,
+  .settings-secondary,
+  .settings-danger,
+  .composer,
+  .inv-status-row {
+    transition: none;
+  }
+
+  [data-activity-state="pending"][data-activity-emphasis="strong"],
+  .settings-note[data-activity-state="pending"] {
+    animation: none;
+  }
+}

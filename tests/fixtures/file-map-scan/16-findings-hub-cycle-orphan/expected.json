@@ -1,0 +1,178 @@
+{
+  "nodes": [
+    {
+      "id": "c1.js",
+      "label": "c1.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0.3333,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "c2.js",
+      "label": "c2.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0.3333,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 24
+    },
+    {
+      "id": "c3.js",
+      "label": "c3.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0.3333,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 48
+    },
+    {
+      "id": "hub.js",
+      "label": "hub.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 3,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    },
+    {
+      "id": "lonely.js",
+      "label": "lonely.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 72
+    },
+    {
+      "id": "p.js",
+      "label": "p.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 96
+    },
+    {
+      "id": "q.js",
+      "label": "q.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 120
+    },
+    {
+      "id": "r.js",
+      "label": "r.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 144
+    }
+  ],
+  "edges": [
+    {
+      "from": "c1.js",
+      "to": "c2.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "c2.js",
+      "to": "c3.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "c3.js",
+      "to": "c1.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "p.js",
+      "to": "hub.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "q.js",
+      "to": "hub.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "r.js",
+      "to": "hub.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "hub.js",
+      "c1.js",
+      "c2.js",
+      "c3.js",
+      "lonely.js"
+    ],
+    "cycles": [
+      [
+        "c1.js",
+        "c2.js",
+        "c3.js"
+      ]
+    ],
+    "orphans": [
+      "lonely.js"
+    ]
+  },
+  "meta": {
+    "scanned": 8,
+    "total": 8,
+    "durationMs": 0
+  }
+}

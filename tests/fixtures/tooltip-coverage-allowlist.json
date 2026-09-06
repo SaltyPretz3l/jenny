@@ -1,0 +1,19 @@
+{
+  "static": [],
+  "source": [
+    "renderer/chat/renderer-artifact-card-utils.js|\"' + escapeHtml(action.ariaLabel) + '\"|0",
+    "renderer/chat/renderer-subagent-monitor-view.js||0",
+    "renderer/features/renderer-artifact-panel-chrome-render.js|'Delete artifact'|0",
+    "renderer/features/renderer-artifact-panel-chrome-render.js|'Jump to chat'|0",
+    "renderer/features/renderer-artifact-panel-chrome-render.js|'Open externally'|0",
+    "renderer/features/renderer-artifact-panel-chrome-render.js|'Reveal in folder'|0",
+    "renderer/features/renderer-dashboard-ask-config.js||0",
+    "renderer/features/renderer-ide-active-file-context.js|armed ? 'Active workspace file added to the next message' : 'Add active workspac|0",
+    "renderer/features/renderer-ide-chip-picker.js||0",
+    "renderer/features/renderer-ide-chip-picker.js||1",
+    "renderer/features/renderer-ide-map-findings.js|`${def.label|0",
+    "renderer/inventory/action-button.js|\"' + escapeHtml(o.ariaLabel) + '\"|0",
+    "renderer/inventory/selection-action-bar.js|\"Export selected messages\"|0",
+    "renderer/shell/renderer-observability-markup-utils.js|\"' + escapeHtml('Trace ' + (stream || 'without an identifier') + ', ' + terminal|0"
+  ]
+}

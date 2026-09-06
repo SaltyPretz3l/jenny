@@ -1,0 +1,12 @@
+{
+  "authenticated_private_pipe": true,
+  "binary_filename": "plugin-full-host-supervisor.exe",
+  "binary_sha256": "84f761ffc86a1e4c144f248bc2be9e8b1ac84cd03ea6a41e1d974d8cebc8b3d3",
+  "contract_lock_v6_sha256": "213a5f40d6adc1c3420c64fedce6b38c32415e50334db583052066ec21822ef0",
+  "provenance_schema_version": 1,
+  "release_eligible": true,
+  "source_commit": "52f8465ce19cd41f44e6ca2f08b419f3dfb9d20e",
+  "source_state": "clean",
+  "source_tree_digest": "ff88df05b094c9ac1a208a3538fb8b968c9e05058ed9979ebe25b7f05a00c8b5",
+  "target": "x86_64-pc-windows-msvc"
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "_comment": "Provenance for the local-only llama_server_extract/ binary. The binary is gitignored and never shipped in releases; this file records what the acceleration feature was last validated against. Runtime behavior is driven by the live --help probe in services/backend/llama-server-capabilities.js, never by this file. Refreshed 2026-09-01 from llama.cpp release b10749 (llama-b10749-bin-win-cuda-13.3-x64.zip + cudart-llama-bin-win-cuda-13.3-x64.zip); previous validated baseline was build 8846 (bcdcc1044), which had no draft-mtp.",
+  "expected_build": 10749,
+  "expected_commit": "dfc29b64e",
+  "cuda": "13.3",
+  "required_spec_types_for_mtp": [
+    "draft-mtp"
+  ],
+  "validated_on": "2026-09-01"
+}

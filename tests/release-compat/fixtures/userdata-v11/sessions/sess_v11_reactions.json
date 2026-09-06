@@ -1,0 +1,67 @@
+{
+  "schema_version": 11,
+  "session": {
+    "id": "sess_v11_reactions",
+    "title": "v11 reactions session",
+    "session_type": "chat",
+    "created_at": "2026-05-12T17:00:00.000Z",
+    "updated_at": "2026-05-12T17:05:00.000Z",
+    "message_count": 2,
+    "last_message_preview": "A message with legacy reaction markers",
+    "last_model_used": "qwen2.5-coder:14b",
+    "session_start_date": "2026-05-12",
+    "preferred_model": "qwen2.5-coder:14b",
+    "reasoning_effort": "default",
+    "conversation_mode": "chat",
+    "pending_question_batch": null,
+    "interactive_sequence_state": "idle",
+    "interactive_round_count": 0,
+    "plan_mode": false,
+    "context_preferences": {},
+    "active_turn": null,
+    "branch_origin": null,
+    "linked_session_ids": [],
+    "messages": [
+      {
+        "id": "msg_v11_user",
+        "role": "user",
+        "kind": "",
+        "content": "Can I react to replies?",
+        "timestamp": "2026-05-12T17:00:00.000Z",
+        "status": "completed",
+        "event_seq": 0
+      },
+      {
+        "id": "msg_v11_assistant",
+        "role": "assistant",
+        "kind": "",
+        "content": "A message with legacy reaction markers",
+        "timestamp": "2026-05-12T17:01:00.000Z",
+        "status": "completed",
+        "event_seq": 1,
+        "messageReactions": {
+          "thumbs_up": {
+            "selected": true,
+            "updatedAt": "2026-05-12T12:00:00-05:00"
+          },
+          "saved": {
+            "selected": false,
+            "updated_at": "2026-05-12T17:02:00.000Z"
+          },
+          "note": {
+            "selected": true,
+            "updated_at": "not-a-date"
+          },
+          "unknown": {
+            "selected": true,
+            "updated_at": "2026-05-12T17:03:00.000Z"
+          }
+        }
+      }
+    ],
+    "message_seq_counter": 2,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 0,
+    "turn_events": []
+  }
+}

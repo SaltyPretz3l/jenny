@@ -1,0 +1,99 @@
+/* ── Shared Home and artifact-review view primitives ── */
+
+.page-shell {
+  height: 100%;
+  padding: 48px 42px 34px;
+  overflow: auto;
+}
+
+.page-eyebrow {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.page-title {
+  margin: var(--space-4) 0 var(--space-3);
+  font-size: var(--font-size-7xl);
+  font-family: var(--font-family-display);
+  letter-spacing: -0.03em;
+}
+
+.page-copy {
+  margin: 0;
+  max-width: 720px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-lg);
+  line-height: 1.6;
+}
+
+/* --home-live-accent is reserved for "happening now" signals. */
+.home-view {
+  --home-live-accent: var(--mat-live-accent);
+  --home-orbit-glow: var(--widget-face-glow-color);
+  --home-orbit-aura-primary: var(--widget-face-aura-primary);
+  --home-orbit-aura-secondary: var(--widget-face-aura-secondary);
+  --home-orbit-shine: var(--widget-face-shine-color);
+  --home-focus-outline: var(--focus-outline);
+  --home-primary-shadow: color-mix(in srgb, var(--widget-button-primary-shadow) 76%, transparent);
+}
+
+.home-shell {
+  position: relative;
+  display: grid;
+  gap: var(--space-10);
+}
+
+@keyframes homeSurfaceSettle {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .home-shell {
+    gap: 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  .home-panel--board {
+    padding: var(--space-8);
+  }
+
+  /* No h3 override: panel headings hold the page-wide eyebrow size at every
+     breakpoint (one heading system). */
+
+  .home-action-row {
+    gap: var(--space-4);
+  }
+
+  .artifact-detail-actions-primary,
+  .artifact-detail-actions-secondary {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-view.active-view .home-body {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-reactive-grid-canvas,
+  .widget-playlist-scroll-canvas,
+  .widget-circuit-trace-canvas { transition: none; }
+
+  .artifacts-detail-panel,
+  .artifact-editor-shell { animation: none; }
+}

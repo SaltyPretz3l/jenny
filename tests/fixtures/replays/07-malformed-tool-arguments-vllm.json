@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "malformed_tool_arguments",
+    "provider": "vllm",
+    "model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "description": "Truncated/invalid JSON in delta.tool_calls[0].function.arguments. The ProviderStreamNormalizer recognizes the malformed payload, records a malformed_tool_arguments signal, streams any pre-error visible text, and the routing layer fails closed with a StopEvent (CMP-LOOP-INVALID-TOOL-CALL).",
+    "target_phase": 4
+  },
+  "raw_chunks": [
+    {"sse": "data: {\"choices\": [{\"delta\": {\"content\": \"Reading the file...\"}}]}"},
+    {"sse": "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_bad\", \"function\": {\"name\": \"read_file\", \"arguments\": \"{\\\"path\\\":\"}}]}, \"finish_reason\": \"tool_calls\"}]}"},
+    {"sse": "data: [DONE]"}
+  ],
+  "expected_engine_events": [
+    {"_class": "StreamingEvent", "kind": "content", "text": "Reading the file..."}
+  ],
+  "expected_loop_events": [
+    {
+      "_class": "TokenDeltaEvent",
+      "delta": "Reading the file...",
+      "token_index": 1
+    },
+    {
+      "_class": "StopEvent",
+      "reason": "tool_call arguments could not be parsed",
+      "code": "CMP-LOOP-0002",
+      "user_hint": ""
+    }
+  ],
+  "expected_notifications": [
+    {
+      "method": "chat.token",
+      "params": {
+        "delta": "Reading the file...",
+        "role": "assistant",
+        "sequence": 1
+      }
+    }
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "assistant_text_segment",
+      "status": "",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "text": "Reading the file...",
+        "assistant_phase": "final_answer",
+        "segment_id": "assistant_t_replay_seg_0",
+        "segment_group_index": 0,
+        "canonical_event_type": "text_part_completed",
+        "canonical_part_id": "t_replay:text_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:2",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_bad",
+      "source_message_ids": [
+        "tool_use_t_replay_call_bad"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_bad",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {},
+        "sequence": 1,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:2",
+        "canonical_seq": 2
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:3",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "error",
+      "primary_message_id": "tool_result_t_replay_call_bad",
+      "source_message_ids": [
+        "tool_result_t_replay_call_bad"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_bad",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "success": false,
+        "tool_output_summary": "tool_call arguments could not be parsed",
+        "content_type": "text",
+        "tool_input": {},
+        "error_code": "CMP-LOOP-0002",
+        "canonical_event_type": "tool_execution_failed",
+        "canonical_part_id": "t_replay:tool_part:3",
+        "canonical_seq": 3
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "Reading the file...",
+    "thinking_text": "",
+    "finish_reason": "tool_calls",
+    "tool_calls": []
+  }
+}

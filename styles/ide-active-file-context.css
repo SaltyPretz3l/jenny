@@ -1,0 +1,209 @@
+/* styles/ide-active-file-context.css
+ * Tier-3 "implicit active-file context + @-mentions".
+ * Owns the transparent active-file composer chip (rendered by
+ * renderer/features/renderer-ide-active-file-context.js) and the @-mention
+ * autocomplete popover (renderer/features/renderer-ide-mention-autocomplete.js).
+ * Kept out of styles/ide-view.css so it stays in the chat/composer lane. */
+
+/* ── Explicit active-file action + one-send chip ── */
+.composer-active-file-action-host.hidden {
+  display: none;
+}
+
+.composer-active-file-action-host .composer-active-file-action {
+  margin: 0;
+}
+
+.composer-active-file-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.active-file-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.active-file-context-chip.hidden {
+  display: none;
+}
+
+.active-file-context-chip-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.active-file-context-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Approx token cost of the shared slice — a small, muted budget indicator. */
+.active-file-context-chip-budget {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.active-file-context-chip-budget:empty {
+  display: none;
+}
+
+/* ── Large-file degraded-mode notice (floats over the editor, top-right) ── */
+.ide-large-file-notice {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+}
+
+.ide-large-file-notice.hidden {
+  display: none;
+}
+
+.ide-large-file-notice-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-large-file-notice-restore {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ide-large-file-notice-restore:hover {
+  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+}
+
+.ide-large-file-notice-restore:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.active-file-context-chip-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.active-file-context-chip-dismiss:hover {
+  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
+  color: var(--text-primary);
+}
+
+.active-file-context-chip-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── @-mention autocomplete popover (fixed; floats above the composer) ── */
+.ide-mention-popover {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  z-index: 60;
+  max-height: 260px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.ide-mention-popover.hidden {
+  display: none;
+}
+
+.ide-mention-results {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 4px 0;
+}
+
+.ide-mention-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ide-mention-row:hover {
+  background: var(--bg-surface-2);
+}
+
+.ide-mention-row--selected,
+.ide-mention-row--selected:hover {
+  background: var(--bg-surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-mention-name {
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.ide-mention-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-mention-path mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ide-mention-status {
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}

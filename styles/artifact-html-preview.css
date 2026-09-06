@@ -1,0 +1,94 @@
+/* Executable-HTML preview chrome uses palette variables and matches only markup emitted by the preview renderer. */
+
+.artifact-html-preview-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 2px 5px;
+}
+
+.artifact-html-preview-glyph {
+  flex: none;
+  color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+}
+
+.artifact-html-preview-label {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+}
+
+.artifact-html-preview-label--failed {
+  color: var(--text-warning, var(--text-secondary));
+}
+
+/* Right cluster: ghost stepper + v{k}/{n}. Emitted only when >=2 versions. */
+.artifact-html-preview-versions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.artifact-html-preview-step {
+  transition: color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+  border: none;
+  background: none;
+  border-radius: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.artifact-html-preview-step svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.artifact-html-preview-step:hover:not(:disabled),
+.artifact-html-preview-step:focus-visible {
+  color: var(--text-primary);
+  background: none;
+}
+
+.artifact-html-preview-step:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.artifact-html-preview-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Frame area: detached host card - full radius on all four corners (the
+ * strip is not a joined card). The iframe inside is chromeless; content sizing
+ * uses the frame's height postMessage with a 120px boot min-height, while fill
+ * mode stretches instead. */
+.artifact-html-preview-host {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-input-background);
+  min-height: 120px;
+  overflow: hidden;
+}
+
+/* Fill mode: the strip is fixed chrome that never shrinks as a flex item. */
+.artifact-html-preview-strip {
+  flex: 0 0 auto;
+}
+
+/* The failed state drops the marker class (factory removes it in teardown
+   before onFailure), so the code fallback returns to normal flow. The doubled
+   class outranks .html-artifact-frame-fill's later-imported 120px floor, so
+   overflow:auto + min-height:0 keep the pre reachable even if a fill host is
+   ever left behind. */
+.artifact-html-preview-host.artifact-html-preview-host--failed {
+  overflow: auto;
+  min-height: 0;
+}

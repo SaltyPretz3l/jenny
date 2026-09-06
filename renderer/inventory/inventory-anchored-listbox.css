@@ -1,0 +1,88 @@
+.inv-anchored-listbox {
+  position: fixed;
+  z-index: calc(var(--z-overlay) + 6);
+  display: flex;
+  flex-direction: column;
+  max-height: min(320px, calc(100vh - 8px));
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-popover-background);
+  box-shadow: var(--shadow-elevation-2);
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+}
+
+.inv-anchored-listbox-filter {
+  width: 100%;
+  height: var(--rail-search-height);
+  margin-bottom: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--rail-search-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--rail-search-bg);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.inv-anchored-listbox-filter:focus-visible {
+  border-color: var(--rail-search-focus-border);
+  box-shadow: inset 0 -1px 0 var(--rail-search-focus-border);
+}
+
+.inv-anchored-listbox-options {
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+}
+
+.inv-anchored-listbox-option {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: var(--rail-item-radius);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.inv-anchored-listbox-option:is(:hover, .is-active) { background: var(--rail-hover-bg); }
+.inv-anchored-listbox-option[aria-selected="true"] { background: var(--rail-selected-bg); }
+
+.inv-anchored-listbox-option:focus-visible,
+.inv-anchored-listbox-options:focus-visible .inv-anchored-listbox-option.is-active {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.inv-anchored-listbox-option-glyph {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+
+.inv-anchored-listbox-option-glyph svg { width: 14px; height: 14px; }
+
+.inv-anchored-listbox-option-label {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-anchored-listbox-option-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inv-anchored-listbox-empty {
+  padding: 12px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}

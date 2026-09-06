@@ -1,0 +1,318 @@
+/* ── Command palette (⌘K / Ctrl+K) ──
+   In-window overlay + the titlebar "Go anywhere" pill.
+   Gated by state.features.featureFlags.command_palette.
+
+   Follows the app-wide flat direction (Home restyle / toast spec): one flat
+   fill, one hairline, sharpened radius, colour used once. No left accent bar,
+   no accent-tinted row fill, no card chrome, no decorative blur.
+*/
+
+/* ── Overlay shell ── */
+.command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-overlay) + 5);
+  display: grid;
+  place-items: start center;
+  padding-top: 12vh;
+  pointer-events: auto;
+}
+
+.command-palette-scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-base) 62%, transparent);
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+  cursor: pointer;
+}
+
+.command-palette-dialog {
+  position: relative;
+  width: min(560px, 92vw);
+  max-height: min(560px, 64vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-palette-background);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  animation: palette-in var(--motion-duration-regular) var(--motion-ease-emphasis) both;
+}
+
+.command-palette-dialog .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Search field row ── */
+.command-palette-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.command-palette-field-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+/* Active scope, e.g. CHATS. Reads as a label on the field, not a control. */
+.command-palette-scope {
+  flex: 0 0 auto;
+  padding: 2px var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.command-palette-input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-8) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-xl);
+  letter-spacing: var(--tracking-ui);
+  outline: none;
+}
+
+.command-palette-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The input holds focus for the overlay's entire lifetime, so a focus ring on
+   it is permanent noise rather than a signal. The dialog is the focus. */
+.command-palette-input:focus-visible {
+  outline: none;
+}
+
+/* ── List scroller ── */
+.command-palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) 0;
+  scroll-behavior: smooth;
+}
+
+.command-palette-list:focus,
+.command-palette-list:focus-visible {
+  outline: none;
+}
+
+/* ── Group label (no-query landing view only) ──
+   Same eyebrow + hairline idiom as the Home dashboard section headers. */
+.command-palette-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-8) var(--space-2);
+}
+
+.command-palette-group-label::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: var(--space-8);
+  height: 1px;
+  background: color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+/* ── Item row — one line ── */
+.command-palette-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-3) var(--space-8);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-md);
+  transition: background-color var(--transition-fast);
+}
+
+.command-palette-item:focus,
+.command-palette-item:focus-visible {
+  outline: none;
+}
+
+.command-palette-item-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.command-palette-item-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: var(--tracking-ui);
+}
+
+.command-palette-item-label {
+  color: var(--text-primary);
+}
+
+.command-palette-item-description {
+  color: var(--text-secondary);
+}
+
+.command-palette-item-trailing {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+/* Pointer movement moves the selection, so there is exactly one selected row
+   and no separate hover paint to disagree with it. Neutral fill — the same
+   text-primary wash the Home ghost buttons use. */
+.command-palette-item--active {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.command-palette-item--active .command-palette-item-icon {
+  color: var(--text-secondary);
+}
+
+.command-palette-item--disabled .command-palette-item-label,
+.command-palette-item--disabled .command-palette-item-description {
+  color: var(--text-muted);
+}
+
+/* Weight-only match emphasis. Recolouring this spent the surface's colour
+   budget a second time, on top of the row fill. */
+.command-palette-item mark {
+  background: none;
+  color: inherit;
+  font-weight: 600;
+}
+
+/* ── Empty state ── */
+.command-palette-empty {
+  padding: var(--space-8);
+}
+
+/* ── Footer: result count + key legend ── */
+.command-palette-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-8);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  user-select: none;
+}
+
+.command-palette-legend {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── "Go anywhere" pill (shared base) ── */
+.palette-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 4px var(--space-5) 4px var(--space-7);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--tracking-ui);
+  cursor: pointer;
+  user-select: none;
+  -webkit-app-region: no-drag; /* inside draggable titlebar, let it be clickable */
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.palette-pill:hover {
+  background: var(--accent-a-12);
+  border-color: var(--accent-a-30);
+  color: var(--text-primary);
+}
+
+.palette-pill:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent-a-50));
+  outline-offset: 2px;
+}
+
+.palette-pill .kbd {
+  margin-left: var(--space-2);
+}
+
+/* ── Titlebar "Go anywhere" pill (sits in the status cluster, next to CPU) ── */
+.titlebar-palette-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Responsive width — grows gently on wide windows, shrinks on narrow ones,
+     matching the clamp() idiom used for composer/bubble widths elsewhere. */
+  max-width: clamp(150px, 16vw, 280px);
+}
+
+.titlebar-palette-pill .palette-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On narrow windows collapse the label to just the kbd hint so the status
+   cluster never crowds the window controls. */
+@media (max-width: 900px) {
+  .titlebar-palette-pill .palette-pill-label { display: none; }
+}
+
+/* The center column carries the pinned-note tab strip; on very narrow windows it
+   collapses so the status cluster never crowds the window controls (pins stay
+   reachable from Home). */
+@media (max-width: 720px) {
+  .titlebar-center { display: none; }
+}
+
+/* At phone-width app shells the wordmark and native controls consume the row.
+   Ctrl+K remains available, so the duplicate pill yields instead of clipping. */
+@media (max-width: 320px) {
+  .titlebar-palette-pill { display: none; }
+}
+
+/* ── Reduced motion — opacity only, no translate/scale ── */
+@media (prefers-reduced-motion: reduce) {
+  .command-palette-dialog {
+    animation: none;
+  }
+  .command-palette-scrim {
+    animation: none;
+  }
+  /* Disable smooth list scrolling under reduced motion; keyboard navigation
+     already requests instant scrolling. */
+  .command-palette-list {
+    scroll-behavior: auto;
+  }
+}

@@ -1,0 +1,370 @@
+/* Two-column Settings card grid, label/control rows, and button metrics. Loaded
+ * after the section sheets. Surfaces stay flat, calm, and token-driven, using
+ * whitespace, hairlines, and hover tint instead of group or card containers. */
+
+/* ── Card grid ─────────────────────────────────────────────────────────── */
+/* The section card itself is the grid. Default every child to a full-width
+   row (safe for loose markup the sections still carry), then let compact
+   groups pair up two-across. Wide content opts out via .settings-group--wide
+   (previews, tables, editors, observability panes). */
+.settings-card {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12) var(--space-16);
+  align-items: start;
+}
+
+/* The active card is shown with `display: block` by settings-sections.css at
+   higher specificity; flip that exact rule to grid. Hidden cards stay
+   display:none. */
+.settings-content-scroll .settings-card.settings-section-active {
+  display: grid;
+}
+
+.settings-card > * {
+  grid-column: 1 / -1;
+  /* Children previously spaced themselves with margin-top rhythm; the grid
+     gap owns inter-block spacing now. */
+  min-width: 0;
+}
+
+.settings-card > .settings-group {
+  grid-column: auto;
+}
+
+.settings-card > .settings-group--wide,
+.settings-card > .settings-subsection {
+  grid-column: 1 / -1;
+}
+
+/* ── Open group: kicker heading + hairline rule, no box ────────────────── */
+/* Groups are typographic units, not containers. Overrides the
+   settings-foundation.css ruled-divider idiom (margin/padding/border-top):
+   no border, no background — a small uppercase kicker over a hairline rule
+   scopes the controls beneath it. */
+.settings-card .settings-group,
+.settings-card .settings-group--flush {
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.settings-card .settings-group-heading {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 80%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.settings-card .settings-group-copy {
+  margin-top: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-lg);
+  line-height: 1.6;
+}
+
+/* Subsections (Skills, Tips) keep their top rule but not doubled spacing. */
+.settings-card .settings-subsection {
+  margin-top: var(--space-4);
+}
+
+/* ── Row primitive: label left + description, control right ────────────── */
+/* DOM order stays track-first (the delegated handlers and tests depend on it);
+   row-reverse flips the reading order. */
+.settings-toggle-list {
+  margin-top: var(--space-5);
+  gap: 0;
+}
+
+.settings-toggle-list .inv-toggle {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: var(--space-7);
+  padding: var(--space-5) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  box-shadow: none;
+}
+
+.settings-toggle-list .inv-toggle + .inv-toggle {
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+  border-radius: 0;
+}
+
+.settings-toggle-list .inv-toggle:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.settings-toggle-list .inv-toggle-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  text-align: left;
+}
+
+.settings-toggle-list .inv-toggle-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-card-title);
+  font-weight: 500;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.settings-toggle-list .inv-toggle-description {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  max-width: 52ch;
+  user-select: none;
+}
+
+/* The switch track must not shrink when the label wraps. */
+.settings-toggle-list .inv-toggle-track {
+  flex: none;
+}
+
+/* Tools capability rows (.tools-config-field-row, settings-controls.css)
+   drop their bordered-card chrome and adopt the same open row idiom: label
+   left, switch right, hairline between rows, hover tint only. */
+.tools-config-field-row {
+  padding: var(--space-5) var(--space-2);
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.tools-config-field-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: none;
+}
+
+.tools-config-field-row + .tools-config-field-row {
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+}
+
+.tools-config-field-row .inv-toggle {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+
+.tools-config-field-row .inv-toggle-label {
+  font-size: var(--font-size-card-title);
+  font-weight: 500;
+}
+
+/* ── Field row: the same reading order for select / text controls ──────── */
+/* Wrap a .settings-field-label (+ optional .settings-field-description) and
+   its .select-shell in a .settings-field-row to get the two-column row. */
+.settings-field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-7);
+  margin-top: var(--space-5);
+  padding: var(--space-5) var(--space-2);
+}
+
+.settings-field-row + .settings-field-row {
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+}
+
+.settings-field-row .settings-field-label {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-card-title);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: none;
+}
+
+.settings-field-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.settings-field-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  max-width: 52ch;
+}
+
+.settings-field-row .select-shell {
+  flex: none;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+/* ── Background effect: cost line + live preview strip ─────────────────── */
+/* The owner's brief for this group was explicit: no card, no border, no tile
+   grid, no side highlight bars. One secondary line and one bare band. If a
+   rule here reaches for `border-left`, it is the wrong rule. */
+.settings-field-note {
+  margin: 0 var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.settings-field-note[hidden] {
+  display: none;
+}
+
+.surface-effect-preview {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 84px;
+  margin: 0 var(--space-2) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--surface-main-stage-background, var(--bg-base));
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  pointer-events: auto;
+}
+
+.surface-effect-preview .surface-canvas-ready {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-effect-preview canvas {
+    transition: none;
+  }
+}
+
+/* ── Search-hit flash (used by the settings search jump) ───────────────── */
+[data-search-hit] {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  animation: settings-search-hit-fade var(--motion-duration-highlight) var(--motion-ease-standard) forwards;
+}
+
+/* Section-level hits land on the active card, whose own three-class enter
+   rule (settings-sections.css) outspecifies [data-search-hit] — run both
+   animations there so the highlight fade still plays (the JS clear timer in
+   renderer-settings-search.js matches durations by animation NAME). */
+.settings-content-scroll .settings-card.settings-section-active[data-search-hit] {
+  animation:
+    scrim-in var(--motion-duration-regular) var(--motion-ease-emphasis) forwards,
+    settings-search-hit-fade var(--motion-duration-highlight) var(--motion-ease-standard) forwards;
+}
+
+@keyframes settings-search-hit-fade {
+  from { outline-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+  to { outline-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-search-hit] {
+    animation: none;
+  }
+}
+
+/* Settings buttons use the shared .btn metrics. */
+.settings-primary,
+.settings-secondary,
+.settings-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 36px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  line-height: 1.15;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-primary {
+  background: var(--widget-button-primary-bg);
+  border: 1px solid color-mix(in srgb, var(--widget-button-primary-shadow) 58%, var(--widget-button-secondary-border));
+  color: var(--widget-button-primary-color);
+}
+
+.settings-secondary {
+  background: color-mix(in srgb, var(--widget-button-secondary-bg) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--widget-button-secondary-border) 92%, transparent);
+  color: var(--widget-button-secondary-color);
+}
+
+.settings-danger {
+  background: var(--widget-button-danger-bg);
+  border: 1px solid var(--widget-button-danger-border);
+  color: var(--widget-button-danger-color);
+}
+
+.settings-primary:hover,
+.settings-secondary:hover,
+.settings-danger:hover {
+  transform: translateY(calc(var(--motion-hover-lift) * -1));
+}
+
+.settings-secondary:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--widget-button-secondary-border));
+  color: var(--text-primary);
+}
+
+.settings-danger:hover {
+  border-color: color-mix(in srgb, var(--state-danger) 48%, var(--widget-button-danger-border));
+}
+
+.settings-primary:focus-visible,
+.settings-secondary:focus-visible,
+.settings-danger:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings-primary:disabled,
+.settings-secondary:disabled,
+.settings-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Responsive: collapse the card grid before the nav collapses ───────── */
+@media (max-width: 1280px) {
+  .settings-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-primary,
+  .settings-secondary,
+  .settings-danger,
+  .settings-toggle-list .inv-toggle {
+    transition: none !important;
+    transform: none !important;
+  }
+}

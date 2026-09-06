@@ -1,0 +1,213 @@
+{
+  "description": "Every durability boundary of one runCommitSequence over a store with one prior commit. Replayed exhaustively by tests/plugins/lifecycle/crash-injection.test.js in before/after/torn modes.",
+  "operation": "runCommitSequence",
+  "prior_commits": 1,
+  "total_points": 41,
+  "points": [
+    {
+      "point": 1,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 2,
+      "method": "writeFile",
+      "role": "mutation_lease"
+    },
+    {
+      "point": 3,
+      "method": "fsyncFile",
+      "role": "mutation_lease"
+    },
+    {
+      "point": 4,
+      "method": "renameFile",
+      "role": "mutation_lease"
+    },
+    {
+      "point": 5,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 6,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 7,
+      "method": "writeFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 8,
+      "method": "fsyncFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 9,
+      "method": "renameFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 10,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 11,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 12,
+      "method": "writeFile",
+      "role": "generation_record"
+    },
+    {
+      "point": 13,
+      "method": "fsyncFile",
+      "role": "generation_record"
+    },
+    {
+      "point": 14,
+      "method": "renameFile",
+      "role": "generation_record"
+    },
+    {
+      "point": 15,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 16,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 17,
+      "method": "writeFile",
+      "role": "retained_prior_pointer"
+    },
+    {
+      "point": 18,
+      "method": "fsyncFile",
+      "role": "retained_prior_pointer"
+    },
+    {
+      "point": 19,
+      "method": "renameFile",
+      "role": "retained_prior_pointer"
+    },
+    {
+      "point": 20,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 21,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 22,
+      "method": "writeFile",
+      "role": "active_pointer"
+    },
+    {
+      "point": 23,
+      "method": "fsyncFile",
+      "role": "active_pointer"
+    },
+    {
+      "point": 24,
+      "method": "renameFile",
+      "role": "active_pointer"
+    },
+    {
+      "point": 25,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 26,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 27,
+      "method": "writeFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 28,
+      "method": "fsyncFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 29,
+      "method": "renameFile",
+      "role": "operation_receipt"
+    },
+    {
+      "point": 30,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 31,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 32,
+      "method": "writeFile",
+      "role": "journal_evidence"
+    },
+    {
+      "point": 33,
+      "method": "fsyncFile",
+      "role": "journal_evidence"
+    },
+    {
+      "point": 34,
+      "method": "renameFile",
+      "role": "journal_evidence"
+    },
+    {
+      "point": 35,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 36,
+      "method": "mkdir",
+      "role": "directory"
+    },
+    {
+      "point": 37,
+      "method": "writeFile",
+      "role": "audit_evidence"
+    },
+    {
+      "point": 38,
+      "method": "fsyncFile",
+      "role": "audit_evidence"
+    },
+    {
+      "point": 39,
+      "method": "renameFile",
+      "role": "audit_evidence"
+    },
+    {
+      "point": 40,
+      "method": "fsyncDir",
+      "role": "directory"
+    },
+    {
+      "point": 41,
+      "method": "remove",
+      "role": "mutation_lease"
+    }
+  ]
+}

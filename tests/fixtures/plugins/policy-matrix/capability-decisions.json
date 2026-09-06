@@ -1,0 +1,864 @@
+{
+  "cases": [
+    {
+      "id": "w2_hard_invariant_denies_even_with_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "full_host.enable"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [
+          {
+            "rule_id": "hard-full-host-ban",
+            "match": {
+              "capability": "full_host.enable"
+            },
+            "decision": "deny",
+            "reason": "machine policy bans full-host plugins entirely"
+          }
+        ],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-full-host",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "full_host.enable"
+            },
+            "decision": "auto",
+            "reason": "user explicitly approved full-host",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "full_host.enable"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "hard_invariant_deny",
+        "matched_rule_id": "hard-full-host-ban",
+        "reason": "machine policy bans full-host plugins entirely"
+      }
+    },
+    {
+      "id": "w2_machine_ceiling_ask_narrows_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "network.fetch"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+        "hard_invariants": [],
+        "machine_ceiling": [
+          {
+            "rule_id": "ceiling-network-ask",
+            "match": {
+              "capability": "network.fetch"
+            },
+            "mode": "ask",
+            "reason": "machine policy requires interactive confirmation for network access"
+          }
+        ],
+        "user_policy": [
+          {
+            "rule_id": "grant-network",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "network.fetch"
+            },
+            "decision": "auto",
+            "reason": "user granted network access",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "network.fetch"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "ask",
+        "stage": "machine_ceiling_ask",
+        "matched_rule_id": "ceiling-network-ask",
+        "reason": "machine policy requires interactive confirmation for network access"
+      }
+    },
+    {
+      "id": "w2_machine_ceiling_deny_narrows_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "mcp.stdio"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "hard_invariants": [],
+        "machine_ceiling": [
+          {
+            "rule_id": "ceiling-mcp-deny",
+            "match": {
+              "capability": "mcp.stdio"
+            },
+            "mode": "deny",
+            "reason": "machine policy blocks native/stdio MCP servers"
+          }
+        ],
+        "user_policy": [
+          {
+            "rule_id": "grant-mcp",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "mcp.stdio"
+            },
+            "decision": "auto",
+            "reason": "user granted mcp stdio",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "mcp.stdio"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "machine_ceiling_deny",
+        "matched_rule_id": "ceiling-mcp-deny",
+        "reason": "machine policy blocks native/stdio MCP servers"
+      }
+    },
+    {
+      "id": "w2_machine_ceiling_required_unmet_denies",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "fs.workspace.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+        "hard_invariants": [],
+        "machine_ceiling": [
+          {
+            "rule_id": "ceiling-required-fs",
+            "match": {
+              "capability": "fs.workspace.read"
+            },
+            "mode": "required",
+            "reason": "machine policy requires this capability but grants none automatically"
+          }
+        ],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "fs.workspace.read"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "machine_ceiling_required_unmet",
+        "matched_rule_id": "ceiling-required-fs",
+        "reason": "machine policy requires this capability but grants none automatically"
+      }
+    },
+    {
+      "id": "w2_machine_ceiling_required_met_by_grant_allows",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "fs.workspace.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+        "hard_invariants": [],
+        "machine_ceiling": [
+          {
+            "rule_id": "ceiling-required-fs",
+            "match": {
+              "capability": "fs.workspace.read"
+            },
+            "mode": "required",
+            "reason": "machine policy requires this capability"
+          }
+        ],
+        "user_policy": [
+          {
+            "rule_id": "grant-fs-read",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "fs.workspace.read"
+            },
+            "decision": "auto",
+            "reason": "user granted workspace read",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "fs.workspace.read"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "auto",
+        "stage": "user_policy",
+        "matched_rule_id": "grant-fs-read",
+        "reason": "user granted workspace read"
+      }
+    },
+    {
+      "id": "w2_user_grant_auto_allows",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-chat-read",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "chat.read"
+            },
+            "decision": "auto",
+            "reason": "user granted chat read",
+            "source": "user_policy"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.read"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "auto",
+        "stage": "user_policy",
+        "matched_rule_id": "grant-chat-read",
+        "reason": "user granted chat read"
+      }
+    },
+    {
+      "id": "w2_user_policy_deny_wins",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.write"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "deny-chat-write",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "chat.write"
+            },
+            "decision": "deny",
+            "reason": "user explicitly denied chat write",
+            "source": "user_policy"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.write"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "user_policy",
+        "matched_rule_id": "deny-chat-write",
+        "reason": "user explicitly denied chat write"
+      }
+    },
+    {
+      "id": "w2_workspace_override_ask_narrows_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "network.fetch",
+        "workspace_incarnation_id": "ws-alpha"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-network-2",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "network.fetch"
+            },
+            "decision": "auto",
+            "reason": "user granted network access",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [
+          {
+            "rule_id": "ws-network-ask",
+            "workspace_incarnation_id": "ws-alpha",
+            "match": {
+              "capability": "network.fetch"
+            },
+            "decision": "ask",
+            "reason": "this workspace requires confirmation for network access"
+          }
+        ],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "network.fetch"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "ask",
+        "stage": "workspace_override",
+        "matched_rule_id": "ws-network-ask",
+        "reason": "this workspace requires confirmation for network access"
+      }
+    },
+    {
+      "id": "w2_workspace_override_deny_wins",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "fs.workspace.write",
+        "workspace_incarnation_id": "ws-beta"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "9999999999999999999999999999999999999999999999999999999999999999",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-fs-write",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "fs.workspace.write"
+            },
+            "decision": "auto",
+            "reason": "user granted workspace write",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [
+          {
+            "rule_id": "ws-fs-write-deny",
+            "workspace_incarnation_id": "ws-beta",
+            "match": {
+              "capability": "fs.workspace.write"
+            },
+            "decision": "deny",
+            "reason": "this workspace forbids writes for this plugin"
+          }
+        ],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "fs.workspace.write"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "workspace_override",
+        "matched_rule_id": "ws-fs-write-deny",
+        "reason": "this workspace forbids writes for this plugin"
+      }
+    },
+    {
+      "id": "w2_workspace_override_out_of_scope_no_effect",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "fs.workspace.write",
+        "workspace_incarnation_id": "ws-gamma"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "aaaa111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-fs-write-2",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "fs.workspace.write"
+            },
+            "decision": "auto",
+            "reason": "user granted workspace write",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [
+          {
+            "rule_id": "ws-fs-write-deny-2",
+            "workspace_incarnation_id": "ws-beta",
+            "match": {
+              "capability": "fs.workspace.write"
+            },
+            "decision": "deny",
+            "reason": "a DIFFERENT workspace forbids writes; must not leak here"
+          }
+        ],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "fs.workspace.write"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "auto",
+        "stage": "user_policy",
+        "matched_rule_id": "grant-fs-write-2",
+        "reason": "user granted workspace write"
+      }
+    },
+    {
+      "id": "w2_workspace_override_cannot_broaden_ceiling_deny",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "mcp.stdio",
+        "workspace_incarnation_id": "ws-delta"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "bbbb111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [],
+        "machine_ceiling": [
+          {
+            "rule_id": "ceiling-mcp-deny-2",
+            "match": {
+              "capability": "mcp.stdio"
+            },
+            "mode": "deny",
+            "reason": "machine policy blocks native/stdio MCP servers"
+          }
+        ],
+        "user_policy": [],
+        "workspace_overrides": [
+          {
+            "rule_id": "ws-mcp-ask",
+            "workspace_incarnation_id": "ws-delta",
+            "match": {
+              "capability": "mcp.stdio"
+            },
+            "decision": "ask",
+            "reason": "workspace would only ask, but this must not resurrect a machine-level deny"
+          }
+        ],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "mcp.stdio"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "machine_ceiling_deny",
+        "matched_rule_id": "ceiling-mcp-deny-2",
+        "reason": "machine policy blocks native/stdio MCP servers"
+      }
+    },
+    {
+      "id": "w2_manifest_request_alone_grants_nothing",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "ui.view"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "cccc111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "ui.view"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "ask",
+        "stage": "default_ask",
+        "matched_rule_id": null,
+        "reason": "no rule authorized this capability at any layer; defaulting to ask rather than auto"
+      }
+    },
+    {
+      "id": "w2_manifest_not_requested_denies_despite_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "secret_value_delivery"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "dddd111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-secret",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "secret_value_delivery"
+            },
+            "decision": "auto",
+            "reason": "user approved secret delivery",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.read"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "manifest_not_requested",
+        "matched_rule_id": null,
+        "reason": "plugin manifest does not request this capability; a request never grants itself"
+      }
+    },
+    {
+      "id": "w2_dependency_plugin_does_not_inherit_sibling_grant",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets-dependency",
+        "capability": "network.fetch"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "eeee111111111111111111111111111111111111111111111111111111111111",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [
+          {
+            "rule_id": "grant-network-parent",
+            "match": {
+              "publisher_id": "acme-labs",
+              "plugin_id": "widgets",
+              "capability": "network.fetch"
+            },
+            "decision": "auto",
+            "reason": "root plugin granted network access",
+            "source": "electron_grant"
+          }
+        ],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "network.fetch"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "manifest_not_requested",
+        "matched_rule_id": null,
+        "reason": "plugin manifest does not request this capability; a request never grants itself"
+      }
+    },
+    {
+      "id": "w2_malformed_snapshot_null",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read"
+      },
+      "snapshot": null,
+      "expected": {
+        "decision": "deny",
+        "stage": "malformed_snapshot",
+        "matched_rule_id": null,
+        "reason": "policy snapshot missing or malformed"
+      }
+    },
+    {
+      "id": "w2_malformed_snapshot_missing_arrays",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "ffff111111111111111111111111111111111111111111111111111111111111"
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "malformed_snapshot",
+        "matched_rule_id": null,
+        "reason": "policy snapshot field 'hard_invariants' must be an array"
+      }
+    },
+    {
+      "id": "w2_stale_revision_denies",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read",
+        "expected_revision": 41
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 42,
+        "canonical_hash": "1010101010101010101010101010101010101010101010101010101010101010",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.read"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "stale_revision",
+        "matched_rule_id": null,
+        "reason": "caller expected policy revision 41 but the snapshot is at revision 42"
+      }
+    },
+    {
+      "id": "w2_future_version_denies",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 2,
+        "revision": 1,
+        "canonical_hash": "1212121212121212121212121212121212121212121212121212121212121212",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": []
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "unsupported_snapshot_version",
+        "matched_rule_id": null,
+        "reason": "policy snapshot version 2 is not supported"
+      }
+    },
+    {
+      "id": "w2_ambiguous_authority_duplicate_manifest_entries",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "chat.read"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "1313131313131313131313131313131313131313131313131313131313131313",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.read"
+            ]
+          },
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "chat.write"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "deny",
+        "stage": "ambiguous_authority",
+        "matched_rule_id": null,
+        "reason": "multiple manifest_requests entries match the same publisher_id/plugin_id"
+      }
+    },
+    {
+      "id": "w2_default_ask_when_nothing_matches_but_requested",
+      "kind": "capability_decision",
+      "request": {
+        "publisher_id": "acme-labs",
+        "plugin_id": "widgets",
+        "capability": "tool.execute"
+      },
+      "snapshot": {
+        "policy_schema_version": 1,
+        "revision": 1,
+        "canonical_hash": "1414141414141414141414141414141414141414141414141414141414141414",
+        "hard_invariants": [],
+        "machine_ceiling": [],
+        "user_policy": [],
+        "workspace_overrides": [],
+        "manifest_requests": [
+          {
+            "publisher_id": "acme-labs",
+            "plugin_id": "widgets",
+            "requested_capabilities": [
+              "tool.execute"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "decision": "ask",
+        "stage": "default_ask",
+        "matched_rule_id": null,
+        "reason": "no rule authorized this capability at any layer; defaulting to ask rather than auto"
+      }
+    }
+  ]
+}

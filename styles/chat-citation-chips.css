@@ -1,0 +1,56 @@
+/* Inline source-citation chips (C1 title pills) — CITATION_CHIPS_SPEC.md.
+   Rendered beneath assistant turns that cited the web (source_citations
+   turn-event kind, flag `source_citations`). All colors are palette vars —
+   zero per-palette rules by construction. NOTE: styles/chat-citation-v2.css
+   (#message:/#tool: in-chat anchors) is a DIFFERENT feature — do not merge. */
+
+.citation-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  padding-top: 10px;
+  margin-top: 12px;
+}
+
+.citation-chip {
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: var(--tl-radius-chip);
+  max-width: 210px;
+  text-decoration: none;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-body);
+  background: color-mix(in srgb, var(--surface-input-background) 92%, transparent);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.citation-chip:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-default) 60%);
+  text-decoration: none;
+}
+
+/* Visited identical to rest — no visited-purple in chat (spec). */
+.citation-chip:visited {
+  color: var(--text-secondary);
+}
+
+.citation-chip:visited:hover {
+  color: var(--text-primary);
+}
+
+.citation-chip svg {
+  flex: none;
+}
+
+.citation-chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

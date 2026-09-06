@@ -1,0 +1,195 @@
+{
+  "turns": [
+    {
+      "turn_id": "stream_19",
+      "branch_id": "user_stream_19",
+      "events": [
+        {
+          "event_id": "stream_19:user_prompt:0",
+          "turn_id": "stream_19",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_19",
+          "source_message_ids": [
+            "user_stream_19"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Plan my week for me",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_19:assistant_text_segment:0",
+          "turn_id": "stream_19",
+          "kind": "assistant_text_segment",
+          "primary_message_id": "assistant_stream_19",
+          "source_message_ids": [
+            "assistant_stream_19"
+          ],
+          "sort_key": [
+            1,
+            0,
+            30
+          ],
+          "payload": {
+            "segment_id": "seg_19",
+            "phase_id": "phase_text_19",
+            "text": "Here's a focused plan for your week.",
+            "message_index": 1,
+            "segment_index": 0
+          },
+          "phase_id": "phase_text_19",
+          "assistant_phase": "final_answer"
+        },
+        {
+          "event_id": "stream_19:interactive_batch:0",
+          "turn_id": "stream_19",
+          "kind": "interactive_batch",
+          "primary_message_id": "question_batch_stream_19",
+          "source_message_ids": [
+            "question_batch_stream_19"
+          ],
+          "sort_key": [
+            2,
+            0,
+            70
+          ],
+          "payload": {
+            "content": "One quick thing to tailor this.",
+            "question_batch": {
+              "batch_id": "qb_19",
+              "round_index": 1,
+              "questions": [
+                {
+                  "question_id": "q1",
+                  "prompt": "Which timeframe matters most?",
+                  "options": [
+                    {
+                      "id": "now",
+                      "label": "Right now"
+                    },
+                    {
+                      "id": "later",
+                      "label": "Longer term"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "status": "complete"
+        }
+      ],
+      "primary_user_message_id": "user_stream_19",
+      "primary_assistant_message_id": "assistant_stream_19",
+      "source_message_ids": [
+        "user_stream_19",
+        "assistant_stream_19",
+        "question_batch_stream_19"
+      ]
+    }
+  ],
+  "byTurnId": {
+    "stream_19": {
+      "turn_id": "stream_19",
+      "branch_id": "user_stream_19",
+      "events": [
+        {
+          "event_id": "stream_19:user_prompt:0",
+          "turn_id": "stream_19",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_19",
+          "source_message_ids": [
+            "user_stream_19"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Plan my week for me",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_19:assistant_text_segment:0",
+          "turn_id": "stream_19",
+          "kind": "assistant_text_segment",
+          "primary_message_id": "assistant_stream_19",
+          "source_message_ids": [
+            "assistant_stream_19"
+          ],
+          "sort_key": [
+            1,
+            0,
+            30
+          ],
+          "payload": {
+            "segment_id": "seg_19",
+            "phase_id": "phase_text_19",
+            "text": "Here's a focused plan for your week.",
+            "message_index": 1,
+            "segment_index": 0
+          },
+          "phase_id": "phase_text_19",
+          "assistant_phase": "final_answer"
+        },
+        {
+          "event_id": "stream_19:interactive_batch:0",
+          "turn_id": "stream_19",
+          "kind": "interactive_batch",
+          "primary_message_id": "question_batch_stream_19",
+          "source_message_ids": [
+            "question_batch_stream_19"
+          ],
+          "sort_key": [
+            2,
+            0,
+            70
+          ],
+          "payload": {
+            "content": "One quick thing to tailor this.",
+            "question_batch": {
+              "batch_id": "qb_19",
+              "round_index": 1,
+              "questions": [
+                {
+                  "question_id": "q1",
+                  "prompt": "Which timeframe matters most?",
+                  "options": [
+                    {
+                      "id": "now",
+                      "label": "Right now"
+                    },
+                    {
+                      "id": "later",
+                      "label": "Longer term"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "status": "complete"
+        }
+      ],
+      "primary_user_message_id": "user_stream_19",
+      "primary_assistant_message_id": "assistant_stream_19",
+      "source_message_ids": [
+        "user_stream_19",
+        "assistant_stream_19",
+        "question_batch_stream_19"
+      ]
+    }
+  },
+  "byMessageId": {
+    "user_stream_19": "stream_19",
+    "assistant_stream_19": "stream_19",
+    "question_batch_stream_19": "stream_19"
+  }
+}

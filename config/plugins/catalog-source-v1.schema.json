@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jenny.local/schemas/plugins/catalog-source-v1.schema.json",
+  "title": "Jenny plugin catalog source V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalog_source_schema_version", "source_id", "kind", "display_name", "root_fingerprint"],
+  "properties": {
+    "catalog_source_schema_version": { "const": 1 },
+    "source_id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "kind": { "enum": ["remote", "offline_mirror"] },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "root_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "metadata_base_url": { "type": "string", "maxLength": 2048 },
+    "target_base_url": { "type": "string", "maxLength": 2048 },
+    "real_root": { "type": "string", "maxLength": 4096 },
+    "pinned_root_base64": { "type": "string", "maxLength": 1398104 }
+  }
+}

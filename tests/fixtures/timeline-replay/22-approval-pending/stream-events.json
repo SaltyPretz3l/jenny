@@ -1,0 +1,63 @@
+[
+  {
+    "payload": {
+      "type": "started",
+      "streamId": "stream_22"
+    },
+    "context": {
+      "turn_id": "stream_22",
+      "event_id": "stream_22:started:0",
+      "primary_user_message_id": "user_stream_22",
+      "primary_assistant_message_id": "assistant_stream_22",
+      "sort_key": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_22",
+      "callId": "call_22",
+      "toolName": "edit_file",
+      "summary": "Edit test.py",
+      "input": {
+        "file_path": "test.py"
+      }
+    },
+    "context": {
+      "turn_id": "stream_22",
+      "event_id": "stream_22:tool_use:0",
+      "primary_user_message_id": "user_stream_22",
+      "primary_tool_message_id": "tool_use_stream_22",
+      "sort_key": [
+        1,
+        0,
+        40
+      ]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_approval_needed",
+      "streamId": "stream_22",
+      "callId": "call_22",
+      "toolName": "edit_file",
+      "approvalId": "appr_22",
+      "summary": "Edit test.py"
+    },
+    "context": {
+      "turn_id": "stream_22",
+      "event_id": "stream_22:approval_requested:0",
+      "primary_user_message_id": "user_stream_22",
+      "primary_tool_message_id": "tool_use_stream_22",
+      "sort_key": [
+        1,
+        1,
+        45
+      ]
+    }
+  }
+]

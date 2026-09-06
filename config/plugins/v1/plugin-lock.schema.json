@@ -1,0 +1,136 @@
+{
+  "contract": "PluginLockV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "source_identity": {
+      "type": "tagged_union",
+      "tag_field": "kind",
+      "variants": {
+        "local_package": {
+          "type": "object",
+          "required": ["kind", "package_path_digest"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "local_package" },
+            "package_path_digest": { "type": "ref", "ref": "sha256_hex" }
+          }
+        },
+        "developer_link": {
+          "type": "object",
+          "required": ["kind", "link_digest"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "developer_link" },
+            "link_digest": { "type": "ref", "ref": "sha256_hex" }
+          }
+        },
+        "git": {
+          "type": "object",
+          "required": ["kind", "repository_url_digest", "pinned_commit"],
+          "max_keys": 3,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "git" },
+            "repository_url_digest": { "type": "ref", "ref": "sha256_hex" },
+            "pinned_commit": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "max_utf8_bytes": 64
+            }
+          }
+        },
+        "https_url": {
+          "type": "object",
+          "required": ["kind", "url_digest"],
+          "max_keys": 2,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "https_url" },
+            "url_digest": { "type": "ref", "ref": "sha256_hex" }
+          }
+        },
+        "signed_catalog": {
+          "type": "object",
+          "required": ["kind", "catalog_id", "catalog_entry_digest"],
+          "max_keys": 3,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "signed_catalog" },
+            "catalog_id": { "type": "string", "format": "nfc_identifier" },
+            "catalog_entry_digest": { "type": "ref", "ref": "sha256_hex" }
+          }
+        },
+        "offline_mirror": {
+          "type": "object",
+          "required": ["kind", "mirror_id", "mirror_entry_digest"],
+          "max_keys": 3,
+          "additional_properties": "reject",
+          "properties": {
+            "kind": { "type": "const", "value": "offline_mirror" },
+            "mirror_id": { "type": "string", "format": "nfc_identifier" },
+            "mirror_entry_digest": { "type": "ref", "ref": "sha256_hex" }
+          }
+        }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": ["lock_schema_version", "graph_hash", "nodes"],
+    "max_keys": 3,
+    "additional_properties": "reject",
+    "properties": {
+      "lock_schema_version": { "type": "const", "value": 1 },
+      "graph_hash": { "type": "ref", "ref": "sha256_hex" },
+      "nodes": {
+        "type": "array",
+        "max_items": 64,
+        "unique_by": ["publisher_id", "plugin_id"],
+        "items": {
+          "type": "object",
+          "required": [
+            "publisher_id",
+            "plugin_id",
+            "resolved_version",
+            "artifact_digest",
+            "publisher_key_id",
+            "source_identity",
+            "dependencies"
+          ],
+          "max_keys": 7,
+          "additional_properties": "reject",
+          "properties": {
+            "publisher_id": { "type": "ref", "ref": "publisher_id" },
+            "plugin_id": { "type": "ref", "ref": "plugin_id" },
+            "resolved_version": { "type": "string", "format": "semver" },
+            "artifact_digest": { "type": "ref", "ref": "sha256_hex" },
+            "publisher_key_id": { "type": "ref", "ref": "sha256_hex" },
+            "source_identity": { "type": "ref", "ref": "source_identity" },
+            "dependencies": {
+              "type": "array",
+              "max_items": 16,
+              "unique_by": ["to_publisher_id", "to_plugin_id"],
+              "items": {
+                "type": "object",
+                "required": ["to_publisher_id", "to_plugin_id", "edge_kind"],
+                "max_keys": 3,
+                "additional_properties": "reject",
+                "properties": {
+                  "to_publisher_id": { "type": "ref", "ref": "publisher_id" },
+                  "to_plugin_id": { "type": "ref", "ref": "plugin_id" },
+                  "edge_kind": {
+                    "type": "enum",
+                    "values": ["required", "optional", "peer", "capability"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

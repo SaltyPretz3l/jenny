@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Jenny trust window</title>
+  <link rel="stylesheet" href="styles/plugin-consent.css">
+  <script defer src="renderer/shell/renderer-plugin-consent-window.js"></script>
+</head>
+<body>
+  <header class="trust-band"><span class="wordmark">JENNY</span><span class="trust-label">Trusted Jenny window · Plugin content cannot appear here</span></header>
+  <main aria-labelledby="consentTitle">
+    <h1 id="consentTitle">Review privileged plugin access</h1>
+    <section class="identity-card" aria-label="Verified plugin identity">
+      <dl><div><dt>Verified publisher</dt><dd id="publisher">—</dd></div><div><dt>Package version</dt><dd id="packageVersion">—</dd></div><div><dt>Contribution</dt><dd id="contribution">—</dd></div><div><dt>Signed executable digest</dt><dd id="digest">—</dd></div></dl>
+      <ul class="risk-list"><li>Same-user access: files and network available to your Windows account</li><li id="containment">Containment: supervised process tree, not sandboxed</li><li id="limits">Limits: bounded memory and session lifetime</li></ul>
+    </section>
+    <label class="acknowledgment"><input id="acknowledge" type="checkbox"><span>I understand this process runs with my account permissions.</span></label>
+    <div class="actions"><button id="approve" type="button" disabled>Allow full host</button><button id="cancel" type="button">Cancel</button></div>
+  </main>
+  <footer><h2>Secret delivery is separate</h2><p>Jenny will ask again before sharing any secret value. Jenny cannot revoke bytes already observed.</p></footer>
+</body>
+</html>

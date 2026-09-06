@@ -1,0 +1,429 @@
+/* ── Chat Media Queries ── */
+
+@media (max-width: 1400px) {
+  .prompt-grid {
+    width: min(520px, calc(100vw - 120px));
+  }
+
+  .prompt-chip {
+    text-align: center;
+  }
+
+  /* No composer width override here: the base rule is already
+     column-relative, while the old viewport-derived width overflowed the
+     column when the artifact review rail was open (UIUX-004). */
+
+  :root {
+    --chat-sprite-size: 30px;
+    --chat-sprite-rail-offset: 52px;
+  }
+}
+
+/* Keep the thread usable when the persistent sessions panel is expanded.
+   At the minimum 248px sessions width, the 320px context rail would leave
+   less than a 480px thread below ~1048px. Yield the secondary rail before it
+   can collapse reasoning and tool content into a one-word column. */
+@media (max-width: 1040px) {
+  .chat-view {
+    --context-panel-width: 0px;
+  }
+
+  .chat-view > .chat-context-panel {
+    display: none;
+  }
+}
+
+/* UIUX-004 residual (Wave 2): priority-order pane collapse for the 701–1180
+   band the 640×560 floor made reachable. Priority 1 (context panel yields
+   whenever the rail opens) lives in context-panel.css
+   (.artifact-review-mode). Priority 2 is this clamp: the rail's inline
+   --artifact-review-width is only recomputed on open (no resize listener in
+   renderer-artifacts-utils.js), so a window shrink mid-session leaves a
+   stale oversized rail crushing the minmax(0,1fr) thread column. Enforce
+   the documented window bound (renderer-artifact-review-prefs.js — raised to
+   90% on 2026-08-20) continuously; the thread column keeps the remainder.
+   Below 700px the fixed-overlay block later in this file owns the rail. */
+@media (max-width: 1180px) and (min-width: 701px) {
+  .chat-view > .artifact-review-panel {
+    width: min(var(--artifact-review-width, 420px), 90vw);
+    min-width: 0;
+    max-width: 90vw;
+  }
+}
+
+@media (max-width: 700px) {
+  .chat-view {
+    --chat-sprite-size: clamp(22px, 5vw, 24px);
+    --chat-sprite-rail-offset: clamp(24px, 7vw, 32px);
+    --chat-user-bubble-max-width: 100%;
+    --content-column-width: min(100%, calc(100vw - var(--sidebar-current-width) - 112px));
+    --composer-width: min(100%, calc(100vw - var(--sidebar-current-width) - 72px));
+    --context-panel-width: 0px;
+    --thread-node-gap: 12px;
+  }
+
+  .chat-view .hero-stack {
+    width: min(440px, calc(100vw - 48px));
+    gap: var(--space-6);
+  }
+
+  .chat-view .hero-avatar {
+    width: calc(44px * var(--chat-zoom-factor, 1));
+    height: calc(44px * var(--chat-zoom-factor, 1));
+    /* Literal 24px (was --font-size-5xl) — keep the chat hero avatar on
+       --chat-zoom-factor only, isolated from the global --font-scale axis. */
+    font-size: calc(24px * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .hero-title {
+    margin-top: var(--space-2);
+    font-size: clamp(
+      calc(24px * var(--chat-zoom-factor, 1)),
+      calc(7vw * var(--chat-zoom-factor, 1)),
+      calc(32px * var(--chat-zoom-factor, 1))
+    );
+  }
+
+  .chat-view .hero-subtitle {
+    max-width: 420px;
+    font-size: calc(13px * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .prompt-grid {
+    width: min(100%, calc(100vw - 48px));
+    gap: var(--space-4);
+  }
+
+  .chat-view .prompt-chip {
+    padding: calc(var(--space-4) * var(--chat-zoom-factor, 1)) calc(var(--space-6) * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .chat-thread-column {
+    --_thread-col-content: min(var(--content-column-width), calc(100vw - 48px));
+    width: calc(var(--_thread-col-content) + var(--chat-sprite-rail-offset));
+    margin-left: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
+  }
+
+  .chat-view.chat-empty .hero-stage::before {
+    --_thread-col-content: min(var(--content-column-width), calc(100vw - 48px));
+  }
+
+  .chat-view .chat-entry.assistant {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .chat-view .chat-thread-children {
+    padding-left: calc(var(--thread-dot-hit-size) + var(--space-4));
+  }
+
+  /* Depth-cap the nested-thread indent (mirror of ide-chat-dock.css). Nested
+   * .chat-thread-children padding-left compounds per tree level; a multi-
+   * iteration tool loop chains an O(iterations)-deep tree that would run content
+   * off the right edge. Cap the cumulative inset at 2 levels; flatten deeper.
+   * See memory project_progressive_turn_indent_rca_2026_07_07. */
+  .chat-view .chat-thread-children:not([data-thread-depth="1"]):not([data-thread-depth="2"]) {
+    padding-left: 0;
+  }
+
+  .chat-view .tool-call-block,
+  .chat-view .interactive-card,
+  .chat-view .slash-command-output,
+  .chat-view .proactive-suggestion-block {
+    max-width: 100%;
+  }
+
+  .chat-view .interactive-card {
+    gap: var(--space-6);
+    padding: var(--space-7) var(--space-7) var(--space-6);
+  }
+
+  .chat-view .slash-command-output {
+    padding: var(--space-7);
+  }
+
+  .chat-view .composer-wrap {
+    /* Column-relative (UIUX-004): the grid column already excludes the
+       sidebar, so sizing against the viewport double-counted it. */
+    width: min(var(--composer-width), 100%);
+  }
+
+  .chat-view .composer {
+    --composer-secondary-control-size: calc(30px * var(--chat-zoom-factor, 1));
+    --composer-secondary-icon-size: calc(14px * var(--chat-zoom-factor, 1));
+    --composer-secondary-meta-height: calc(28px * var(--chat-zoom-factor, 1));
+    padding: calc(var(--space-5) * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .composer-entry-row {
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin-bottom: var(--space-2);
+  }
+
+  .chat-view .composer-input {
+    min-height: calc(54px * var(--chat-zoom-factor, 1));
+    font-size: calc(15px * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .composer-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    width: 100%;
+    padding-top: var(--space-3);
+    margin-top: var(--space-2);
+    border-top: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 14%, transparent);
+  }
+
+  .chat-view .composer-toolbar-left,
+  .chat-view .composer-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .chat-view .composer-toolbar-right {
+    margin-left: auto;
+  }
+
+  .chat-view .composer-send {
+    width: calc(44px * var(--chat-zoom-factor, 1));
+    height: calc(44px * var(--chat-zoom-factor, 1));
+  }
+
+  /* The 44px rule above ties chat-composer.css's queue-pill rule (0,2,0) and
+   * loads later; this (0,3,0) override keeps the pill label unclipped. */
+  .chat-view .composer-send.composer-send-queue {
+    width: auto;
+  }
+
+  .chat-view .composer-stop-button {
+    width: calc(44px * var(--chat-zoom-factor, 1));
+    height: calc(44px * var(--chat-zoom-factor, 1));
+  }
+
+  .chat-view .composer-meta {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+    padding-top: 0;
+    margin-top: var(--space-3);
+  }
+
+  .chat-view .composer-meta .composer-select-model select {
+    width: 104px;
+    min-width: 104px;
+  }
+
+  .chat-view .composer-meta .composer-select-effort select {
+    max-width: 76px;
+  }
+
+  .chat-view .composer-jump-tools {
+    width: auto;
+    gap: var(--space-2);
+  }
+
+  .chat-view > .chat-context-panel {
+    display: none;
+  }
+
+  .chat-view > .artifact-review-resizer {
+    display: none;
+  }
+
+  /* Route to the artifact panel at narrow widths (UIUX-004): the grid has no
+     room for a third column here, so an opened artifact review becomes a
+     right-edge overlay instead of vanishing entirely. The panel's own
+     Collapse / Full View header controls remain the way back, and the
+     .hidden state (display: none, see context-panel.css) still wins when
+     the panel is closed. */
+  .chat-view > .artifact-review-panel {
+    position: fixed;
+    top: calc(var(--titlebar-height) + var(--toprail-height));
+    right: 0;
+    bottom: 0;
+    width: min(var(--artifact-review-width, 420px), calc(100% - 32px));
+    min-width: 0;
+    max-width: calc(100% - 32px);
+    z-index: var(--z-dock);
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* At phone widths the sessions panel becomes the existing 56px chats strip.
+   Size the chat against its actual grid column (not the full viewport) and
+   retire the avatar rail that is already visually hidden in this breakpoint. */
+@media (max-width: 480px) {
+  .chat-view {
+    --chat-sprite-rail-offset: 0px;
+    --content-column-width: 100%;
+    --composer-width: 100%;
+  }
+
+  .chat-view .hero-stack,
+  .chat-view .prompt-grid,
+  .chat-view .chat-thread-column {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .chat-sprite-layer {
+    display: none;
+  }
+}
+
+@media (min-width: 2000px) {
+  :root {
+    --composer-width: min(920px, calc(100vw - var(--sidebar-current-width) - 240px));
+    --context-panel-width: 360px;
+    /* Ultra-wide card cap for DEFAULT mode only. At (0,1,0) this loses to
+       :root[data-chat-width="wide"] in foundation.css, so Wide keeps 1100px. */
+    --chat-card-max-width: 820px;
+  }
+
+  .chat-view .hero-stack,
+  .chat-view .prompt-grid {
+    width: min(620px, 100%);
+  }
+
+  .chat-view .tool-call-block {
+    width: 100%;
+  }
+
+  /* .interactive-card has no base width rule anywhere -- the "Jenny asks"
+     family in chat-ask-card-v2.css superseded it -- so this stays its only
+     cap. Its two former co-selectors now read --chat-card-max-width from
+     their own base rules, which this breakpoint retunes above. */
+  .chat-view .interactive-card {
+    max-width: min(100%, var(--chat-card-max-width));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer,
+  .composer-wrap,
+  .composer-holo,
+  .composer-send,
+  .composer-stop-button,
+  .composer-icon-button,
+  .composer-gear,
+  .composer-jump-button,
+  .prompt-chip,
+  .hero-stack,
+  .chat-thread-shell,
+  .chat-assistant-sprite,
+  .chat-hover-row,
+  .chat-copy-chip,
+  .chat-sprite-layer,
+  .tool-call-details,
+  .tool-call-header,
+  .tool-approve-btn,
+  .tool-deny-btn,
+  .chat-hover-action,
+  .interactive-option-button,
+  .interactive-action-button,
+  .interactive-other-confirm,
+  .context-panel-collapse,
+  .context-section-action,
+  .context-artifact-row {
+    transition: none;
+  }
+
+  .chat-view.thread-transition-ready .chat-thread-shell,
+  .chat-view.thread-transition-ready.chat-active .hero-stack,
+  .chat-view.thread-transition-ready .chat-timeline > .chat-thread-node:nth-child(-n + 3) {
+    animation: none;
+  }
+
+  .reasoning-row-main.shimmer-active {
+    animation: none;
+  }
+
+  .reasoning-stream-unit.is-revealed {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+
+  .chat-stream-token { animation: none; opacity: 1; }
+
+  .chat-comet-svg {
+    display: none;
+  }
+
+  .chat-copy-chip {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .composer-holo,
+  .composer-icon-button:active,
+  .composer-gear:hover,
+  .composer-jump-button:hover:not(:disabled),
+  .prompt-chip:hover,
+  .tool-approve-btn:hover,
+  .tool-approve-btn:active,
+  .tool-deny-btn:hover,
+  .tool-deny-btn:active,
+  .chat-hover-action:hover,
+  .chat-hover-action:focus-visible,
+  .interactive-option-button:hover:not(:disabled),
+  .interactive-action-button:hover:not(:disabled),
+  .interactive-other-confirm:hover:not(:disabled),
+  .context-artifact-row:hover,
+  .composer-send:hover,
+  .composer-stop-button:hover {
+    transform: none;
+  }
+
+  .chat-assistant-sprite::before {
+    animation: none;
+  }
+
+  .chat-assistant-sprite,
+  .chat-assistant-sprite::before,
+  .chat-assistant-sprite::after {
+    will-change: auto;
+  }
+
+  .inv-toast,
+  .inv-toast__dismiss,
+  .inv-toast__action {
+    animation: none;
+    transition: none;
+  }
+
+
+}
+
+/* ---- backdrop-filter: reduced-motion and unsupported-browser fallbacks ---- */
+
+@supports not (backdrop-filter: blur(1px)) {
+  .chat-thread-column::before,
+  .chat-view.chat-empty .hero-stage::before {
+    background: color-mix(in srgb, var(--bg-base) 84%, transparent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .composer { background: color-mix(in srgb, var(--bg-base) 97%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thread-column::before,
+  .chat-view.chat-empty .hero-stage::before,
+  .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .chat-thread-column::before,
+  .chat-view.chat-empty .hero-stage::before {
+    background: color-mix(in srgb, var(--bg-base) 84%, transparent);
+  }
+  .composer { background: color-mix(in srgb, var(--bg-base) 97%, transparent); }
+}

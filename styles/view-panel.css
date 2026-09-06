@@ -1,0 +1,57 @@
+/* Per-view contextual panel host (nav overhaul).
+   The grid element carries both `.workspace` (legacy grid owner, unchanged) and
+   `.view-shell`. The state modifiers (.panel-collapsed/.panel-none/.panel-dock-right)
+   are applied by renderer-view-panel-registry.js; the width alias below resolves the
+   panel column width. Do not name anything here "context panel" — that name belongs to
+   the right-side chat context panel (styles/context-panel.css). */
+
+.view-shell {
+  /* Successor name for the panel column width. JS sets --sidebar-current-width
+     inline on this element today; the alias keeps both names resolving to the
+     same value until the legacy name is retired. */
+  --view-panel-current-width: var(--sidebar-current-width);
+}
+
+/* Views that declare no panel reclaim the full width. */
+.view-shell.panel-none {
+  grid-template-columns: 0 0 minmax(0, 1fr);
+}
+
+/* Ctrl+B full-hide (panel stays mounted, column collapses). */
+.view-shell.panel-hidden {
+  grid-template-columns: 0 0 minmax(0, 1fr);
+}
+
+/* W11: a collapsed panel renders the 56px chats strip (chats-panel-collapsed.css).
+   The JS-set width var stays the single width source — while collapsed the
+   registry writes the strip width into it (renderer-top-nav-shell.js). */
+.view-shell.panel-collapsed {
+  grid-template-columns: var(--view-panel-current-width) 0 minmax(0, 1fr);
+}
+
+/* Zero-width grid columns still let borders and min-content bleed; drop the
+   host and the resizer out of the layout entirely while no panel renders.
+   A collapsed panel keeps its host (the strip lives in it) but not the resizer. */
+.view-shell.panel-none .view-panel,
+.view-shell.panel-none .sidebar-resizer,
+.view-shell.panel-hidden .view-panel,
+.view-shell.panel-hidden .sidebar-resizer,
+.view-shell.panel-collapsed .sidebar-resizer {
+  display: none;
+}
+
+/* Reserved for workspace widget docking (follow-on). */
+.view-shell.panel-dock-right {
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-resizer-width) var(--view-panel-current-width);
+}
+
+/* Panel host frame; establishes the current viewpanel container identity. */
+.view-panel {
+  container-type: inline-size;
+  container-name: viewpanel;
+}
+
+.view-shell.panel-dock-right .view-panel {
+  border-right: 0;
+  border-left: 1px solid var(--view-panel-border);
+}

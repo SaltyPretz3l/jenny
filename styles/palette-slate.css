@@ -1,0 +1,373 @@
+:root[data-palette="slate"] {
+  --widget-context-weave-line-color: rgba(150, 162, 176, 0.42);
+  --widget-context-weave-spacing: 90;
+  --widget-context-weave-pointer-radius: 162;
+  --widget-context-weave-interlace: 3;
+  --widget-context-weave-weft-alpha: 0.7;
+  --widget-context-weave-lit-gain: 3;
+  --widget-context-weave-density: 1.12;
+  color-scheme: dark;
+
+  /* ── Base palette ── quiet slate structural ladder with explicit compact-control and semantic exceptions ── */
+  --bg-base: #15181c;
+  --bg-surface: #1c2025;
+  --bg-surface-2: #252a30;
+  --bg-sidebar: #121519;
+  --bg-panel: #121519;
+  --line: rgba(168, 176, 188, 0.13);
+  --line-strong: rgba(168, 176, 188, 0.24);
+
+  /* ── Text ── crisp white-led reading ramp on the flat slate canvas ── */
+  --text-primary: #f6f7f9;
+  --text-secondary: #d0d5dc;
+  --text-muted: #a7aeb8; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #858d98;
+  --text-bright: #ffffff;
+  --text-link: #8fc0e4;
+  --text-active: #f6f7f9;
+  --text-accent-soft: color-mix(in srgb, #7fb6dd 52%, var(--text-primary));
+  --text-danger-soft: #f2a1a8;
+  --text-success-soft: #9dd6b4;
+  --text-danger-emphasis: #ef98a0;
+  --status-gradient-end: #d9a860;
+
+  /* ── Accents — a single vivid cyan signal owns chrome; the black canvas itself never gets a cyan wash ── */
+  --accent: #7fb6dd;
+  --accent-primary: var(--accent);
+  --accent-strong: #9ccbec;
+  --accent-cyan: #86c3e4;
+  --accent-amber: #d9a860;
+
+  /* ── Holo palette — neon on black glass ── */
+  --holo-periwinkle: #8fa4c9;
+  --holo-lavender: #a396c9;
+  --holo-pink: #c98fae;
+  --holo-cyan: #86c3e4;
+
+  /* ── Syntax tokens — vivid HUD set read by the Monaco theme bridge (scoped to Obsidian) ── */
+  --syntax-keyword: #8fb6dd;
+  --syntax-string: #a8c8a0;
+  --syntax-comment: #6b7280;
+  --syntax-number: #d9b98a;
+  --syntax-function: #d9c98a;
+  --syntax-type: #8fc7c0;
+  --syntax-variable: #b9c4d0;
+  --syntax-constant: #e0a3aa;
+
+  /* ── Doodle field — ice-blue circuitry on ink ── */
+
+  /* ── Atomic burst — brighter ice / muted lavender / rose HUD ── */
+  --widget-atomic-burst-color-a: rgba(127, 182, 221, 0.84);
+  --widget-atomic-burst-color-b: rgba(163, 150, 201, 0.74);
+  --widget-atomic-burst-color-c: rgba(201, 143, 174, 0.72);
+  --widget-atomic-burst-flare-color: rgba(245, 251, 255, 0.96);
+  --widget-atomic-burst-link-color: rgba(168, 176, 188, 0.55);
+  --widget-atomic-burst-wave-color: rgba(127, 182, 221, 0.88);
+  --widget-atomic-burst-size: 28;
+  --widget-atomic-burst-density: 9.2;
+
+  /* ── Circuit trace — ice-blue HUD grid with rose/amber accents ── */
+  --widget-circuit-trace-grid-color: rgba(168, 176, 188, 0.12);
+  --widget-circuit-trace-line-color: rgba(127, 182, 221, 0.96);
+  --widget-circuit-trace-glow-color: rgba(201, 143, 174, 0.90);
+  --widget-circuit-trace-accent-color: rgba(245, 177, 58, 0.90);
+  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-density: 1.0;
+
+  /* ── Reactive grid: achromatic idle, quiet ice-blue active ── */
+  --widget-reactive-grid-dot-idle: rgba(168, 176, 188, 0.20);
+  --widget-reactive-grid-dot-active: rgba(127, 182, 221, 0.98);
+  --widget-reactive-grid-dot-glow: rgba(127, 182, 221, 0.45);
+
+  /* ── Playlist scroll ── */
+  --playlist-scroll-line-color: rgba(168, 176, 188, 0.5);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.04;
+  --playlist-scroll-ghost-color: rgba(168, 176, 188, 0.18);
+  --playlist-scroll-pad-color: rgba(180, 180, 190, 0.05);
+  --playlist-scroll-accent-color: rgba(127, 182, 221, 0.50);
+
+  /* ── Shadows — soft true-black drops and neutral hairline rings, without sheen ── */
+  --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.42);
+  --shadow-accent: 0 8px 20px rgba(127, 182, 221, 0.14);
+  --shadow-elevation-1: 0 0 0 1px rgba(168, 176, 188, 0.10);
+  --shadow-elevation-2: 0 2px 10px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(168, 176, 188, 0.11);
+  --shadow-elevation-3: 0 6px 22px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(168, 176, 188, 0.13);
+
+  /* ── Borders — neutral slate seams, with ice blue reserved for explicit focus states ── */
+  --border-subtle: rgba(168, 176, 188, 0.08);
+  --border-default: rgba(168, 176, 188, 0.14);
+  --border-strong: rgba(168, 176, 188, 0.26);
+  --border-focus: rgba(127, 182, 221, 0.45);
+  --focus-outline: rgba(127, 182, 221, 0.62);
+
+  /* ── Surface backgrounds — solid slate fields; no washes, glows, or vignettes ── */
+  --surface-body-background:
+    #15181c;
+
+  --surface-shell-background:
+    #15181c;
+
+  --surface-titlebar-background:
+    #121519;
+
+  --surface-sidebar-background:
+    #121519;
+
+  --surface-main-stage-background:
+    #15181c;
+
+  --surface-main-stage-overlay:
+    none;
+
+  --surface-main-stage-glow:
+    none;
+
+  --surface-card-background:
+    #1c2025;
+
+  --surface-input-background: #1a1e22;
+  --surface-input-background-strong: #14171b;
+  --surface-toolbar-background: #1a1e22;
+
+  --surface-prompt-chip-background: #1c2025;
+  --surface-prompt-chip-hover: #252a30;
+  --surface-prompt-chip-border: rgba(168, 176, 188, 0.16);
+  --surface-prompt-chip-border-hover: rgba(127, 182, 221, 0.44);
+
+  --surface-assistant-sprite-background:
+    #1c2025;
+  --surface-assistant-sprite-border: rgba(127, 182, 221, 0.38);
+  --surface-assistant-sprite-holo:
+    rgba(143, 164, 201, 0.85) 0deg,
+    rgba(163, 150, 201, 0.85) 90deg,
+    rgba(217, 168, 96, 0.85) 180deg,
+    rgba(134, 195, 228, 0.85) 270deg,
+    rgba(143, 164, 201, 0.85) 360deg;
+
+  --surface-interactive-card-background:
+    #1c2025;
+
+  --surface-notice-background:
+    #241f14;
+
+  --surface-composer-inner:
+    #1c2025;
+  --surface-composer-signal-background: #1a1e22;
+  --surface-composer-mode-background: #1a1e22;
+
+  --surface-user-bubble-background:
+    #1c2025;
+
+  --surface-auth-overlay: rgba(8, 10, 12, 0.82);
+  --surface-auth-card: #1c2025;
+
+  --surface-popover-background: #1c2025;
+  --surface-popover-row: #252a30;
+  --surface-popover-row-hover: #2e343b;
+
+  --surface-dev-row-background: #1a1e22;
+  --surface-dev-row-border: rgba(127, 182, 221, 0.16);
+
+  /* ── Material hierarchy ── */
+  --mat-chrome-bg: #121519;
+  --mat-chrome-border: rgba(168, 176, 188, 0.10);
+  --mat-chrome-text: var(--text-secondary);
+  --mat-chrome-accent: var(--text-primary);
+  --mat-work-bg:
+    #15181c;
+  --mat-work-border: var(--border-default);
+  --mat-work-text: var(--text-primary);
+  --mat-work-accent: var(--text-secondary);
+  --mat-live-bg: #121519;
+  --mat-live-accent: var(--accent-cyan);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
+  --mat-live-text: var(--text-primary);
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-text: var(--text-primary);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.44), 0 2px 6px rgba(0, 0, 0, 0.28);
+
+  /* ── Widget tokens ── */
+
+  /* Buttons — ice-blue primary, dark ink text */
+  --widget-button-primary-bg: #7fb6dd;
+  --widget-button-primary-color: #0b1a24;
+  --widget-button-primary-shadow: rgba(127, 182, 221, 0.26);
+  --widget-button-secondary-bg: #1c2025;
+  --widget-button-secondary-border: rgba(168, 176, 188, 0.20);
+  --widget-button-secondary-color: #d5dae0;
+  --widget-button-danger-bg: rgba(239, 152, 160, 0.14);
+  --widget-button-danger-border: rgba(239, 152, 160, 0.28);
+  --widget-button-danger-color: #f2a1a8;
+  --widget-button-session-bg: #d9a860;
+  --widget-button-session-color: #241704;
+  --widget-close-hover-bg: #a24d52;
+  --widget-hero-avatar-bg: #7fb6dd;
+
+  /* Sidebar & item states */
+  --widget-item-active-bg: #252a30;
+  --widget-item-active-border: rgba(168, 176, 188, 0.18);
+  --widget-badge-bg: rgba(255, 255, 255, 0.04);
+  --widget-badge-border: rgba(168, 176, 188, 0.10);
+  --widget-badge-color: #b0b0b6;
+  --widget-badge-secondary-color: #74747c;
+  --widget-action-color: #b0b0b6;
+  --widget-action-bg: rgba(255, 255, 255, 0.04);
+  --widget-action-border: rgba(168, 176, 188, 0.14);
+  --widget-action-hover-bg: rgba(127, 182, 221, 0.14);
+  --widget-action-hover-border: rgba(127, 182, 221, 0.42);
+  --widget-action-hover-color: #fcfcfd;
+  --widget-action-delete-hover-bg: rgba(255, 110, 124, 0.14);
+  --widget-action-delete-hover-border: rgba(255, 110, 124, 0.28);
+  --widget-action-delete-hover-color: #ff9aa6;
+  --widget-scrollbar-color: rgba(168, 176, 188, 0.28);
+  --widget-collapsed-item-bg: rgba(127, 182, 221, 0.20);
+  --widget-collapsed-item-color: #04141b;
+  --widget-collapsed-item-active-bg: rgba(127, 182, 221, 0.92);
+
+  /* Chat & copy */
+  --widget-chat-meta-color: #74747c;
+  --widget-chat-meta-error-color: #ff9aa6;
+  --widget-copy-chip-bg: #1c2025;
+  --widget-copy-chip-border: rgba(168, 176, 188, 0.22);
+  --widget-copy-chip-color: #dfe0e3;
+
+
+  /* Sprite streaming — ice-blue live HUD signal */
+  --widget-sprite-color: rgba(233, 233, 236, 0.94);
+  --widget-sprite-streaming-border: rgba(127, 182, 221, 0.36);
+  --widget-sprite-streaming-shadow:
+
+    0 0 0 1px rgba(0, 0, 0, 0.40),
+    0 12px 30px rgba(127, 182, 221, 0.16),
+    0 0 22px rgba(127, 182, 221, 0.16);
+
+  /* Home orbit */
+  --widget-face-glow-color: var(--accent-cyan);
+  --widget-face-shine-color: rgba(220, 248, 255, 0.84);
+  --widget-face-aura-primary: rgba(127, 182, 221, 0.14);
+  --widget-face-aura-secondary: rgba(168, 176, 188, 0.10);
+  /* Tool calls — ice-blue running and approval signals */
+  --widget-tool-bg:
+    #1c2025;
+  --widget-tool-border: rgba(168, 176, 188, 0.14);
+  --widget-tool-pending-border: rgba(127, 182, 221, 0.24);
+  --widget-tool-running-border: rgba(127, 182, 221, 0.38);
+  --widget-tool-error-border: rgba(239, 152, 160, 0.36);
+  --widget-tool-color: var(--text-secondary);
+  --widget-tool-name-color: var(--text-primary);
+  --widget-tool-success-color: #8fc9a8;
+  --widget-tool-error-color: #ef98a0;
+  --widget-tool-denied-color: #d1a07a;
+  --widget-tool-code-bg: #14171b;
+  --widget-tool-code-color: #c0c6ce;
+  --widget-approve-bg: rgba(127, 182, 221, 0.84);
+  --widget-approve-border: rgba(156, 203, 236, 0.34);
+  --widget-approve-color: #04141b;
+  --widget-approve-hover-border: rgba(156, 203, 236, 0.48);
+  --widget-deny-bg: rgba(22, 22, 26, 0.74);
+  --widget-deny-border: rgba(168, 176, 188, 0.22);
+  --widget-deny-color: rgba(233, 233, 236, 0.84);
+
+
+  /* Composer — send uses the reserved ice-blue accent */
+  --widget-placeholder-color: #62626a;
+  --widget-placeholder-focus-color: #b0b0b6;
+  --widget-composer-mode-active-bg: rgba(127, 182, 221, 0.20);
+  --widget-send-bg: #7fb6dd;
+  --widget-send-border: rgba(127, 182, 221, 0.40);
+  --widget-send-color: #04141b;
+  --widget-send-hover-bg: #9ccbec;
+  --widget-send-hover-color: #04141b;
+  --widget-composer-signal-border: rgba(168, 176, 188, 0.20);
+  --widget-select-caret-color: #74747c;
+  --widget-select-hover-color: #fcfcfd;
+  --widget-select-option-bg: var(--bg-surface);
+  --widget-select-option-color: #dfe0e3;
+  --widget-composer-meta-color: #62626a;
+  --widget-composer-scrollbar-color: rgba(168, 176, 188, 0.50);
+  --widget-token-pill-bg: rgba(22, 22, 26, 0.66);
+  --widget-token-pill-color: #b0b0b6;
+  --widget-jump-color: rgba(180, 180, 188, 0.84);
+  --widget-jump-hover-color: #fcfcfd;
+
+  /* Interactive mode — ice-blue for explicit active selection */
+  --widget-interactive-card-border: rgba(168, 176, 188, 0.24);
+  --widget-interactive-pending-border: rgba(127, 182, 221, 0.34);
+  --widget-interactive-intro-color: rgba(233, 233, 236, 0.92);
+  --widget-interactive-option-bg: rgba(22, 22, 26, 0.36);
+  --widget-interactive-option-border: rgba(168, 176, 188, 0.18);
+  --widget-interactive-option-color: rgba(233, 233, 236, 0.92);
+  --widget-interactive-option-hover-bg: rgba(34, 34, 40, 0.52);
+  --widget-interactive-option-hover-border: rgba(168, 176, 188, 0.36);
+  --widget-interactive-option-selected-bg: rgba(127, 182, 221, 0.36);
+  --widget-interactive-option-selected-border: rgba(127, 182, 221, 0.50);
+  --widget-interactive-option-selected-color: #04141b;
+  --widget-interactive-input-bg: rgba(11, 11, 14, 0.88);
+  --widget-interactive-input-color: rgba(243, 243, 246, 0.94);
+  --widget-interactive-label-color: rgba(150, 150, 158, 0.86);
+  --widget-interactive-prompt-color: rgba(243, 243, 246, 0.94);
+  --widget-interactive-note-color: rgba(166, 166, 176, 0.74);
+  --widget-interactive-disabled-color: rgba(150, 150, 158, 0.5);
+  --widget-input-focus-border: rgba(127, 182, 221, 0.45);
+  --widget-input-focus-glow: rgba(127, 182, 221, 0.22);
+
+  /* Settings shell — restrained ice-blue accents */
+  --widget-settings-badge-bg: rgba(127, 182, 221, 0.26);
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+
+  /* Personality */
+  --widget-personality-preview-color: rgba(224, 224, 228, 0.92);
+
+  /* Mermaid */
+
+  /* Artifact focus */
+  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+
+  /* Activity states */
+  --widget-activity-pending-glow: rgba(127, 182, 221, 0.12);
+  --widget-activity-pending-border: rgba(127, 182, 221, 0.50);
+  --widget-activity-pending-color: #9ccbec;
+  --widget-activity-success-color: rgba(79, 224, 160, 0.92);
+  --widget-activity-error-color: #ff9aa6;
+  --widget-activity-pulse-color: rgba(127, 182, 221, 0.16);
+
+  /* Attachments */
+  --widget-attachment-bg: rgba(22, 22, 26, 0.88);
+  --widget-attachment-border: rgba(168, 176, 188, 0.18);
+  --widget-attachment-color: #dfe0e3;
+  --widget-attachment-meta-color: #74747c;
+  --widget-attachment-remove-color: #b0b0b6;
+  --widget-attachment-clear-color: #74747c;
+
+  /* Popover badge & stop */
+  --widget-popover-badge-active-bg: rgba(245, 177, 58, 0.20);
+  --widget-popover-badge-active-color: #f5b13a;
+  --widget-stop-bg: rgba(255, 110, 124, 0.16);
+  --widget-stop-color: #ff9aa6;
+
+  /* Composer holo draw — muted for users who override the bundle default */
+  --composer-holo-opacity-active: 0.66;
+  --composer-holo-opacity-streaming: 0.58;
+  --composer-holo-draw-glow-alpha-scale: 1.85;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-palette="slate"] .composer { background: #1c2025; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-palette="slate"] .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  :root[data-palette="slate"] .composer { background: #1c2025; }
+}

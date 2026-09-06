@@ -1,0 +1,14 @@
+{
+  "source": "ollama.com",
+  "url": "https://github.com/ollama/ollama/releases/download/v0.30.10/OllamaSetup.exe",
+  "version": "0.30.10",
+  "minimumSupportedVersion": "0.30.10",
+  "sizeBytes": 1395032360,
+  "sha256": "EB18BFB0CC74C01191479B76C152A79CB38291260054556A266B4214ACD4F99F",
+  "license": "MIT",
+  "manualFallbackUrl": "https://ollama.com/download/windows",
+  "updatePolicy": "Manually pin a specific OllamaSetup.exe release; bump version + re-hash sha256 each time.",
+  "packagingPath": "Downloaded at runtime to the OS temp dir; never bundled in the installer.",
+  "rollback": "Uninstall via Ollama's own uninstaller; Jenny never auto-uninstalls Ollama.",
+  "_comment": "PROVENANCE MANIFEST (per docs/BUILDING.md § Release Provenance and Evidence). Pinned to Ollama v0.30.10 (2026-06-24). To update: download the new OllamaSetup.exe, run `(Get-FileHash -Algorithm SHA256 .\\OllamaSetup.exe).Hash`, and update url/version/sizeBytes/sha256. If sha256 is ever left empty, getInstallPlan() reports available:false and installOllama() refuses to download (fail-closed)."
+}

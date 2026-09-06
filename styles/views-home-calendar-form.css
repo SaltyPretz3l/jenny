@@ -1,0 +1,225 @@
+/* Quick-add, event form, and feed-manager presentation for the Home calendar. */
+
+.cal-quickadd {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+}
+
+.cal-quickadd__affordance {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-quickadd__affordance:hover {
+  color: var(--text-secondary);
+}
+
+.cal-quickadd__affordance:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.cal-quickadd__bar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+
+.cal-quickadd__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cal-quickadd .inv-text-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cal-quickadd .inv-text-field-control {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--border-default) 86%, transparent);
+  border-radius: var(--radius-base);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+}
+
+.cal-quickadd__error,
+.cal-form__error {
+  color: var(--status-fg-danger);
+  font-size: var(--font-size-sm);
+}
+
+.cal-quickadd__suggest {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+}
+
+.cal-quickadd__preview {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.cal-quickadd__preview-title {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.cal-quickadd__preview-when {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.cal-quickadd__conflict {
+  color: var(--status-fg-warning);
+  font-size: var(--font-size-sm);
+}
+
+.cal-quickadd__suggest-actions,
+.cal-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.cal-form,
+.cal-feeds {
+  display: grid;
+  gap: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+}
+
+.cal-form__heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+
+.cal-form__series-note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
+.cal-form__row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.cal-form__row--title .inv-text-field,
+.cal-form__row--notes .inv-text-field {
+  flex: 1;
+  min-width: 220px;
+}
+
+.cal-form__toggle {
+  padding-bottom: var(--space-2);
+}
+
+.cal-form .inv-text-field,
+.cal-form .inv-date-field,
+.cal-form .inv-time-field,
+.cal-form .inv-select-field,
+.cal-feeds .inv-text-field,
+.cal-feeds .inv-url-field,
+.cal-feeds .inv-select-field {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.cal-form .inv-text-field-control,
+.cal-form .inv-date-field-control,
+.cal-form .inv-time-field-control,
+.cal-form .inv-select-field-control,
+.cal-feeds .inv-text-field-control,
+.cal-feeds .inv-url-field-control,
+.cal-feeds .inv-select-field-control {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--border-default) 86%, transparent);
+  border-radius: var(--radius-base);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+}
+
+.cal-feeds__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-5);
+  padding-block: var(--space-3);
+}
+
+.cal-feeds__name {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.cal-feeds__url {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-feeds__status,
+.cal-feeds__empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.cal-feeds__row[data-state="error"] .cal-feeds__status {
+  color: var(--status-fg-warning);
+}
+
+.cal-feeds__add {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+}
+
+.cal-feeds .inv-url-field {
+  flex: 1;
+  min-width: 220px;
+}
+
+@container (max-width: 720px) {
+  .cal-feeds__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .cal-feeds__url,
+  .cal-feeds__status {
+    grid-column: 1 / -1;
+  }
+}

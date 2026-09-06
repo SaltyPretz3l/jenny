@@ -1,0 +1,180 @@
+/* ── Scratchpad pinned "sticky note" tabs ──
+   Pinned scratchpad notes live as a compact tab strip docked in the titlebar
+   (.pin-tabs / #pinnedNoteTabs), just right of the "Jenny" brand. Clicking a tab
+   drops its editable mini-panel down beneath it as a body-level popover
+   (#pinnedNoteLayer) so the dropdown is never clipped by the titlebar overflow.
+   The panel look is a thin full-perimeter accent ("holo") border — a flat
+   dark-mono hairline, NOT a side accent bar.
+*/
+
+/* Titlebar tab strip — horizontal row of compact pins. */
+.pin-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pin-tabs[hidden] {
+  display: none;
+}
+
+/* A pinned-note tab reuses the .palette-pill base (border/radius/background/
+   no-drag/hover/focus); these are only the compact-tab deltas. */
+.pin-tab {
+  gap: var(--space-2);
+  min-width: 0; /* shrink + ellipsize the title instead of clipping whole tabs */
+  max-width: clamp(96px, 12vw, 200px);
+  padding: 3px var(--space-4);
+  color: var(--text-secondary);
+}
+
+.pin-tab--active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.pin-tab__icon {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  opacity: 0.8;
+}
+
+.pin-tab__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+/* Editor popover — a single dropdown panel anchored (inline left/top, set by the
+   controller) just below the active tab. Body-level so it escapes titlebar clip. */
+.scratchpad-pin-layer {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: fixed;
+  top: var(--titlebar-height); /* fallback; refined inline per active tab */
+  left: var(--space-6);
+  z-index: calc(var(--z-toast) + 2); /* above toasts (75), below auth/startup (80) + capture (85) */
+  display: flex;
+  flex-direction: column;
+  width: clamp(260px, 22vw, 340px);
+}
+
+.scratchpad-pin-layer[hidden] {
+  display: none;
+}
+
+.scratchpad-pin {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-card-elevated);
+  /* Thin full-perimeter accent hairline + a very faint outer ring for the "holo"
+     sheen — restrained, no glow/gradient, stays in the flat dark-mono language. */
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-strong));
+  border-radius: var(--radius-base);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
+    var(--shadow-float);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.scratchpad-pin:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
+}
+
+.scratchpad-pin__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+/* Expanded mini-panel: same thin holo border, wider, with a header + editor. */
+.scratchpad-pin__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle, var(--border-strong));
+}
+
+.scratchpad-pin__header .scratchpad-pin__title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.scratchpad-pin__header-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.scratchpad-pin__hbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.scratchpad-pin__hbtn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.scratchpad-pin__editor-wrap {
+  padding: var(--space-2) var(--space-3);
+}
+
+.scratchpad-pin__editor {
+  margin: 0;
+}
+
+.scratchpad-pin__editor .inv-text-field-control {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  font-size: var(--font-size-sm);
+}
+
+.scratchpad-pin__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 1.1em;
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.scratchpad-pin__saved {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.scratchpad-pin__hbtn:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scratchpad-pin {
+    transition: none;
+  }
+}

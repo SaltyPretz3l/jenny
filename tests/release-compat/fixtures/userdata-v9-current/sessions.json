@@ -1,0 +1,31 @@
+{
+  "schema_version": 9,
+  "sessions": {
+    "sess_v9_current": {
+      "id": "sess_v9_current",
+      "title": "v9 current session (no-op migration)",
+      "session_type": "chat",
+      "created_at": "2026-04-30T14:00:00.000Z",
+      "updated_at": "2026-04-30T14:05:00.000Z",
+      "message_count": 0,
+      "last_message_preview": "",
+      "last_model_used": "qwen2.5-coder:14b",
+      "session_start_date": "2026-04-30",
+      "preferred_model": "",
+      "reasoning_effort": "",
+      "conversation_mode": "",
+      "pending_question_batch": null,
+      "interactive_sequence_state": null,
+      "interactive_round_count": 0,
+      "plan_mode": false,
+      "context_preferences": {},
+      "active_turn": null,
+      "linked_session_ids": [],
+      "messages": [],
+      "message_seq_counter": 0,
+      "turn_event_log_version": 2,
+      "turn_event_seq_counter": 0,
+      "turn_events": []
+    }
+  }
+}

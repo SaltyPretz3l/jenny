@@ -1,0 +1,330 @@
+{
+  "fixture_id": "streams/citation_markers",
+  "schema_version": 1,
+  "description": "response.output_text.delta values pass through a stateful _CitationNormalizer that buffers incomplete markers across delta boundaries (bounded at 128 chars) and rewrites complete 'cite<sep>web:N' bodies to '[web:N]'. The clearest carve-out candidate in the whole parser.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_citation_markers_are_normalized_across_stream_deltas"
+  ],
+  "constants": {
+    "CITATION_START": "\ue200",
+    "CITATION_END": "\ue201",
+    "CITATION_SEPARATOR": "\ue202"
+  },
+  "declarative_verdict": "no",
+  "notes": "Requires a bounded incomplete-marker buffer carried across feed() calls, delimiter scanning with three distinct roles (start/end/separator), a closed allow-list on the marker body prefix ('cite' + separator + 'web:'), and an overflow-flush rule. A small hand-written state machine, not a lookup table; the architecture doc already anticipated this stays core.",
+  "cases": [
+    {
+      "case_id": "constant_identity_citation_start",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {
+        "name": "CITATION_START"
+      },
+      "expect": {
+        "value": "${CITATION_START}"
+      },
+      "rule": "Pins the private-use-area codepoint the normalizer scans for. These three delimiters are the whole alphabet of the citation state machine; a codepoint drift would make every case below pass vacuously as plain passthrough."
+    },
+    {
+      "case_id": "constant_identity_citation_end",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {
+        "name": "CITATION_END"
+      },
+      "expect": {
+        "value": "${CITATION_END}"
+      },
+      "rule": "Pins the private-use-area codepoint the normalizer scans for. These three delimiters are the whole alphabet of the citation state machine; a codepoint drift would make every case below pass vacuously as plain passthrough."
+    },
+    {
+      "case_id": "constant_identity_citation_separator",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {
+        "name": "CITATION_SEPARATOR"
+      },
+      "expect": {
+        "value": "${CITATION_SEPARATOR}"
+      },
+      "rule": "Pins the private-use-area codepoint the normalizer scans for. These three delimiters are the whole alphabet of the citation state machine; a codepoint drift would make every case below pass vacuously as plain passthrough."
+    },
+    {
+      "case_id": "single_web_citation_is_rewritten",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "Forecast ${CITATION_START}cite${CITATION_SEPARATOR}web:1${CITATION_END} today"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "Forecast [web:1] today",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 27
+        }
+      },
+      "rule": "A complete marker inside one delta becomes '[web:N]'; the private-use delimiters never reach the consumer."
+    },
+    {
+      "case_id": "marker_split_across_four_deltas",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "Forecast ${CITATION_START}ci"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "te${CITATION_SEPARATOR}web:"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "12"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "${CITATION_END} today"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "Forecast [web:12] today",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 4,
+          "output_text_delta_chars": 28
+        }
+      },
+      "rule": "The same marker fragmented across FOUR deltas: the normalizer buffers the incomplete prefix between feed() calls, so the rewrite is not delta-local."
+    },
+    {
+      "case_id": "two_adjacent_citations",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "${CITATION_START}cite${CITATION_SEPARATOR}web:1${CITATION_END}${CITATION_START}cite${CITATION_SEPARATOR}web:2${CITATION_END}"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "[web:1][web:2]",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 24
+        }
+      },
+      "rule": "Two complete markers with no plain text between them are rewritten independently."
+    },
+    {
+      "case_id": "non_web_prefix_is_dropped_silently",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "A${CITATION_START}cite${CITATION_SEPARATOR}source:1${CITATION_END}B"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "AB",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 17
+        }
+      },
+      "rule": "A complete but non-'web:' marker body is dropped ENTIRELY (not just its delimiters): the body prefix is allow-listed, not passthrough."
+    },
+    {
+      "case_id": "unterminated_marker_at_stream_end_is_discarded",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "A${CITATION_START}cite${CITATION_SEPARATOR}web:2"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "A",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 12
+        }
+      },
+      "rule": "An in-progress marker at genuine stream end is buffered, then finish() discards it -- it is diagnostic noise, never flushed as visible answer text."
+    },
+    {
+      "case_id": "buffer_overflow_flushes_within_one_delta",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "A${CITATION_START}xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "Visible answer."
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "AxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxVisible answer.",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 2,
+          "output_text_delta_chars": 146
+        }
+      },
+      "rule": "The pending buffer alone exceeds the 128-char bound inside a single feed() call, so it is flushed with delimiters stripped rather than held forever."
+    },
+    {
+      "case_id": "buffer_overflow_accumulates_across_two_deltas",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "A${CITATION_START}xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          },
+          {
+            "type": "response.output_text.delta",
+            "delta": "Visible answer."
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "AxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyVisible answer.",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 3,
+          "output_text_delta_chars": 157
+        }
+      },
+      "rule": "Pending is under the bound after delta 1 (80 chars) and crosses it after delta 2 (140 total): the limit check is stateful across feed() calls, not per-delta."
+    },
+    {
+      "case_id": "stray_end_and_separator_without_a_start",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "A${CITATION_SEPARATOR}web:2${CITATION_END}B${CITATION_END}"
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "AB",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 10
+        }
+      },
+      "rule": "A separator or end delimiter with no preceding start is treated as noise and dropped, not emitted literally."
+    },
+    {
+      "case_id": "citation_free_text_is_pure_passthrough",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.output_text.delta",
+            "delta": "Citation-free answer."
+          },
+          {
+            "type": "response.completed",
+            "response": {}
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "content": "Citation-free answer.",
+          "finish_reason": "stop"
+        },
+        "diagnostics": {
+          "output_text_delta_count": 1,
+          "output_text_delta_chars": 21
+        }
+      },
+      "rule": "With no private-use markers present the normalizer is the identity function."
+    }
+  ],
+  "non_executable": []
+}

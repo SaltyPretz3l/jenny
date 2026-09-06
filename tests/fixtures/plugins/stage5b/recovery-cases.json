@@ -1,0 +1,8 @@
+{
+  "fixture_schema_version": 1,
+  "cases": [
+    { "name": "pointer_landed_receipt_pending", "expected": "committed" },
+    { "name": "validated_retained_generation", "expected": "safely_recoverable" },
+    { "name": "uncertain_authority", "expected": "plugins-disabled-required" }
+  ]
+}

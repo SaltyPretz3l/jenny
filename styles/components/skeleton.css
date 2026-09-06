@@ -1,0 +1,83 @@
+/* styles/components/skeleton.css
+ *
+ * Skeleton placeholder primitive. Use during async hydration to indicate
+ * "what you'll see here" without a generic spinner.
+ *
+ * Variants: .skeleton--text  (one line of text)
+ *           .skeleton--row   (single list row)
+ *
+ * Container should set aria-busy="true" while skeletons are visible; the
+ * renderer should remove the .skeleton elements and the aria-busy attribute
+ * together when real content arrives.
+ *
+ * Shimmer animation honors prefers-reduced-motion via the global motion
+ * tokens — the keyframe still runs, but with --motion-duration-emphasis
+ * collapsed to 0ms it becomes a no-op solid surface.
+ */
+
+.skeleton {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--skeleton-base);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-shimmer) 48%,
+    transparent 100%
+  );
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-shimmer var(--skeleton-duration) linear infinite;
+  /* Keep the placeholder out of the screen-reader tab order — the parent
+     container's aria-busy already conveys "loading". */
+  pointer-events: none;
+  user-select: none;
+  color: transparent;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -100% 0; }
+}
+
+/* When the user prefers reduced motion, hold the shimmer in place at a
+   slightly raised tint so the surface still reads as "loading" without
+   the moving gradient. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background-image: none;
+    background-color: var(--skeleton-shimmer);
+  }
+}
+
+/* ── Variants ── */
+
+.skeleton--text {
+  height: 0.85em;
+  border-radius: var(--radius-xs);
+  margin: 4px 0;
+}
+
+.skeleton--text + .skeleton--text {
+  margin-top: var(--space-3);
+}
+
+.skeleton--text-lg {
+  height: 1.4em;
+  border-radius: var(--radius-sm);
+}
+
+.skeleton--row {
+  height: 56px;
+  border-radius: var(--radius-md);
+}
+
+/* When skeletons sit inside a list, give them rhythm matching the list
+   gap (8–12px depending on density). */
+.skeleton-stack {
+  display: grid;
+  gap: var(--space-5);
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "repairs": {
+    "repair_release_v1": {
+      "artifact_id": "repair_release_v1",
+      "session_id": "session_release_v1",
+      "session_incarnation": "inc_release_v1",
+      "turn_generation": 4,
+      "turn_id": "turn_release_v1",
+      "stream_id": "stream_release_v1",
+      "message": {
+        "id": "assistant_release_v1",
+        "role": "assistant",
+        "content": "Visible reply awaiting a durable retry.",
+        "status": "complete",
+        "client_message_id": "assistant_release_v1",
+        "timestamp": "2026-07-14T12:00:00.000Z"
+      },
+      "terminal_snapshot": {
+        "kind": "complete",
+        "terminal": {
+          "kind": "complete"
+        },
+        "messages": [
+          {
+            "id": "assistant_release_v1",
+            "role": "assistant",
+            "content": "Visible reply awaiting a durable retry.",
+            "status": "complete",
+            "client_message_id": "assistant_release_v1",
+            "timestamp": "2026-07-14T12:00:00.000Z"
+          }
+        ],
+        "tool_repairs": [],
+        "turn_events": [],
+        "preference_patch": {},
+        "title": null
+      },
+      "reason": "write_failed",
+      "scope": "assistant",
+      "state": "pending",
+      "created_at": "2026-07-14T12:00:00.000Z",
+      "updated_at": "2026-07-14T12:00:00.000Z"
+    }
+  }
+}

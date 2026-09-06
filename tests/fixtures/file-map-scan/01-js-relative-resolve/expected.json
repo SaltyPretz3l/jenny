@@ -1,0 +1,53 @@
+{
+  "nodes": [
+    {
+      "id": "src/a.js",
+      "label": "a.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 2,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "src/b.js",
+      "label": "b.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 2,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    }
+  ],
+  "edges": [
+    {
+      "from": "src/a.js",
+      "to": "src/b.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "src/b.js",
+      "src/a.js"
+    ],
+    "cycles": [],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 2,
+    "total": 2,
+    "durationMs": 0
+  }
+}

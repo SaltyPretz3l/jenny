@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {"id":"w12_manifest_v2_valid_minimal","contract":"PluginManifestV2","value":{"manifest_schema_version":2,"publisher_id":"jenny-official","plugin_id":"declarative","name":"Declarative","version":"1.0.0","contract_versions":{"manifest":2,"declarative_content":2,"operation_receipt":1,"cleanup_state":1},"contributions":[],"requested_permissions":[]}},
+    {"id":"w12_content_v2_valid_skill","contract":"PluginDeclarativeContentV2","value":{"content_schema_version":2,"publisher_id":"jenny-official","plugin_id":"declarative","contribution_id":"skill","payload":{"kind":"skill","instructions":"Use concise answers."}}},
+    {"id":"w12_generation_v2_valid_empty","contract":"PluginGenerationV2","value":{"generation_id":"gen-stage4b","generation_schema_version":2,"created_at":"2026-08-04T00:00:00Z","graph_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","plugins":[],"policy_grant_ref":{"policy_snapshot_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","policy_revision":0,"grant_set_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"data_schema_refs":[]}},
+    {"id":"w12_runtime_snapshot_v2_valid_empty","contract":"PluginRuntimeSnapshotV2","value":{"kind":"plugin_runtime_snapshot","runtime_schema_version":2,"registry_revision":1,"dependency_graph_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit_epoch":1,"active_generation_id":"gen-stage4b","declarative_content":{"skill_scopes":[],"prompts":[],"themes":[],"settings_schemas":[],"commands":[],"workflows":[],"mcp_descriptors":[]},"workflow_tool_bindings":[],"settings_states":[]}},
+    {"id":"w12_settings_state_v2_valid_empty","contract":"PluginSettingsStateV2","value":{"settings_state_schema_version":2,"publisher_id":"jenny-official","plugin_id":"declarative","contribution_id":"settings","schema_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","revision":1,"updated_at":"2026-08-04T00:00:00Z","values":[]}},
+    {"id":"w12_command_invocation_v2_valid_empty","contract":"PluginCommandInvocationV2","value":{"invocation_schema_version":2,"publisher_id":"jenny-official","plugin_id":"declarative","command_id":"run","observed_generation_id":"gen-stage4b","observed_registry_revision":1,"inputs":[]}}
+  ],
+  "expectations": {
+    "w12_manifest_v2_valid_minimal":{"ok":true,"error_code":null,"error_path":null},
+    "w12_content_v2_valid_skill":{"ok":true,"error_code":null,"error_path":null},
+    "w12_generation_v2_valid_empty":{"ok":true,"error_code":null,"error_path":null},
+    "w12_runtime_snapshot_v2_valid_empty":{"ok":true,"error_code":null,"error_path":null},
+    "w12_settings_state_v2_valid_empty":{"ok":true,"error_code":null,"error_path":null},
+    "w12_command_invocation_v2_valid_empty":{"ok":true,"error_code":null,"error_path":null}
+  }
+}

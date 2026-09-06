@@ -1,0 +1,42 @@
+package jenny:plugin@1.0.0;
+
+interface %stream {
+  emit-progress: func(value: string) -> result<_, string>;
+  emit-data: func(value: list<u8>) -> result<_, string>;
+}
+
+interface control {
+  cancelled: func() -> bool;
+}
+
+interface network {
+  record network-request {
+    token: string,
+    method: string,
+    url: string,
+    body: list<u8>,
+  }
+  record network-response {
+    status: u16,
+    body: list<u8>,
+  }
+  request: func(value: network-request) -> result<network-response, string>;
+}
+
+interface secret {
+  use-handle: func(handle: string, request-digest: string) -> result<_, string>;
+}
+
+interface clock {
+  monotonic-deadline-remaining: func() -> u64;
+}
+
+world restricted-host {
+  import %stream;
+  import control;
+  import network;
+  import secret;
+  import clock;
+  export describe: func() -> string;
+  export invoke: func(input: string) -> result<string, string>;
+}

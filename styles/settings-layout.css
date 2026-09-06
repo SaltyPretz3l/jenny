@@ -1,0 +1,14 @@
+/* ── Settings layout: companion atelier nav rail + workspace panel ── */
+.settings-view {
+  --settings-shell-content-max: 1180px;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  gap: var(--space-8);
+  height: 100%;
+  overflow: hidden;
+  padding: var(--space-10);
+  contain: layout;
+}

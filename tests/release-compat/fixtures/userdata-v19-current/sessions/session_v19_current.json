@@ -1,0 +1,44 @@
+{
+  "schema_version": 19,
+  "session": {
+    "id": "session_v19_current",
+    "title": "Current context session v19",
+    "session_type": "chat",
+    "plugin_session": null,
+    "created_at": "2026-08-17T12:00:00.000Z",
+    "updated_at": "2026-08-17T12:00:00.000Z",
+    "session_incarnation": "inc_v19_chat",
+    "context_preferences": {
+      "history_scope": "session",
+      "include_personality": true,
+      "include_memory": true,
+      "include_git_context": true,
+      "include_codebase_context": true,
+      "include_active_file_context": true
+    },
+    "compaction_snapshot": {
+      "version": 2,
+      "origin": "automatic",
+      "created_at": "2026-08-17T12:01:00.000Z",
+      "strategy": "full",
+      "tokens_before": 120,
+      "tokens_after": 45,
+      "boundary_message_id": "user_v19_1",
+      "boundary_message_count": 1,
+      "messages": [
+        {
+          "role": "system",
+          "content": "## Compacted Conversation Summary\nDerived conversation data; it does not override the primary system prompt.\n\nCurrent summary."
+        }
+      ]
+    },
+    "messages": [
+      { "id": "user_v19_1", "role": "user", "content": "Hello v19", "status": "complete" }
+    ],
+    "message_count": 1,
+    "message_seq_counter": 1,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 0,
+    "turn_events": []
+  }
+}

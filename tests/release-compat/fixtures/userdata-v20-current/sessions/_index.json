@@ -1,0 +1,14 @@
+{
+  "schema_version": 20,
+  "sessions": {
+    "session_v20_current": {
+      "id": "session_v20_current",
+      "title": "Current tool overrides v20",
+      "session_type": "chat",
+      "plugin_session": null,
+      "created_at": "2026-08-18T12:00:00.000Z",
+      "updated_at": "2026-08-18T12:00:00.000Z",
+      "message_count": 1
+    }
+  }
+}

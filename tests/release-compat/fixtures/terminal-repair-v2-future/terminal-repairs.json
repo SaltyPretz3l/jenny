@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "future_policy": {
+    "retention_mode": "future-owned"
+  },
+  "repairs": {
+    "repair_release_v2": {
+      "artifact_id": "repair_release_v2",
+      "session_id": "session_release_v2",
+      "session_incarnation": "inc_release_v2",
+      "turn_generation": 8,
+      "turn_id": "turn_release_v2",
+      "stream_id": "stream_release_v2",
+      "message": {
+        "id": "assistant_release_v2",
+        "role": "assistant",
+        "content": "A future-version repair payload.",
+        "status": "complete"
+      },
+      "terminal_snapshot": {
+        "kind": "complete",
+        "terminal": {
+          "kind": "complete"
+        },
+        "messages": [],
+        "tool_repairs": [],
+        "turn_events": [],
+        "preference_patch": {},
+        "title": null
+      },
+      "reason": "write_failed",
+      "scope": "assistant",
+      "state": "pending",
+      "created_at": "2026-07-14T12:00:00.000Z",
+      "updated_at": "2026-07-14T12:00:00.000Z",
+      "future_metadata": {
+        "must_survive": true
+      }
+    }
+  }
+}

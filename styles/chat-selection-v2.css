@@ -1,0 +1,199 @@
+/* styles/chat-selection-v2.css
+ *
+ * F4/F5/F6: multi-select mode visual layer. Scoped to
+ *   .chat-entry-select-handle  â€” per-row checkbox affordance
+ *   [data-selected="true"]     â€” selected chat-entry highlight
+ *   .selection-action-bar      â€” floating action bar above the timeline
+ *   .selection-action-bar-export-menu â€” export-format dropdown
+ *
+ * Sibling stylesheet â€” registered in styles.css immediately after
+ * chat-bubble-editor-v2.css so the cascade resolves base bubble rules first,
+ * then the selection overrides. Visual vocabulary matches D3 hover-actions
+ * (accent-tinted V2 surface).
+ */
+
+/* â”€â”€ Per-row selection-handle (checkbox) â”€â”€ */
+
+.chat-entry-select-handle {
+  position: absolute;
+  top: var(--space-2);
+  inset-inline-start: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: color-mix(in srgb, var(--accent-cyan) 6%, var(--bg-surface));
+  border: 1.5px solid color-mix(in srgb, var(--accent-cyan) 38%, var(--line));
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  z-index: 4;
+}
+
+.chat-entry-select-handle:hover {
+  background: color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 64%, var(--line));
+}
+
+.chat-entry-select-handle:focus-visible {
+  outline: 2px solid var(--focus-outline, color-mix(in srgb, var(--accent-cyan) 70%, transparent));
+  outline-offset: 2px;
+}
+
+.chat-entry-select-handle[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent-cyan) 32%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 88%, var(--line));
+}
+
+.chat-entry-select-handle[aria-checked="true"] .chat-entry-select-handle-glyph::before {
+  content: "âœ“";
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* â”€â”€ Selected chat-entry highlight â”€â”€ */
+
+.chat-entry[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent-cyan) 8%, transparent);
+  border-radius: var(--radius-card, 12px);
+}
+
+/* Reserve a slim leading column so the handle doesn't overlap content. */
+.chat-entry[data-selected] {
+  padding-inline-start: calc(var(--space-3) + 22px + var(--space-1));
+  position: relative;
+}
+
+/* â”€â”€ Selection action bar (floating toolbar) â”€â”€ */
+
+.chat-selection-overlay-host {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-cyan) 28%, var(--line));
+  backdrop-filter: blur(6px);
+}
+
+.selection-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+}
+
+.selection-action-bar[aria-busy="true"] {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.selection-action-bar-count {
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-inline-end: var(--space-2);
+  border-inline-end: 1px solid color-mix(in srgb, var(--accent-cyan) 28%, var(--line));
+}
+
+.selection-action-bar-button {
+  appearance: none;
+  padding: var(--space-1) var(--space-3);
+  background: color-mix(in srgb, var(--accent-cyan) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 28%, var(--line));
+  border-radius: var(--radius-button, 6px);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.selection-action-bar-button:hover:not([disabled]) {
+  background: color-mix(in srgb, var(--accent-cyan) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--line));
+}
+
+.selection-action-bar-button:focus-visible {
+  outline: 2px solid var(--focus-outline, color-mix(in srgb, var(--accent-cyan) 70%, transparent));
+  outline-offset: 2px;
+}
+
+.selection-action-bar-button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.selection-action-bar-delete {
+  background: color-mix(in srgb, var(--state-danger) 8%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--state-danger) 32%, var(--line));
+}
+
+.selection-action-bar-delete:hover:not([disabled]) {
+  background: color-mix(in srgb, var(--state-danger) 18%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--state-danger) 56%, var(--line));
+}
+
+.selection-action-bar-cancel {
+  background: transparent;
+  border-color: var(--line);
+}
+
+/* â”€â”€ Export submenu â”€â”€ */
+
+.selection-action-bar-export-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.selection-action-bar-export-menu {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: absolute;
+  top: calc(100% + 4px);
+  inset-inline-start: 0;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 36%, var(--line));
+  border-radius: var(--radius-card, 8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 30;
+  min-width: 220px;
+}
+
+.selection-action-bar-export-menu[hidden] {
+  display: none;
+}
+
+.selection-action-bar-export-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button, 6px);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.875rem;
+  text-align: start;
+  transition: background-color var(--transition-fast);
+}
+
+.selection-action-bar-export-item:hover,
+.selection-action-bar-export-item:focus-visible {
+  background: color-mix(in srgb, var(--accent-cyan) 12%, var(--bg-surface));
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-entry-select-handle,
+  .selection-action-bar-button,
+  .selection-action-bar-export-item {
+    transition: none;
+  }
+}

@@ -1,0 +1,120 @@
+/* ── Chat Animations ── */
+
+/* Shared by .workbench-health-pill-dot and .inv-status-row-dot. Each dot sets
+   --status-dot-accent to its own tone variable, so one keyframe drives both. */
+@keyframes status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-dot-accent) 32%, transparent);
+  }
+
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--status-dot-accent) 14%, transparent);
+  }
+}
+
+@keyframes suggestion-reveal {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chat-copy-chip-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+
+  14%,
+  72% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-1px) scale(0.985);
+  }
+}
+
+@keyframes thread-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes assistant-stream-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleY(0.78);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes hero-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+}
+
+@keyframes thread-entry-item {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sprite-holo-cycle {
+  from {
+    transform: scale(1) rotate(0turn);
+  }
+
+  to {
+    transform: scale(1) rotate(1turn);
+  }
+}
+
+/* Morphing Presence Orb Overlay */
+.presence-morph-overlay {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  background: radial-gradient(circle, var(--home-orbit-shine, #16e9ff) 0%, var(--home-orbit-aura-primary, rgba(109, 130, 255, 0.4)) 50%, transparent 70%);
+  box-shadow: 0 0 40px var(--home-orbit-glow, rgba(109, 130, 255, 0.25));
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  /* top/left/width/height/box-shadow are not compositable — listing them in
+     will-change only wastes memory. The geometry morph is a deliberate
+     layout animation (single transient overlay, ~1 flight per view switch). */
+  will-change: opacity;
+  transition:
+    top var(--motion-duration-emphasis) var(--motion-ease-elastic),
+    left var(--motion-duration-emphasis) var(--motion-ease-elastic),
+    width var(--motion-duration-emphasis) var(--motion-ease-elastic),
+    height var(--motion-duration-emphasis) var(--motion-ease-elastic),
+    opacity var(--motion-duration-emphasis) var(--motion-ease-emphasis),
+    box-shadow var(--motion-duration-emphasis) var(--motion-ease-emphasis);
+}
+
+.presence-morph-overlay.morphing {
+  box-shadow: 0 0 20px rgba(22, 233, 255, 0.5);
+}

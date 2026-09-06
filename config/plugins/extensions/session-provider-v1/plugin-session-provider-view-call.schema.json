@@ -1,0 +1,26 @@
+{
+  "contract": "PluginSessionProviderViewCallV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": ["call_schema_version", "request_id", "action", "payload_json"],
+    "max_keys": 4,
+    "additional_properties": "reject",
+    "properties": {
+      "call_schema_version": { "type": "const", "value": 1 },
+      "request_id": { "type": "ref", "ref": "operation_id" },
+      "action": {
+        "type": "enum",
+        "values": [
+          "get_context",
+          "update_state",
+          "invoke",
+          "cancel",
+          "reveal_attachment"
+        ]
+      },
+      "payload_json": { "type": "ref", "ref": "payload_json" }
+    }
+  }
+}

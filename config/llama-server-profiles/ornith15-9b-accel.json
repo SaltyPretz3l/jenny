@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "profile_id": "ornith15-9b-accel",
+  "model_tag": "ornith15:9b",
+  "context_size": 32768,
+  "extra_args": [
+    "--parallel",
+    "1",
+    "--no-mmproj",
+    "--gpu-layers",
+    "all",
+    "--split-mode",
+    "none",
+    "--flash-attn",
+    "on"
+  ],
+  "acceleration": {
+    "mode": "mtp",
+    "draft_n_max": 3,
+    "allow_unverified": true
+  }
+}

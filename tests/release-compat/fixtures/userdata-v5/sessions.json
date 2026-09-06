@@ -1,0 +1,22 @@
+{
+  "schema_version": 4,
+  "sessions": {
+    "sess_v5_legacy": {
+      "id": "sess_v5_legacy",
+      "title": "v5 legacy session with partial active_turn",
+      "session_type": "chat",
+      "created_at": "2025-11-10T11:00:00.000Z",
+      "updated_at": "2025-11-10T11:15:00.000Z",
+      "message_count": 0,
+      "last_message_preview": "",
+      "last_model_used": "qwen2.5-coder:14b",
+      "linked_session_ids": [],
+      "active_turn": {
+        "request_id": "req_v5_partial",
+        "stream_id": "stream_v5_partial"
+      },
+      "messages": [],
+      "turn_events": []
+    }
+  }
+}

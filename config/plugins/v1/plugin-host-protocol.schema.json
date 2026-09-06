@@ -1,0 +1,59 @@
+{
+  "contract": "PluginHostProtocolV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "protocol_schema_version",
+      "negotiated_protocol_version",
+      "method",
+      "channel_kind",
+      "channel_id",
+      "commit_epoch",
+      "lifecycle_epoch"
+    ],
+    "max_keys": 10,
+    "additional_properties": "reject",
+    "properties": {
+      "protocol_schema_version": { "type": "const", "value": 1 },
+      "negotiated_protocol_version": { "type": "integer", "minimum": 1, "maximum": 1000 },
+      "method": {
+        "type": "enum",
+        "values": [
+          "invoke",
+          "cancel",
+          "stream_ack",
+          "secret_channel_open",
+          "host_attest",
+          "host_shutdown"
+        ]
+      },
+      "channel_kind": {
+        "type": "enum",
+        "values": ["invocation", "secret", "control"]
+      },
+      "channel_id": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "max_utf8_bytes": 64
+      },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "lifecycle_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "secret_purpose": {
+        "type": "enum",
+        "values": ["secret_value_delivery"]
+      },
+      "secret_nonce": { "type": "ref", "ref": "sha256_hex" },
+      "secret_expires_epoch_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    }
+  }
+}

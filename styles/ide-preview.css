@@ -1,0 +1,253 @@
+/* styles/ide-preview.css - Workspace IDE preview styling shared by
+ * .ide-preview-pane and .ide-preview-host. Rules stay scoped so preview
+ * content never leaks into chat surfaces. Loaded from styles.css. */
+
+/* ── Unified Preview stage host (workspace_preview_surface) ── */
+
+/* Stage-surface exclusivity: Monaco stays mounted for model/undo preservation,
+ * but a hidden editor cluster must not paint descendants (the minimap has its
+ * own stacking context) through Preview/File Map/Exploded overlays. */
+.ide-main[data-stage-surface]:not([data-stage-surface="editor"]) .ide-editor-host,
+.ide-main[data-stage-surface]:not([data-stage-surface="editor"]) .ide-editor-fallback,
+.ide-main[data-stage-surface]:not([data-stage-surface="editor"]) .ide-empty-state {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The dedicated Preview bar is the file-identity owner while previewing. */
+.ide-main[data-stage-surface="preview"] > .ide-breadcrumbs {
+  display: none;
+}
+
+.ide-preview-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.ide-preview-host.hidden {
+  display: none;
+}
+
+/* Stage switch (editor ↔ preview) crossfade-in. */
+.ide-preview-host:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Slim chrome strip: file name + kind chip + the self-contained-HTML note. */
+.ide-preview-stage-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-surface-2);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ide-preview-stage-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-preview-stage-name--empty {
+  color: var(--text-muted);
+}
+
+.ide-preview-stage-kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ide-preview-stage-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.ide-preview-stage-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Bounded state card (empty / unsupported / missing / binary / too-large /
+ * frame-failed): quiet copy, never a blank surface. */
+.ide-preview-stage-state {
+  max-width: 520px;
+  margin: 48px auto 0;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  /* Opt out of the shell-wide user-select:none (foundation.css) - these
+     messages embed the file path, which is the thing worth copying. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Selection highlight matches the chat bubble's accent tint so a copy-worthy
+ * preview reads the same in every theme (styles/chat-bubble-v2.css). */
+.ide-preview-stage-state::selection,
+.ide-preview-stage-state *::selection,
+.ide-preview-content::selection,
+.ide-preview-content *::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-preview-frame-host {
+  padding: 10px 12px;
+}
+
+/* Fill-height HTML preview: the stage body stops scrolling and hands its full
+   height to the frame, which scrolls internally like a browser tab. Gated on
+   :has(...) so the state cards and the markdown body keep the scroller. The
+   .html-artifact-frame-fill base rules live in artifact-panel.css. */
+.ide-preview-stage-body:has(.html-artifact-frame-fill) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ide-preview-frame-host.html-artifact-frame-fill {
+  padding: 0;
+}
+
+.ide-preview-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--bg-base);
+}
+
+.ide-preview-content {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 28px 48px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ide-preview-content h1,
+.ide-preview-content h2,
+.ide-preview-content h3,
+.ide-preview-content h4 {
+  margin: 1.2em 0 0.5em;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.ide-preview-content h1 {
+  font-size: 1.6em;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.25em;
+}
+
+.ide-preview-content h2 {
+  font-size: 1.35em;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.2em;
+}
+
+.ide-preview-content h3 {
+  font-size: 1.15em;
+}
+
+.ide-preview-content p,
+.ide-preview-content ul,
+.ide-preview-content ol {
+  margin: 0.6em 0;
+}
+
+.ide-preview-content ul,
+.ide-preview-content ol {
+  padding-left: 1.6em;
+}
+
+.ide-preview-content a {
+  color: var(--accent);
+}
+
+.ide-preview-content code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-surface-2);
+  font-family: var(--font-family-mono);
+  font-size: 0.88em;
+}
+
+.ide-preview-content pre {
+  overflow-x: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-surface-2);
+}
+
+.ide-preview-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.ide-preview-content blockquote {
+  margin: 0.6em 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-secondary);
+}
+
+.ide-preview-content table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+
+.ide-preview-content th,
+.ide-preview-content td {
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+}
+
+.ide-preview-content th {
+  background: var(--bg-surface-2);
+}
+
+.ide-preview-content hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.2em 0;
+}
+
+.ide-preview-content img {
+  max-width: 100%;
+}
+
+/* Mermaid blocks render inline SVG via the chat's lazy runtime. */
+.ide-preview-content svg {
+  max-width: 100%;
+}

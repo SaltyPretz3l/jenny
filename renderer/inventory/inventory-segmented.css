@@ -1,0 +1,86 @@
+/* renderer/inventory/inventory-segmented.css
+   Segmented control (pill group for closed 2-4 enums). Calm treatment:
+   soft accent fill on the selected segment, no solid-accent text surfaces,
+   so the 9-palette sweep only has to vet one low-risk color pair. */
+
+.inv-segmented {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--widget-action-bg);
+}
+
+.inv-segmented--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.inv-segmented-option {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18ch;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-segmented-option:hover:not(:disabled):not(.inv-segmented-option--on) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.inv-segmented-option--on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-default));
+  color: var(--text-primary);
+}
+
+.inv-segmented-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.inv-segmented-option:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.inv-segmented--compact {
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.inv-segmented--compact .inv-segmented-option {
+  padding: 2px 9px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+}
+
+.inv-segmented--compact .inv-segmented-option--on {
+  border-color: transparent;
+  background: var(--rail-selected-bg);
+}
+
+@media (forced-colors: active) {
+  .inv-segmented--compact .inv-segmented-option--on {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-segmented-option { transition: none; }
+}

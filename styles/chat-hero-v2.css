@@ -1,0 +1,59 @@
+/* D7 — Empty state / hero stage V2 visual refresh.
+ * Base: styles/chat-thread.css (lines ~77-222). The 50px "J" avatar
+ * and .prompt-chip grid render via renderHero() in
+ * renderer/chat/renderer-render-pipeline-chrome.js. Hero copy refresh
+ * lives in the renderer module and is out of scope for CSS-only D7. */
+
+.hero-avatar {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    var(--shadow-accent);
+  transition:
+    transform var(--transition-emphasis),
+    box-shadow var(--transition-emphasis);
+}
+
+.hero-stage:hover .hero-avatar,
+.hero-stage:focus-within .hero-avatar {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent),
+    var(--shadow-accent);
+}
+
+.prompt-chip {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-prompt-chip-background));
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--surface-prompt-chip-border));
+  color: var(--text-secondary);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.prompt-chip:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-prompt-chip-background));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text-primary);
+}
+
+.prompt-chip:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.prompt-chip:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-avatar,
+  .prompt-chip {
+    transition: none;
+  }
+  .hero-stage:hover .hero-avatar,
+  .hero-stage:focus-within .hero-avatar {
+    transform: none;
+  }
+}

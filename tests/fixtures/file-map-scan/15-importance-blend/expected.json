@@ -1,0 +1,97 @@
+{
+  "nodes": [
+    {
+      "id": "src/a.js",
+      "label": "a.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 1,
+      "importance": 0.383,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "src/b.js",
+      "label": "b.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 1,
+      "importance": 0.383,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 24
+    },
+    {
+      "id": "src/big.js",
+      "label": "big.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 10,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 48
+    },
+    {
+      "id": "src/hub.js",
+      "label": "hub.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 3,
+      "inbound": 2,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    }
+  ],
+  "edges": [
+    {
+      "from": "src/a.js",
+      "to": "src/b.js",
+      "kind": "cochange",
+      "weight": 2
+    },
+    {
+      "from": "src/a.js",
+      "to": "src/hub.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "src/b.js",
+      "to": "src/hub.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "src/hub.js",
+      "src/a.js",
+      "src/b.js",
+      "src/big.js"
+    ],
+    "cycles": [],
+    "orphans": [
+      "src/big.js"
+    ]
+  },
+  "meta": {
+    "scanned": 4,
+    "total": 4,
+    "durationMs": 0
+  }
+}

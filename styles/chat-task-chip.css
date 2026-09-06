@@ -1,0 +1,42 @@
+.jenny-task-spawn-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.jenny-task-spawn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--widget-tool-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--widget-tool-color);
+  font-size: var(--tl-font-code);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.jenny-task-spawn-action:hover {
+  background: var(--widget-tool-code-bg);
+}
+
+.jenny-task-spawn-action:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.jenny-task-spawn-strip--used .jenny-task-spawn-title,
+.jenny-task-spawn-state {
+  color: var(--text-muted);
+}
+
+.jenny-task-spawn-state {
+  font-size: 11px;
+}

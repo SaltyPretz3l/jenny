@@ -1,0 +1,296 @@
+/* Tool call block/row — structural remainder (flat details, kv-grid colors,
+ * combined card, minimal-row body mechanics, inventory copy behavior).
+ * The one-liner header grammar, status accents, and rest-state treatment
+ * live in styles/chat-machinery.css (quiet-timeline overhaul). */
+
+/* ── Args kv-grid V2 token refresh ───────────────────────────────── */
+
+.tool-kv-label {
+  color: var(--text-secondary);
+}
+
+.tool-kv-value {
+  color: var(--text-primary);
+}
+
+.tool-kv-meta {
+  color: var(--text-muted);
+}
+
+.tool-kv-row--block .tool-kv-value--block {
+  background: color-mix(in srgb, var(--tool-call-accent) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--tool-call-accent) 22%, var(--line));
+  border-radius: var(--radius-sm);
+}
+
+/* .tool-call-input / .tool-call-output surface styling lives in
+   chat-machinery.css (shared --tl-code-bg code surface). */
+
+.tool-call-output-meta {
+  color: var(--text-muted);
+}
+
+.tool-call-output-text {
+  color: var(--text-primary);
+}
+
+/* ── Trace-mode rows: structural base ──
+ * Status/severity accent mapping + severity badge tinting moved to
+ * chat-machinery.css (single --tl-status-* source). */
+.tool-call-row,
+.tool-result-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tool-result-notice-code { flex: none; }
+.tool-result-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+.tool-result-row .tool-result-icon {
+  min-width: 0; min-height: 0; padding: 0; border-radius: 0; background: none;
+  color: var(--text-muted); font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-label); letter-spacing: 0; text-transform: none;
+}
+
+/* ── Combined tool card: paired tool_result folded into the call card ── */
+
+.tool-call-row .tool-result-duration {
+  margin-left: auto;
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  color: var(--text-secondary);
+}
+
+.tool-call-row .tool-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tool-call-row .tool-result-body .markdown-mermaid-block {
+  margin: 0;
+}
+
+/* Modest chart preview inside the card: the bubble's 480px viewport cap is
+   too generous for a tool card, where a single large node otherwise fills
+   the visible timeline. */
+.tool-call-row .tool-result-body .mermaid-viewport {
+  min-height: 100px;
+  max-height: 340px;
+}
+
+.tool-call-row .tool-result-body .mermaid-viewport svg {
+  max-height: 320px;
+}
+
+/* ── Minimal one-row tool card ────────────────────────────────────────
+   Default presentation: a shared header row (status dot + name + formatted
+   summary + status + duration + caret). The detail body (Input/Output
+   disclosures, artifacts, copy) hides behind the toggle; error/approval
+   statuses auto-expand at render time. */
+
+.tool-call-row--minimal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tool-call-row--minimal .tool-call-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* W1-4 clickable path chip beside the disclosure: quiet until hovered so
+   the header keeps its one-liner calm; underline + accent on hover/focus
+   signals "this navigates" distinct from the row's expand/collapse. */
+.tool-call-row--minimal .tool-path-chip {
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 2px;
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.tool-call-row--minimal .tool-path-chip:hover,
+.tool-call-row--minimal .tool-path-chip:focus-visible {
+  color: var(--accent, var(--text-primary));
+  text-decoration-color: currentColor;
+}
+
+.tool-call-row--minimal .tool-path-chip:focus-visible {
+  outline: 1px solid var(--accent, currentColor);
+  outline-offset: 1px;
+}
+
+/* The combined-card rule above pushes the duration right with
+   margin-left:auto; in the minimal row the summary already absorbs the
+   slack, so the right cluster packs naturally. */
+.tool-call-row--minimal .tool-result-duration {
+  margin-left: 0;
+}
+
+.tool-call-row--minimal .tool-call-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tool-call-row--minimal .tool-result-diagram {
+  min-width: 0;
+}
+
+/* === Flat tool-call detail body === */
+
+/* Smooth reveal of the always-rendered minimal-row body (replaces the old
+   instant hidden toggle). animateRevealHeight supplies the pixel max-height
+   mid-transition; these are the resting states keyed on data-expanded. */
+.tool-call-row-body {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition:
+    max-height var(--motion-duration-regular) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tool-call-row[data-expanded="true"] .tool-call-row-body {
+  max-height: none;
+  opacity: 1;
+}
+
+.tool-detail-body {
+  display: grid;
+  gap: var(--tl-detail-gap);
+  margin-top: var(--space-3);
+  margin-left: var(--tl-detail-indent);
+}
+
+.tool-call-section-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tool-detail-copy,
+.tool-detail-copy-all,
+.tool-detail-toggle {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 2px;
+  font-size: var(--tl-font-meta);
+}
+
+.tool-detail-copy {
+  opacity: 0;
+}
+
+.tool-call-section:hover .tool-detail-copy,
+.tool-detail-copy:focus-visible {
+  opacity: 1;
+}
+
+.tool-detail-copy:hover,
+.tool-detail-copy-all:hover,
+.tool-detail-toggle:hover {
+  color: var(--text-primary);
+  background: var(--widget-action-hover-bg);
+}
+
+.tool-detail-more {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+/* Scope the clamp state to its section so it outranks the later-loaded
+   .tool-call-input/.tool-call-output flat-surface reset in chat-machinery.css. */
+.tool-call-section [data-detail-clamped="true"] {
+  max-height: calc(var(--tl-detail-clamp-lines) * 1.5em);
+  overflow: hidden;
+}
+
+.tool-call-section [data-detail-clamped="false"] {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Inventory code-block: line-numbered variant (gutter beside the content). */
+.inv-codeblock-body {
+  display: flex;
+  align-items: stretch;
+}
+
+.inv-codeblock-body .inv-codeblock {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+  /* min-width:0 lets this flex item shrink below its content width so overflow-x
+     actually engages; without it a long unwrapped line blows out the panel and
+     the gutter scrolls away instead of staying fixed. */
+  min-width: 0;
+  flex: 1 1 0;
+  /* no wrap so each logical line stays one row aligned with the gutter; the
+     compound selector outranks inventory.css's .inv-codeblock pre-wrap, which
+     imports after this file. */
+  white-space: pre;
+}
+
+.inv-codeblock-gutter {
+  flex: 0 0 auto;
+  margin: 0;
+  /* top padding matches .inv-codeblock so line 1 aligns with the gutter */
+  padding: var(--space-5) var(--space-3);
+  text-align: right;
+  -webkit-user-select: none;
+  user-select: none;
+  color: var(--text-muted);
+  background: var(--widget-tool-code-bg);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  white-space: pre;
+}
+
+/* Inventory code-block: icon copy button (idle copy glyph / done check). */
+.inv-codeblock-copy--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inv-codeblock-copy--icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.inv-codeblock-copy--icon .inv-copy-done {
+  display: none;
+}
+
+.inv-codeblock-copy--icon[data-copy-status="copied"] .inv-copy-idle {
+  display: none;
+}
+
+.inv-codeblock-copy--icon[data-copy-status="copied"] .inv-copy-done {
+  display: inline-flex;
+  color: var(--widget-tool-success-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-row-body {
+    transition: none;
+  }
+}

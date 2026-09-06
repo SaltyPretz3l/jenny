@@ -1,0 +1,82 @@
+/* D5 — Sprite / assistant avatar V2 visual refresh.
+ * Base: styles/chat-thread.css (lines ~411-566) + --sprite-holo-* /
+ * --widget-sprite-* / --holo-duration-* tokens in foundation.css.
+ * Mixes --accent-cyan into the streaming border so the sprite picks
+ * up the same accent the streaming chat-bubble rail (D1) and
+ * reasoning V2 use. The scale-up composes with the conic-gradient
+ * rotation on ::before because that rotation lives in a separate
+ * transform context. */
+
+.chat-assistant-sprite {
+  transition:
+    transform var(--transition-emphasis),
+    border-color var(--transition-emphasis),
+    box-shadow var(--transition-emphasis),
+    filter var(--transition-emphasis),
+    opacity var(--transition-emphasis);
+}
+
+.chat-assistant-sprite.is-streaming {
+  /* Pick up the same cyan accent the chat bubble streaming rail uses
+   * so presence reads as a coherent state across the row. The existing
+   * --widget-sprite-streaming-border token still drives the base
+   * border-color (set in chat-thread.css); this rule blends it with
+   * the V2 accent so themes that haven't migrated the widget token
+   * still get the V2 vocabulary. */
+  border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--widget-sprite-streaming-border));
+  transform: scale(1.04);
+}
+
+.chat-assistant-sprite[data-sprite-state="complete"] {
+  border-color: color-mix(in srgb, var(--surface-assistant-sprite-border) 78%, var(--accent-cyan));
+  box-shadow: var(--sprite-holo-shadow-idle);
+  opacity: 0.84;
+}
+
+.chat-assistant-sprite[data-sprite-state="error"] {
+  border-color: color-mix(in srgb, var(--state-danger) 68%, var(--surface-assistant-sprite-border));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--state-danger) 22%, transparent);
+  color: color-mix(in srgb, var(--state-danger) 76%, var(--widget-sprite-color));
+  opacity: 0.92;
+}
+
+.chat-assistant-sprite[data-sprite-state="cancelled"] {
+  border-color: color-mix(in srgb, var(--state-warning) 58%, var(--surface-assistant-sprite-border));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--state-warning) 16%, transparent);
+  color: color-mix(in srgb, var(--state-warning) 66%, var(--widget-sprite-color));
+  opacity: 0.88;
+}
+
+.chat-sprite-layer {
+  transition: opacity var(--transition-regular);
+}
+
+/* Holo-off keeps the live status treatment but owns no invisible animation
+   or compositor promotion. */
+:root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming,
+:root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming::before,
+:root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming::after {
+  will-change: auto;
+}
+
+:root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming::before,
+:root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming::after {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-assistant-sprite,
+  .chat-sprite-layer {
+    transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+  .chat-assistant-sprite.is-streaming {
+    transform: none;
+  }
+  .chat-assistant-sprite::before,
+  .chat-assistant-sprite::after,
+  .chat-assistant-sprite.is-streaming::before,
+  .chat-assistant-sprite.is-streaming::after {
+    animation: none;
+    will-change: auto;
+  }
+}

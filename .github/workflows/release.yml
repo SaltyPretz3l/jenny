@@ -1,0 +1,102 @@
+name: Release
+
+# Builds and publishes the Windows and macOS installers for a tagged release.
+# Each runner builds its OWN sidecar (PyInstaller is platform-specific) and runs
+# electron-builder for its OS, publishing to the GitHub Release for the tag.
+#
+# Signing is OPTIONAL: with no signing secrets set, both installers build and
+# publish UNSIGNED (shippable today; users click through SmartScreen / Gatekeeper
+# "open anyway"). Adding the secrets below flips the same workflow to signed.
+#
+# The macOS leg uses build/icon.png (electron-builder generates the .icns); fail-fast
+# is disabled so the Windows installer still ships even if the mac leg has trouble.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            eb_flag: "--win"
+          - os: macos-latest
+            eb_flag: "--mac"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      # preload.bundle.js is gitignored and untracked, and electron-builder.yml
+      # has no beforeBuild/beforePack hook -- without this step the asar ships
+      # with no preload and the sandboxed window boots with window.jennyShell
+      # undefined. Pinned by scripts/checks/check_release_version_policy.py.
+      - name: Build sandboxed preload bundle
+        run: npm run build:preload
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build-lock.txt
+          python -m pip install --require-hashes -r requirements-lock.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
+
+      - name: Build offline managed-Python runtime (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/build-python-runtime-bundle.py
+
+      - name: Verify offline managed-Python runtime (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/checks/check_python_runtime_bundle.py
+
+      - name: Build sidecar artifact (this OS)
+        run: python scripts/packaging/build_sidecar_artifact.py
+
+      - name: Emit sidecar SBOM
+        run: python scripts/packaging/emit_sbom.py
+
+      - name: Build & publish installer
+        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- Windows Authenticode (optional; unsigned build when unset) ---
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # --- Apple Developer ID signing + notarization (optional) ---
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload installer artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jenny-installer-${{ matrix.os }}
+          path: dist/**
+          if-no-files-found: ignore

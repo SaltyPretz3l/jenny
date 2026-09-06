@@ -1,0 +1,30 @@
+/* comet-overlay.css — Comet ambient overlay window styles.
+ *
+ * The overlay runs in its own transparent BrowserWindow with no access to the
+ * main app stylesheet; it hosts only the comet glow canvas.
+ */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  position: relative;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ── Canvas (ambient comet) ── */
+#overlayCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+  pointer-events: none;
+}

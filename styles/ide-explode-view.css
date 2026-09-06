@@ -1,0 +1,340 @@
+/* styles/ide-explode-view.css - the Exploded View pane (a code<->exploded
+ * toggle on a TS/JS file tab). Renders one source file as a node graph:
+ * functions/methods + data (arrays/consts) as cards, wired by call/read/import
+ * edges, grouped into left->right zone lanes (imports | data | functions |
+ * exported entry). Palette-token-driven so it themes across all 10 palettes;
+ * category color encodes NODE KIND (one channel), edge style encodes RELATION
+ * (call = solid + arrow, read = dashed, import = faint dotted). Default calm,
+ * reveal on interaction. All rules scoped under .ide-exploded-host. Loaded via
+ * @import in styles.css (IDE block), mirroring styles/ide-file-map.css. */
+
+.ide-exploded-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.ide-exploded-host.hidden {
+  display: none;
+}
+
+/* Stage switch (code ↔ exploded) crossfade-in. */
+.ide-exploded-host:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Pannable/zoomable viewport; the shared transform controller owns its cursor. */
+.ide-explode-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.ide-explode-viewport.is-panning {
+  cursor: grabbing;
+}
+
+/* The transformed content plane — translate/scale applied by the transform
+ * controller; everything inside is positioned in content coordinates. */
+.ide-explode-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* ---- Zone lanes -------------------------------------------------------- */
+
+.ide-explode-band {
+  position: absolute;
+  border: 1px dashed color-mix(in srgb, var(--line) 60%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 30%, transparent);
+  pointer-events: none;
+}
+
+.ide-explode-band-label {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* ---- Edge layer -------------------------------------------------------- */
+
+.ide-explode-edges {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ide-explode-edge {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
+  opacity: 0.5;
+  transition: opacity var(--transition-fast), stroke var(--transition-fast);
+}
+
+.ide-explode-edge--call {
+  stroke: color-mix(in srgb, var(--accent) 80%, transparent);
+  opacity: 0.6;
+}
+
+.ide-explode-edge--read {
+  stroke: var(--accent-cyan);
+  stroke-dasharray: 5 4;
+  opacity: 0.45;
+}
+
+.ide-explode-edge--import {
+  stroke: var(--text-muted);
+  stroke-dasharray: 1 5;
+  stroke-width: 1.2;
+  opacity: 0.4;
+}
+
+.ide-explode-edge-arrow--call { fill: color-mix(in srgb, var(--accent) 80%, transparent); }
+.ide-explode-edge-arrow--read { fill: var(--accent-cyan); }
+
+.ide-explode-edge.is-incident {
+  opacity: 0.98;
+  stroke-width: 2;
+}
+
+/* ---- Node cards -------------------------------------------------------- */
+
+.ide-explode-node {
+  --explode-node-kind: var(--accent);
+  --explode-node-scale: 1;
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px * var(--explode-node-scale));
+  padding: calc(8px * var(--explode-node-scale)) calc(12px * var(--explode-node-scale));
+  max-width: calc(200px * var(--explode-node-scale));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--explode-node-kind);
+  border-radius: 9px;
+  background: var(--surface-card-background, var(--bg-panel));
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: calc(12px * var(--explode-node-scale));
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+}
+
+.ide-explode-node:hover,
+.ide-explode-node:focus-visible {
+  border-color: var(--explode-node-kind);
+  box-shadow: 0 0 0 1px var(--explode-node-kind), 0 2px 10px rgba(0, 0, 0, 0.35);
+  outline: none;
+}
+
+.ide-explode-node-dot {
+  flex: none;
+  width: calc(8px * var(--explode-node-scale));
+  height: calc(8px * var(--explode-node-scale));
+  border-radius: 50%;
+  background: var(--explode-node-kind);
+}
+
+.ide-explode-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ide-explode-node-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--explode-node-kind) 16%, transparent);
+  color: var(--text-secondary);
+  font-size: calc(10px * var(--explode-node-scale));
+}
+
+/* Kind color channel — derived from palette tokens so every palette themes it. */
+.ide-explode-node--function { --explode-node-kind: var(--accent); }
+.ide-explode-node--method { --explode-node-kind: color-mix(in srgb, var(--accent) 60%, var(--accent-cyan)); }
+.ide-explode-node--data { --explode-node-kind: var(--accent-cyan); }
+.ide-explode-node--import { --explode-node-kind: var(--text-muted); }
+
+/* Exported entry point is the hero — success accent + a ring (never a recolor
+ * of another kind's channel; hero owns its own color). */
+.ide-explode-node--hero {
+  --explode-node-kind: var(--state-success);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--state-success) 70%, transparent), 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+/* ---- Spotlight (default calm, reveal on interaction) ------------------- */
+
+.ide-explode-content--spotlit .ide-explode-node {
+  opacity: 0.32;
+}
+
+.ide-explode-content--spotlit .ide-explode-edge {
+  opacity: 0.1;
+}
+
+.ide-explode-content--spotlit .ide-explode-node.is-spotlit,
+.ide-explode-content--spotlit .ide-explode-node.is-incident-node {
+  opacity: 1;
+}
+
+.ide-explode-content--spotlit .ide-explode-node.is-spotlit {
+  border-color: var(--explode-node-kind);
+  box-shadow: 0 0 0 1px var(--explode-node-kind), 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.ide-explode-content--spotlit .ide-explode-edge.is-incident {
+  opacity: 0.98;
+}
+
+/* ---- Semantic-zoom tiers (LOD) ---------------------------------------- */
+
+/* Pills: name only, tighter. */
+.ide-explode-content--tier-pills .ide-explode-node-tag {
+  display: none;
+}
+
+.ide-explode-content--tier-pills .ide-explode-node {
+  padding: calc(5px * var(--explode-node-scale)) calc(9px * var(--explode-node-scale));
+}
+
+/* Dots: collapse to a kind-tinted circle centered on the node's (x, y). */
+.ide-explode-content--tier-dots .ide-explode-node-name,
+.ide-explode-content--tier-dots .ide-explode-node-tag {
+  display: none;
+}
+
+.ide-explode-content--tier-dots .ide-explode-node {
+  padding: 0;
+  width: calc(14px * var(--explode-node-scale));
+  height: calc(14px * var(--explode-node-scale));
+  border-width: 0;
+  border-radius: 50%;
+  background: var(--explode-node-kind);
+  /* positionCard anchors the card top-left at (x - NODE_BASE_W/2·scale,
+   * y - NODE_BASE_H/2·scale) = (x - 88·scale, y - 23·scale). The dot is
+   * 14·scale wide (half = 7·scale), so re-center it on (x, y) with a
+   * translate of (88 - 7)·scale, (23 - 7)·scale — otherwise every dot floats
+   * up-and-left of its edge endpoints + band. (Mirrors the File Map's
+   * tier-dots recenter in styles/ide-file-map.css.) */
+  transform: translate(
+    calc(81px * var(--explode-node-scale)),
+    calc(16px * var(--explode-node-scale))
+  );
+}
+
+.ide-explode-content--tier-dots .ide-explode-node-dot {
+  display: none;
+}
+
+/* ---- States (loading / empty / parse-failed) -------------------------- */
+
+.ide-explode-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  z-index: 3;
+}
+
+.ide-explode-state.hidden {
+  display: none;
+}
+
+.ide-explode-state-title {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.ide-explode-state-detail {
+  font-size: 12px;
+  max-width: 42ch;
+  color: var(--text-muted);
+}
+
+.ide-explode-state-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: ide-explode-spin var(--motion-duration-spin) linear infinite;
+}
+
+@keyframes ide-explode-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-explode-state-spinner { animation: none; }
+}
+
+/* ---- View-mode toggle (Code | Exploded) ------------------------------- */
+
+.ide-viewmode-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.ide-viewmode-bar.hidden {
+  display: none;
+}
+
+.ide-viewmode-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.ide-viewmode-seg-btn {
+  padding: 3px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ide-viewmode-seg-btn + .ide-viewmode-seg-btn {
+  border-left: 1px solid var(--line);
+}
+
+.ide-viewmode-seg-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.ide-viewmode-seg-btn.is-active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}

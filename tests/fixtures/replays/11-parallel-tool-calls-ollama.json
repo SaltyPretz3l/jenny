@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "parallel_tool_calls",
+    "provider": "ollama",
+    "model": "qwen2.5-coder:14b",
+    "description": "Ollama returns multiple tool_calls in a single done chunk. stream_generate_with_tools surfaces them via GenerationResult.tool_calls; ordered tool.executing notifications are owned by the post-approval dispatch layer.",
+    "target_phase": 4
+  },
+  "raw_chunks": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {"id": "call_one", "function": {"name": "read_file", "arguments": {"path": "a.py"}}},
+          {"id": "call_two", "function": {"name": "read_file", "arguments": {"path": "b.py"}}}
+        ]
+      },
+      "done": true,
+      "prompt_eval_count": 100,
+      "eval_count": 14,
+      "eval_duration": 700000000,
+      "prompt_eval_duration": 110000000,
+      "load_duration": 35000000
+    }
+  ],
+  "expected_engine_events": [
+    {"_class": "EngineEvent", "kind": "tool_call_completed", "tool_call_id": "call_one", "tool_name": "read_file", "arguments": {"path": "a.py"}, "sequence": 0},
+    {"_class": "EngineEvent", "kind": "tool_call_completed", "tool_call_id": "call_two", "tool_name": "read_file", "arguments": {"path": "b.py"}, "sequence": 1}
+  ],
+  "expected_loop_events": [
+    {"_class": "ToolCallCompletedEvent", "call_id": "call_one", "tool_name": "read_file", "arguments": {"path": "a.py"}, "sequence": 0},
+    {"_class": "ToolCallCompletedEvent", "call_id": "call_two", "tool_name": "read_file", "arguments": {"path": "b.py"}, "sequence": 1}
+  ],
+  "expected_notifications": [],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_one",
+      "source_message_ids": [
+        "tool_use_t_replay_call_one"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_one",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "a.py"
+        },
+        "sequence": 1,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:2",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_two",
+      "source_message_ids": [
+        "tool_use_t_replay_call_two"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_two",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "b.py"
+        },
+        "sequence": 2,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:2",
+        "canonical_seq": 2
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:3",
+      "turn_id": "t_replay",
+      "kind": "tool_executing",
+      "status": "running",
+      "primary_message_id": "tool_use_t_replay_call_one",
+      "source_message_ids": [
+        "tool_use_t_replay_call_one"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_one",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "a.py"
+        },
+        "canonical_event_type": "tool_execution_started",
+        "canonical_part_id": "t_replay:tool_part:3",
+        "canonical_seq": 3
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:4",
+      "turn_id": "t_replay",
+      "kind": "tool_executing",
+      "status": "running",
+      "primary_message_id": "tool_use_t_replay_call_two",
+      "source_message_ids": [
+        "tool_use_t_replay_call_two"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_two",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "b.py"
+        },
+        "canonical_event_type": "tool_execution_started",
+        "canonical_part_id": "t_replay:tool_part:4",
+        "canonical_seq": 4
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:5",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "completed",
+      "primary_message_id": "tool_result_t_replay_call_one",
+      "source_message_ids": [
+        "tool_result_t_replay_call_one"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_one",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "success": true,
+        "tool_output_summary": "",
+        "content_type": "text",
+        "tool_input": {
+          "path": "a.py"
+        },
+        "canonical_event_type": "tool_execution_completed",
+        "canonical_part_id": "t_replay:tool_part:5",
+        "canonical_seq": 5
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:6",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "completed",
+      "primary_message_id": "tool_result_t_replay_call_two",
+      "source_message_ids": [
+        "tool_result_t_replay_call_two"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_two",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "success": true,
+        "tool_output_summary": "",
+        "content_type": "text",
+        "tool_input": {
+          "path": "b.py"
+        },
+        "canonical_event_type": "tool_execution_completed",
+        "canonical_part_id": "t_replay:tool_part:6",
+        "canonical_seq": 6
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "",
+    "thinking_text": "",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {"tool_id": "read_file", "arguments": {"path": "a.py"}, "call_id": "call_one"},
+      {"tool_id": "read_file", "arguments": {"path": "b.py"}, "call_id": "call_two"}
+    ],
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 14,
+      "total_tokens": 114,
+      "last_request_input_tokens": 100,
+      "generation_tokens": 14,
+      "generation_duration_ms": 700,
+      "prompt_eval_duration_ms": 110,
+      "load_duration_ms": 35,
+      "time_to_first_token_ms": 0,
+      "provider": "ollama"
+    }
+  }
+}

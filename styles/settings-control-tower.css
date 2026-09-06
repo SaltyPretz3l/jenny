@@ -1,0 +1,79 @@
+/* Settings -> Readiness. The checklist is a real section (first in the rail),
+   rendered into #settingsControlTowerHost inside its own .settings-card. Rows
+   are the house status vocabulary: a leading tone dot (inventory status-row)
+   carries the tone, the text keeps full contrast, and rows are hairline-
+   separated - no per-row card chrome, no uppercase pills. Nothing here may
+   collapse: the ready state is a real success row, so the card keeps its
+   height whether or not anything needs attention. */
+.settings-control-tower {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.settings-control-tower-summary {
+  margin: 0;
+}
+
+.settings-control-tower-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-control-tower-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-7);
+  min-height: 52px;
+  padding: var(--space-4) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.settings-control-tower-row + .settings-control-tower-row {
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+  border-radius: 0;
+}
+
+.settings-control-tower-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.settings-control-tower-status {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-control-tower-status .inv-status-row-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+}
+
+.settings-control-tower-status .inv-status-row-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-card-title);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.settings-control-tower-action {
+  flex: none;
+}
+
+@media (max-width: 700px) {
+  .settings-control-tower-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-control-tower-action {
+    width: 100%;
+  }
+}

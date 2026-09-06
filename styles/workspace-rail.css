@@ -1,0 +1,292 @@
+/* ── Main Stage & Workspace Rail ── */
+
+.main-stage {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  z-index: var(--z-content);
+  background: var(--surface-main-stage-background);
+}
+
+/* Pre-first-render only: renderRail() builds the scroll arrows, the rail, and
+   the + button unconditionally, so once the chat view has painted once this
+   shell is never `:empty` again. The real collapse condition is the tab count
+   below, which renderRail() publishes as data-tab-count. */
+.workspace-rail-shell:empty { display: none; }
+
+/* A single open session is already identified by the sidebar's active row, so a
+   lone tab chip buys nothing but an empty 36px band under the top nav. Collapse
+   the whole band until there are at least two tabs to switch between. */
+.workspace-rail-shell[data-tab-count="0"],
+.workspace-rail-shell[data-tab-count="1"] {
+  display: none;
+}
+
+/* The shell, not the rail, owns the band's paint and its drag region. The rail
+   shrink-wraps its tabs (flex: 0 1 auto) so the sibling + button trails the last
+   tab instead of being shoved to the window edge; the leftover strip is then
+   bare shell, which keeps painting the band and stays a window-drag area. */
+.workspace-rail-shell {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface-titlebar-background);
+  border-bottom: 1px solid var(--border-default);
+  -webkit-app-region: drag;
+}
+
+.workspace-rail {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  min-height: 36px;
+  padding: 0 var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.workspace-rail::-webkit-scrollbar { display: none; }
+
+.workspace-rail-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 80px;
+  max-width: 220px;
+  padding: 0 var(--space-2);
+  border-bottom: 2px solid transparent;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+.workspace-rail-tab.active {
+  background: var(--widget-action-bg);
+  border-bottom-color: var(--accent-primary, var(--accent-cyan));
+}
+
+.workspace-rail-tab-button {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-rail-tab.active .workspace-rail-tab-button {
+  color: var(--text-primary);
+}
+.workspace-rail-tab-button:is(:hover, :focus-visible) {
+  background: var(--widget-action-bg);
+}
+
+.workspace-rail-tab-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.workspace-rail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.workspace-rail-indicator {
+  /* intentionally below scale for compact indicator */
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-cyan);
+}
+.workspace-rail-indicator:empty { display: none; }
+
+.workspace-rail-link-button,
+.workspace-rail-close-button {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.workspace-rail-link-button svg,
+.workspace-rail-close-button svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+:is(.workspace-rail-link-button, .workspace-rail-close-button):is(:hover, :focus-visible) {
+  background: var(--widget-action-bg);
+  color: var(--text-primary);
+}
+:is(.workspace-rail-link-button, .workspace-rail-close-button):focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+.workspace-rail-close-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.workspace-rail-tab .workspace-rail-close-button { opacity: 0; transition: opacity var(--transition-fast); }
+.workspace-rail-tab:hover .workspace-rail-close-button,
+.workspace-rail-tab.active .workspace-rail-close-button,
+.workspace-rail-close-button:focus-visible { opacity: 1; }
+
+.workspace-rail-new-button {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: var(--space-2) var(--space-1);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: none;
+  -webkit-app-region: no-drag;
+}
+.workspace-rail-new-button:is(:hover, :focus-visible) { background: var(--widget-action-bg); color: var(--text-primary); }
+.workspace-rail-new-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.workspace-rail-scroll-arrow {
+  transition: color var(--transition-fast);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  background: var(--surface-titlebar-background);
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.workspace-rail-scroll-arrow:is(:hover, :focus-visible) { color: var(--text-primary); }
+.workspace-rail-scroll-arrow:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+.workspace-rail-scroll-arrow[hidden] { display: none; }
+
+.workspace-linked-row {
+  display: flex;
+  gap: var(--space-5);
+}
+
+/* ── Tab context menu ── */
+.workspace-tab-context-menu {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: fixed;
+  min-width: 180px;
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-md);
+  background: var(--mat-ephemeral-bg);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--mat-ephemeral-shadow);
+  z-index: var(--z-popover);
+}
+.workspace-tab-context-menu-item {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-6);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.workspace-tab-context-menu-item:is(:hover, :focus-visible) {
+  background: var(--widget-action-bg);
+}
+.workspace-tab-context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.workspace-tab-context-menu-item:disabled:hover {
+  background: transparent;
+}
+.workspace-tab-context-menu-separator {
+  height: 1px;
+  margin: var(--space-2) var(--space-4);
+  background: var(--border-subtle);
+}
+
+/* ── Tab drag-and-drop ── */
+.workspace-rail-tab.dragging {
+  opacity: 0.3;
+}
+.workspace-tab-drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  opacity: 0.85;
+  z-index: var(--z-overlay);
+  border-radius: var(--radius-sm);
+  background: var(--surface-titlebar-background);
+  border: 1px solid var(--accent-primary, var(--accent));
+  box-shadow: var(--shadow-elevated);
+  max-width: 220px;
+  padding: 0 var(--space-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+.workspace-tab-insertion-marker {
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  width: 2px;
+  background: var(--accent-primary, var(--accent-cyan));
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.main-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--surface-main-stage-overlay);
+  pointer-events: none;
+}
+
+.main-stage-glow {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-main-stage-glow);
+  pointer-events: none;
+}

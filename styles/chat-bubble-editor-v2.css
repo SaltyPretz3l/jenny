@@ -1,0 +1,108 @@
+/* styles/chat-bubble-editor-v2.css
+ * Inline editing is scoped to .chat-bubble-editing and loads after
+ * chat-bubble-v2.css so base bubble rules precede these overrides.
+ */
+
+.chat-bubble.chat-bubble-editing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--accent-cyan) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 38%, var(--line));
+  border-radius: var(--radius-card, 12px);
+}
+
+.chat-bubble-editor {
+  width: 100%;
+  min-height: calc(1.5em * 2 + var(--space-2) * 2);
+  max-height: calc(1.5em * 12 + var(--space-2) * 2);
+  padding: var(--space-2);
+  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 28%, var(--line));
+  border-radius: var(--radius-input, 8px);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.chat-bubble-editor:focus-visible {
+  border-color: var(--focus-outline, color-mix(in srgb, var(--accent-cyan) 70%, transparent));
+  box-shadow: 0 0 0 2px var(--focus-outline, color-mix(in srgb, var(--accent-cyan) 55%, transparent));
+}
+
+.chat-bubble-editor[disabled],
+.chat-bubble-editor[aria-busy="true"] {
+  opacity: 0.65;
+  cursor: progress;
+  outline: none;
+}
+
+.chat-bubble-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.chat-bubble-editor-cancel,
+.chat-bubble-editor-save {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-button, 6px);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-cyan) 8%, var(--bg-surface));
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.chat-bubble-editor-cancel:hover,
+.chat-bubble-editor-save:hover {
+  background: color-mix(in srgb, var(--accent-cyan) 16%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 52%, var(--line));
+}
+
+.chat-bubble-editor-save {
+  background: color-mix(in srgb, var(--accent-cyan) 18%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--line));
+}
+
+.chat-bubble-editor-save:hover {
+  background: color-mix(in srgb, var(--accent-cyan) 28%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-cyan) 62%, var(--line));
+}
+
+.chat-bubble-editor-cancel:focus-visible,
+.chat-bubble-editor-save:focus-visible {
+  outline: 2px solid var(--focus-outline, color-mix(in srgb, var(--accent-cyan) 70%, transparent));
+  outline-offset: 2px;
+}
+
+.chat-bubble-editor-cancel:active,
+.chat-bubble-editor-save:active {
+  transform: translateY(1px);
+}
+
+.chat-bubble-editor-cancel[disabled],
+.chat-bubble-editor-save[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-bubble-editor,
+  .chat-bubble-editor-cancel,
+  .chat-bubble-editor-save {
+    transition: none;
+  }
+  .chat-bubble-editor-cancel:active,
+  .chat-bubble-editor-save:active {
+    transform: none;
+  }
+}

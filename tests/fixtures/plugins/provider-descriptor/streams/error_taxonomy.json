@@ -1,0 +1,431 @@
+{
+  "fixture_id": "streams/error_taxonomy",
+  "schema_version": 1,
+  "description": "Two related but distinct tables: (1) INITIAL HTTP status -> typed error, checked before the SSE stream opens; (2) in-stream response.failed error.code -> typed error, checked mid-stream. Both are closed lookup tables with a bounded, allow-listed safe-field extraction step -- the strongest declarative-fit finding in this spike.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_status_table",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_401_is_invalid_credential_classification",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_429_retains_only_safe_retry_metadata",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_429_falls_back_to_the_codex_reset_header",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_retry_after_accepts_an_http_date",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_initial_retry_after_is_ignored_when_unparseable",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_streamed_quota_failure_is_rate_limit_classification",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_streamed_context_failure_is_context_overflow_classification",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_streamed_transient_server_failure_is_retryable",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_streamed_unrecognized_failure_code_still_raises_generation_error"
+  ],
+  "declarative_verdict": "yes",
+  "notes": "raise_for_initial_status no longer hand-rolls a second status table: classification and retryability both DELEGATE to the shared provider_http policy, which is why 408 is api_timeout/retryable, 409 and 425 are retryable, and 529 is server_overload. classify_http_response_error is deliberately called with body=None -- it greps the raw provider message for phrases, and this engine only ever lets 'code' and 'resets_at' escape a 429 body, so with None the classification is a pure status-code table and no provider text (potentially token-bearing) reaches a decision path. Retry-After now parses the HTTP-date form as well as bare seconds.",
+  "cases": [
+    {
+      "case_id": "initial_400_is_a_terminal_client_error",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 400},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 400,
+        "classification": "client_error",
+        "retryable": false,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "message": "ChatGPT request failed with status 400",
+        "retry_after_seconds": null
+      },
+      "rule": "Default client-error row: not retryable, and the response body is never inspected or surfaced."
+    },
+    {
+      "case_id": "initial_401_is_an_invalid_credential",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 401},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 401,
+        "classification": "invalid_api_key",
+        "retryable": false,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "message": "ChatGPT credentials were rejected",
+        "retry_after_seconds": null
+      },
+      "rule": "401 is the one status whose generic message would be actively misleading, so it carries an override message; classification still comes from the shared table."
+    },
+    {
+      "case_id": "initial_403_is_a_terminal_client_error",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 403},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 403,
+        "classification": "client_error",
+        "retryable": false,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "With body=None the shared classifier cannot see the phrases that would promote a 403 to invalid_api_key, so it stays client_error -- an accepted consequence of never routing provider text through a decision path."
+    },
+    {
+      "case_id": "initial_404_is_a_terminal_client_error",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 404},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 404,
+        "classification": "client_error",
+        "retryable": false,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "Same reason as 403: the invalid_model promotion depends on body text this engine refuses to read."
+    },
+    {
+      "case_id": "initial_408_is_a_retryable_api_timeout",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 408},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 408,
+        "classification": "api_timeout",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "408 was TERMINAL while this engine hand-rolled its own status table; delegating to the shared policy made it retryable and gave it the api_timeout classification."
+    },
+    {
+      "case_id": "initial_409_is_retryable",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 409},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 409,
+        "classification": "client_error",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "409 is one of the shared policy's explicitly retryable 4xx statuses even though its classification stays client_error."
+    },
+    {
+      "case_id": "initial_425_is_retryable",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 425},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 425,
+        "classification": "client_error",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "Same as 409: retryability and classification are independent axes in the shared table."
+    },
+    {
+      "case_id": "initial_429_is_a_rate_limit_with_a_scrubbed_body",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 429},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 429,
+        "classification": "rate_limit",
+        "retryable": true,
+        "code": "CMP-CLOUD-1001",
+        "body": {"code": "unknown_error"},
+        "message": "ChatGPT request was rate limited",
+        "retry_after_seconds": null
+      },
+      "rule": "429 is the ONLY status allowed to surface any part of the provider body, and even then only through the safe-scalar extractor: a body with no usable 'code' yields the 'unknown_error' sentinel rather than the raw value."
+    },
+    {
+      "case_id": "initial_500_is_a_retryable_server_error",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 500},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 500,
+        "classification": "server_error",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "Everything at or above 500 is retryable server_error unless a more specific row claims it."
+    },
+    {
+      "case_id": "initial_503_is_a_retryable_server_error",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 503},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 503,
+        "classification": "server_error",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "Same row as 500."
+    },
+    {
+      "case_id": "initial_529_is_a_distinct_server_overload",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {"status_code": 529},
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 529,
+        "classification": "server_overload",
+        "retryable": true,
+        "code": "CMP-CLOUD-1003",
+        "body": null,
+        "retry_after_seconds": null
+      },
+      "rule": "529 is claimed by a MORE specific row than the generic >=500 one: server_overload, not server_error."
+    },
+    {
+      "case_id": "initial_429_retains_only_safe_retry_metadata",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {
+        "status_code": 429,
+        "response_headers": {"retry-after": "12"},
+        "response_body": {
+          "error": {
+            "code": "rate_limit_exceeded",
+            "resets_at": 1800000000,
+            "message": "synthetic raw provider message sample text",
+            "plan_type": "synthetic-plan"
+          }
+        }
+      },
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 429,
+        "classification": "rate_limit",
+        "retryable": true,
+        "body": {"code": "rate_limit_exceeded", "resets_at": 1800000000},
+        "retry_after_seconds": 12.0
+      },
+      "rule": "ONLY 'code' and 'resets_at' are ever lifted out of a provider body, via an allow-listed safe-scalar extractor. 'message', 'plan_type' and every other field are DROPPED, never merely redacted in place."
+    },
+    {
+      "case_id": "initial_429_falls_back_to_the_codex_reset_header",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {
+        "status_code": 429,
+        "response_headers": {"x-codex-primary-reset-at": "2026-07-31T00:00:00Z"},
+        "response_body": {"error": {"code": "rate_limit_exceeded"}}
+      },
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "body": {"code": "rate_limit_exceeded", "resets_at": "2026-07-31T00:00:00Z"},
+        "retry_after_seconds": null
+      },
+      "rule": "A body with no 'resets_at' falls back to the x-codex-primary-reset-at response header, which passes the same timestamp-charset safe-scalar gate."
+    },
+    {
+      "case_id": "retry_after_accepts_the_http_date_form",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {
+        "status_code": 429,
+        "response_headers": {"retry-after": "Fri, 31 Jul 2026 00:00:00 GMT"}
+      },
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 429,
+        "retry_after_is_non_negative": true
+      },
+      "rule": "The local float-only parser this engine used to own returned None here; the shared parser understands the HTTP-date form and clamps a past date to 0. The exact value is clock-relative, so only its shape is pinned."
+    },
+    {
+      "case_id": "retry_after_is_ignored_when_unparseable",
+      "executable": true,
+      "binding": "initial_status",
+      "input": {
+        "status_code": 429,
+        "response_headers": {"retry-after": "soon"}
+      },
+      "expect": {
+        "error_type": "ProviderHttpError",
+        "status_code": 429,
+        "retry_after_seconds": null
+      },
+      "rule": "An unparseable Retry-After is dropped rather than guessed at, so a hostile header cannot inject an arbitrary backoff."
+    },
+    {
+      "case_id": "streamed_insufficient_quota_is_a_non_retryable_rate_limit",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.failed",
+            "response": {
+              "error": {"code": "insufficient_quota", "message": "synthetic provider detail"}
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "rate_limit",
+          "retryable": false,
+          "code": "CMP-CLOUD-1001",
+          "body": {"code": "insufficient_quota"},
+          "message": "ChatGPT request failed: insufficient_quota"
+        }
+      },
+      "rule": "Out of quota is a rate-limit CLASSIFICATION but is NOT retryable -- retrying cannot make quota appear. The provider 'message' never reaches the error."
+    },
+    {
+      "case_id": "streamed_usage_not_included_is_a_non_retryable_rate_limit",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.failed",
+            "response": {"error": {"code": "usage_not_included"}}
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "rate_limit",
+          "retryable": false,
+          "body": {"code": "usage_not_included"}
+        }
+      },
+      "rule": "Second member of the rate-limit code set; retryable only for rate_limit_exceeded."
+    },
+    {
+      "case_id": "streamed_rate_limit_exceeded_is_the_retryable_member",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.failed",
+            "response": {"error": {"code": "rate_limit_exceeded"}}
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "rate_limit",
+          "retryable": true,
+          "body": {"code": "rate_limit_exceeded"}
+        }
+      },
+      "rule": "Retryability inside the rate-limit bucket is per-code, not per-classification: only rate_limit_exceeded resets on its own."
+    },
+    {
+      "case_id": "streamed_context_length_exceeded_is_context_overflow",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.failed",
+            "response": {"error": {"code": "context_length_exceeded"}}
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "context_overflow",
+          "retryable": true,
+          "code": "CMP-CLOUD-1003",
+          "body": {"code": "context_length_exceeded"}
+        }
+      },
+      "rule": "Context overflow is retryable because the retry path can compact first; it is a distinct classification so the UI can say why."
+    },
+    {
+      "case_id": "streamed_server_is_overloaded_is_transient",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "response.failed",
+            "response": {
+              "error": {"code": "server_is_overloaded", "message": "synthetic provider detail"}
+            }
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "server_error",
+          "retryable": true,
+          "body": {"code": "server_is_overloaded"}
+        }
+      },
+      "rule": "Backend-side congestion is not a user-fixable fault, so it must reach the UI as retryable."
+    },
+    {
+      "case_id": "streamed_slow_down_is_transient",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.failed", "response": {"error": {"code": "slow_down"}}}
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "ProviderHttpError",
+          "classification": "server_error",
+          "retryable": true,
+          "body": {"code": "slow_down"}
+        }
+      },
+      "rule": "Second member of the transient-server code set."
+    },
+    {
+      "case_id": "streamed_unrecognized_code_falls_back_to_a_generic_failure",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.failed", "response": {"error": {"code": "cyber_policy"}}}
+        ]
+      },
+      "expect": {
+        "error": {
+          "type": "GenerationError",
+          "message": "[CMP-AI-0005] ChatGPT generation failed: cyber_policy"
+        }
+      },
+      "rule": "A code outside every known bucket produces a plain untyped generation failure quoting the (already charset/length-bounded) safe code -- the closed table always has a default row."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "safe_field_extractor",
+      "reason": "The observable behavior of _safe_error_code/_safe_reset_value is already asserted by the 429 body cases and the 'unknown_error' sentinel case above. What remains here is the design claim that this shape (string/format/max_utf8_bytes with a closed enum) is already precedented by the contract-schema DSL's node facets and could be generalized into a 'safe_scalar_extractor' descriptor primitive. That is an argument about a future interpreter, not a fact about shipped code."
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "contract": "PluginManifestV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "contribution_name": {
+      "type": "ref",
+      "ref": "display_string"
+    },
+    "content_path": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$",
+      "max_utf8_bytes": 240
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "manifest_schema_version",
+      "publisher_id",
+      "plugin_id",
+      "name",
+      "version",
+      "contract_versions",
+      "contributions",
+      "requested_permissions"
+    ],
+    "max_keys": 9,
+    "additional_properties": "reject",
+    "properties": {
+      "manifest_schema_version": { "type": "const", "value": 1 },
+      "publisher_id": { "type": "ref", "ref": "publisher_id" },
+      "plugin_id": { "type": "ref", "ref": "plugin_id" },
+      "name": { "type": "ref", "ref": "display_string" },
+      "version": { "type": "string", "format": "semver" },
+      "contract_versions": {
+        "type": "object",
+        "required": ["manifest", "declarative_content", "operation_receipt", "cleanup_state"],
+        "max_keys": 7,
+        "additional_properties": "ignore",
+        "properties": {
+          "manifest": { "type": "const", "value": 1 },
+          "declarative_content": { "type": "const", "value": 1 },
+          "operation_receipt": { "type": "const", "value": 1 },
+          "cleanup_state": { "type": "const", "value": 1 }
+        }
+      },
+      "contributions": {
+        "type": "array",
+        "max_items": 32,
+        "unique_by": ["contribution_id"],
+        "items": {
+          "type": "tagged_union",
+          "tag_field": "kind",
+          "variants": {
+            "skill": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "skill" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "prompt": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "prompt" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "theme": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "theme" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "settings_schema": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "settings_schema" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "command": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "command" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "workflow": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "workflow" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            },
+            "mcp_descriptor": {
+              "type": "object",
+              "required": ["kind", "contribution_id", "name", "content_path", "content_sha256"],
+              "max_keys": 5,
+              "additional_properties": "reject",
+              "properties": {
+                "kind": { "type": "const", "value": "mcp_descriptor" },
+                "contribution_id": { "type": "ref", "ref": "contribution_id" },
+                "name": { "type": "ref", "ref": "contribution_name" },
+                "content_path": { "type": "ref", "ref": "content_path" },
+                "content_sha256": { "type": "ref", "ref": "sha256_hex" }
+              }
+            }
+          }
+        }
+      },
+      "requested_permissions": {
+        "type": "array",
+        "max_items": 16,
+        "items": {
+          "type": "enum",
+          "values": [
+            "chat.read",
+            "chat.write",
+            "fs.workspace.read",
+            "fs.workspace.write",
+            "network.fetch",
+            "mcp.stdio",
+            "ui.view"
+          ]
+        }
+      }
+    }
+  }
+}

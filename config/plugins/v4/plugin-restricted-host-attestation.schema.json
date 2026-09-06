@@ -1,0 +1,9 @@
+{
+  "contract": "PluginRestrictedHostAttestationV4", "contract_version": 4, "frozen": true,
+  "root": {
+    "type": "object", "required": ["attestation_schema_version", "process_instance_id", "launch_nonce", "host_digest", "backend_version", "protocol_digest", "abi_digest", "publisher_id", "plugin_id", "contribution_id", "artifact_digest", "component_digest", "generation_id", "commit_epoch", "lifecycle_epoch", "channel_id"], "max_keys": 16, "additional_properties": "reject",
+    "properties": {
+      "attestation_schema_version": { "type": "const", "value": 4 }, "process_instance_id": { "type": "ref", "ref": "operation_id" }, "launch_nonce": { "type": "ref", "ref": "sha256_hex" }, "host_digest": { "type": "ref", "ref": "sha256_hex" }, "backend_version": { "type": "string", "format": "semver" }, "protocol_digest": { "type": "ref", "ref": "sha256_hex" }, "abi_digest": { "type": "ref", "ref": "sha256_hex" }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "contribution_id": { "type": "ref", "ref": "contribution_id" }, "artifact_digest": { "type": "ref", "ref": "sha256_hex" }, "component_digest": { "type": "ref", "ref": "sha256_hex" }, "generation_id": { "type": "ref", "ref": "generation_id" }, "commit_epoch": { "type": "ref", "ref": "commit_epoch" }, "lifecycle_epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "channel_id": { "type": "ref", "ref": "operation_id" }
+    }
+  }
+}

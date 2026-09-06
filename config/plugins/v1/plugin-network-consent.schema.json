@@ -1,0 +1,102 @@
+{
+  "contract": "PluginNetworkConsentV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "network_purpose": {
+      "type": "enum",
+      "values": [
+        "app_updates",
+        "plugin_metadata",
+        "plugin_payloads",
+        "advisories",
+        "plugin_runtime"
+      ]
+    },
+    "network_scope": {
+      "type": "enum",
+      "values": ["loopback", "lan", "internet", "unrestricted_ambient"]
+    },
+    "destination": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x7E]{1,253}$",
+      "max_utf8_bytes": 253
+    },
+    "purpose_grant": {
+      "type": "object",
+      "required": ["purpose", "scopes", "enabled"],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "purpose": { "type": "ref", "ref": "network_purpose" },
+        "scopes": {
+          "type": "array",
+          "max_items": 4,
+          "items": { "type": "ref", "ref": "network_scope" }
+        },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "plugin_consent": {
+      "type": "object",
+      "required": [
+        "publisher_id",
+        "plugin_id",
+        "purpose",
+        "scopes",
+        "enabled"
+      ],
+      "max_keys": 6,
+      "additional_properties": "reject",
+      "properties": {
+        "publisher_id": { "type": "ref", "ref": "publisher_id" },
+        "plugin_id": { "type": "ref", "ref": "plugin_id" },
+        "purpose": { "type": "ref", "ref": "network_purpose" },
+        "scopes": {
+          "type": "array",
+          "max_items": 4,
+          "items": { "type": "ref", "ref": "network_scope" }
+        },
+        "destinations": {
+          "type": "array",
+          "max_items": 16,
+          "items": { "type": "ref", "ref": "destination" }
+        },
+        "enabled": { "type": "boolean" }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "network_consent_schema_version",
+      "revision",
+      "system_authorized",
+      "purpose_grants",
+      "plugin_consents"
+    ],
+    "max_keys": 6,
+    "additional_properties": "reject",
+    "properties": {
+      "network_consent_schema_version": { "type": "const", "value": 1 },
+      "revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "system_authorized": { "type": "boolean" },
+      "purpose_grants": {
+        "type": "array",
+        "max_items": 5,
+        "unique_by": ["purpose"],
+        "items": { "type": "ref", "ref": "purpose_grant" }
+      },
+      "plugin_consents": {
+        "type": "array",
+        "max_items": 256,
+        "unique_by": ["publisher_id", "plugin_id", "purpose"],
+        "items": { "type": "ref", "ref": "plugin_consent" }
+      }
+    }
+  }
+}

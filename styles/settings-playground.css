@@ -1,0 +1,86 @@
+.inv-select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--settings-shell-field-border);
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 64%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text-primary);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  outline: none;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-select:hover {
+  border-color: color-mix(in srgb, var(--accent-cyan) 32%, var(--settings-shell-field-border));
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 80%, transparent);
+}
+
+.inv-select:focus-visible {
+  border-color: var(--accent-cyan) !important;
+  outline: 2px solid var(--settings-shell-accent) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 2px var(--accent-cyan),
+    0 0 8px 4px color-mix(in srgb, var(--accent-cyan) 25%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ── Custom range input styling inside Comet Playground ── */
+.settings-setup-divider {
+  height: 1px;
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  margin: var(--space-6) 0 var(--space-5);
+}
+
+.settings-setup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+/* Column wrapper for the setup actions: button row on top, the "More"
+   overflow disclosure on its own line below (Appearance-card pattern). */
+.settings-setup-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.settings-setup-actions .settings-actions {
+  margin-top: 0;
+  justify-content: flex-end;
+}
+
+.settings-setup-actions .settings-overflow {
+  text-align: right;
+}
+
+.settings-setup-row-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* ── Prefers Reduced Motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .inv-select {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}

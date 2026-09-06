@@ -1,0 +1,183 @@
+/* Composer V2 chrome overrides layer on chat-composer.css; attachment styling
+ * is owned by chat-attachments-v2.css. */
+
+.composer-send {
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.composer-send:hover {
+  box-shadow:
+    var(--shadow-elevation-1),
+    inset 0 1px 0 color-mix(in srgb, white 24%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.composer-send:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-send:active {
+  transform: scale(0.97);
+}
+
+.composer-jump-button {
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.composer-jump-button:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text-primary);
+}
+
+.composer-jump-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-jump-button:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-send,
+  .composer-jump-button {
+    transition: none;
+  }
+  .composer-send:active,
+  .composer-jump-button:active {
+    transform: none;
+  }
+}
+
+/* Density overrides; pointer-events must remain restricted to aria-hidden nodes. */
+.composer-meta {
+  padding-top: var(--space-2);
+  border-top-color: color-mix(in srgb, var(--widget-composer-signal-border) 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* B2 — lower the visual weight of the wayfinder so it stops reading
+ * as a third composer row. Discoverability is preserved (button
+ * remains visible when triggered) but it recedes into the chrome. */
+.composer-wayfinder-host .chat-wayfinder-button {
+  min-height: calc(var(--composer-secondary-control-size) - 4px);
+  font-size: 10.5px;
+  border-color: color-mix(in srgb, var(--composer-wayfinder-accent) 18%, var(--composer-secondary-control-border));
+}
+
+.composer-wayfinder-host .chat-wayfinder-icon {
+  flex-basis: 14px;
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+}
+
+.composer-skill-chip {
+  max-width: min(260px, 70vw);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--widget-attachment-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--widget-attachment-bg));
+}
+
+.composer-skill-chip .inv-chip-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.slash-autocomplete-popover {
+  z-index: var(--z-popover);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-elevation-3);
+}
+
+.slash-autocomplete-results {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.slash-autocomplete-group {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.slash-autocomplete-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.slash-autocomplete-row--selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.slash-autocomplete-row--disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.62;
+}
+
+.slash-autocomplete-command {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.slash-autocomplete-copy {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-autocomplete-tag {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.slash-autocomplete-empty,
+.slash-autocomplete-footer {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.slash-autocomplete-empty {
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.slash-autocomplete-footer {
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-skill-chip {
+    transition: none;
+  }
+}

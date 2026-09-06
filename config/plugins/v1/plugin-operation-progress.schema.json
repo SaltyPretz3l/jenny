@@ -1,0 +1,109 @@
+{
+  "contract": "PluginOperationProgressV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "progress_schema_version",
+      "operation_id",
+      "sequence",
+      "lifecycle_epoch",
+      "expected_generation",
+      "observed_generation",
+      "recorded_at",
+      "event"
+    ],
+    "max_keys": 8,
+    "additional_properties": "reject",
+    "properties": {
+      "progress_schema_version": { "type": "const", "value": 1 },
+      "operation_id": { "type": "ref", "ref": "operation_id" },
+      "sequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "lifecycle_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "expected_generation": { "type": "ref", "ref": "generation_binding" },
+      "observed_generation": { "type": "ref", "ref": "generation_binding" },
+      "recorded_at": { "type": "ref", "ref": "iso8601_utc" },
+      "event": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "phase": {
+            "type": "object",
+            "required": ["kind", "phase"],
+            "max_keys": 3,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "phase" },
+              "phase": {
+                "type": "enum",
+                "values": [
+                  "lease_acquired",
+                  "receipt_pending",
+                  "staging",
+                  "validating",
+                  "preparing",
+                  "attesting",
+                  "committing",
+                  "publishing",
+                  "cleanup"
+                ]
+              },
+              "detail_code": { "type": "string", "format": "nfc_identifier" }
+            }
+          },
+          "heartbeat": {
+            "type": "object",
+            "required": ["kind"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "heartbeat" },
+              "detail_code": { "type": "string", "format": "nfc_identifier" }
+            }
+          },
+          "terminal": {
+            "type": "object",
+            "required": ["kind", "status", "retryable"],
+            "max_keys": 4,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "terminal" },
+              "status": {
+                "type": "enum",
+                "values": ["committed", "failed", "indeterminate", "expired"]
+              },
+              "retryable": { "type": "boolean" },
+              "terminal_result_digest": { "type": "ref", "ref": "sha256_hex" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "defs": {
+    "generation_binding": {
+      "type": "object",
+      "required": ["commit_epoch"],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+        "generation_id": { "type": "ref", "ref": "generation_id" },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    }
+  }
+}

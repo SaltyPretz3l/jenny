@@ -1,0 +1,132 @@
+{
+  "name": "jenny",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Jenny Project",
+  "description": "Jenny local-first desktop AI companion built with Electron and an in-repo Python sidecar.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SaltyPretz3l/jenny.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SaltyPretz3l/jenny/issues"
+  },
+  "homepage": "https://github.com/SaltyPretz3l/jenny",
+  "main": "main.js",
+  "scripts": {
+    "audit": "npm audit --omit=dev",
+    "lint": "eslint .",
+    "test": "npm run test:dist",
+    "test:safe": "node scripts/run-node-tests-safe.js tests/ --timeout-ms=600000",
+    "test:fast": "node scripts/run-node-tests-safe.js tests/ --timeout-ms=600000 --fail-fast",
+    "test:soak": "node scripts/run-node-tests-safe.js tests/streaming-ipc-bytes.load.test.js tests/streaming-markdown-cost.load.test.js tests/streaming-session-commit.load.test.js --timeout-ms=900000",
+    "test:dist": "node scripts/tests/run-dist-tests.js",
+    "test:js:stable": "node scripts/run-node-tests-safe.js tests/ --parallel-only --timeout-ms=1080000 --per-file-timeout-ms=240000",
+    "coverage:js": "c8 node scripts/run-node-tests-safe.js tests/ --timeout-ms=600000",
+    "coverage:js:stable": "c8 node scripts/run-node-tests-safe.js tests/ --parallel-only --timeout-ms=1080000 --per-file-timeout-ms=240000",
+    "test:live-local-evidence": "node scripts/tests/run-live-local-evidence.js",
+    "test:packaged-attachment-rehydration": "node scripts/tests/packaged-attachment-rehydration.js",
+    "test:managed-safe": "node scripts/run-node-tests-safe.js tests/managed-sidecar/ --timeout-ms=600000",
+    "test:sidecar:cov": "python -m pytest tests/sidecar -n 8 --dist=loadscope --cov=sidecar --cov-report=term-missing --cov-report=json:coverage.json",
+    "test:affected": "node scripts/select-affected-tests.js",
+    "test:slowest": "node scripts/report-slow-tests.js",
+    "test:surface-conformance": "node scripts/run-node-tests-safe.js tests/renderer-surface-effect-conformance.test.js",
+    "test:surface-soak": "node scripts/run-node-tests-safe.js tests/renderer-surface-effect-soak.test.js",
+    "check:policy": "python scripts/checks/run_all.py",
+    "check:all": "python scripts/checks/run_ci.py",
+    "build:preload": "node scripts/build/build-preload.js",
+    "build:preload:force": "node scripts/build/build-preload.js --force",
+    "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
+    "build:restricted-host": "python scripts/packaging/build_restricted_host_artifact.py",
+    "build:restricted-host:release": "python scripts/packaging/build_restricted_host_artifact.py --release",
+    "build:full-host-supervisor": "python scripts/packaging/build_full_host_supervisor_artifact.py",
+    "build:full-host-supervisor:release": "python scripts/packaging/build_full_host_supervisor_artifact.py --release",
+    "plugin:stage8:build-signing-kit": "node scripts/plugins/build-stage8-conformance-kit.mjs",
+    "plugin:stage8:export-signing-request": "node scripts/plugins/export-stage8-conformance-signing-request.mjs",
+    "plugin:stage8:finalize-signed": "node scripts/plugins/finalize-stage8-signed-conformance-package.mjs",
+    "plugin:stage8:verify-signed": "node scripts/plugins/verify-stage8-conformance-package.mjs",
+    "plugin:local-image:export-signing-request": "node scripts/plugins/export-local-image-generation-signing-request.mjs",
+    "plugin:local-image:finalize-signed": "node scripts/plugins/finalize-local-image-generation-package.mjs",
+    "plugin:local-image:verify-signed": "node scripts/plugins/verify-local-image-generation-package.mjs",
+    "plugin:validate": "node scripts/plugins/validate-plugin.mjs",
+    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host && npm run build:full-host-supervisor && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",
+    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",
+    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish always",
+    "release:smoke": "python scripts/packaging/smoke_packaged_flow.py",
+    "sbom:sidecar": "python scripts/packaging/emit_sbom.py",
+    "check:python-runtime-bundle": "python scripts/checks/check_python_runtime_bundle.py",
+    "dev": "node start.js",
+    "dev:agent": "node start.js --agent",
+    "dev:test-flags": "node scripts/dev/dev-test-flags.js",
+    "setup": "node scripts/setup/setup.js",
+    "uninstall": "node scripts/uninstall.js"
+  },
+  "engines": {
+    "node": ">=22.23.2 <23 || >=24.19.0 <25",
+    "npm": ">=10.0.0"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "^0.0.6",
+    "@lydell/node-pty": "^1.2.0-beta.12",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "ajv": "8.20.0",
+    "dompurify": "^3.4.13",
+    "electron-updater": "6.8.9",
+    "js-yaml": "^4.3.1",
+    "katex": "^0.16.44",
+    "marked": "^18.0.7",
+    "mermaid": "^11.16.1",
+    "monaco-editor": "0.52.0",
+    "semver": "7.7.4",
+    "tuf-js": "6.0.0",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "@eslint/js": "^10.0.1",
+    "c8": "^11.0.0",
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.0.2",
+    "globals": "^17.4.0",
+    "jsdom": "^29.0.0",
+    "minimatch": "10.2.4",
+    "playwright-core": "^1.60.0"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.8.13",
+    "flatted": "^3.4.2",
+    "lodash": "^4.18.1",
+    "lodash-es": "^4.18.1",
+    "uuid": "^14.0.0",
+    "tar": "7.5.22",
+    "micromatch": {
+      "picomatch": "^2.3.2"
+    },
+    "node-gyp": {
+      "undici": "6.28.0"
+    },
+    "@electron/get": {
+      "undici": "7.29.0"
+    },
+    "jsdom": {
+      "undici": "7.29.0"
+    },
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.18"
+    },
+    "minimatch@5.1.9": {
+      "brace-expansion": "2.1.4"
+    },
+    "minimatch@9.0.9": {
+      "brace-expansion": "2.1.4"
+    },
+    "minimatch@10.2.4": {
+      "brace-expansion": "5.0.9"
+    }
+  },
+  "distribution": true
+}

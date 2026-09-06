@@ -1,0 +1,124 @@
+{
+  "description": "Scenario matrix driving services/plugins/data/rollback-barrier.js. Each scenario feeds evaluateRollback() and asserts the exact returned shape -- see tests/plugins/data/rollback-barrier.test.js.",
+  "scenarios": [
+    {
+      "id": "no_writes_since_snapshot_permitted",
+      "description": "The mutation watermark exactly matches the retained generation's snapshot watermark: nothing could be lost by rolling back.",
+      "barrier": { "kind": "none" },
+      "mutationWatermark": { "sequence": 12, "recordedAt": "2026-07-30T12:00:00Z" },
+      "targetWatermark": { "sequence": 12, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": null,
+      "expected": {
+        "permitted": true,
+        "reason": null,
+        "detail": { "writesPreserved": 0, "viaValidatedDowngrade": false }
+      }
+    },
+    {
+      "id": "incompatible_migration_erected_barrier_blocks_rollback",
+      "description": "An incompatible migration erected a durable barrier, later writes exist, and no downgrade is offered at all -- rollback must refuse.",
+      "barrier": {
+        "kind": "erected",
+        "erected_by_operation_id": "op-0100",
+        "source_generation_id": "gen-0001",
+        "target_generation_id": "gen-0002",
+        "erected_at": "2026-07-30T12:00:00Z",
+        "reason": "incompatible_migration_write"
+      },
+      "mutationWatermark": { "sequence": 20, "recordedAt": "2026-07-30T13:00:00Z" },
+      "targetWatermark": { "sequence": 12, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": null,
+      "expected": {
+        "permitted": false,
+        "reason": "rollback_barrier_active",
+        "detail": { "writesAtRisk": 8 }
+      }
+    },
+    {
+      "id": "validated_downgrade_preserves_writes_permitted",
+      "description": "A declared and validated downgrade path proves it carries forward every write up through the current watermark, so rollback is permitted despite the barrier.",
+      "barrier": {
+        "kind": "erected",
+        "erected_by_operation_id": "op-0100",
+        "source_generation_id": "gen-0001",
+        "target_generation_id": "gen-0002",
+        "erected_at": "2026-07-30T12:00:00Z",
+        "reason": "incompatible_migration_write"
+      },
+      "mutationWatermark": { "sequence": 20, "recordedAt": "2026-07-30T13:00:00Z" },
+      "targetWatermark": { "sequence": 12, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": { "declared": true, "validated": true, "preservesWritesThroughSequence": 20 },
+      "expected": {
+        "permitted": true,
+        "reason": null,
+        "detail": { "writesPreserved": 8, "viaValidatedDowngrade": true }
+      }
+    },
+    {
+      "id": "blocked_rollback_after_post_update_writes_no_barrier_yet",
+      "description": "No formal barrier is recorded, but writes already exist past the target snapshot and no downgrade is offered -- still blocked, never silently restored.",
+      "barrier": { "kind": "none" },
+      "mutationWatermark": { "sequence": 5, "recordedAt": "2026-07-30T10:00:00Z" },
+      "targetWatermark": { "sequence": 1, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": null,
+      "expected": {
+        "permitted": false,
+        "reason": "unvalidated_writes_since_snapshot",
+        "detail": { "writesAtRisk": 4 }
+      }
+    },
+    {
+      "id": "declared_but_unvalidated_downgrade_still_blocked",
+      "description": "A downgrade path was declared but never validated -- an unproven claim of loss-preservation must not unblock rollback.",
+      "barrier": {
+        "kind": "erected",
+        "erected_by_operation_id": "op-0100",
+        "source_generation_id": "gen-0001",
+        "target_generation_id": "gen-0002",
+        "erected_at": "2026-07-30T12:00:00Z",
+        "reason": "incompatible_migration_write"
+      },
+      "mutationWatermark": { "sequence": 20, "recordedAt": "2026-07-30T13:00:00Z" },
+      "targetWatermark": { "sequence": 12, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": { "declared": true, "validated": false, "preservesWritesThroughSequence": 20 },
+      "expected": {
+        "permitted": false,
+        "reason": "rollback_barrier_active",
+        "detail": { "writesAtRisk": 8 }
+      }
+    },
+    {
+      "id": "validated_downgrade_that_does_not_cover_the_latest_write_still_blocked",
+      "description": "A validated downgrade only proves preservation through an earlier sequence than the current watermark -- the gap beyond it is still at risk, so rollback stays blocked.",
+      "barrier": {
+        "kind": "erected",
+        "erected_by_operation_id": "op-0100",
+        "source_generation_id": "gen-0001",
+        "target_generation_id": "gen-0002",
+        "erected_at": "2026-07-30T12:00:00Z",
+        "reason": "incompatible_migration_write"
+      },
+      "mutationWatermark": { "sequence": 20, "recordedAt": "2026-07-30T13:00:00Z" },
+      "targetWatermark": { "sequence": 12, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": { "declared": true, "validated": true, "preservesWritesThroughSequence": 18 },
+      "expected": {
+        "permitted": false,
+        "reason": "rollback_barrier_active",
+        "detail": { "writesAtRisk": 8 }
+      }
+    },
+    {
+      "id": "watermark_regression_fails_closed",
+      "description": "The current watermark is somehow behind the retained generation's own recorded watermark -- an internally inconsistent input that must never be interpreted charitably.",
+      "barrier": { "kind": "none" },
+      "mutationWatermark": { "sequence": 3, "recordedAt": "2026-07-30T10:00:00Z" },
+      "targetWatermark": { "sequence": 9, "recordedAt": "2026-07-29T09:00:00Z" },
+      "downgrade": null,
+      "expected": {
+        "permitted": false,
+        "reason": "watermark_regression",
+        "detail": { "writesAtRisk": -6 }
+      }
+    }
+  ]
+}

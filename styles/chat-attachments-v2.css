@@ -1,0 +1,87 @@
+/* Overrides attachment-tray chip styling; base layout lives in chat-composer.css
+ * and settings-controls.css, with markup emitted by renderer-sidebar-utils.js. */
+
+.attachment-tray .attachment-chip {
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.attachment-tray .attachment-chip:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--widget-attachment-bg));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--widget-attachment-border));
+}
+
+.attachment-tray .attachment-chip:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.attachment-chip-audio-glyph {
+  background: color-mix(in srgb, var(--accent-cyan) 22%, var(--bg-surface));
+  color: color-mix(in srgb, var(--accent-cyan) 78%, white);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 36%, transparent);
+}
+
+.attachment-chip-retry {
+  background: color-mix(in srgb, var(--text-danger-emphasis) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-danger-emphasis) 38%, transparent);
+  color: color-mix(in srgb, var(--text-danger-emphasis) 78%, var(--text-primary));
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.attachment-chip-retry:hover {
+  background: color-mix(in srgb, var(--text-danger-emphasis) 18%, transparent);
+  border-color: color-mix(in srgb, var(--text-danger-emphasis) 54%, transparent);
+}
+
+.attachment-chip-retry:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.attachment-chip-remove,
+.attachment-chip-clear {
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.attachment-chip-remove:hover,
+.attachment-chip-clear:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.attachment-chip-remove:focus-visible,
+.attachment-chip-clear:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.message-skill-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--widget-attachment-border));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 9%, var(--widget-attachment-bg));
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attachment-tray .attachment-chip,
+  .attachment-chip-retry,
+  .attachment-chip-remove,
+  .attachment-chip-clear {
+    transition: none;
+  }
+}

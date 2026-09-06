@@ -1,0 +1,76 @@
+/* Sidebar shell scaffolding. Expanded Chats presentation lives exclusively in
+   chats-panel.css; collapsed Chats presentation lives in its companion file. */
+
+.sidebar-resizer {
+  position: relative;
+  width: var(--sidebar-resizer-width);
+  min-height: 0;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}
+
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  opacity: 0;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.sidebar-resizer:hover::before,
+.workspace.panel-resizing .sidebar-resizer::before,
+.sidebar-resizer:focus-visible::before,
+.sidebar-resizer.dragging::before {
+  background: var(--accent);
+  opacity: 0.78;
+}
+
+.sidebar-resizer:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* Small icon-only shell action retained for the Chats overflow and collapsed
+   strip controls. Feature files own their exact geometry and state colors. */
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: var(--sidebar-icon-button-size);
+  height: var(--sidebar-icon-button-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.icon-button:is(:hover, :focus-visible) {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.icon-button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}

@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "thinking_plus_content_plus_tool",
+    "provider": "vllm",
+    "model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "description": "vLLM (OpenAI-compatible) turn with delta.reasoning_content followed by delta.content and a final tool_calls. Same routing-layer outcome as fixture #3 via the vLLM SSE wire shape: reasoning plus the live pre-tool token are emitted, and the full tool loop clears stale pre-tool prose with stream_reset before post-tool continuation.",
+    "target_phase": 3
+  },
+  "raw_chunks": [
+    {"sse": "data: {\"choices\": [{\"delta\": {\"reasoning_content\": \"I should read the file first.\"}}]}"},
+    {"sse": "data: {\"choices\": [{\"delta\": {\"content\": \"Looking up the file...\"}}]}"},
+    {"sse": "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_readme\", \"function\": {\"name\": \"read_file\", \"arguments\": \"{\\\"path\\\": \\\"README.md\\\"}\"}}]}, \"finish_reason\": \"tool_calls\"}]}"},
+    {"sse": "data: [DONE]"}
+  ],
+  "expected_engine_events": [
+    {"_class": "ThinkingDelta", "text": "I should read the file first.", "is_complete": true},
+    {"_class": "StreamingEvent", "kind": "content", "text": "Looking up the file..."}
+  ],
+  "expected_loop_events": [
+    {
+      "_class": "ThinkingEvent",
+      "thinking_id": "think_req_replay_model",
+      "delta": "I should read the file first.",
+      "kind": "reasoning",
+      "persist": true,
+      "thinking_budget_chars": 65536
+    },
+    {
+      "_class": "TokenDeltaEvent",
+      "delta": "Looking up the file...",
+      "token_index": 1
+    }
+  ],
+  "expected_notifications": [
+    {
+      "method": "chat.thinking",
+      "params": {
+        "delta": "I should read the file first.",
+        "thinking_id": "think_req_replay_model",
+        "kind": "reasoning",
+        "persist": true
+      }
+    },
+    {
+      "method": "chat.token",
+      "params": {
+        "delta": "Looking up the file...",
+        "role": "assistant",
+        "sequence": 1
+      }
+    }
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "reasoning_phase",
+      "status": "completed",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "phase_reasoning_t_replay_1",
+      "payload": {
+        "phase_id": "phase_reasoning_t_replay_1",
+        "phase_kind": "reasoning",
+        "thinking_id": "t_replay:reasoning_part:1",
+        "render_collapsed": false,
+        "entries": [
+          {
+            "id": "reasoning_t_replay_1_1",
+            "text": "I should read the file first.",
+            "thinkingId": "t_replay:reasoning_part:1"
+          }
+        ],
+        "chunk_count": 1,
+        "completed": true,
+        "canonical_event_type": "reasoning_part_completed",
+        "canonical_part_id": "t_replay:reasoning_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:2",
+      "turn_id": "t_replay",
+      "kind": "assistant_text_segment",
+      "status": "",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "text": "Looking up the file...",
+        "assistant_phase": "final_answer",
+        "segment_id": "assistant_t_replay_seg_0",
+        "segment_group_index": 0,
+        "canonical_event_type": "text_part_completed",
+        "canonical_part_id": "t_replay:text_part:2",
+        "canonical_seq": 2
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:3",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_readme",
+      "source_message_ids": [
+        "tool_use_t_replay_call_readme"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_readme",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "README.md"
+        },
+        "sequence": 1,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:3",
+        "canonical_seq": 3
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:4",
+      "turn_id": "t_replay",
+      "kind": "tool_executing",
+      "status": "running",
+      "primary_message_id": "tool_use_t_replay_call_readme",
+      "source_message_ids": [
+        "tool_use_t_replay_call_readme"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_readme",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "tool_input": {
+          "path": "README.md"
+        },
+        "canonical_event_type": "tool_execution_started",
+        "canonical_part_id": "t_replay:tool_part:4",
+        "canonical_seq": 4
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:5",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "completed",
+      "primary_message_id": "tool_result_t_replay_call_readme",
+      "source_message_ids": [
+        "tool_result_t_replay_call_readme"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_readme",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "read_file",
+        "success": true,
+        "tool_output_summary": "",
+        "content_type": "text",
+        "tool_input": {
+          "path": "README.md"
+        },
+        "canonical_event_type": "tool_execution_completed",
+        "canonical_part_id": "t_replay:tool_part:5",
+        "canonical_seq": 5
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "Looking up the file...",
+    "thinking_text": "I should read the file first.",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "tool_id": "read_file",
+        "arguments": {"path": "README.md"},
+        "call_id": "call_readme"
+      }
+    ]
+  }
+}

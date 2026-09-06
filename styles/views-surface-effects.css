@@ -1,0 +1,231 @@
+[data-widget-modifier~="reactive-grid"],
+[data-widget-modifier~="playlist-scroll"],
+[data-widget-modifier~="atomic-burst"],
+[data-widget-modifier~="circuit-trace"],
+[data-widget-modifier~="context-weave"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.chat-surface-effect-gutter[data-widget-modifier~="reactive-grid"],
+.chat-surface-effect-gutter[data-widget-modifier~="playlist-scroll"],
+.chat-surface-effect-gutter[data-widget-modifier~="atomic-burst"],
+.chat-surface-effect-gutter[data-widget-modifier~="circuit-trace"],
+.chat-surface-effect-gutter[data-widget-modifier~="context-weave"] {
+  position: absolute;
+}
+
+[data-widget-modifier~="reactive-grid"] > :not(.widget-reactive-grid-canvas),
+[data-widget-modifier~="playlist-scroll"] > :not(.widget-playlist-scroll-canvas),
+[data-widget-modifier~="atomic-burst"] > :not(.widget-atomic-burst-canvas),
+[data-widget-modifier~="circuit-trace"] > :not(.widget-circuit-trace-canvas),
+[data-widget-modifier~="context-weave"] > :not(.widget-context-weave-canvas) {
+  position: relative;
+  z-index: 1;
+}
+
+.widget-reactive-grid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+.widget-reactive-grid-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+.main-view[data-widget-modifier~="reactive-grid"],
+.surface-gallery-stage[data-widget-modifier~="reactive-grid"] {
+  --reactive-grid-cell-size: 28px;
+  --reactive-grid-strength: 0.5;
+  --reactive-grid-idle-amplitude: 0.3;
+}
+.chat-surface-effect-gutter[data-widget-modifier~="reactive-grid"] {
+  --reactive-grid-cell-size: 26px;
+  --reactive-grid-strength: 0.5;
+  --reactive-grid-idle-amplitude: 0.3;
+}
+
+.widget-playlist-scroll-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+.widget-playlist-scroll-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+.widget-atomic-burst-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.widget-atomic-burst-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+.main-view[data-widget-modifier~="atomic-burst"],
+.surface-gallery-stage[data-widget-modifier~="atomic-burst"] {
+  --widget-atomic-burst-size: 32;
+  --widget-atomic-burst-density: 9.2;
+  --widget-atomic-burst-bloom: 0.78;
+  --widget-atomic-burst-link-radius: 260;
+  --widget-atomic-burst-link-max: 6;
+  --widget-atomic-burst-wave-speed: 720;
+  --widget-atomic-burst-wave-lifetime: 1200;
+}
+
+.chat-surface-effect-gutter[data-widget-modifier~="atomic-burst"] {
+  --widget-atomic-burst-size: 24;
+  --widget-atomic-burst-density: 8.6;
+  --widget-atomic-burst-bloom: 0.6;
+  --widget-atomic-burst-link-radius: 200;
+  --widget-atomic-burst-link-max: 5;
+  --widget-atomic-burst-wave-speed: 600;
+  --widget-atomic-burst-wave-lifetime: 1000;
+}
+
+.widget-circuit-trace-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.widget-circuit-trace-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+.widget-context-weave-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.widget-context-weave-canvas.surface-canvas-ready {
+  opacity: 1;
+}
+
+.main-view[data-widget-modifier~="circuit-trace"],
+.surface-gallery-stage[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-version: 3;
+  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-density: 1.0;
+  --widget-circuit-trace-trail-length: 16;
+  --widget-circuit-trace-speed: 1.0;
+  --widget-circuit-trace-bloom: 0.7;
+  --widget-circuit-trace-lift-px: 4;
+}
+
+.chat-surface-effect-gutter[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-version: 3;
+  --widget-circuit-trace-hex-size: 26;
+  --widget-circuit-trace-density: 1.2;
+  --widget-circuit-trace-trail-length: 14;
+  --widget-circuit-trace-speed: 1.05;
+  --widget-circuit-trace-bloom: 0.55;
+  --widget-circuit-trace-lift-px: 3;
+}
+
+:root[data-motion="calm"] .main-view[data-widget-modifier~="circuit-trace"],
+:root[data-motion="calm"] .surface-gallery-stage[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-trail-length: 12;
+  --widget-circuit-trace-speed: 0.76;
+  --widget-circuit-trace-bloom: 0.48;
+  --widget-circuit-trace-lift-px: 2;
+}
+
+:root[data-motion="calm"] .chat-surface-effect-gutter[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-trail-length: 10;
+  --widget-circuit-trace-speed: 0.78;
+  --widget-circuit-trace-bloom: 0.38;
+  --widget-circuit-trace-lift-px: 2;
+}
+
+:root[data-motion="expressive"] .main-view[data-widget-modifier~="circuit-trace"],
+:root[data-motion="expressive"] .surface-gallery-stage[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-trail-length: 20;
+  --widget-circuit-trace-speed: 1.18;
+  --widget-circuit-trace-bloom: 0.82;
+  --widget-circuit-trace-lift-px: 5;
+}
+
+:root[data-motion="expressive"] .chat-surface-effect-gutter[data-widget-modifier~="circuit-trace"] {
+  --widget-circuit-trace-trail-length: 18;
+  --widget-circuit-trace-speed: 1.2;
+  --widget-circuit-trace-bloom: 0.66;
+  --widget-circuit-trace-lift-px: 4;
+}
+
+/* Motion-axis tuning is effect-scoped so each registered visual has an
+   explicit calm/expressive posture without changing its public preset id. */
+:root[data-motion="calm"] [data-widget-modifier~="reactive-grid"] {
+  --reactive-grid-motion-scale: 0.72;
+  --reactive-grid-idle-amplitude: 0.30;
+}
+
+:root[data-motion="expressive"] [data-widget-modifier~="reactive-grid"] {
+  --reactive-grid-motion-scale: 1.24;
+  --reactive-grid-idle-amplitude: 0.52;
+}
+
+:root[data-motion="calm"] [data-widget-modifier~="playlist-scroll"] {
+  --playlist-scroll-speed: 0.28;
+}
+
+:root[data-motion="expressive"] [data-widget-modifier~="playlist-scroll"] {
+  --playlist-scroll-speed: 0.55;
+}
+
+:root[data-motion="calm"] [data-widget-modifier~="atomic-burst"] {
+  --widget-atomic-burst-bloom: 0.45;
+  --widget-atomic-burst-wave-speed: 480;
+  --widget-atomic-burst-wave-lifetime: 900;
+}
+
+:root[data-motion="expressive"] [data-widget-modifier~="atomic-burst"] {
+  --widget-atomic-burst-bloom: 0.90;
+  --widget-atomic-burst-wave-speed: 820;
+  --widget-atomic-burst-wave-lifetime: 1350;
+}
+
+/* context-weave is alpha-only under the pointer, so the motion axis tunes the
+   single lit-gain knob; the controller derives pluck amplitude from it, which
+   is why calm/expressive move both the sheen and the pluck together. */
+:root[data-motion="calm"] [data-widget-modifier~="context-weave"] {
+  --widget-context-weave-lit-gain: 2.1;
+}
+
+:root[data-motion="expressive"] [data-widget-modifier~="context-weave"] {
+  --widget-context-weave-lit-gain: 4;
+}

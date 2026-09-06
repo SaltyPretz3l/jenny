@@ -1,0 +1,447 @@
+/* styles/ide-source-control.css - Tier-2 git slice. The Source Control rail
+ * panel (Changed / Ready to commit groups, per-row actions, commit box), the
+ * file-tree git-state decorations (M/A/U badges + folder roll-ups), and the
+ * statusbar branch dirty-count chip. All colours come from palette state tokens
+ * so they re-theme through the theme bridge. Loaded via @import in styles.css
+ * after ide-explorer.css. */
+
+/* ── Source Control panel ── */
+.ide-scm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 12px;
+}
+
+.ide-scm-branch {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Detached HEAD / unborn repo read as full sentences, not a terse branch chip,
+ * so drop the base uppercase + tracking. Detached is risky (new commits land on
+ * no branch and can be GC'd) so it reads as danger; unborn keeps the neutral
+ * secondary colour. */
+.ide-scm-branch--detached,
+.ide-scm-branch--unborn {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ide-scm-branch--detached {
+  color: var(--state-danger);
+}
+
+.ide-scm-empty {
+  padding: 6px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* UIUX-032: explicit partial-status notices — a truncated getStatus buffer or
+ * a render-capped file list. Persistent (not a toast) for as long as it's true. */
+.ide-scm-partial-notice {
+  padding: 6px 8px;
+  margin: 4px 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
+  color: var(--state-warning);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ide-scm-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ide-scm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ide-scm-group-count {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ide-scm-group-head .ide-scm-action--stage-all {
+  margin-left: auto;
+}
+
+.ide-scm-row {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 2px;
+  border-radius: 5px;
+}
+
+.ide-scm-row:hover {
+  background: var(--bg-surface-2);
+}
+
+.ide-scm-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 2px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  background: none;
+  border: none;
+}
+
+.ide-scm-file:hover {
+  color: var(--text-primary);
+}
+
+.ide-scm-file:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-scm-badge {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--state-warning);
+}
+
+.ide-scm-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-scm-row-dir,
+.ide-scm-row-orig {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-scm-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  opacity: 0;
+}
+
+.ide-scm-row:hover .ide-scm-row-actions,
+.ide-scm-row:focus-within .ide-scm-row-actions {
+  opacity: 1;
+}
+
+.ide-scm-action {
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+  border: 1px solid transparent;
+}
+
+.ide-scm-action:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-color: var(--line);
+}
+
+.ide-scm-action--discard.ide-scm-danger:hover {
+  color: var(--state-danger);
+  border-color: var(--state-danger-border);
+}
+
+/* Badge colours by git state (re-themeable palette tokens). */
+.ide-scm-badge[data-git-state="modified"],
+.ide-scm-badge[data-git-state="renamed"],
+.ide-scm-badge[data-git-state="copied"] {
+  color: var(--state-warning);
+}
+
+.ide-scm-badge[data-git-state="untracked"],
+.ide-scm-badge[data-git-state="added"] {
+  color: var(--state-success);
+}
+
+.ide-scm-badge[data-git-state="staged"] {
+  color: var(--state-info);
+}
+
+.ide-scm-badge[data-git-state="deleted"],
+.ide-scm-badge[data-git-state="conflicted"] {
+  color: var(--state-danger);
+}
+
+/* ── Commit box ── */
+.ide-scm-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-scm-commit-hint {
+  color: var(--state-warning);
+  font-size: 11px;
+}
+
+.ide-scm-commit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ide-scm-write-message {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ide-scm-write-icon {
+  flex: 0 0 auto;
+}
+
+/* ── File-tree git decorations (lit up in the tree commit) ── */
+.ide-tree-row--git-modified .ide-tree-name,
+.ide-tree-row--git-renamed .ide-tree-name,
+.ide-tree-row--git-copied .ide-tree-name {
+  color: var(--state-warning);
+}
+
+.ide-tree-row--git-untracked .ide-tree-name,
+.ide-tree-row--git-added .ide-tree-name {
+  color: var(--state-success);
+}
+
+.ide-tree-row--git-deleted .ide-tree-name {
+  color: var(--state-danger);
+  text-decoration: line-through;
+}
+
+.ide-tree-row--git-conflicted .ide-tree-name {
+  color: var(--state-danger);
+}
+
+.ide-tree-git-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.ide-tree-row--git-modified .ide-tree-git-badge,
+.ide-tree-row--git-renamed .ide-tree-git-badge,
+.ide-tree-row--git-copied .ide-tree-git-badge { color: var(--state-warning); }
+.ide-tree-row--git-untracked .ide-tree-git-badge,
+.ide-tree-row--git-added .ide-tree-git-badge { color: var(--state-success); }
+.ide-tree-row--git-deleted .ide-tree-git-badge,
+.ide-tree-row--git-conflicted .ide-tree-git-badge { color: var(--state-danger); }
+
+/* Folder roll-up dot (a directory with dirty descendants). */
+.ide-tree-git-dot {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-warning);
+}
+
+.ide-tree-row--git-rollup-untracked .ide-tree-git-dot,
+.ide-tree-row--git-rollup-added .ide-tree-git-dot { background: var(--state-success); }
+.ide-tree-row--git-rollup-deleted .ide-tree-git-dot,
+.ide-tree-row--git-rollup-conflicted .ide-tree-git-dot { background: var(--state-danger); }
+
+/* ── Statusbar branch dirty-count chip (lit up in the statusbar commit) ── */
+.ide-statusbar-branch-count {
+  margin-left: 4px;
+  color: var(--state-warning);
+  font-weight: 600;
+}
+
+/* ── Friendly commit History (read-only recent-commit cards) ── */
+.ide-scm-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-scm-history-head {
+  display: flex;
+  align-items: center;
+}
+
+.ide-scm-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.ide-scm-history-toggle:hover {
+  color: var(--accent);
+}
+
+.ide-scm-history-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.ide-scm-history-title {
+  white-space: nowrap;
+}
+
+.ide-scm-history-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.ide-scm-history-empty,
+.ide-scm-history-error,
+.ide-scm-history-loading {
+  padding: 4px 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ide-scm-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ide-scm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+.ide-scm-card:hover {
+  border-color: var(--line-strong, var(--line));
+  background: var(--bg-surface-2);
+}
+
+.ide-scm-card--clickable {
+  cursor: pointer;
+}
+
+.ide-scm-card--clickable:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent, #4c8bf5));
+  outline-offset: 1px;
+}
+
+.ide-scm-card-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ide-scm-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ide-scm-card-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.ide-scm-card-dot {
+  flex: 0 0 auto;
+}
+
+.ide-scm-card-time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ide-scm-card-merge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--state-info);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ide-scm-card-hash {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.ide-scm-history-retry {
+  align-self: flex-start;
+  margin-top: 2px;
+}

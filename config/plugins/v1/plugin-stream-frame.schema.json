@@ -1,0 +1,90 @@
+{
+  "contract": "PluginStreamFrameV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "frame_schema_version",
+      "invocation_id",
+      "commit_epoch",
+      "lifecycle_epoch",
+      "sequence",
+      "frame"
+    ],
+    "max_keys": 6,
+    "additional_properties": "reject",
+    "properties": {
+      "frame_schema_version": { "type": "const", "value": 1 },
+      "invocation_id": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "max_utf8_bytes": 64
+      },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "lifecycle_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "frame": {
+        "type": "tagged_union",
+        "tag_field": "kind",
+        "variants": {
+          "progress": {
+            "type": "object",
+            "required": ["kind", "payload"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "progress" },
+              "payload": { "type": "string", "max_utf8_bytes": 8192 }
+            }
+          },
+          "data": {
+            "type": "object",
+            "required": ["kind", "payload"],
+            "max_keys": 2,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "data" },
+              "payload": { "type": "string", "max_utf8_bytes": 8192 }
+            }
+          },
+          "backpressure": {
+            "type": "object",
+            "required": ["kind", "queue_depth", "pause_ms"],
+            "max_keys": 3,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "backpressure" },
+              "queue_depth": { "type": "integer", "minimum": 0, "maximum": 256 },
+              "pause_ms": { "type": "integer", "minimum": 0, "maximum": 60000 }
+            }
+          },
+          "terminal": {
+            "type": "object",
+            "required": ["kind", "status", "retryable"],
+            "max_keys": 5,
+            "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "terminal" },
+              "status": {
+                "type": "enum",
+                "values": ["succeeded", "failed", "cancelled", "timeout", "rejected"]
+              },
+              "retryable": { "type": "boolean" },
+              "result_digest": { "type": "ref", "ref": "sha256_hex" },
+              "reason_code": { "type": "string", "format": "nfc_identifier" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

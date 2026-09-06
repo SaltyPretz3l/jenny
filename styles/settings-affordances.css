@@ -1,0 +1,189 @@
+/*
+ * Settings Tier C affordances — status chips, per-field reset, and inline
+ * two-step section reset.
+ *
+ * Contracts (JS side):
+ *   .settings-status-chip[data-state="loading"|"live"|"error"]
+ *       — applied via renderer-status-chip-utils.js applyStatusChip();
+ *         the chip TEXT carries the verdict (non-color a11y), the tint is
+ *         reinforcement only.
+ *   .settings-field-reset — small ghost revert button, shown by the reset
+ *       layer only when a field's value ≠ its adapter default.
+ *   .settings-reset-confirm — inline two-step Reset… → Confirm/Cancel group
+ *       (replaces dialogs for section-level resets; full dialog stays
+ *       reserved for factory reset).
+ *
+ * Calm/de-vibe rules: no glow, no pulse, token-driven color only.
+ */
+
+/* ── Status chip ─────────────────────────────────────────────────────── */
+
+.settings-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 22px;
+  padding: var(--space-1) var(--space-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--settings-shell-muted-border);
+  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-status-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.settings-status-chip[data-state="loading"] {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.settings-status-chip[data-state="live"] {
+  border-color: var(--state-success-border);
+  background: var(--state-success-bg);
+  color: var(--text-primary);
+}
+
+.settings-status-chip[data-state="live"]::before {
+  background: var(--state-success);
+}
+
+.settings-status-chip[data-state="error"] {
+  border-color: var(--state-danger-border);
+  background: var(--state-danger-bg);
+  color: var(--state-danger);
+}
+
+.settings-status-chip[data-state="error"]::before {
+  background: var(--state-danger);
+}
+
+/* ── Per-field reset affordance ──────────────────────────────────────── */
+/* Lives on the TITLE line of a field (after the label in an Appearance
+   .settings-field-row-text, inside .settings-field-title-row for generated
+   rows) so it borrows the empty space beside the title instead of pushing the
+   control. Text-styled, not a pill: icon + word, muted until hovered. */
+.settings-field-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-field-reset:hover {
+  color: var(--text-primary);
+  border-color: var(--settings-shell-muted-border);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.settings-field-reset:focus-visible {
+  outline: 2px solid var(--settings-shell-accent);
+  outline-offset: 2px;
+  color: var(--text-primary);
+}
+
+.settings-field-reset[hidden] {
+  display: none;
+}
+
+/* ── Inline two-step reset confirm ───────────────────────────────────── */
+
+.settings-reset-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-reset-confirm[data-armed="true"] {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--state-warning-border);
+  background: var(--state-warning-bg);
+}
+
+.settings-reset-confirm-label {
+  color: var(--state-warning);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-status-chip,
+  .settings-field-reset {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}
+
+/* ── Field title line: label + meta (default · Modified · reset) ─────── */
+.settings-field-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-4);
+  min-width: 0;
+}
+
+.settings-field-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.settings-field-meta-modified {
+  color: var(--status-fg-warning);
+}
+
+/* Appearance rows: the label and its reset share the first grid row; the
+   description spans both columns beneath. Geometry is identical with the
+   reset hidden, so a field going modified never shifts the row. */
+.settings-field-row-text {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+}
+
+.settings-field-row-text > .settings-field-description,
+.settings-field-row-text > .settings-field-note {
+  grid-column: 1 / -1;
+}

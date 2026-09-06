@@ -1,0 +1,23 @@
+{
+  "manifest_schema_version": 1,
+  "publisher_id": "astra-labs",
+  "plugin_id": "astra-dogfood-prompt",
+  "name": "Astra Warm Review Prompt",
+  "version": "1.0.0",
+  "contract_versions": {
+    "manifest": 1,
+    "declarative_content": 1,
+    "operation_receipt": 1,
+    "cleanup_state": 1
+  },
+  "contributions": [
+    {
+      "kind": "prompt",
+      "contribution_id": "warm_review_prompt",
+      "name": "Warm Review",
+      "content_path": "content/warm-review-prompt.json",
+      "content_sha256": "68202203d15b68861a0194a51cca810ce023bc82442b9de96fbdac5f6be891a8"
+    }
+  ],
+  "requested_permissions": []
+}

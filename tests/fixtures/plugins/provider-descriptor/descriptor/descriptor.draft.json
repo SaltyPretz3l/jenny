@@ -1,0 +1,153 @@
+{
+  "fixture_id": "descriptor/descriptor.draft",
+  "schema_version": 1,
+  "description": "DRAFT provider-descriptor attempt for the ChatGPT subscription engine -- metadata, endpoints, the request-header template, and the named carve-outs. NOT the PluginProviderDescriptorV1 contract and not a frozen artifact; see docs/plans/plugin-chatgpt-descriptor-spike.md for the reasoning. The parts that describe SHIPPED behavior are executed below; the parts that argue about a future interpreter are declared non-executable.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_request_payload_headers_and_reasoning_effort",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_function_call_round_and_follow_up_output_serialization"
+  ],
+  "constants": {
+    "ACCESS_TOKEN": "synthetic-subscription-access-token",
+    "ACCOUNT_ID": "acct_test_456",
+    "BASE_URL": "https://example.test/backend-api/codex",
+    "OAUTH_CLIENT_ID": "app_EMoamEEZ73f0CkXaXp7hrann"
+  },
+  "declarative_verdict": "partially",
+  "notes": "The header template is a pure name -> value map with two substitution points (a broker-held secret handle and an optional account id) and is asserted below against the real httpx client the engine builds. The descriptor bytes never carry a literal token: the runner substitutes ${ACCESS_TOKEN} with a synthetic value, exactly mirroring the production path where the token arrives via RuntimeConfig from Electron's initialize channel and is assembled into the headers dict by core sidecar code.",
+  "cases": [
+    {
+      "case_id": "constant_identity_access_token",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "ACCESS_TOKEN"},
+      "expect": {"value": "${ACCESS_TOKEN}"},
+      "rule": "Pins the SYNTHETIC token the runner injects, so the header assertion below cannot pass by comparing two independently-drifting placeholders. No real credential appears in these bytes; that is what the redaction gate enforces."
+    },
+    {
+      "case_id": "constant_identity_account_id",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "ACCOUNT_ID"},
+      "expect": {"value": "${ACCOUNT_ID}"},
+      "rule": "Pins the synthetic account id used by the header cases below."
+    },
+    {
+      "case_id": "constant_identity_base_url",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "BASE_URL"},
+      "expect": {"value": "${BASE_URL}"},
+      "rule": "Pins the synthetic override base URL used by the endpoint cases below."
+    },
+    {
+      "case_id": "constant_identity_oauth_client_id",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "OAUTH_CLIENT_ID"},
+      "expect": {"value": "${OAUTH_CLIENT_ID}"},
+      "rule": "The OAuth client id is read out of services/backend/chatgpt-auth-service.js by the runner, so a rotation there fails this fixture instead of leaving the descriptor draft quietly stale. A public OAuth client identifier is not a secret -- it is published in the authorize URL of every PKCE flow."
+    },
+    {
+      "case_id": "request_headers_template_is_a_pure_header_map",
+      "executable": true,
+      "binding": "request_headers",
+      "input": {"account_id": "${ACCOUNT_ID}"},
+      "expect": {
+        "headers": {
+          "authorization": "Bearer ${ACCESS_TOKEN}",
+          "originator": "jenny",
+          "user-agent": "jenny",
+          "accept": "text/event-stream",
+          "content-type": "application/json",
+          "chatgpt-account-id": "${ACCOUNT_ID}"
+        },
+        "declared_header_names": [
+          "accept",
+          "authorization",
+          "chatgpt-account-id",
+          "content-type",
+          "originator",
+          "user-agent"
+        ]
+      },
+      "rule": "Six headers, no more: the template is a NAME -> VALUE map with nothing else mixed in. Names are matched case-insensitively because httpx lowercases them on the wire."
+    },
+    {
+      "case_id": "account_header_is_omitted_when_the_account_id_is_blank",
+      "executable": true,
+      "binding": "request_headers",
+      "input": {"account_id": ""},
+      "expect": {
+        "headers": {
+          "authorization": "Bearer ${ACCESS_TOKEN}",
+          "originator": "jenny",
+          "user-agent": "jenny",
+          "accept": "text/event-stream",
+          "content-type": "application/json"
+        },
+        "declared_header_names": [
+          "accept",
+          "authorization",
+          "content-type",
+          "originator",
+          "user-agent"
+        ]
+      },
+      "rule": "ChatGPT-Account-ID is conditional: a blank account id omits the header entirely rather than sending an empty value, which the backend would reject."
+    },
+    {
+      "case_id": "inference_stream_endpoint_is_post_responses",
+      "executable": true,
+      "binding": "endpoint",
+      "input": {
+        "base_url": "${BASE_URL}",
+        "sse_lines": [{"type": "response.completed", "response": {}}]
+      },
+      "expect": {
+        "method": "POST",
+        "path": "/responses",
+        "base_url": "${BASE_URL}/",
+        "payload_fields": {"stream": true, "store": false}
+      },
+      "rule": "One inference endpoint: POST {base_url}/responses with a server-sent-events response. There is no second call in the shipped path -- no model discovery, no capability probe."
+    },
+    {
+      "case_id": "base_url_defaults_when_unset",
+      "executable": true,
+      "binding": "endpoint",
+      "input": {
+        "base_url": null,
+        "sse_lines": [{"type": "response.completed", "response": {}}]
+      },
+      "expect": {
+        "method": "POST",
+        "path": "/responses",
+        "base_url": "https://chatgpt.com/backend-api/codex/",
+        "payload_fields": {"stream": true}
+      },
+      "rule": "The base URL is overridable but defaults to the first-party Codex backend; an empty or whitespace override falls back to the same default rather than producing a relative URL."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "auth_profile",
+      "reason": "PLUG-D23 sequences the auth/network broker at Stage 5; this spike covers only the sidecar SSE-parsing/request-construction surface. The observed shape is: OAuth2 authorization-code + PKCE S256 against issuer https://auth.openai.com (/oauth/authorize, /oauth/token) with client_id ${OAUTH_CLIENT_ID}, scopes [openid, profile, email, offline_access], a loopback redirect on the first free port of a declared list, identity claims at $['https://api.openai.com/auth'].chatgpt_account_id / .chatgpt_plan_type and $.email OR $['https://api.openai.com/profile'].email, form-encoded body for the code exchange and JSON for refresh, permanent-failure codes {refresh_token_expired, refresh_token_reused, refresh_token_invalidated}, and freshness = now < jwt.exp*1000 - 5min skew with an 8-day fallback window from last_refresh_ms when exp is absent. Every field is already DATA in the current implementation, and the state-machine half (single-flight refresh, epoch-fenced sign-out race, JWT decode) reads as generic OAuth-broker machinery. It lives in Electron (services/backend/chatgpt-auth-service.js), not the sidecar, so nothing here can execute it -- only the client id is pinned, by the constant_identity case above."
+    },
+    {
+      "section": "model_discovery_endpoint",
+      "reason": "A GET .../models discovery endpoint is planned but NOT implemented; there is no call to assert. See model_catalog.json's plan_vs_implementation_gap."
+    },
+    {
+      "section": "core_carve_outs",
+      "reason": "The two named carve-outs -- the citation-marker normalizer and the reasoning-item replay cache -- have their behavior asserted in streams/citation_markers.json and streams/tool_call_lifecycle.json. What lives here is the VERDICT that they cannot be expressed as descriptor data, which is a judgement about a hypothetical interpreter rather than an observable fact."
+    },
+    {
+      "section": "generic_interpreter_requirements",
+      "reason": "The claim that two-buffer terminal text resolution, call-pairing enforcement, placeholder suppression and the safe-scalar extractor belong in fixed provider-agnostic interpreter code rather than per-provider data is a scope decision about where future code should live. Each one's shipped behavior is asserted in its own fixture; only the disposition is unfalsifiable here."
+    },
+    {
+      "section": "security_property_confirmation",
+      "reason": "The PLUG-D23 invariant is that provider credentials never reach plugin code and no secret_value_delivery grant is involved. There is no plugin code and no interpreter yet, so the invariant has nothing to hold over. Its two factual halves ARE mechanized elsewhere: the redaction gate in check_provider_descriptor_fixtures.py proves these bytes carry no credential, and the engine suite proves the shipped code keeps token-shaped text out of errors and logs."
+    }
+  ]
+}

@@ -1,0 +1,919 @@
+@font-face {
+  font-family: "Fraunces";
+  src: url("../assets/fonts/fraunces-roman.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("../assets/fonts/fraunces-italic.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anastasia";
+  src: url("../assets/fonts/anastasia.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --bg-base: #0b0d14;
+  --bg-surface: #171a27;
+  --bg-surface-2: #1d2030;
+  --bg-sidebar: #191c29;
+  --bg-panel: #181b28;
+  --line: rgba(113, 122, 151, 0.16);
+  --line-strong: rgba(132, 145, 182, 0.28);
+  --text-primary: #f3f4fc;
+  --text-secondary: #b3b2c8;
+  /* UIUX-022 semantic split: --text-muted is READABLE muted (essential
+     secondary copy — must clear WCAG 4.5:1 against bg-base/surface/surface-2/
+     panel; pinned by tests/palette-muted-contrast.test.js). --text-decorative
+     keeps the original faint tint for skeletons, muted washes, and other
+     non-text/disabled decoration (WCAG-exempt, no floor). */
+  --text-muted: #88879d;
+  --text-decorative: #706f87;
+  --accent: #6d82ff;
+  --accent-primary: var(--accent);
+  --accent-strong: #7a8bff;
+  --text-link: var(--accent-strong);
+  --text-active: var(--accent-strong);
+  --accent-cyan: #16e9ff;
+  --accent-amber: #f3b537;
+  --holo-periwinkle: #95adff;
+  --holo-lavender: #d3a2ff;
+  --holo-pink: #ff79d7;
+  --holo-cyan: #66f7ff;
+  --reactive-grid-motion-scale: 1;
+  --reactive-grid-cell-size: 24px;
+  --reactive-grid-hit-radius: 192;
+  --reactive-grid-strength: 1;
+  --reactive-grid-idle-amplitude: 0.42;
+  --reactive-grid-friction: 0.86;
+  --reactive-grid-spring: 0.04;
+  --reactive-grid-push: 0.9;
+  --reactive-grid-glow-blur: 14;
+  --reactive-grid-glow-curve: 3;
+  --reactive-grid-fade-rise-ms: 240;
+  --reactive-grid-fade-decay-ms: 520;
+  --reactive-grid-breath-amplitude: 0.05;
+  --widget-reactive-grid-dot-idle: rgba(157, 197, 255, 0.18);
+  --widget-reactive-grid-dot-active: rgba(160, 230, 255, 0.96);
+  --widget-reactive-grid-dot-glow: rgba(155, 170, 255, 0.42);
+  --playlist-scroll-line-color: rgba(157, 197, 255, 0.5);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.025;
+  --playlist-scroll-lane-height: 28;
+  --playlist-scroll-subdivisions: 4;
+  --playlist-scroll-bar-width: 120;
+  --playlist-scroll-speed: 0.4;
+  --playlist-scroll-edge-fade: 32;
+  /* --playlist-scroll-ghost-color and -accent-color are intentionally NOT floored here: their
+     JS fallback (renderer-playlist-scroll-utils.js getEntryConfig) derives from the resolved
+     line-color at runtime (ghost = line-color alpha x 0.22, accent = line-color verbatim), not
+     a fixed literal — a static floor would go stale the moment a palette overrides line-color
+     without also overriding these. The JS-side derivation already covers the unset case. */
+  --widget-atomic-burst-color-a: rgba(47, 174, 230, 0.78);
+  --widget-atomic-burst-color-b: rgba(255, 90, 160, 0.78);
+  --widget-atomic-burst-color-c: rgba(245, 207, 58, 0.78);
+  --widget-atomic-burst-flare-color: rgba(255, 255, 255, 0.96);
+  --widget-atomic-burst-size: 14;
+  --widget-atomic-burst-density: 6.2;
+  --widget-atomic-burst-bloom: 0.7;
+  --widget-atomic-burst-link-radius: 220;
+  --widget-atomic-burst-link-max: 6;
+  --widget-atomic-burst-wave-speed: 620;
+  --widget-atomic-burst-wave-lifetime: 1100;
+  /* --widget-atomic-burst-link-color and -wave-color are intentionally NOT floored: same
+     derived-token rule as playlist-scroll's ghost/accent above — both fall back to the
+     resolved flare-color at runtime, not a fixed literal. */
+  --widget-circuit-trace-grid-color: rgba(106, 58, 255, 0.16);
+  --widget-circuit-trace-line-color: rgba(41, 192, 255, 0.92);
+  --widget-circuit-trace-glow-color: rgba(255, 90, 160, 0.85);
+  --widget-circuit-trace-version: 2;
+  --widget-circuit-trace-hex-size: 32;
+  --widget-circuit-trace-density: 1.0;
+  --widget-circuit-trace-trail-length: 14;
+  --widget-circuit-trace-speed: 1.0;
+  --widget-circuit-trace-bloom: 0.7;
+  --widget-circuit-trace-lift-px: 4;
+  --widget-circuit-trace-energy: 0;
+  /* --widget-circuit-trace-accent-color is intentionally NOT floored: same derived-token rule
+     as above — falls back to the resolved line-color at runtime, not a fixed literal. */
+  /* Context Weave defaults */
+  --widget-context-weave-line-color: rgba(150, 160, 186, 0.42);
+  --widget-context-weave-spacing: 96;
+  --widget-context-weave-pointer-radius: 150;
+  --widget-context-weave-interlace: 3;
+  --widget-context-weave-weft-alpha: 0.7;
+  --widget-context-weave-lit-gain: 3;
+  --widget-context-weave-density: 1;
+  --holo-duration-idle: 4800ms;
+  --holo-duration-active: 2600ms;
+  --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.28);
+  --shadow-accent: 0 12px 30px rgba(109, 130, 255, 0.2);
+  --shadow-card: 0 10px 24px rgba(0, 0, 0, 0.22);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.18);
+  --shadow-elevated: 0 12px 28px rgba(0, 0, 0, 0.22);
+  --shadow-float: 0 24px 60px rgba(0, 0, 0, 0.34);
+  --z-content: 1;
+  --z-raised: 4;
+  --z-chrome: 10;
+  --z-dock: 40;
+  --z-face: 50;
+  --z-popover: 70;
+  --z-toast: 75;
+  --z-overlay: 80;
+  --z-boot-curtain: 90;
+  --z-window-controls: 95;
+  --sidebar-width: 320px;
+  --sidebar-width-compact: 272px;
+  --sidebar-collapsed-width: 84px;
+  --sidebar-current-width: var(--sidebar-width);
+  --context-panel-width: 320px;
+  --sidebar-resizer-width: 10px;
+  /* Chat reading measure. --chat-measure-max is the user-selectable cap
+     (Appearance > Chat layout > Chat width); --chat-measure-fit is the viewport
+     clamp that stops any cap from overflowing a narrow window. The wide-mode
+     override lives in the :root[data-chat-width="wide"] block further down.
+     --chat-card-max-width caps the standalone cards that sit inside the
+     column but do not stretch to it (slash output, proactive suggestions,
+     interactive recap). */
+  --chat-measure-max: 760px;
+  --chat-measure-fit: calc(100vw - var(--sidebar-current-width) - 172px);
+  --content-column-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  --composer-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  --chat-user-bubble-max-width: clamp(410px, 34vw, 560px);
+  --chat-card-max-width: 760px;
+  --chat-sprite-size: 30px;
+  --chat-sprite-rail-offset: clamp(56px, 4.4vw, 64px);
+  --composer-dock-bottom: clamp(20px, 3vh, 30px);
+  /* 188px ≈ idle composer height (~144px textarea max + controls) plus
+     padding/gap buffer (~44px).  This is the CSS-only fallback used before
+     the JS ResizeObserver in renderer-viewport-utils.js measures the real
+     offset and overwrites this property on the chat-view element. */
+  --composer-safe-offset: calc(var(--composer-dock-bottom) + 188px);
+  --chat-thread-offset: 86px;
+  --thread-transition-duration: 300ms;
+  --empty-composer-lift: clamp(72px, 10vh, 112px);
+  --font-family-body: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-family-display: var(--font-family-body);
+  /* Mono stack. `ui-monospace` and Consolas sit ahead of the generic
+     keyword on purpose: JetBrains Mono is not bundled (no @font-face)
+     and is absent on a stock Windows install, so without them the
+     stack degrades straight to the UA fixed font. Monaco reads this
+     token at create time and re-reads it when the typography preset
+     changes (renderer-monaco-editor-utils.js). */
+  --font-family-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --font-family-emotive: "Fraunces", Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  /* Brand mark face for the "J" glyphs (sprite + hero avatar), shared with the site. */
+  --font-family-brand: "Anastasia", "Fraunces", serif;
+  --motion-duration-fast: 140ms;
+  --motion-duration-regular: 220ms;
+  --motion-duration-emphasis: 360ms;
+  --motion-ease-standard: ease;
+  --motion-ease-emphasis: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-ease-elastic: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --motion-hover-lift: 1px;
+  /* Ambient/loop durations — spinners, liveness pulses, shimmer sweeps and
+     list-entry stagger. Preset-scaled (calm/expressive) and zeroed under
+     prefers-reduced-motion like the transition tokens above. Zeroing an
+     infinite loop freezes it at its first frame, which is the intended
+     reduced-motion treatment; never replace these with `animation: none`
+     on elements whose JS waits for animationend (0ms animations still fire
+     it, `animation: none` does not). */
+  --motion-duration-spin: 900ms;
+  --motion-duration-pulse-fast: 1000ms;
+  --motion-duration-pulse: 1600ms;
+  --motion-duration-pulse-slow: 2500ms;
+  --motion-duration-sheen: 1800ms;
+  /* One-shot attention accents (distinct from loop cadence): flash = brief
+     link/selection blink; feedback = action acknowledgement (copy chip,
+     row highlight); highlight = long locate-me fade (search hit). */
+  --motion-duration-flash: 600ms;
+  --motion-duration-feedback: 1200ms;
+  --motion-duration-highlight: 2400ms;
+  --motion-stagger: 45ms;
+  --transition-fast: var(--motion-duration-fast) var(--motion-ease-standard);
+  --transition-regular: var(--motion-duration-regular) var(--motion-ease-standard);
+  --transition-emphasis: var(--motion-duration-emphasis) var(--motion-ease-emphasis);
+  --focus-outline: rgba(122, 139, 255, 0.68);
+  --surface-body-background:
+    radial-gradient(circle at 48% 46%, rgba(31, 42, 102, 0.2), rgba(11, 13, 20, 0) 26%),
+    radial-gradient(circle at 52% 62%, rgba(21, 236, 255, 0.05), rgba(11, 13, 20, 0) 21%),
+    #0b0d14;
+  --surface-shell-background:
+    linear-gradient(180deg, rgba(24, 25, 38, 0.98), rgba(12, 13, 20, 0.98)),
+    var(--bg-base);
+  --surface-titlebar-background: linear-gradient(90deg, rgba(29, 31, 46, 0.98), rgba(20, 21, 33, 0.98));
+  --surface-sidebar-background:
+    linear-gradient(180deg, rgba(23, 27, 40, 0.98), rgba(15, 18, 29, 0.98)),
+    var(--bg-sidebar);
+  --surface-main-stage-background:
+    radial-gradient(circle at 48% 44%, rgba(38, 43, 94, 0.1), rgba(11, 13, 20, 0) 26%),
+    radial-gradient(circle at 50% 88%, rgba(67, 103, 255, 0.08), rgba(11, 13, 20, 0) 22%),
+    linear-gradient(180deg, #0d1018, #090c13 78%);
+  --surface-main-stage-overlay:
+    linear-gradient(90deg, rgba(103, 118, 255, 0.03), rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0) 84%, rgba(18, 233, 255, 0.026)),
+    radial-gradient(circle at 50% 66%, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0) 36%);
+  --surface-main-stage-glow:
+    radial-gradient(circle at 50% 55%, rgba(109, 130, 255, 0.07), rgba(11, 13, 20, 0) 22%),
+    radial-gradient(circle at 50% 96%, rgba(109, 130, 255, 0.08), rgba(11, 13, 20, 0) 18%);
+  --surface-card-background:
+    linear-gradient(180deg, rgba(28, 31, 44, 0.9), rgba(20, 22, 33, 0.96)),
+    radial-gradient(circle at top left, rgba(98, 144, 255, 0.08), transparent 58%);
+  --surface-input-background: rgba(14, 16, 24, 0.92);
+  --surface-input-background-strong: rgba(11, 13, 20, 0.78);
+  --surface-toolbar-background: rgba(17, 19, 28, 0.88);
+  --surface-prompt-chip-background: rgba(255, 255, 255, 0.035);
+  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.06);
+  --surface-prompt-chip-border: rgba(128, 139, 186, 0.15);
+  --surface-prompt-chip-border-hover: rgba(109, 130, 255, 0.28);
+  --surface-assistant-sprite-background:
+    radial-gradient(circle at 32% 28%, rgba(236, 244, 255, 0.26), rgba(236, 244, 255, 0) 42%),
+    linear-gradient(180deg, rgba(31, 36, 54, 0.97), rgba(18, 22, 34, 0.98));
+  --surface-assistant-sprite-border: rgba(144, 157, 205, 0.28);
+  --surface-assistant-sprite-holo:
+    rgba(107, 138, 255, 0.96) 0deg,
+    rgba(180, 100, 255, 0.96) 90deg,
+    rgba(255, 120, 200, 0.96) 180deg,
+    rgba(100, 220, 255, 0.96) 270deg,
+    rgba(107, 138, 255, 0.96) 360deg;
+  --surface-interactive-card-background:
+    linear-gradient(180deg, rgba(18, 24, 39, 0.96), rgba(11, 16, 28, 0.96)),
+    radial-gradient(circle at top left, rgba(86, 146, 255, 0.1), transparent 48%);
+  --surface-notice-background:
+    linear-gradient(180deg, rgba(61, 49, 32, 0.72), rgba(41, 32, 22, 0.7)),
+    rgba(24, 20, 16, 0.68);
+  --surface-composer-inner:
+    linear-gradient(180deg, rgba(33, 37, 51, 0.94), rgba(25, 28, 40, 0.97)),
+    rgba(18, 20, 30, 0.94);
+  --surface-composer-signal-background: rgba(16, 21, 34, 0.78);
+  --surface-composer-mode-background: rgba(16, 21, 34, 0.72);
+  --surface-user-bubble-background: linear-gradient(180deg, rgba(42, 47, 65, 0.96), rgba(31, 35, 50, 0.98));
+  --surface-auth-overlay: rgba(6, 7, 12, 0.76);
+  --surface-auth-card: linear-gradient(180deg, rgba(28, 31, 45, 0.98), rgba(18, 20, 31, 0.98));
+  --surface-popover-background: linear-gradient(180deg, rgba(29, 34, 52, 0.98), rgba(18, 22, 34, 0.98));
+  --surface-popover-row: rgba(48, 54, 80, 0.44);
+  --surface-popover-row-hover: rgba(71, 81, 122, 0.56);
+  /* One toast fill for every palette. Derived from --bg-surface (opaque
+   * hex in all 11 palettes) so toasts theme with zero per-palette
+   * declarations; tone lives on the mark, not the surface. */
+  --surface-toast-background: color-mix(in srgb, var(--bg-surface) 93%, var(--text-primary));
+  /* Command palette dialog. Same derivation (and same zero-per-palette
+   * rationale) as the toast fill above — one flat opaque surface that themes
+   * with every palette rather than a card gradient. */
+  --surface-palette-background: color-mix(in srgb, var(--bg-surface) 93%, var(--text-primary));
+  --surface-dev-row-background: rgba(18, 31, 43, 0.5);
+  --surface-dev-row-border: rgba(123, 211, 226, 0.16);
+  --artifact-surface-shell-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 66%, transparent), color-mix(in srgb, var(--bg-base) 96%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 44%),
+    radial-gradient(circle at bottom right, color-mix(in srgb, var(--accent-cyan) 8%, transparent), transparent 46%);
+  --artifact-surface-shell-border: color-mix(in srgb, var(--border-default) 76%, transparent);
+  --artifact-surface-shell-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 18px 36px color-mix(in srgb, var(--bg-base) 10%, transparent);
+  --artifact-surface-item-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 62%, transparent), color-mix(in srgb, var(--surface-input-background) 96%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 7%, transparent), transparent 48%);
+  --artifact-surface-item-hover-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 72%, transparent), color-mix(in srgb, var(--surface-input-background) 98%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 9%, transparent), transparent 48%);
+  --artifact-surface-item-border: color-mix(in srgb, var(--border-default) 74%, transparent);
+  --artifact-surface-item-hover-border: color-mix(in srgb, var(--accent-cyan) 22%, var(--border-default));
+  --artifact-surface-kicker-color: color-mix(in srgb, var(--accent-cyan) 74%, var(--text-secondary));
+  --artifact-surface-copy-color: color-mix(in srgb, var(--text-secondary) 90%, white 6%);
+  --artifact-surface-preview-image-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-input-background) 88%, transparent), color-mix(in srgb, var(--bg-surface) 98%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 10%, transparent), transparent 56%);
+  --artifact-surface-preview-file-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 84%, transparent), color-mix(in srgb, var(--surface-input-background) 98%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 12%, transparent), transparent 54%);
+  --artifact-surface-preview-tool-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-sidebar) 92%, transparent), color-mix(in srgb, var(--bg-base) 98%, transparent)),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 7%, transparent), transparent 58%);
+  --artifact-surface-action-bg: color-mix(in srgb, var(--bg-surface) 68%, transparent);
+  --artifact-surface-action-border: color-mix(in srgb, var(--border-default) 78%, transparent);
+  --artifact-surface-action-hover-bg: color-mix(in srgb, var(--bg-surface) 84%, transparent);
+  --artifact-surface-action-hover-border: color-mix(in srgb, var(--accent) 26%, var(--border-default));
+  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent-cyan) 22%, transparent);
+
+  /* ── Material hierarchy (semantic aliases) ── */
+
+  /* Chrome: structural shell, quietest surfaces */
+  --mat-chrome-bg: var(--surface-titlebar-background);
+  --mat-chrome-border: var(--border-subtle);
+  --mat-chrome-text: var(--text-secondary);
+  --mat-chrome-accent: var(--text-primary);
+
+  /* Work: primary content, highest contrast */
+  --mat-work-bg: var(--surface-body-background);
+  --mat-work-border: var(--border-default);
+  --mat-work-text: var(--text-primary);
+  --mat-work-accent: var(--text-secondary);
+
+  /* Live: state-reactive, slightly elevated */
+  --mat-live-bg: var(--surface-sidebar-background);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 10%, var(--border-subtle));
+  --mat-live-text: var(--text-primary);
+  --mat-live-accent: var(--accent-cyan);
+
+  /* Ephemeral: overlays, highest z, strongest depth cues */
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-text: var(--text-primary);
+  --mat-ephemeral-shadow: var(--border-strong);
+
+  /* ── Semantic color tokens ── */
+  --text-bright: #f5f7ff;
+  --text-danger-soft: #ffbfca;
+  --text-accent-soft: #dbe3ff;
+  --text-success-soft: #d8fff0;
+  --status-gradient-end: #ffd080;
+  --text-danger-emphasis: #ff9ea7;
+
+  /* ── Shadow elevation scale ── */
+  --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(109, 130, 255, 0.06);
+  --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(109, 130, 255, 0.08);
+  --shadow-elevation-3:
+    0 8px 32px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(109, 130, 255, 0.08),
+    0 0 16px rgba(109, 130, 255, 0.05);
+
+  /* ── Accent alpha tokens ── */
+  --accent-a-12: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-a-20: color-mix(in srgb, var(--accent) 20%, transparent);
+  --accent-a-30: color-mix(in srgb, var(--accent) 30%, transparent);
+  --accent-a-50: color-mix(in srgb, var(--accent) 50%, transparent);
+  --accent-cyan-a-20: color-mix(in srgb, var(--accent-cyan) 20%, transparent);
+  --accent-cyan-a-30: color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+
+  /* ── Surface pair (elevated companion) ── */
+  --surface-card-elevated:
+    linear-gradient(180deg, rgba(36, 40, 57, 0.94), rgba(24, 27, 40, 0.98)),
+    radial-gradient(circle at top left, rgba(98, 144, 255, 0.12), transparent 58%);
+
+  /* ── Tracking scale ── */
+  --tracking-display: -0.025em;
+  --tracking-tight: -0.01em;
+  --tracking-ui: -0.005em;
+  --tracking-kicker-sm: 0.14em;
+  --tracking-kicker-md: 0.1em;
+  --tracking-kicker-lg: 0.08em;
+
+  /* ── User typography-scale axis ──
+     --font-scale multiplies every font-size token (and the display clamps
+     below). Default 1 = today's exact px; set by appearance-utils from the
+     user's "Text size" preference. Spacing/surfaces are intentionally NOT
+     scaled by this axis — overall app zoom (webContents.setZoomFactor) owns
+     uniform magnification. The chat column is governed by --chat-zoom-factor
+     and stays isolated from --font-scale. */
+  --font-scale: 1;
+
+  /* ── Font-size scale ── */
+  --font-size-xs: calc(10px * var(--font-scale, 1));
+  --font-size-sm: calc(11px * var(--font-scale, 1));
+  --font-size-base: calc(12px * var(--font-scale, 1));
+  --font-size-md: calc(13px * var(--font-scale, 1));
+  --font-size-lg: calc(14px * var(--font-scale, 1));
+  --font-size-card-title: calc(15px * var(--font-scale, 1));
+  --font-size-xl: calc(16px * var(--font-scale, 1));
+  --font-size-2xl: calc(18px * var(--font-scale, 1));
+  --font-size-3xl: calc(20px * var(--font-scale, 1));
+  --font-size-4xl: calc(22px * var(--font-scale, 1));
+  --font-size-5xl: calc(24px * var(--font-scale, 1));
+  --font-size-6xl: calc(26px * var(--font-scale, 1));
+  --font-size-7xl: calc(28px * var(--font-scale, 1));
+
+  /* ── Spacing scale ── */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
+  /* ── Border color scale ── */
+  --border-subtle: rgba(112, 118, 147, 0.08);
+  --border-default: rgba(112, 118, 147, 0.14);
+  --border-strong: rgba(112, 118, 147, 0.22);
+  --border-focus: rgba(109, 130, 255, 0.28);
+
+  /* ── Border-radius scale ── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-base: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+
+  /* ── Sidebar surface tokens (v2) ── */
+  --sidebar-card-radius: var(--radius-md);
+  --sidebar-card-pad-block: var(--space-5);
+  --sidebar-card-pad-inline: var(--space-5);
+  --sidebar-card-shell-gap: var(--space-5);
+  --sidebar-card-row-gap: var(--space-2);
+  --sidebar-monogram-size: 32px;
+  --sidebar-monogram-radius: var(--radius-base);
+  --sidebar-monogram-collapsed-size: 40px;
+  --sidebar-collapsed-card-size: 52px;
+  --sidebar-icon-button-size: 28px;
+  --sidebar-action-button-size: 28px;
+  --sidebar-state-approval-color: var(--accent-amber);
+  --sidebar-state-streaming-color: var(--accent);
+
+  /* ── Titlebar / chrome dimensions ── */
+  --titlebar-height: 58px;
+
+  /* ── Top navigation rail tokens (nav overhaul) ── */
+  --toprail-height: 48px;
+  --toprail-pad-inline: var(--space-8);
+  --toprail-gap: var(--space-1);
+  --toprail-bg: var(--mat-chrome-bg);
+  --toprail-border: var(--border-default);
+  --toprail-item-height: 34px;
+  --toprail-item-pad-inline: var(--space-7);
+  --toprail-item-radius: var(--radius-base);
+  --toprail-item-gap: var(--space-4);
+  --toprail-item-font-size: var(--font-size-md);
+  --toprail-item-color: var(--text-muted);
+  --toprail-item-hover-color: var(--text-primary);
+  --toprail-item-hover-bg: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --toprail-item-active-color: var(--text-primary);
+  --toprail-item-active-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+  --toprail-indicator-height: 2px;
+  --toprail-indicator-color: var(--accent);
+  --toprail-icon-size: 18px;
+
+  /* ── Per-view contextual panel tokens (nav overhaul) ── */
+  --view-panel-bg: var(--mat-live-bg);
+  --view-panel-border: var(--mat-live-border);
+  --view-panel-header-pad: var(--space-6);
+  --view-panel-strip-width: 56px;
+  --view-panel-flyout-bg: var(--mat-ephemeral-bg);
+  --view-panel-flyout-border: var(--mat-ephemeral-border);
+  --view-panel-flyout-shadow: var(--shadow-float);
+  --view-panel-flyout-radius: var(--radius-md);
+
+  /* Shared text-rail vocabulary. Chats and Settings keep separate DOM and
+     controller contracts while consuming the same quiet interaction surfaces. */
+  --rail-divider: color-mix(in srgb, var(--border-default) 76%, transparent);
+  --rail-hover-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --rail-selected-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --rail-search-height: 40px;
+  --rail-search-bg: transparent;
+  --rail-search-border: var(--rail-divider);
+  --rail-search-focus-border: color-mix(in srgb, var(--accent) 72%, var(--border-default));
+  --rail-scrollbar-color: var(--widget-scrollbar-color);
+  --rail-item-radius: var(--radius-xs);
+
+  /* ── Compact session row tokens (nav overhaul) ── */
+  --session-row-height: 40px;
+  --session-row-selected-bg: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  --session-row-pad-inline: var(--space-5);
+  --session-row-radius: var(--radius-base);
+  --session-row-gap: var(--space-4);
+  --session-row-dot-size: 6px;
+
+  /* Settings shell tokens — retinted to compose off the canonical app
+     surfaces (card / sidebar / input) so Settings tracks every palette
+     instead of running a parallel hand-tuned vocabulary. The token names
+     and consuming references are kept intact (enforced by
+     tests/appearance-utils.test.js); only the values changed. */
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-accent-glow: color-mix(in srgb, var(--accent) 18%, transparent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-nav-border: color-mix(in srgb, var(--border-default) 76%, transparent);
+  --settings-shell-nav-shadow: var(--shadow-soft);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-masthead-border: color-mix(in srgb, var(--border-default) 76%, transparent);
+  --settings-shell-masthead-shadow: var(--shadow-soft);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-panel-border: color-mix(in srgb, var(--border-default) 76%, transparent);
+  --settings-shell-panel-shadow: var(--shadow-soft);
+  --settings-shell-chip-bg: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --settings-shell-chip-border: color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  --settings-shell-chip-color: var(--text-secondary);
+  --settings-shell-muted-bg: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --settings-shell-muted-border: color-mix(in srgb, var(--border-default) 60%, transparent);
+  --settings-shell-field-bg: var(--surface-input-background);
+  --settings-shell-field-border: color-mix(in srgb, var(--border-default) 70%, transparent);
+  --settings-shell-badge-color: var(--accent);
+  --settings-shell-badge-border: color-mix(in srgb, var(--accent) 18%, transparent);
+  --settings-shell-nav-item-active-bg: var(--rail-selected-bg);
+
+  /* ── Homepage v2 foundation tokens ── */
+
+  /* Semantic state aliases. Components reference --state-* once instead of
+     reinventing fg/bg/border triples per feature file. Mapped onto existing
+     palette so a future light-theme pass only swaps the source tokens. */
+  --state-success: var(--widget-tool-success-color);
+  --state-success-bg: color-mix(in srgb, var(--widget-tool-success-color) 14%, transparent);
+  --state-success-border: color-mix(in srgb, var(--widget-tool-success-color) 38%, transparent);
+  --state-warning: var(--accent-amber);
+  --state-warning-bg: color-mix(in srgb, var(--accent-amber) 14%, transparent);
+  --state-warning-border: color-mix(in srgb, var(--accent-amber) 40%, transparent);
+  --state-danger: var(--text-danger-emphasis);
+  --state-danger-bg: color-mix(in srgb, var(--text-danger-emphasis) 14%, transparent);
+  --state-danger-border: color-mix(in srgb, var(--text-danger-emphasis) 40%, transparent);
+  --state-info: var(--accent-cyan);
+  --state-info-bg: color-mix(in srgb, var(--accent-cyan) 14%, transparent);
+  --state-info-border: color-mix(in srgb, var(--accent-cyan) 40%, transparent);
+  --state-pending: color-mix(in srgb, var(--accent) 60%, var(--text-muted));
+  --state-pending-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+  --state-pending-border: color-mix(in srgb, var(--accent) 32%, transparent);
+  --state-muted: var(--text-muted);
+  /* Washes/tints stay on the decorative token (UIUX-022): brightening the
+     readable muted TEXT must not brighten these background derivations. */
+  --state-muted-bg: color-mix(in srgb, var(--text-decorative) 12%, transparent);
+  --state-muted-border: color-mix(in srgb, var(--text-decorative) 28%, transparent);
+
+  /* Unified status-tone helper variables */
+  --status-fg-info: color-mix(in srgb, var(--state-info) 84%, var(--text-primary));
+  --status-bg-info: var(--state-info-bg);
+  --status-border-info: var(--state-info-border);
+
+  --status-fg-pending: color-mix(in srgb, var(--state-pending) 88%, var(--text-primary));
+  --status-bg-pending: var(--state-pending-bg);
+  --status-border-pending: var(--state-pending-border);
+
+  --status-fg-success: color-mix(in srgb, var(--state-success) 88%, var(--text-primary));
+  --status-bg-success: var(--state-success-bg);
+  --status-border-success: var(--state-success-border);
+
+  --status-fg-warning: color-mix(in srgb, var(--state-warning) 84%, var(--text-primary));
+  --status-bg-warning: var(--state-warning-bg);
+  --status-border-warning: var(--state-warning-border);
+
+  --status-fg-danger: color-mix(in srgb, var(--state-danger) 84%, var(--text-primary));
+  --status-bg-danger: var(--state-danger-bg);
+  --status-border-danger: var(--state-danger-border);
+
+  --status-fg-muted: color-mix(in srgb, var(--state-muted) 90%, var(--text-secondary));
+  --status-bg-muted: var(--state-muted-bg);
+  --status-border-muted: var(--state-muted-border);
+
+  /* Focus-ring aliases. Existing --focus-outline drives the global
+     :focus-visible rule; these names let components opt in explicitly. */
+  --focus-ring-color: var(--focus-outline);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Skeleton placeholder tokens. Shimmer is gated by prefers-reduced-motion
+     in styles/components/skeleton.css. */
+  --skeleton-base: color-mix(in srgb, var(--text-decorative) 12%, var(--surface-input-background));
+  --skeleton-shimmer: color-mix(in srgb, var(--text-decorative) 22%, var(--surface-input-background-strong));
+  --skeleton-duration: 1400ms;
+
+  /* Display font-size aliases for giant home titles. Replace ad-hoc clamp()
+     in views-home-artifacts.css. display-1 = home hero "Today" title,
+     display-2 = next-move title, display-3 = board / panel section heads. */
+  /* Distribute --font-scale across all three clamp arms (including the vw
+     middle arm) so the hero titles honor the text-size preference at every
+     window width, not only when the px arms win the clamp. */
+  --font-size-display-3: clamp(calc(28px * var(--font-scale, 1)), calc(3vw * var(--font-scale, 1)), calc(40px * var(--font-scale, 1)));
+  --font-size-display-2: clamp(calc(32px * var(--font-scale, 1)), calc(3.3vw * var(--font-scale, 1)), calc(48px * var(--font-scale, 1)));
+  --font-size-display-1: clamp(calc(76px * var(--font-scale, 1)), calc(8.8vw * var(--font-scale, 1)), calc(126px * var(--font-scale, 1)));
+
+  font-family: var(--font-family-body);
+}
+
+/* Typography presets remap the mono face alongside body/display so the
+   preference governs every surface, code included. Cascadia Mono is the
+   ligature-free cut of the same superfamily — quieter next to the editorial
+   serif display face; Cascadia Code keeps ligatures for the code-forward
+   technical preset. These blocks outrank the bare `:root` defaults on
+   specificity, so no !important is needed. */
+:root[data-typography="editorial"] {
+  --font-family-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-family-display: "Fraunces", Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --font-family-mono: "Cascadia Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+}
+
+:root[data-typography="technical"] {
+  --font-family-body: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-family-display: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-family-mono: "Cascadia Code", ui-monospace, Consolas, monospace;
+}
+
+/* Chat width = Wide. 8df910a0 deliberately reverted an AUTOMATIC 920px
+   widening at ultra-wide viewports to protect the default reading measure;
+   this is the explicit, opt-in user setting instead, so that guard stands.
+   The width tokens are re-declared here rather than left to inherit from
+   --chat-measure-max on purpose: at (0,2,0) this block outranks the bare
+   `:root` overrides in settings-responsive.css (<=1280px -> 700px) and
+   chat-media-queries.css (>=2000px composer), so Wide wins at every viewport.
+   --chat-measure-fit still clamps, so it can never overflow the window.
+   Do NOT scope this as `:root[data-chat-width="wide"] .chat-view` -- at
+   (0,2,1) it would beat the .chat-view mobile breakpoints and break <=700px. */
+:root[data-chat-width="wide"] {
+  --chat-measure-max: 1100px;
+  --content-column-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  --composer-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  /* 49vw / 810px is the default 34vw / 560px ratio scaled by 1100/760, so the
+     bubble keeps roughly the same proportion of the measure. */
+  --chat-user-bubble-max-width: clamp(410px, 49vw, 810px);
+  --chat-card-max-width: 1100px;
+}
+
+:root[data-motion="calm"] {
+  --motion-duration-fast: 180ms;
+  --motion-duration-regular: 280ms;
+  --motion-duration-emphasis: 420ms;
+  --motion-duration-spin: 1100ms;
+  --motion-duration-pulse-fast: 1250ms;
+  --motion-duration-pulse: 2000ms;
+  --motion-duration-pulse-slow: 3100ms;
+  --motion-duration-sheen: 2300ms;
+  --motion-duration-flash: 750ms;
+  --motion-duration-feedback: 1500ms;
+  --motion-duration-highlight: 3000ms;
+  --motion-stagger: 60ms;
+  --thread-transition-duration: 360ms;
+  --motion-hover-lift: 0px;
+  --holo-duration-idle: 6400ms;
+  --holo-duration-active: 3400ms;
+  --reactive-grid-motion-scale: 0.72;
+  --reactive-grid-idle-amplitude: 0.30;
+}
+
+:root[data-motion="expressive"] {
+  --motion-duration-fast: 120ms;
+  --motion-duration-regular: 180ms;
+  --motion-duration-emphasis: 300ms;
+  --motion-duration-spin: 750ms;
+  --motion-duration-pulse-fast: 850ms;
+  --motion-duration-pulse: 1350ms;
+  --motion-duration-pulse-slow: 2100ms;
+  --motion-duration-sheen: 1450ms;
+  --motion-duration-flash: 500ms;
+  --motion-duration-feedback: 1000ms;
+  --motion-duration-highlight: 2000ms;
+  --motion-stagger: 35ms;
+  --thread-transition-duration: 240ms;
+  --motion-hover-lift: 2px;
+  --holo-duration-idle: 3200ms;
+  --holo-duration-active: 1800ms;
+  --reactive-grid-motion-scale: 1.24;
+  --reactive-grid-idle-amplitude: 0.52;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0ms;
+    --motion-duration-regular: 0ms;
+    --motion-duration-emphasis: 0ms;
+    --motion-duration-spin: 0ms;
+    --motion-duration-pulse-fast: 0ms;
+    --motion-duration-pulse: 0ms;
+    --motion-duration-pulse-slow: 0ms;
+    --motion-duration-sheen: 0ms;
+    --motion-duration-flash: 0ms;
+    --motion-duration-feedback: 0ms;
+    --motion-duration-highlight: 0ms;
+    --motion-stagger: 0ms;
+    --thread-transition-duration: 0ms;
+    --motion-hover-lift: 0px;
+    --holo-duration-idle: 0ms;
+    --holo-duration-active: 0ms;
+    --reactive-grid-motion-scale: 0;
+    --reactive-grid-idle-amplitude: 0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--surface-body-background);
+  color: var(--text-primary);
+  overflow: hidden;
+  user-select: none;
+  font-family: var(--font-family-body);
+}
+
+body {
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-window-height, 100dvh);
+  text-wrap: pretty;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+/* ── Kicker micro-label ── */
+.kicker {
+  display: inline-block;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.15;
+}
+.kicker--md { letter-spacing: var(--tracking-kicker-md); }
+.kicker--accent { color: color-mix(in srgb, var(--accent) 48%, var(--text-secondary)); }
+
+/* ── Keyboard shortcut hint ── */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--widget-token-pill-bg);
+  color: var(--widget-token-pill-color);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  user-select: none;
+}
+
+/* ── Status dot ── */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+.status-dot--ok { background: var(--widget-tool-success-color); }
+.status-dot--warn { background: var(--accent-amber); }
+.status-dot--error { background: var(--text-danger-emphasis); }
+.status-dot--active { background: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan-a-30); }
+.status-dot--pending { background: color-mix(in srgb, var(--accent) 60%, var(--text-muted)); }
+.status-dot--muted { background: var(--text-muted); }
+
+/* ── Hover-lift ── */
+.hover-lift {
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+.hover-lift:hover { transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) {
+  .hover-lift:hover { transform: none; }
+}
+
+/* ── Empty-state / Offered claim (serif register) ── */
+.empty-state-claim {
+  font-family: var(--font-family-emotive);
+  font-style: italic;
+  font-variation-settings: "opsz" 48, "wght" 450;
+  font-size: 1.25rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  letter-spacing: var(--tracking-tight);
+  text-wrap: pretty;
+  max-width: 52ch;
+  margin: 0;
+}
+
+.approved-memory-empty.empty-state-claim,
+.artifacts-empty.empty-state-claim {
+  font-size: 1.25rem;
+  line-height: 1.45;
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-xs);
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  height: var(--app-window-height, 100%);
+  background: var(--surface-shell-background);
+}
+
+.titlebar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-9);
+  min-height: var(--titlebar-height);
+  padding: 0 0 0 var(--space-5);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--mat-chrome-bg);
+  -webkit-app-region: drag;
+}
+
+.titlebar-brand,
+.titlebar-center,
+.titlebar-status {
+  min-width: 0;
+}
+
+.titlebar-brand {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  /* Nudge the "Jenny" home button off the window's left edge for breathing room
+     (this padding lands in the draggable region; the button keeps no-drag). */
+  padding-left: var(--space-9);
+}
+
+/* Left-aligned (not centered) so the pinned-note tab strip begins right after
+   the brand and flows toward the status cluster. */
+.titlebar-center {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  justify-self: start;
+  gap: var(--space-4);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.titlebar-home-link {
+  -webkit-app-region: no-drag;
+  padding: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.titlebar-home-link:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.section-link {
+  -webkit-app-region: no-drag;
+  color: var(--text-link);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* The titlebar wordmark is the brand face, not a generic navigation label.
+   Anastasia ships only at 400, so pin the native weight instead of allowing
+   .section-link to synthesize a heavier Segoe/Anastasia rendering. */
+.section-link.titlebar-home-link {
+  font-family: var(--font-family-brand);
+  font-size: var(--font-size-4xl);
+  letter-spacing: var(--tracking-kicker-lg);
+  font-weight: 400;
+}
+
+.active-link {
+  color: var(--text-active);
+}
+
+.stat-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: var(--space-10);
+  background: var(--border-default);
+}
+
+.titlebar-status {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-8);
+  padding-left: var(--space-9);
+  -webkit-app-region: no-drag;
+}

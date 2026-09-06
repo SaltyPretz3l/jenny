@@ -1,0 +1,164 @@
+/* Horizontal top navigation rail (nav overhaul).
+   The rail row is injected between the titlebar and the status strip and starts
+   `.hidden` until renderer-top-nav-shell.js shows it. The titlebar above it
+   remains the OS drag region; the rail itself must never become draggable. */
+
+.toprail {
+  position: relative;
+  z-index: var(--z-chrome);
+  display: flex;
+  align-items: center;
+  gap: var(--toprail-gap);
+  height: var(--toprail-height);
+  padding: 0 var(--toprail-pad-inline);
+  background: var(--toprail-bg);
+  border-bottom: 1px solid var(--toprail-border);
+  -webkit-app-region: no-drag;
+}
+
+.toprail-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--toprail-gap);
+}
+
+.toprail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-4);
+}
+
+.toprail-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--toprail-item-gap);
+  height: var(--toprail-item-height);
+  padding: 0 var(--toprail-item-pad-inline);
+  border: 0;
+  border-radius: var(--toprail-item-radius);
+  background: transparent;
+  color: var(--toprail-item-color);
+  font-family: inherit;
+  font-size: var(--toprail-item-font-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.toprail-tab:hover {
+  color: var(--toprail-item-hover-color);
+  background: var(--toprail-item-hover-bg);
+}
+
+.toprail-tab:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.toprail-tab[aria-selected="true"] {
+  color: var(--toprail-item-active-color);
+  background: var(--toprail-item-active-bg);
+  font-weight: 700;
+}
+
+/* Per-tab underline fallback; suppressed once the JS sliding indicator owns it. */
+.toprail-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: var(--toprail-item-pad-inline);
+  right: var(--toprail-item-pad-inline);
+  bottom: calc((var(--toprail-item-height) - var(--toprail-height)) / 2);
+  height: var(--toprail-indicator-height);
+  border-radius: var(--radius-pill);
+  background: var(--toprail-indicator-color);
+  pointer-events: none;
+}
+
+.toprail[data-indicator-ready] .toprail-tab[aria-selected="true"]::after {
+  content: none;
+}
+
+.toprail-indicator {
+  position: absolute;
+  /* Anchor at the padding-box origin: offsetLeft is measured from there, so
+     without left:0 the static flex position double-counts the rail padding
+     and the underline lands right of the active tab. */
+  left: 0;
+  bottom: -1px;
+  height: var(--toprail-indicator-height);
+  border-radius: var(--radius-pill);
+  background: var(--toprail-indicator-color);
+  transition:
+    transform var(--motion-duration-regular) var(--motion-ease-emphasis),
+    width var(--motion-duration-regular) var(--motion-ease-emphasis);
+  pointer-events: none;
+}
+
+.toprail-tab__icon {
+  width: var(--toprail-icon-size);
+  height: var(--toprail-icon-size);
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toprail-tab__icon {
+    transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+
+  .toprail-tab:hover .toprail-tab__icon {
+    transform: scale(1.06);
+  }
+}
+
+/* Settings is the system view: float it to the trailing edge. */
+.toprail-tab[data-tab-id="settings"] {
+  margin-left: auto;
+}
+
+/* Narrow widths: Settings rejoins the row, rail scrolls instead of wrapping. */
+@media (max-width: 719px) {
+  .toprail-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toprail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toprail-tab {
+    padding: 0 var(--space-5);
+  }
+
+  .toprail-tab[data-tab-id="settings"] {
+    margin-left: 0;
+  }
+}
+
+/* Very narrow: icon-only tabs; labels stay for screen readers. */
+@media (max-width: 519px) {
+  .toprail-tab__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}

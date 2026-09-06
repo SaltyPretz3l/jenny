@@ -1,0 +1,19 @@
+{
+  "tests/plugins/lifecycle/real-store-e2e.test.js": 300000,
+  "tests/managed-sidecar/managed-sidecar-startup.test.js": 180000,
+  "tests/packaging-launch-probe.test.js": 120000,
+  "tests/main-packaged-smoke.test.js": 120000,
+  "tests/workspace-pty-spawn.test.js": 30000,
+  "tests/renderer-tool-rendering-rich-output.test.js": 300000,
+  "tests/renderer-tool-rendering.test.js": 240000,
+  "tests/renderer-chat-layout-shell.test.js": 300000,
+  "tests/renderer-guidance-shell.test.js": 300000,
+  "tests/renderer-lifecycle-shell.test.js": 300000,
+  "tests/renderer-logs-v2-shell.test.js": 300000,
+  "tests/renderer-send-handoff-shell.test.js": 300000,
+  "tests/renderer-shell.test.js": 300000,
+  "tests/renderer-shell-behavior-regressions.test.js": 300000,
+  "tests/renderer-shell-settings.test.js": 300000,
+  "tests/renderer-shell-settings-appearance.test.js": 300000,
+  "tests/renderer-top-nav-shell.test.js": 300000
+}

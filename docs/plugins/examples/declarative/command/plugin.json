@@ -1,0 +1,30 @@
+{
+  "manifest_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-command",
+  "name": "Example Command",
+  "version": "1.0.0",
+  "contract_versions": {
+    "manifest": 1,
+    "declarative_content": 1,
+    "operation_receipt": 1,
+    "cleanup_state": 1
+  },
+  "contributions": [
+    {
+      "kind": "prompt",
+      "contribution_id": "target_prompt",
+      "name": "Target Prompt",
+      "content_path": "content/target-prompt.json",
+      "content_sha256": "f67b453eece8510723e58bb9a60312a07577d768b4033ad4e56114c6f48e5834"
+    },
+    {
+      "kind": "command",
+      "contribution_id": "run_target_prompt",
+      "name": "Run Target Prompt",
+      "content_path": "content/command.json",
+      "content_sha256": "92631a07908f105183670f92544defbb936dc940ff0e1e756d22d72182928fe7"
+    }
+  ],
+  "requested_permissions": []
+}

@@ -1,0 +1,7 @@
+'use strict';
+const test=require('node:test');const assert=require('node:assert/strict');
+const {compileNativeMcpContributions}=require('../../../services/plugins/native-mcp/contribution-compiler');
+const d=(x)=>x.repeat(64);const authority={active_generation_id:'gen-1',commit_epoch:1};
+function binding(overrides={}){const schema='{}';return {binding_schema_version:6,publisher_id:'acme',plugin_id:'plug',contribution_id:'native',server_id:'server',binding_digest:d('1'),artifact_digest:d('2'),executable_digest:d('3'),active_generation_id:'gen-1',commit_epoch:1,containment_profile_digest:d('4'),tools:[{remote_name:'run',namespaced_name:'plugin_acme_plug_run',description:'Run',schema_digest:require('node:crypto').createHash('sha256').update(schema).digest('hex'),schema_json:schema,side_effecting:false}],...overrides};}
+test('compiler isolates malformed rows and keeps later valid rows',()=>{const result=compileNativeMcpContributions([{bad:true},binding()],authority);assert.equal(result.rejected.length,1);assert.equal(result.accepted.length,1);assert.equal(Object.hasOwn(result.accepted[0],'session_epoch'),false);});
+test('compiler rejects a schema body that does not match its digest',()=>{const invalid=binding();invalid.tools[0].schema_json='{"type":"string"}';const result=compileNativeMcpContributions([invalid,binding()],authority);assert.equal(result.rejected[0].reason,'schema_digest_mismatch');assert.equal(result.accepted.length,1);});

@@ -1,0 +1,666 @@
+/*
+ * Settings v2 — unified field primitive.
+ *
+ * .settings-field is the canonical primitive; .tools-config-field-row remains
+ * the only legacy compatibility family.
+ *
+ * Modifiers:
+ *   --toggle  : label/help on left, control on right (default toggle layout)
+ *   --stacked : label above, control fills width (text inputs, textareas)
+ *   --inline  : compact horizontal row, used in dense toolbars
+ *
+ * State:
+ *   data-state="error" → renders the .settings-field-error slot, tints control
+ *   data-state="busy"  → reduces opacity while a save is in flight
+ */
+.settings-field {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--settings-shell-muted-border);
+  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
+  color: var(--text-primary);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+.settings-field:hover {
+  border-color: color-mix(in srgb, var(--settings-shell-accent) 24%, var(--settings-shell-muted-border));
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--settings-shell-accent) 6%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-field + .settings-field {
+  margin-top: var(--space-4);
+}
+
+.settings-field--toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.settings-field--stacked {
+  grid-template-columns: 1fr;
+}
+
+.settings-field--inline {
+  grid-auto-flow: column;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+}
+
+.settings-field-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.settings-field-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.settings-field-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  max-width: 56ch;
+}
+
+.settings-field-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.settings-field-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--state-danger-bg);
+  border: 1px solid var(--state-danger-border);
+  color: var(--state-danger);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.settings-field[data-state="error"] {
+  border-color: var(--state-danger-border);
+}
+
+.settings-field[data-state="error"] .settings-field-control input,
+.settings-field[data-state="error"] .settings-field-control select,
+.settings-field[data-state="error"] .settings-field-control textarea {
+  border-color: var(--state-danger);
+}
+
+.settings-field[data-state="busy"] {
+  opacity: 0.78;
+  cursor: progress;
+}
+
+.settings-field[data-state="busy"] .settings-field-control {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-field,
+  .tools-config-field-row,
+  .approved-memory-item {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}
+
+.select-shell {
+  display: block;
+  margin-top: var(--space-4);
+}
+
+.select-shell select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--settings-shell-field-border);
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 64%, transparent);
+  color: var(--text-primary);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  outline: none;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select-shell select:hover {
+  border-color: color-mix(in srgb, var(--accent-cyan) 32%, var(--settings-shell-field-border));
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 80%, transparent);
+}
+
+.select-shell select:focus-visible {
+  border-color: var(--accent-cyan) !important;
+  outline: 2px solid var(--settings-shell-accent) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 2px var(--accent-cyan),
+    0 0 8px 4px color-mix(in srgb, var(--accent-cyan) 25%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+}
+
+.tools-config-field-list {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+/* Editor settings section: stacked inventory select/toggle controls. */
+.settings-editor-field-list {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.settings-editor-advanced-fields {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.tools-config-field-row {
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--settings-shell-muted-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tools-config-field-row:hover {
+  border-color: color-mix(in srgb, var(--settings-shell-accent) 24%, var(--settings-shell-muted-border));
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--settings-shell-accent) 6%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.tools-config-field-row .inv-toggle {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--space-6);
+}
+
+.tools-config-field-row .inv-toggle-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.tools-config-field-help {
+  margin-top: var(--space-3);
+}
+
+/* Tools > Approval rules: one row per saved decision, Remove on the right. */
+.tools-approval-rules {
+  margin-top: var(--space-5);
+}
+
+.tools-approval-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-2);
+}
+
+.tools-approval-rule + .tools-approval-rule {
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+}
+
+.tools-approval-rule-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tools-approval-rule-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.tools-approval-rule-detail {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-7);
+}
+
+.approved-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  margin-top: var(--space-8);
+}
+
+.approved-memory-item {
+  padding: var(--space-8);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--settings-shell-muted-border);
+  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.approved-memory-item:hover {
+  border-color: color-mix(in srgb, var(--settings-shell-accent) 24%, var(--settings-shell-muted-border));
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--settings-shell-accent) 6%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.approved-memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+
+.approved-memory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  align-items: center;
+}
+
+.approved-memory-empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+}
+
+.approved-memory-input,
+.approved-memory-textarea {
+  width: 100%;
+  margin-top: var(--space-5);
+  padding: var(--space-6) var(--space-7);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--settings-shell-field-border);
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 64%, transparent);
+  color: var(--text-primary);
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.approved-memory-input {
+  min-height: 38px;
+}
+
+.approved-memory-textarea {
+  min-height: 104px;
+  resize: vertical;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-md);
+  line-height: 1.65;
+}
+
+.approved-memory-input:hover,
+.approved-memory-textarea:hover {
+  border-color: color-mix(in srgb, var(--accent-cyan) 32%, var(--settings-shell-field-border));
+  background: color-mix(in srgb, var(--settings-shell-field-bg) 80%, transparent);
+}
+
+.approved-memory-input:focus-visible,
+.approved-memory-textarea:focus-visible {
+  border-color: var(--accent-cyan) !important;
+  outline: 2px solid var(--settings-shell-accent) !important;
+  outline-offset: 3px !important;
+  box-shadow:
+    0 0 0 2px var(--accent-cyan),
+    0 0 8px 4px color-mix(in srgb, var(--accent-cyan) 25%, transparent),
+    inset 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ── Personality (v3): flat rows, no cards-in-cards, no tabs ─────────────── */
+
+.personality-grid {
+  display: grid;
+  gap: var(--space-7);
+  margin-top: var(--space-8);
+}
+
+.personality-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-6);
+}
+
+.personality-row-label {
+  padding-top: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.personality-row-content {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.personality-note-field .inv-text-field-control {
+  min-height: 9.5em;
+  resize: vertical;
+}
+
+.personality-user-field .inv-text-field-control,
+.personality-notes-field .inv-text-field-control {
+  min-height: 4em;
+  resize: vertical;
+}
+
+.personality-row-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.personality-hint,
+.personality-counter,
+.personality-lint,
+.personality-tokens,
+.personality-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.personality-counter {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.personality-counter--over {
+  color: var(--state-danger);
+}
+
+.personality-lint {
+  margin: 0;
+}
+
+.personality-preset-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.personality-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin-top: var(--space-8);
+  padding-top: var(--space-7);
+  border-top: 1px solid var(--settings-shell-muted-border);
+}
+
+.personality-footer-info {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.personality-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.personality-exact-trigger {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.personality-exact-trigger:focus-visible {
+  outline: 2px solid var(--settings-shell-accent);
+  outline-offset: 3px;
+}
+
+/* Plain text, deliberately: no border, no background, no card. The exact
+   request contribution is evidence, not another surface to decorate. */
+.personality-exact {
+  margin: var(--space-6) 0 0;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+@media (max-width: 720px) {
+  .personality-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .personality-row-label {
+    padding-top: 0;
+  }
+}
+
+/* Settings rows whose switch is labelled by the row's own name: the switch still
+   needs an accessible name, so the built-in label is hidden visually rather than
+   dropped. Same geometry as .sr-only (shell-chrome.css), which the toggle
+   primitive cannot be given directly -- it hardcodes .inv-toggle-label. */
+.plugins-settings-row-toggle .inv-toggle-label,
+.mcp-servers-row-toggle .inv-toggle-label,
+.skills-settings-row-toggle .inv-toggle-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Flat row variant ───────────────────────────────────────────────────── */
+/* settings-field--row is the list idiom the open sections use for select and
+   text controls (.settings-field-row in settings-grid.css), exposed through
+   the settingsField builder so generated rows (Advanced engine tuning) keep
+   the error/busy slots without the per-field card chrome. One hairline
+   between siblings, no border, background, or shadow. */
+.settings-field--row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-7);
+  padding: var(--space-5) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  box-shadow: none;
+}
+
+.settings-field--row + .settings-field--row {
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+  border-radius: 0;
+}
+
+.settings-field--row:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: none;
+}
+
+.settings-field--row .settings-field-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 500;
+}
+
+.settings-field--row .settings-field-help {
+  font-size: var(--font-size-md);
+  max-width: 52ch;
+}
+
+.settings-field--row .settings-field-control {
+  justify-content: flex-end;
+  flex: none;
+}
+
+/* Generated group stack (Advanced engine tuning): groups are siblings inside
+   one host, so the card grid gap does not reach them — give the stack its own
+   rhythm, and pin the unit suffix width so the inputs line up down the column. */
+.settings-tuning-fields {
+  display: grid;
+  gap: var(--space-12);
+}
+
+.settings-tuning-fields .settings-group {
+  min-width: 0;
+}
+
+.settings-tuning-fields .settings-group-heading + .settings-field--row,
+.settings-tuning-fields .settings-group-copy + .settings-field--row {
+  margin-top: var(--space-3);
+}
+
+.settings-tuning-fields .inv-number-input-suffix {
+  min-width: 3.5rem;
+}
+
+/* Advanced engine tuning: the control cell stacks the input row over the
+   quick-pick chips, right-aligned so the inputs still line up down the page.
+   The input is widened past the inventory's 96px so "Auto" and four-digit
+   values with a unit never clip. */
+.settings-tuning-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.settings-tuning-control-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-tuning-fields .settings-field--row {
+  align-items: flex-start;
+  padding-top: var(--space-5);
+  padding-bottom: var(--space-5);
+}
+
+.settings-tuning-fields .settings-field-help {
+  max-width: 58ch;
+}
+
+.settings-tuning-fields .inv-number-input input {
+  width: 7.5rem;
+}
+
+.settings-tuning-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.settings-tuning-presets .settings-tuning-preset {
+  min-height: 24px;
+  padding: 0 var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 80%, transparent);
+  border-radius: var(--radius-pill, 999px);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-tuning-presets .settings-tuning-preset:hover {
+  border-color: color-mix(in srgb, var(--settings-shell-accent) 40%, var(--settings-shell-muted-border));
+  color: var(--text-primary);
+}
+
+.settings-tuning-presets .settings-tuning-preset:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.settings-tuning-presets .settings-tuning-preset.is-pressed {
+  border-color: color-mix(in srgb, var(--settings-shell-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--settings-shell-accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.settings-tuning-presets .settings-tuning-preset:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

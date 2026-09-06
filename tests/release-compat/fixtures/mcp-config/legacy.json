@@ -1,0 +1,6 @@
+{
+  "mcp_sse_enabled": false,
+  "mcp_servers": [
+    { "name": "docs", "transport": "stdio", "command": "node", "args": ["server.js"] }
+  ]
+}

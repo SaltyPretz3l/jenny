@@ -1,0 +1,23 @@
+{
+  "manifest_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-theme-v1",
+  "name": "Example Theme V1",
+  "version": "1.0.0",
+  "contract_versions": {
+    "manifest": 1,
+    "declarative_content": 1,
+    "operation_receipt": 1,
+    "cleanup_state": 1
+  },
+  "contributions": [
+    {
+      "kind": "theme",
+      "contribution_id": "accent_theme",
+      "name": "Accent Theme",
+      "content_path": "content/theme.json",
+      "content_sha256": "504708e932b36b6355d1ec65859c517e0578d4023c6adc4cfa66b5fa62189c42"
+    }
+  ],
+  "requested_permissions": []
+}

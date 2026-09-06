@@ -1,0 +1,613 @@
+/* Home hero: clock, greeting, weather, digest, Ask Jenny line, model trigger, and page menu. */
+
+/* Hero band: the repainted chrome takes the row and the ask block rides at its
+ * right edge. Flex (not grid) so it can wrap onto its own line instead of
+ * squeezing the clock on a narrow shell. */
+.home-info-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* The seam between the chrome and the ask cluster; the gap inside the
+   * cluster steps down one notch from it. */
+  gap: var(--space-5);
+  /* No inline inset — the clock's left edge sits flush with the card grid. */
+  padding: var(--space-6) 0;
+}
+
+/* Chrome = everything the 30s clock repaint rewrites via innerHTML. It keeps
+ * the strip's original flex row so every leaf rule below is unchanged. */
+.home-info-strip__chrome {
+  flex: 1 1 420px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5) var(--space-9);
+  min-width: 0;
+}
+
+/* The Ask line is built once because repainting loses the value and caret. Its
+ * two-row layout uses one underline plus a meta row. */
+.home-info-strip__ask {
+  flex: 0 1 auto;
+  margin-left: auto;
+  width: 100%;
+  max-width: clamp(380px, 32vw, 520px);
+  min-width: 0;
+  position: relative;
+  /* flex-START, not center: the field grows downward once it is multiline, and
+   * centering would drag the page-menu trigger down with it. */
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.home-ask__shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+/* The rule lives on the ROW, not on the control, so it spans the whole block
+ * including the send lane and does not move when the textarea autosizes. */
+.home-ask__field-row {
+  display: flex;
+  align-items: flex-start;
+  min-height: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The rule IS the focus signal - the field carries no outline ring. A bare
+ * --accent-a-30 hairline runs under 3:1 on the light palettes, so the accent is
+ * BLENDED toward --text-primary rather than run at a higher alpha (the
+ * palette-contrast fix, same as the page menu's check mark). */
+.home-info-strip__ask:focus-within .home-ask__field-row {
+  border-bottom-color: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+}
+
+.home-info-strip__ask .inv-text-field {
+  display: block;
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+}
+
+/* LOAD-ORDER TRAP. views-home-setup.css ships an UNSCOPED
+ * `.inv-text-field--multiline .inv-text-field-control { min-height: 64px;
+ * resize: vertical; }` and loads AFTER this sheet at the SAME (0,2,0)
+ * specificity, so two classes here would lose the tiebreak and render the ask
+ * block as a 64px user-resizable box. Every rule touching this control carries
+ * THREE classes and restates what it outranks. Do not shorten these. */
+.home-info-strip__ask .inv-text-field--multiline .inv-text-field-control {
+  width: 100%;
+  min-height: 22px;
+  /* Four lines, then it scrolls itself - nothing is ever truncated. */
+  max-height: calc((1.5em * 4) + 4px);
+  resize: none;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-lg);
+  line-height: 1.5;
+  letter-spacing: normal;
+  overflow-y: auto;
+}
+
+.home-info-strip__ask .inv-text-field--multiline .inv-text-field-control::placeholder {
+  color: var(--text-muted);
+}
+
+.home-info-strip__ask .inv-text-field--multiline .inv-text-field-control:focus,
+.home-info-strip__ask .inv-text-field--multiline .inv-text-field-control:focus-visible {
+  outline: none;
+  border: 0;
+  background: transparent;
+}
+
+/* Sending: the rule holds the focused accent so the block does not visibly
+ * relax while the request is out. */
+.home-info-strip__ask[data-ask-busy="1"] .home-ask__field-row {
+  border-bottom-color: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+}
+
+/* Meta row: model trigger left, hint and send right. Its height is RESERVED at
+ * every state, so revealing either control never shifts Home. */
+.home-ask__meta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 20px;
+  padding-top: var(--space-2);
+}
+
+/* The trigger's host and the panel's anchor. NO transform: a transformed
+ * anchor becomes a stacking context and TRAPS the panel's z-index at the host's
+ * auto level - which is how the sticky rail once painted its scratchpad card
+ * through the open panel (W11.1). Centering is flex, on purpose. */
+.home-ask-config {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+}
+
+/* Information, not a control: legible at rest, with no capsule around it. */
+.home-ask__model {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-ui);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.home-info-strip__ask:focus-within .home-ask__model {
+  color: var(--text-secondary);
+}
+
+.home-ask__model:hover {
+  color: var(--text-primary);
+}
+
+/* Open takes the menu rows' 7% wash, so trigger and panel read as one. */
+.home-ask__model[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.home-ask__model:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent-a-50));
+  outline-offset: 1px;
+}
+
+.home-ask__model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-ask__model-caret {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* The hint and the send share the row's right end. The hint is absolutely
+ * placed so it reserves NO width at rest - the old chip lane's mistake -
+ * leaving the send button as the only in-flow item there. */
+.home-ask__hint {
+  position: absolute;
+  right: 0;
+  display: block;
+  margin: 0;
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    visibility var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Controls appear on demand: only while focused, and only until there is
+ * something to send. */
+.home-info-strip__ask:focus-within .home-ask__hint {
+  opacity: 1;
+  visibility: visible;
+}
+
+.home-info-strip__ask[data-ask-filled="1"] .home-ask__hint {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Reduced motion opts out of the fades, never out of the reveals themselves. */
+@media (prefers-reduced-motion: reduce) {
+  .home-ask__hint {
+    transition: none;
+  }
+
+  .home-ask__field-row,
+  .home-ask__send {
+    transition: none;
+  }
+}
+
+/* The mouse path to submit (F5). Hidden until there is text, but it keeps its
+ * lane in the flow at every state, so revealing it never reflows the row. */
+.home-ask__send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  /* Blended: a bare --accent-a-50 fill drops under 4.5:1 on light palettes. */
+  background: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+  color: var(--bg-base);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    visibility var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.home-info-strip__ask[data-ask-filled="1"] .home-ask__send {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.home-ask__send:hover {
+  background: color-mix(in srgb, var(--accent) 70%, var(--text-primary));
+}
+
+.home-ask__send:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent-a-50));
+  outline-offset: 2px;
+}
+
+/* Busy: occupied, and unclickable - the keydown path ignores Enter too. */
+.home-info-strip__ask[data-ask-busy="1"] .home-ask__send {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* The settings menu - the ONE box in this feature. It hangs below the trigger,
+ * left-aligned to it; nothing inside it is boxed or ruled. */
+.home-ask__panel {
+  left: 0;
+  top: calc(100% + var(--space-3));
+  /* DEFINITE, not a min/max pair. A native <select> is as wide as its WIDEST
+   * option - here full model ids, plus an unbounded "(unavailable: reason)"
+   * tail - and an indefinite panel width let the rows' min-content floor blow
+   * straight past a max-width, which clamps only the PAINTED box: the controls
+   * ended up drawn outside the panel's own border. A real width caps the grid
+   * track and lets the percentages below resolve against something. */
+  width: 320px;
+}
+
+/* minmax(0, 1fr), never a bare auto track: grid items floor at min-content, and
+ * the model select's min-content is its longest option. The min-width: 0 chain
+ * from here down to the control is what lets that select ellipsize inside the
+ * panel instead of overflowing it. */
+.home-ask-config__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+/* A grid item in its own right, so it needs the floor released too. */
+.home-ask-config__effort {
+  min-width: 0;
+}
+
+.home-ask-config__effort[hidden] {
+  display: none;
+}
+
+.home-ask-config__tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  margin-top: var(--space-5);
+}
+
+/* Panel interior: flat label-left / control-right rows - no boxed fields
+ * inside an already-boxed panel. The generic field chrome comes from UNSCOPED
+ * setup-wizard rules in views-home-setup.css; these higher-specificity rules
+ * restate every declaration that look sets, on purpose. */
+.home-ask__panel .inv-select-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 32px;
+  min-width: 0;
+}
+
+.home-ask__panel .inv-select-field-label {
+  flex: none;
+  padding-left: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  letter-spacing: var(--tracking-ui);
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.home-ask__panel .inv-select-field-control {
+  flex: 0 1 auto;
+  width: auto;
+  /* max-width is the CAP; min-width: 0 is what actually lets flex shrink the
+   * select, and overflow/white-space are what make the ellipsis below fire at
+   * all - text-overflow alone is inert without them. */
+  min-width: 0;
+  max-width: 62%;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 4px var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: right;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.home-ask__panel .inv-select-field-control:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.home-ask__panel .inv-select-field-control:focus,
+.home-ask__panel .inv-select-field-control:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent-a-50));
+  outline-offset: 1px;
+}
+
+/* Toggle rows flip to label-left / switch-right (row-reverse: the primitive
+ * emits the track first) and take the selects' hover wash, so the panel reads
+ * as one column of quiet rows. */
+.home-ask-config__toggle {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 28px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-base);
+}
+
+.home-ask-config__toggle:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.home-ask-config__toggle .inv-toggle-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+/* No hairline over the caption: the panel draws exactly one border, its own. */
+.home-ask__panel .inv-popover-footer {
+  margin-top: var(--space-5);
+  padding-top: 0;
+  border-top: 0;
+  line-height: 1.5;
+}
+
+/* Narrow shells: the ask block drops to its own full-width line under the
+ * chrome. The panel keeps `left: 0` at every width - its trigger sits at the
+ * block's LEFT edge now, so there is nothing to override. */
+@media (max-width: 720px) {
+  .home-info-strip__ask {
+    flex-basis: 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+}
+
+.home-info-strip[hidden] {
+  display: none;
+}
+
+/* Hydrates asynchronously — rise in instead of popping into the layout. */
+.home-info-strip {
+  animation: fade-up var(--motion-duration-regular) var(--motion-ease-emphasis);
+}
+
+/* Lead: dominant clock numeral + a stacked greeting/date heading. */
+.home-info-strip__lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  min-width: 0;
+}
+
+.home-info-strip__time {
+  flex: none;
+  color: var(--text-primary);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-display-2);
+  line-height: 1;
+}
+
+.home-info-strip__heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-left: var(--space-7);
+  border-left: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.home-info-strip__greeting {
+  color: var(--text-primary);
+  font-size: var(--font-size-4xl);
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.home-info-strip__date {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xl);
+}
+
+/* Actions: the weather chip, pushed to the right edge. */
+.home-info-strip__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.home-info-strip__weather {
+  color: var(--text-secondary);
+  font-size: var(--font-size-lg);
+}
+
+/* Page menu: the page-level controls (focus mode / edit layout) fold into one
+ * quiet [⋯] trigger on the ask block's own flex line, wearing the 32px
+ * palette-pill idiom — hairline border, pill radius, 4% accent wash. */
+.home-page-menu {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* Matches the field row, so the trigger holds the field's FIRST line. */
+  min-height: 32px;
+}
+
+.home-page-menu__trigger {
+  --btn-min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  color: var(--text-secondary);
+  font-weight: 700;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.home-page-menu__trigger:hover,
+.home-page-menu__trigger[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--accent-a-30);
+  background: var(--accent-a-12);
+}
+
+/* While either mode is ON the trigger stays lit a step PAST hover, so an
+ * active mode survives sitting next to a resting pill that carries a border
+ * and a wash of its own. */
+.home-page-menu__trigger--active {
+  color: var(--text-primary);
+  border-color: var(--accent-a-50);
+  background: var(--accent-a-20);
+}
+
+.home-page-menu__popover {
+  top: calc(100% + var(--space-4));
+  right: 0;
+  min-width: 208px;
+  display: grid;
+  gap: 2px;
+}
+
+/* Flat rows, not boxes: icon + label left, a check when the mode is on. */
+.home-page-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: var(--tracking-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-page-menu__item:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.home-page-menu__item:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent-a-50));
+  outline-offset: -2px;
+}
+
+.home-page-menu__item .home-info-strip__action-icon {
+  color: var(--text-secondary);
+}
+
+.home-page-menu__item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Blend toward text-primary: bare accents run under 4.5:1 on the light
+ * palettes (palette-contrast gotcha), and the check is a state signal. */
+.home-page-menu__item-check {
+  display: inline-flex;
+  flex: none;
+  color: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+}
+
+.home-info-strip__action-icon {
+  display: inline-flex;
+  flex: none;
+  color: currentColor;
+}
+
+.home-info-strip__action-icon svg {
+  display: block;
+}
+
+/* The digest takes its own full line under the lead row (flex-wrap), led by an
+ * accent dot so it reads as a deliberate "up next" glance. Color mixes toward
+ * --text-primary: bare --text-secondary measures 4.36:1 against the paper
+ * palette's base — just under the 4.5:1 contract. */
+.home-info-strip__digest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-basis: 100%;
+  color: color-mix(in srgb, var(--text-secondary) 42%, var(--text-primary));
+  font-size: var(--font-size-lg);
+}
+
+/* Plain "happening now" dot — no glow ring. --home-live-accent keeps its one
+ * job here (this is a live signal, not ambient chrome). */
+.home-info-strip__digest::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--home-live-accent);
+}

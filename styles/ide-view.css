@@ -1,0 +1,1015 @@
+/* styles/ide-view.css — Workspace IDE page (#ideView): editor stage + right-pinned secondary rail.
+ * The rail is side-agnostic: flipping [data-rail-side] on .ide-shell swaps the
+ * grid columns without any JS layout work (future nav-overhaul hook). */
+
+.ide-view {
+  display: flex;
+  min-height: 0;
+}
+
+.ide-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--ide-rail-width, 300px);
+  grid-template-areas: "main rail";
+  background: var(--bg-base);
+}
+
+.ide-shell[data-rail-side="left"] {
+  grid-template-columns: var(--ide-rail-width, 300px) minmax(0, 1fr);
+  grid-template-areas: "rail main";
+}
+
+/* Secondary sidebar: a second static side container pinned OPPOSITE the primary
+ * rail, sized by --ide-secondary-sidebar-width and gated on the
+ * [data-secondary-open] attribute the sidebar module drives on .ide-shell.
+ * rail right (default) -> sidebar on the left; rail left -> sidebar on the right. */
+.ide-shell[data-secondary-open="true"] {
+  grid-template-columns:
+    var(--ide-secondary-sidebar-width, 260px) minmax(0, 1fr) var(--ide-rail-width, 300px);
+  grid-template-areas: "secondary main rail";
+}
+
+.ide-shell[data-rail-side="left"][data-secondary-open="true"] {
+  grid-template-columns:
+    var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-secondary-sidebar-width, 260px);
+  grid-template-areas: "rail main secondary";
+}
+
+.ide-secondary-sidebar {
+  grid-area: secondary;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  /* On the right (rail left) the divider faces the editor on the sidebar's left
+   * edge; on the left (rail right) it faces the editor on the right edge. */
+  border-left: 1px solid var(--line);
+}
+
+.ide-shell[data-rail-side="right"] .ide-secondary-sidebar {
+  border-left: 0;
+  border-right: 1px solid var(--line);
+}
+
+.ide-secondary-sidebar.hidden {
+  display: none;
+}
+
+.ide-secondary-sidebar:not(.hidden) {
+  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* ── Main column: tab strip + editor stage ── */
+
+.ide-main {
+  grid-area: main;
+  /* Positioning context for the floating presentation chip. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-tabstrip {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  min-height: 36px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  background: var(--bg-surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-tabstrip:empty {
+  border-bottom-color: transparent;
+}
+
+.ide-tab {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 220px;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ide-tab--active {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.ide-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 4px 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ide-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ide-tab--preview .ide-tab-name {
+  font-style: italic;
+}
+
+.ide-tab-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  visibility: hidden;
+}
+
+.ide-tab--dirty .ide-tab-dirty-dot {
+  visibility: visible;
+}
+
+.ide-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 6px 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ide-tab:hover .ide-tab-close,
+.ide-tab--active .ide-tab-close,
+.ide-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.ide-tab-close:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-tab-label:focus-visible,
+.ide-tab-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-editor-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Armed only while a file is dragged from the tree over the stage (drop-to-open). */
+.ide-editor-stage--drop-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  z-index: 5;
+}
+
+.ide-editor-host {
+  position: absolute;
+  inset: 0;
+}
+
+.ide-editor-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  padding: 12px 16px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ide-editor-fallback:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* "safe center" keeps the block vertically centred when it fits, but falls
+   * back to flex-start once the welcome content (recent files + the keyboard
+   * cheat-sheet) is taller than the stage — so the title stays reachable from
+   * the scroll origin instead of being clipped above it. */
+  justify-content: safe center;
+  gap: 6px;
+  text-align: center;
+  padding: 24px;
+  /* Scroll the overflow inside the stage rather than letting the centred block
+   * spill over the tabstrip/top bar (above) and the bottom panel (below) on a
+   * short window. */
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.ide-empty-state .page-copy {
+  max-width: 440px;
+}
+
+/* The parent stage is pointer-events:none so an empty editor never eats
+ * clicks; the Choose Folder action must opt back in to stay clickable. */
+.ide-empty-state-action {
+  margin-top: 10px;
+  pointer-events: auto;
+}
+
+/* The Choose-Folder CTAs render on the shared .btn primitive; soften the pill
+ * to a 4px radius so they match the IDE's angular chrome rather than the
+ * app-wide 999px pill. */
+.ide-empty-state-action .btn,
+.ide-tree-choose-root .btn {
+  --btn-radius: 4px;
+}
+
+/* ── Secondary rail (right-pinned): resizer + activity bar + panel ── */
+
+.ide-rail {
+  grid-area: rail;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--line);
+}
+
+.ide-shell[data-rail-side="left"] .ide-rail {
+  border-left: 0;
+  border-right: 1px solid var(--line);
+}
+
+.ide-rail-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.ide-shell[data-rail-side="left"] .ide-rail-resizer {
+  left: auto;
+  right: -3px;
+}
+
+.ide-rail-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-activitybar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The panel tabs scroll horizontally inside this box when the four labels exceed
+ * the rail width, so they never spill out of the rail onto the editor/titlebar.
+ * The trailing flip / secondary-toggle controls are bar siblings OUTSIDE this box,
+ * so they stay pinned and reachable while the tabs scroll under them. */
+.ide-activitybar-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.ide-activitybar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Stage-surface entries (Preview / File Map): a second entry kind in the same
+ * activity strip, separated from the panel tablist by a hairline. The buttons
+ * reuse .ide-activity-button styling; only the group divider is new. Rendered
+ * only while their feature flags are on (flag-off bar stays byte-identical). */
+.ide-stage-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.ide-rail-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* The presentation chip ("Jenny wants to show …") lives in
+ * styles/ide-presentation.css (file-size ceiling); .ide-main above is its
+ * position: relative anchor. */
+
+.ide-rail-placeholder {
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ide-rail-placeholder-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ide-rail-placeholder-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Explorer tree (W3) ── */
+
+.ide-tree {
+  padding: 6px 0;
+  font-size: 12px;
+  user-select: none;
+}
+
+.ide-tree-row {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 8px 3px calc(10px + var(--ide-tree-depth, 0) * 14px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ide-tree-row:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-tree-row--selected,
+.ide-tree-row--selected:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-tree--qol .ide-tree-row--selected,
+.ide-tree--qol .ide-tree-row--selected:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.ide-tree--qol .ide-tree-row--active,
+.ide-tree--qol .ide-tree-row--active:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-tree--qol .ide-tree-row--selected.ide-tree-row--active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ide-tree-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-tree-choose-root {
+  padding: 6px 12px;
+}
+
+.ide-tree-row--directory {
+  color: var(--text-primary);
+}
+
+.ide-tree-twisty {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.ide-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ide-tree-status {
+  padding: 4px 8px 4px calc(22px + var(--ide-tree-depth, 0) * 14px);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+  white-space: normal;
+}
+
+/* Inline create/rename editor row (inventory text-field primitive). */
+.ide-tree-row--edit {
+  cursor: default;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.ide-tree-row--edit:hover {
+  background: transparent;
+}
+
+.ide-tree-edit-field {
+  flex: 1;
+  min-width: 0;
+  display: block;
+}
+
+.ide-tree-edit-field .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ide-tree-edit-field .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Dirty buffer whose file changed on disk: a hollow danger-hued ring (distinct
+ * shape, not just color) keeps it readable next to the filled dirty dot. */
+.ide-tab--stale .ide-tab-dirty-dot {
+  visibility: visible;
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--state-danger);
+}
+
+/* ── Activity bar (W4): rail panel switcher + side flip ── */
+
+/* Activity tabs follow the bottom-panel tab idiom: squared, fill-less, hover =
+   text color only, active = a straight 2px bottom accent bar. The old 4px
+   radius + panel fill turned the inset bar into a rounded pill edge. */
+.ide-activity-button {
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ide-activity-button:hover {
+  color: var(--text-primary);
+}
+
+.ide-activity-button--active {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.ide-rail-flip {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ide-rail-flip:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-activity-button:focus-visible,
+.ide-rail-flip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-rail-resizer:hover {
+  background: var(--line);
+}
+
+/* ── Find-in-files panel (W4) ── */
+
+.ide-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 16px;
+  font-size: 12px;
+}
+
+.ide-search-field {
+  display: block;
+}
+
+.ide-search-field .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ide-search-field .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-search-status {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* Search result-row and replace-action styles live in styles/ide-view-replace.css. */
+
+.ide-search-hit {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ── Diff review surface (W5) ── */
+
+/* Diff review tabs reuse the tab strip; an accent tint marks them read-only. */
+.ide-tab--diff .ide-tab-name {
+  color: var(--accent);
+  font-style: italic;
+}
+
+/* Overlay pane inside #ideEditorHost hosting the reused Monaco diff editor
+   (or the plain-text hunks-summary placeholder when a snapshot is gone). */
+.ide-diff-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--bg-base);
+}
+
+.ide-diff-editor {
+  position: absolute;
+  inset: 0;
+}
+
+.ide-diff-placeholder {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ide-diff-placeholder.nowrap {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* ── Jenny's Changes panel (W5) ── */
+
+.ide-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 10px 16px;
+  font-size: 12px;
+}
+
+.ide-changes-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ide-changes-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 6px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ide-changes-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ide-changes-empty {
+  padding: 8px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ide-changes-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ide-changes-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ide-changes-file-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 10px;
+}
+
+.ide-changes-row {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 4px 3px 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ide-changes-row:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-changes-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-changes-row--disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.ide-changes-row--disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ide-changes-row--unsaved {
+  padding-left: 4px;
+}
+
+.ide-changes-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ide-changes-row-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ide-changes-row-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ide-changes-status {
+  flex-shrink: 0;
+  min-width: 58px;
+  font-size: 11px;
+}
+
+.ide-changes-counts {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+
+.ide-changes-add {
+  color: var(--state-success);
+}
+
+.ide-changes-del {
+  color: var(--state-danger);
+}
+
+.ide-changes-danger-text { color: var(--state-danger); }
+
+.ide-changes-batch-header,
+.ide-changes-batch-actions,
+.ide-recovery-conflict-choices {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ide-changes-batch-actions { margin-left: auto; }
+
+.ide-changes-batch-actions .btn,
+.ide-changes-op-row .btn,
+.ide-recovery-conflict-choices .btn {
+  min-height: 24px; padding: 2px 7px; font-size: 11px;
+}
+
+.ide-changes-batch-detail {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 0 4px 6px 20px; padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px; font-size: 11px; color: var(--text-secondary);
+}
+
+.ide-changes-op-row {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; min-width: 0;
+}
+
+.ide-changes-op-path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; flex: 1;
+}
+
+.ide-changes-outside-undo summary { cursor: pointer; }
+.ide-changes-outside-undo-list {
+  margin: 4px 0 0; padding-left: 18px;
+}
+.ide-recovery-conflict { margin-bottom: 12px; }
+
+.ide-recovery-conflict-path {
+  overflow-wrap: anywhere; font-weight: 600;
+}
+
+.ide-recovery-conflict-choices {
+  flex-wrap: wrap; margin-top: 6px;
+}
+
+.ide-recovery-conflict-choice--selected {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+/* Narrow windows: collapse the rail (and secondary sidebar) under the editor
+ * instead of crushing the columns. */
+@media (max-width: 860px) {
+  /* Closed (or no secondary): single column, rail stacks under the editor. */
+  .ide-shell,
+  .ide-shell[data-rail-side="left"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "rail";
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  /* Open: the secondary sidebar stacks as its own row between editor + rail
+   * (only when open, so a closed sidebar never reserves a `secondary` track). */
+  .ide-shell[data-secondary-open="true"],
+  .ide-shell[data-rail-side="left"][data-secondary-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "secondary" "rail";
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+
+  .ide-rail,
+  .ide-shell[data-rail-side="left"] .ide-rail {
+    border-left: 0;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+    max-height: 40%;
+  }
+
+  .ide-secondary-sidebar,
+  .ide-shell[data-rail-side="right"] .ide-secondary-sidebar {
+    border-left: 0;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+    max-height: 40%;
+  }
+
+  .ide-rail-resizer,
+  .ide-secondary-sidebar-resizer {
+    display: none;
+  }
+}
+
+/* ── Welcome / Start surface (empty editor state) ──
+ * Recent files + keyboard cheat-sheet rendered into #ideEmptyState beneath the
+ * copy/action. The parent stage is pointer-events:none, so the interactive
+ * welcome content must opt back in. */
+.ide-welcome {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 560px;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  text-align: left;
+}
+
+.ide-welcome-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ide-welcome-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary, var(--ink-2, #8a8a8a));
+}
+
+/* Collapsed-by-default shortcut catalog (progressive disclosure — the empty
+   state's primary action must stay above the fold). */
+.ide-welcome-shortcuts > summary.ide-welcome-heading {
+  cursor: pointer;
+  user-select: none;
+}
+.ide-welcome-shortcuts[open] > summary.ide-welcome-heading {
+  margin-bottom: 8px;
+}
+
+.ide-welcome-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ide-welcome-recent-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.ide-welcome-recent-item:hover,
+.ide-welcome-recent-item:focus-visible {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+.ide-welcome-recent-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-welcome-recent-name {
+  font-size: 13px;
+  color: var(--text-primary, var(--ink-1, inherit));
+}
+
+.ide-welcome-recent-dir {
+  font-size: 11px;
+  color: var(--text-secondary, var(--ink-2, #8a8a8a));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-welcome-actions {
+  margin-top: 2px;
+}
+
+/* The cheat-sheet reuses the chat help-overlay catalog classes; trim its
+ * spacing for the denser welcome context. */
+.ide-welcome-shortcuts-body .chat-help-overlay-section {
+  margin-bottom: 10px;
+}
+
+/* ── Dirty-tab close confirm (rendered in the inventory help-overlay body) ── */
+.ide-confirm-message {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.ide-confirm-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 12px;
+  color: var(--text-secondary, var(--ink-2, #8a8a8a));
+}
+
+.ide-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* Statusbar quick-pick popover (.ide-chip-popover / .ide-chip-option) lives in
+ * styles/ide-statusbar-quickpick.css — split out to respect the file-size cap. */

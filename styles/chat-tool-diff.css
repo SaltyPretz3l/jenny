@@ -1,0 +1,167 @@
+/* Unified file diffs for settled and live tool details. */
+
+.file-diff-list { display: grid; gap: var(--space-2); }
+.file-diff { min-width: 0; }
+
+.file-diff-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--tl-row-h);
+  border-radius: var(--tl-radius-control);
+}
+.file-diff-head:hover { background: var(--tl-row-hover); }
+
+.file-diff-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--tl-row-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.file-diff-toggle--static { cursor: default; }
+
+.file-diff-chevron {
+  flex: 0 0 auto;
+  color: var(--text-decorative);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+.file-diff[data-expanded="true"] .file-diff-chevron { transform: rotate(90deg); }
+
+.file-diff-language-dot,
+:is(.chat-bubble-markdown, .tool-result-body) .markdown-code-language::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--lang-dot, var(--tl-status-muted));
+  content: "";
+}
+
+.file-diff-path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--tl-font-code)/1.4 var(--font-family-mono);
+  white-space: nowrap;
+}
+.file-diff-directory {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-decorative);
+  direction: rtl;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+}
+.file-diff-basename { flex: 0 0 auto; color: var(--text-primary); }
+
+.file-diff-counts {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-3);
+  margin-left: auto;
+  font: var(--tl-font-meta)/1.4 var(--font-family-mono);
+}
+.file-diff-count-add { color: var(--tl-status-ok); }
+.file-diff-count-remove { color: var(--tl-status-error); }
+.file-diff-truncated {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+  font-style: italic;
+}
+
+.file-diff-open {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tl-row-h);
+  min-height: var(--tl-row-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-decorative);
+  cursor: pointer;
+}
+.file-diff-open:hover,
+.file-diff-open:focus-visible { color: var(--text-primary); }
+.file-diff-toggle:focus-visible,
+.file-diff-open:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+
+.file-diff-body {
+  padding: var(--space-2) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: var(--tl-radius-panel);
+  background: var(--tl-code-bg);
+  color: var(--widget-tool-code-color);
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-code);
+}
+.file-diff-body[hidden] { display: none; }
+.file-diff-body .diff-line {
+  display: flex;
+  min-width: max-content;
+  line-height: calc(20px * var(--chat-zoom-factor, 1));
+}
+.file-diff-body .diff-line-add { background: color-mix(in srgb, var(--tl-status-ok) 9%, transparent); }
+.file-diff-body .diff-line-remove { background: color-mix(in srgb, var(--tl-status-error) 9%, transparent); }
+.file-diff-body .diff-gutter {
+  flex: 0 0 auto;
+  min-width: 4ch;
+  padding-right: var(--space-3);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+  text-align: right;
+  user-select: none;
+}
+.file-diff-body .diff-marker { flex: 0 0 1.5ch; text-align: center; user-select: none; }
+.file-diff-body .diff-line-add .diff-marker { color: var(--tl-status-ok); }
+.file-diff-body .diff-line-remove .diff-marker { color: var(--tl-status-error); }
+.file-diff-body .diff-line-context .diff-marker { color: transparent; }
+.file-diff-body .diff-content {
+  flex: 1 1 auto;
+  padding-right: var(--space-6);
+  color: var(--widget-tool-code-color);
+  white-space: pre;
+}
+.file-diff-body .diff-line-meta .diff-content { color: var(--text-decorative); }
+.file-diff-body .diff-gap {
+  display: flex;
+  height: 18px;
+  min-width: max-content;
+  align-items: center;
+}
+
+/* The code-review rail remains an independent product surface. */
+.jenny-code-review-affordance {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--widget-tool-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--widget-tool-color);
+  font-size: var(--tl-font-code);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.jenny-code-review-affordance:hover { background: var(--widget-tool-code-bg); }
+.jenny-code-review-affordance:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .file-diff-chevron { transition: none; }
+}

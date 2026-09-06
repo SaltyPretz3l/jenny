@@ -1,0 +1,22 @@
+:root {
+  --tok-default: var(--widget-tool-code-color);
+  --tok-comment: var(--text-decorative);
+  --tok-string: var(--accent-amber);
+  --tok-number: var(--accent-amber);
+  --tok-keyword: var(--accent-primary);
+  --tok-type: var(--accent-cyan);
+  --tok-function: var(--accent-cyan);
+  --tok-delimiter: var(--text-secondary);
+  --tok-invalid: var(--tl-status-error);
+}
+
+.tok { color: var(--tok-default); }
+.tok-default { color: var(--tok-default); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-string { color: var(--tok-string); }
+.tok-number { color: var(--tok-number); }
+.tok-keyword { color: var(--tok-keyword); }
+.tok-type { color: var(--tok-type); }
+.tok-function { color: var(--tok-function); }
+.tok-delimiter { color: var(--tok-delimiter); }
+.tok-invalid { color: var(--tok-invalid); }

@@ -1,0 +1,173 @@
+/* styles/chat-help-overlay-v2.css
+ *
+ * Track E E7 — visual treatment for the `?`-triggered keyboard shortcut
+ * overlay. Owns the scrim, dialog card, and kbd chiclet typography for the
+ * `renderer/inventory/help-overlay.js` primitive when populated with the
+ * chat-side catalog (renderer/chat/renderer-chat-help-overlay.js).
+ *
+ * Sibling cadence mirrors Track D V2 stylesheets — registered in styles.css
+ * after the base inventory css so dialog overrides cascade correctly.
+ *
+ * z-index: derives from the foundation ladder (UIUX-019 -- this was a
+ * hardcoded 9001, above every other managed overlay including the OS
+ * chrome, which let it visually win regardless of the shared overlay
+ * manager's actual stack order). Sits at the same tier as quick-settings
+ * (styles/quick-settings.css, calc(var(--z-overlay) + 6)); DOM append order
+ * (renderer/inventory/help-overlay.js appends once per open(), same as
+ * quick-settings) breaks the same-tier tie in favor of whichever opened
+ * last, which matches the shared manager's stacking order.
+ */
+
+.inv-help-overlay-host {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6, 24px);
+  background: color-mix(in srgb, var(--shell-background, #0b0d11) 78%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: calc(var(--z-overlay) + 6);
+}
+
+.inv-help-overlay-host[hidden] {
+  display: none;
+}
+
+.inv-help-overlay-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - var(--space-8, 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-card-background, #14181f);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan, #4cc7ff) 24%, var(--line, #2a3140));
+  border-radius: var(--radius-4, 16px);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  outline: none;
+  animation: chat-help-overlay-enter var(--motion-duration-fast) var(--motion-ease-emphasis);
+}
+
+@keyframes chat-help-overlay-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.inv-help-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px) var(--space-5, 20px);
+  border-bottom: 1px solid var(--line, #2a3140);
+  background: color-mix(in srgb, var(--accent-cyan, #4cc7ff) 5%, transparent);
+}
+
+.inv-help-overlay-title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--text-primary, #e9eef5);
+  letter-spacing: 0.01em;
+}
+
+.inv-help-overlay-close {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary, #aab3c0);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 var(--space-2, 8px);
+  border-radius: var(--radius-2, 8px);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.inv-help-overlay-close:hover,
+.inv-help-overlay-close:focus-visible {
+  color: var(--text-primary, #e9eef5);
+  background: color-mix(in srgb, var(--accent-cyan, #4cc7ff) 12%, transparent);
+}
+
+.inv-help-overlay-close:focus-visible {
+  outline: 2px solid var(--focus-outline, #4cc7ff);
+  outline-offset: 2px;
+}
+
+.inv-help-overlay-body {
+  overflow-y: auto;
+  padding: var(--space-4, 16px) var(--space-5, 20px) var(--space-5, 20px);
+  color: var(--text-primary, #e9eef5);
+}
+
+.chat-help-overlay-section + .chat-help-overlay-section {
+  margin-top: var(--space-5, 20px);
+}
+
+.chat-help-overlay-section-heading {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #8a93a4);
+}
+
+.chat-help-overlay-list {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  column-gap: var(--space-4, 16px);
+  row-gap: var(--space-2, 8px);
+  margin: 0;
+}
+
+.chat-help-overlay-row {
+  display: contents;
+}
+
+.chat-help-overlay-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.chat-help-overlay-kbd {
+  display: inline-flex;
+  align-items: center;
+  min-width: 22px;
+  padding: 2px 6px;
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary, #e9eef5);
+  background: color-mix(in srgb, var(--accent-cyan, #4cc7ff) 8%, var(--surface-deep, #0e1218));
+  border: 1px solid color-mix(in srgb, var(--accent-cyan, #4cc7ff) 28%, var(--line, #2a3140));
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  justify-content: center;
+}
+
+.chat-help-overlay-plus {
+  margin: 0 2px;
+  color: var(--text-muted, #8a93a4);
+  font-size: var(--font-size-base);
+}
+
+.chat-help-overlay-description {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--text-secondary, #aab3c0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-help-overlay-dialog {
+    animation: none;
+  }
+  .inv-help-overlay-close {
+    transition: none;
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "contract": "PluginSessionProviderDescriptorV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "action": {
+      "type": "object",
+      "required": [
+        "action_id",
+        "name",
+        "requires_exclusive_gpu",
+        "cancel_on_session_leave"
+      ],
+      "max_keys": 4,
+      "additional_properties": "reject",
+      "properties": {
+        "action_id": { "type": "ref", "ref": "bounded_id" },
+        "name": { "type": "ref", "ref": "display_string" },
+        "requires_exclusive_gpu": { "type": "boolean" },
+        "cancel_on_session_leave": { "type": "boolean" }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "descriptor_schema_version",
+      "publisher_id",
+      "plugin_id",
+      "publisher_key_id",
+      "contribution_id",
+      "provider_name",
+      "icon_token",
+      "view_contribution_id",
+      "plugin_version",
+      "state_schema_version",
+      "default_state_json",
+      "artifact_kinds",
+      "actions",
+      "binding_digest",
+      "artifact_digest",
+      "executable_digest",
+      "active_generation_id",
+      "commit_epoch"
+    ],
+    "max_keys": 18,
+    "additional_properties": "reject",
+    "properties": {
+      "descriptor_schema_version": { "type": "const", "value": 1 },
+      "publisher_id": { "type": "ref", "ref": "publisher_id" },
+      "plugin_id": { "type": "ref", "ref": "plugin_id" },
+      "publisher_key_id": { "type": "ref", "ref": "sha256_hex" },
+      "contribution_id": { "type": "ref", "ref": "contribution_id" },
+      "provider_name": { "type": "ref", "ref": "display_string" },
+      "icon_token": { "type": "ref", "ref": "bounded_id" },
+      "view_contribution_id": { "type": "ref", "ref": "contribution_id" },
+      "plugin_version": { "type": "ref", "ref": "semver" },
+      "state_schema_version": { "type": "integer", "minimum": 1, "maximum": 65535 },
+      "default_state_json": { "type": "ref", "ref": "payload_json" },
+      "artifact_kinds": {
+        "type": "array",
+        "max_items": 8,
+        "unique_by": [],
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9_.-]{0,63}$",
+          "max_utf8_bytes": 129
+        }
+      },
+      "actions": {
+        "type": "array",
+        "max_items": 16,
+        "unique_by": ["action_id"],
+        "items": { "type": "ref", "ref": "action" }
+      },
+      "binding_digest": { "type": "ref", "ref": "sha256_hex" },
+      "artifact_digest": { "type": "ref", "ref": "sha256_hex" },
+      "executable_digest": { "type": "ref", "ref": "sha256_hex" },
+      "active_generation_id": { "type": "ref", "ref": "generation_id" },
+      "commit_epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+    }
+  }
+}

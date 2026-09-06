@@ -1,0 +1,601 @@
+.diagnostics-activity {
+  --diagnostics-log-columns: 7.5rem 4.5rem 5.5rem minmax(11rem, 0.8fr) minmax(14rem, 1.3fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 32%);
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: var(--space-6);
+  row-gap: var(--space-5);
+}
+
+.diagnostics-activity:has(.logs-detail-panel[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.diagnostics-toolbar {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: end;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.diagnostics-toolbar > #diagnosticsSearchControl {
+  flex: 0 1 320px;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.diagnostics-toolbar > #diagnosticsLevelControl,
+.diagnostics-toolbar > #diagnosticsSourceControl {
+  flex: 0 0 140px;
+}
+
+.diagnostics-toolbar .inv-text-field,
+.diagnostics-toolbar .inv-select-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.diagnostics-toolbar .logs-search-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.diagnostics-toolbar .logs-search-shell::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: var(--space-5);
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  background: var(--text-muted);
+  -webkit-mask: url("../renderer/inventory/assets/search.svg") center / contain no-repeat;
+  mask: url("../renderer/inventory/assets/search.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+
+.diagnostics-toolbar .logs-search-shell .inv-text-field-control {
+  padding-left: 32px;
+}
+
+.diagnostics-activity .diagnostics-toolbar .inv-select-field-control,
+.diagnostics-activity .diagnostics-toolbar .inv-text-field-control {
+  min-height: 32px;
+}
+
+.diagnostics-toolbar .inv-text-field-control::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.diagnostics-toolbar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-5);
+  margin-left: auto;
+  padding-bottom: 1px;
+  flex: 0 0 auto;
+}
+
+#logResultsLabel {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#logAutoScrollToggle.active {
+  border-color: var(--state-info-border);
+  background: var(--state-info-bg);
+  color: var(--text-primary);
+}
+
+.diagnostics-activity-scope {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--state-info-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-info-bg);
+}
+
+.diagnostics-activity-scope[hidden] {
+  display: none;
+}
+
+.diagnostics-activity-scope > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.diagnostics-activity-scope span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.diagnostics-activity-scope strong,
+.diagnostics-activity-scope small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-activity-scope strong {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-base);
+}
+
+.diagnostics-activity-scope small {
+  color: var(--text-muted);
+}
+
+.diagnostics-activity-layout {
+  display: contents;
+}
+
+.diagnostics-activity-console {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background-strong);
+}
+
+@media (min-width: 1241px) {
+  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) .diagnostics-activity-console {
+    grid-row: 3;
+  }
+}
+
+.diagnostics-log-header,
+.diagnostics-activity .log-entry {
+  display: grid;
+  grid-template-columns: var(--diagnostics-log-columns);
+  align-items: center;
+  column-gap: var(--space-5);
+}
+
+.diagnostics-log-header {
+  min-height: 30px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-toolbar-background);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.diagnostics-activity .log-list {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  background: transparent;
+}
+
+.diagnostics-activity .log-entry {
+  position: relative;
+  min-height: 31px;
+  padding: var(--space-1) var(--space-5);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid var(--border-strong);
+  cursor: default;
+  font-size: var(--font-size-base);
+}
+
+.diagnostics-activity .log-entry:last-child {
+  border-bottom: 0;
+}
+
+.diagnostics-activity .log-entry[data-level="warn"] {
+  border-inline-start-color: var(--state-warning);
+}
+
+.diagnostics-activity .log-entry[data-level="error"] {
+  border-inline-start-color: var(--state-danger);
+}
+
+.diagnostics-activity .log-entry:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.diagnostics-activity .log-entry[aria-selected="true"] {
+  background: var(--state-info-bg);
+}
+
+.diagnostics-activity .log-entry:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.diagnostics-activity .log-entry time,
+.log-entry-level,
+.log-entry-source,
+.log-entry-event,
+.log-entry-message {
+  min-width: 0;
+}
+
+.diagnostics-activity .log-entry time,
+.log-entry-level,
+.log-entry-source,
+.log-entry-event {
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-activity .log-entry time,
+.log-entry-source {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.log-entry-level {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.log-entry[data-level="warn"] .log-entry-level {
+  color: var(--state-warning);
+}
+
+.log-entry[data-level="error"] .log-entry-level {
+  color: var(--state-danger);
+}
+
+.log-entry-event {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.log-entry-message {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logs-detail-panel {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background-strong);
+  scrollbar-gutter: stable;
+}
+
+.logs-detail-panel[hidden] {
+  display: none;
+}
+
+.diagnostics-detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  min-height: 36px;
+  padding: var(--space-3) var(--space-7);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-toolbar-background);
+}
+
+.diagnostics-detail-header > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.diagnostics-detail-header-level {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.diagnostics-detail-header-level[data-level="warn"] {
+  color: var(--state-warning);
+}
+
+.diagnostics-detail-header-level[data-level="error"] {
+  color: var(--state-danger);
+}
+
+.diagnostics-detail-header h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-base);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-detail-header h3 code {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-detail-close-narrow {
+  display: none;
+}
+
+.diagnostics-detail-section {
+  padding: var(--space-4) var(--space-7);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-detail-section:last-child {
+  border-bottom: 0;
+}
+
+.diagnostics-detail-section h4 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.diagnostics-detail-section > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-detail-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.diagnostics-detail-list > div {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.6fr) minmax(0, 1.8fr);
+  gap: var(--space-4);
+}
+
+@media (max-width: 1180px) and (min-width: 981px) {
+  .diagnostics-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .diagnostics-toolbar > #diagnosticsSearchControl {
+    flex: 1 1 280px;
+    max-width: none;
+  }
+
+  .diagnostics-toolbar-meta {
+    flex: 1 1 100%;
+  }
+}
+
+.diagnostics-detail-list dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-detail-list dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-detail-list code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-detail-code {
+  max-width: 100%;
+}
+
+.diagnostics-detail-code.inv-codeblock-wrap {
+  border-radius: var(--radius-xs);
+}
+
+.log-entry-virtualized {
+  min-height: inherit;
+}
+
+@media (max-width: 1120px) {
+  .diagnostics-activity {
+    --diagnostics-log-columns: 7rem 4.25rem 5rem minmax(10rem, 0.8fr) minmax(12rem, 1.2fr);
+  }
+}
+
+@media (max-width: 1240px) {
+  .diagnostics-activity,
+  .diagnostics-activity:has(.logs-detail-panel[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .diagnostics-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .diagnostics-toolbar-meta {
+    flex: 1 1 100%;
+  }
+
+  .diagnostics-activity-layout {
+    display: grid;
+    grid-column: 1;
+    grid-row: 2;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(210px, 0.8fr) minmax(260px, 1.2fr);
+    gap: var(--space-5);
+    min-height: 0;
+  }
+
+  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) .diagnostics-activity-layout {
+    grid-row: 3;
+  }
+
+  .diagnostics-activity-layout:has(.logs-detail-panel[hidden]) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .diagnostics-activity-console {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .diagnostics-activity-layout:has(.logs-detail-panel[hidden]) .diagnostics-activity-console {
+    grid-row: 1;
+  }
+
+  .logs-detail-panel {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .diagnostics-activity {
+    --diagnostics-log-columns: minmax(5.5rem, 0.8fr) minmax(4rem, 0.5fr) minmax(6rem, 1fr);
+  }
+
+  .diagnostics-toolbar > #diagnosticsSearchControl {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .diagnostics-toolbar > #diagnosticsLevelControl,
+  .diagnostics-toolbar > #diagnosticsSourceControl {
+    flex: 1 1 120px;
+  }
+
+  .diagnostics-activity-scope > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .diagnostics-log-header {
+    display: none;
+  }
+
+  .diagnostics-activity-console {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .diagnostics-activity .log-entry {
+    grid-template-columns: var(--diagnostics-log-columns);
+    row-gap: var(--space-5);
+    align-items: start;
+    padding-block: var(--space-6);
+  }
+
+  .diagnostics-activity .log-entry [data-label] {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .diagnostics-activity .log-entry [data-label]::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .log-entry-event {
+    grid-column: 1 / -1;
+  }
+
+  .log-entry-message {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 620px) {
+  .diagnostics-detail-close-wide {
+    display: none;
+  }
+
+  .diagnostics-detail-close-narrow {
+    display: inline;
+  }
+
+  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) .diagnostics-activity-console {
+    display: none;
+  }
+
+  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) .logs-detail-panel {
+    grid-row: 1;
+  }
+}
+
+@media (forced-colors: active) {
+  .diagnostics-activity .log-entry[data-level="warn"],
+  .diagnostics-activity .log-entry[data-level="error"] {
+    border-inline-start-color: CanvasText;
+  }
+
+  .diagnostics-activity .log-entry[aria-selected="true"],
+  .diagnostics-activity-scope {
+    border-color: Highlight;
+  }
+
+  .diagnostics-activity .log-entry:focus-visible {
+    outline-color: Highlight;
+  }
+}

@@ -1,0 +1,224 @@
+{
+  "fixture_id": "streams/incomplete_and_malformed",
+  "schema_version": 1,
+  "description": "Terminal-but-not-failed events, framing-layer tolerance, the EOF-without-terminal-event failure mode, and the bounded ignored-event diagnostics that replaced silent event dropping. Framing itself (line splitting, 'data:' prefix stripping, '[DONE]' sentinel, non-JSON payload skip) is generic SSE transport, not provider-specific.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_response_incomplete_returns_partial_content_instead_of_failing",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_malformed_event_is_ignored_and_eof_before_completion_fails",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_iter_raw_sse_path_handles_crlf_framing",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_unrecognized_event_types_are_counted_not_dropped_silently",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_undecodable_lines_are_counted_separately_from_keepalives",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_ignored_event_type_is_charset_and_length_bounded",
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_ignored_event_type_histogram_is_capped_at_twelve_distinct_types"
+  ],
+  "declarative_verdict": "yes",
+  "notes": "Every behavior here is either a tiny lookup table with a default row (the incomplete-reason mapping) or generic SSE transport tolerance a Jenny-owned generic engine would implement once for every Responses-shaped provider. Unhandled event types are no longer silently dropped: they are counted into a bounded, sanitized histogram alongside undecodable-line and duplicate-call counters, so a provider-side schema change is visible instead of quietly degrading the turn.",
+  "cases": [
+    {
+      "case_id": "incomplete_max_output_tokens_maps_to_length",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.output_text.delta", "delta": "partial answer"},
+          {
+            "type": "response.incomplete",
+            "response": {
+              "incomplete_details": {"reason": "max_output_tokens"},
+              "usage": {"input_tokens": 4, "output_tokens": 2}
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [{"kind": "content", "text": "partial answer"}],
+        "result": {
+          "content": "partial answer",
+          "finish_reason": "length",
+          "usage": {
+            "input_tokens": 4,
+            "output_tokens": 2,
+            "total_tokens": 6,
+            "provider": "chatgpt",
+            "model": "gpt-5.5"
+          }
+        },
+        "diagnostics": {
+          "terminal_event_type": "response.incomplete",
+          "finish_reason": "length",
+          "terminal_text_source": "delta"
+        }
+      },
+      "rule": "response.incomplete is TERMINAL but not a failure: partial content is returned. A missing total_tokens is derived as input+output rather than left at zero."
+    },
+    {
+      "case_id": "incomplete_any_other_reason_maps_to_stop",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.output_text.delta", "delta": "cut"},
+          {
+            "type": "response.incomplete",
+            "response": {"incomplete_details": {"reason": "content_filter"}}
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [{"kind": "content", "text": "cut"}],
+        "result": {"content": "cut", "finish_reason": "stop", "usage": null},
+        "diagnostics": {"terminal_event_type": "response.incomplete", "finish_reason": "stop"}
+      },
+      "rule": "The reason table has exactly one real entry (max_output_tokens -> length) and a 'stop' default for everything else, INCLUDING reasons that sound terminal-and-different such as content_filter."
+    },
+    {
+      "case_id": "non_json_and_keepalive_lines_are_ignored",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          "data: {not-json",
+          "event: ping",
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "", "finish_reason": "stop"},
+        "diagnostics": {
+          "undecodable_line_count": 1,
+          "ignored_event_count": 0,
+          "ignored_event_types": {}
+        }
+      },
+      "rule": "Three things produce no event and only one is diagnostic-worthy: a non-'data:' framing line (keepalive), the [DONE]/blank terminator, and a body that is not a JSON object. Only the last increments undecodable_line_count, so keepalives cannot inflate either counter."
+    },
+    {
+      "case_id": "eof_before_any_terminal_event_fails",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {"sse_lines": ["data: {still-not-json"]},
+      "expect": {
+        "error": {
+          "type": "GenerationError",
+          "message": "[CMP-AI-0005] ChatGPT stream ended before completion"
+        }
+      },
+      "rule": "A stream that ends without response.completed/incomplete/failed is a failure, not an empty answer: silently returning '' would be indistinguishable from a genuinely textless turn."
+    },
+    {
+      "case_id": "crlf_raw_byte_framing_across_arbitrary_chunk_boundaries",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "raw_byte_framing": 9,
+        "sse_lines": [
+          {"type": "response.output_text.delta", "delta": "Hello raw"},
+          {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [{"kind": "content", "text": "Hello raw"}],
+        "result": {"content": "Hello raw", "finish_reason": "stop"},
+        "diagnostics": {"undecodable_line_count": 0, "output_text_delta_count": 1}
+      },
+      "rule": "Exercises the raw-byte iter_raw() path instead of iter_lines(): the same logical lines re-encoded with CRLF terminators and split into two chunks at byte 9 (mid-line) must reassemble identically, so line recovery is chunk-boundary-independent."
+    },
+    {
+      "case_id": "unhandled_event_types_are_counted_not_silently_dropped",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.created"},
+          {"type": "response.output_item.added"},
+          {"type": "response.created"},
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "result": {"content": "", "finish_reason": "stop"},
+        "diagnostics": {
+          "ignored_event_count": 3,
+          "ignored_event_types": {"response.created": 2, "response.output_item.added": 1},
+          "undecodable_line_count": 0
+        }
+      },
+      "rule": "An unrecognized event type still has NO behavioral effect, but it is now counted into a per-type histogram so a provider-side schema change is visible in diagnostics instead of quietly degrading the turn."
+    },
+    {
+      "case_id": "hostile_event_types_are_charset_and_length_bounded",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {
+            "type": "zqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqxzqx"
+          },
+          {"type": "leakyevent\u0007<script>alert"},
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "diagnostics": {"ignored_event_count": 2, "ignored_event_types": {"unsafe": 2}}
+      },
+      "rule": "An event type off the wire is attacker-influenced text, so it is charset (alnum plus '._-') and length (64 chars) gated BEFORE it is counted; anything failing the gate folds into the 'unsafe' sentinel and the raw string never reaches diagnostics."
+    },
+    {
+      "case_id": "histogram_folds_into_an_other_bucket_at_twelve_distinct_types",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.unknown0"},
+          {"type": "response.unknown1"},
+          {"type": "response.unknown2"},
+          {"type": "response.unknown3"},
+          {"type": "response.unknown4"},
+          {"type": "response.unknown5"},
+          {"type": "response.unknown6"},
+          {"type": "response.unknown7"},
+          {"type": "response.unknown8"},
+          {"type": "response.unknown9"},
+          {"type": "response.unknown10"},
+          {"type": "response.unknown11"},
+          {"type": "response.unknown12"},
+          {"type": "response.unknown13"},
+          {"type": "response.completed", "response": {}}
+        ]
+      },
+      "expect": {
+        "stream_items": [],
+        "diagnostics": {
+          "ignored_event_count": 14,
+          "ignored_event_types": {
+            "response.unknown0": 1,
+            "response.unknown1": 1,
+            "response.unknown2": 1,
+            "response.unknown3": 1,
+            "response.unknown4": 1,
+            "response.unknown5": 1,
+            "response.unknown6": 1,
+            "response.unknown7": 1,
+            "response.unknown8": 1,
+            "response.unknown9": 1,
+            "response.unknown10": 1,
+            "other": 3
+          }
+        }
+      },
+      "rule": "The histogram is capped at 12 distinct keys with one slot reserved for the 'other' overflow bucket, and the ignored_event_count total is the authority: folding must never truncate the count, because a truncated histogram reads as 'nothing else happened', the opposite of the signal."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "sse_framing_bounds",
+      "reason": "The 1 MiB per-line and 32 MiB per-stream byte bounds are engine-wide transport constants shared with every other provider, not chatgpt descriptor data. Exercising them here would mean streaming tens of megabytes through a fixture to assert a constant that is owned and tested elsewhere."
+    }
+  ]
+}

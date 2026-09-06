@@ -1,0 +1,144 @@
+/* Workspace Chat Dock session picker. Split from ide-chat-dock.css so the
+ * dock layout and the interactive picker remain independently bounded. */
+.ide-chat-dock-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ide-chat-dock-session-control {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ide-chat-dock-session-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ide-chat-dock-session-trigger:hover,
+.ide-chat-dock-session-trigger:focus-visible,
+.ide-chat-dock-session-trigger[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+.ide-chat-dock-session-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.ide-chat-dock-session-trigger svg {
+  flex: 0 0 auto;
+}
+
+.ide-chat-dock-session-picker.inv-popover {
+  top: calc(100% + var(--space-2));
+  left: 0;
+  width: min(320px, calc(var(--ide-chat-dock-width, 380px) - 20px));
+  max-width: calc(var(--ide-chat-dock-width, 380px) - 20px);
+  padding: var(--space-3);
+}
+
+.ide-chat-dock-session-search {
+  display: block;
+}
+
+.ide-chat-dock-session-search .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.ide-chat-dock-session-search .inv-text-field-control:focus-visible {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.ide-chat-dock-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: min(360px, 50vh);
+  margin-top: var(--space-2);
+  overflow-y: auto;
+}
+
+.ide-chat-dock-session-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ide-chat-dock-session-option:hover,
+.ide-chat-dock-session-option:focus-visible,
+.ide-chat-dock-session-option.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-chat-dock-session-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-chat-dock-session-option:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.ide-chat-dock-session-option-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-chat-dock-session-check {
+  flex: 0 0 14px;
+  color: var(--accent);
+  text-align: center;
+}
+
+.ide-chat-dock-session-empty,
+.ide-chat-dock-session-status {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.ide-chat-dock-session-status {
+  padding-bottom: 0;
+  text-align: right;
+}

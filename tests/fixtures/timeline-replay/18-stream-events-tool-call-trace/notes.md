@@ -1,0 +1,1 @@
+A normal tool call that succeeds: the stream-events replay (started -> tool_use(running) -> tool_result) reduces to a tool_call + tool_result provisional pair that reconciles against the hydrated trace projection with no stale rows (the D1 trace-parity reflow witness).

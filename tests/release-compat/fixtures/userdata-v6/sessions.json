@@ -1,0 +1,36 @@
+{
+  "schema_version": 5,
+  "sessions": {
+    "sess_v6_legacy": {
+      "id": "sess_v6_legacy",
+      "title": "v6 legacy session with assistant status=error rows",
+      "session_type": "chat",
+      "created_at": "2025-12-05T12:00:00.000Z",
+      "updated_at": "2025-12-05T12:20:00.000Z",
+      "message_count": 2,
+      "last_message_preview": "",
+      "last_model_used": "qwen2.5-coder:14b",
+      "linked_session_ids": [],
+      "messages": [
+        {
+          "id": "msg_v6_user",
+          "role": "user",
+          "content": "please run the privileged operation",
+          "kind": "user_prompt",
+          "created_at": "2025-12-05T12:00:00.000Z"
+        },
+        {
+          "id": "msg_v6_assistant_error",
+          "role": "assistant",
+          "content": "approval was denied",
+          "kind": "assistant_text",
+          "status": "error",
+          "category": "denied",
+          "stream_error": "approval denied by user",
+          "created_at": "2025-12-05T12:01:00.000Z"
+        }
+      ],
+      "turn_events": []
+    }
+  }
+}

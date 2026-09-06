@@ -1,0 +1,53 @@
+[
+  {
+    "payload": {
+      "type": "started",
+      "streamId": "stream_07"
+    },
+    "context": {
+      "turn_id": "stream_07",
+      "event_id": "stream_07:started:0",
+      "primary_user_message_id": "user_stream_07",
+      "primary_assistant_message_id": "assistant_stream_07",
+      "sort_key": [0, 0, 0]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_07",
+      "callId": "call_07",
+      "toolName": "Shell",
+      "status": "error",
+      "summary": "Invalid args"
+    },
+    "context": {
+      "turn_id": "stream_07",
+      "event_id": "stream_07:tool_use:0",
+      "primary_user_message_id": "user_stream_07",
+      "primary_tool_message_id": "tool_use_stream_07",
+      "tool_result_message_id": "tool_result_stream_07",
+      "sort_key": [1, 0, 40]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_result",
+      "streamId": "stream_07",
+      "callId": "call_07",
+      "toolName": "Shell",
+      "summary": "",
+      "content": "Invalid arguments",
+      "isError": true,
+      "errorCode": "CMP-ARGS-0001"
+    },
+    "context": {
+      "turn_id": "stream_07",
+      "event_id": "stream_07:tool_result:0",
+      "primary_user_message_id": "user_stream_07",
+      "primary_tool_message_id": "tool_use_stream_07",
+      "tool_result_message_id": "tool_result_stream_07",
+      "sort_key": [1, 1, 50]
+    }
+  }
+]

@@ -1,0 +1,388 @@
+:root[data-palette="darkroom"] {
+  color-scheme: dark;
+
+  /* ── Base palette ── matte warm-neutral near-black; a quiet value ladder reads panels without any navy/cyan cast ── */
+  --bg-base: #161517;
+  --bg-surface: #201f23;
+  --bg-surface-2: #2b2a30;
+  --bg-sidebar: #121113;
+  --bg-panel: #121113;
+  --line: rgba(176, 172, 184, 0.11);
+  --line-strong: rgba(188, 184, 196, 0.22);
+
+  /* ── Text ── warm chalk ramp on matte black; chalk-white primary holds the contrast ── */
+  --text-primary: #f0efea;
+  --text-secondary: #b4b1bb;
+  --text-muted: #95929b; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #77747e;
+  --text-bright: #faf9f5;
+  --text-accent-soft: color-mix(in srgb, #9c8fbe 52%, var(--text-primary));
+  --text-danger-soft: #e6a6ae;
+  --text-success-soft: #a9c8a6;
+  --text-danger-emphasis: #e2939d;
+  --status-gradient-end: #c9a96a;
+
+  /* ── Accents — a single muted lavender owns chrome; the matte canvas never gets a color wash ── */
+  --accent: #9c8fbe;
+  --accent-primary: var(--accent);
+  --accent-strong: #b3a6d4;
+  --accent-cyan: #9c8fbe; /* "live" signal reuses the lavender — keeps the theme near-monochrome (no electric cyan) */
+  --accent-amber: #c9a96a;
+
+  /* ── Holo palette — quiet dusk tones on matte, never neon ── */
+  --holo-periwinkle: #8f9bd0;
+  --holo-lavender: #b39ddb;
+  --holo-pink: #c79ec4;
+  --holo-cyan: #8fb3c4;
+
+  /* ── Syntax tokens — muted ink set read by the Monaco theme bridge (bare hex, scoped to Darkroom) ── */
+  --syntax-keyword: #b3a6d4;
+  --syntax-string: #a9c8a6;
+  --syntax-comment: #6f6c78;
+  --syntax-number: #c9a96a;
+  --syntax-function: #d8cfa0;
+  --syntax-type: #9fb8c4;
+  --syntax-variable: #d3d0db;
+  --syntax-constant: #c79ec4;
+
+  /* ── Context weave — chalk-grey thread on matte ── */
+  --widget-context-weave-line-color: rgba(178, 172, 168, 0.38);
+  --widget-context-weave-spacing: 104;
+  --widget-context-weave-pointer-radius: 145;
+  --widget-context-weave-interlace: 3;
+  --widget-context-weave-weft-alpha: 0.7;
+  --widget-context-weave-lit-gain: 3;
+  --widget-context-weave-density: 0.90;
+
+  /* ── Atomic burst — chalk / lavender dust ── */
+  --widget-atomic-burst-color-a: rgba(240, 239, 234, 0.66);
+  --widget-atomic-burst-color-b: rgba(179, 166, 212, 0.60);
+  --widget-atomic-burst-color-c: rgba(199, 158, 196, 0.52);
+  --widget-atomic-burst-flare-color: rgba(245, 244, 239, 0.92);
+  --widget-atomic-burst-link-color: rgba(176, 172, 184, 0.50);
+  --widget-atomic-burst-wave-color: rgba(156, 143, 190, 0.70);
+  --widget-atomic-burst-size: 28;
+  --widget-atomic-burst-density: 9.2;
+
+  /* ── Circuit trace — faint chalk grid with lavender trace heads ── */
+  --widget-circuit-trace-grid-color: rgba(176, 172, 184, 0.10);
+  --widget-circuit-trace-line-color: rgba(179, 166, 212, 0.90);
+  --widget-circuit-trace-glow-color: rgba(156, 143, 190, 0.80);
+  --widget-circuit-trace-accent-color: rgba(201, 169, 106, 0.80);
+  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-density: 1.0;
+
+  /* ── Reactive grid: achromatic idle, muted lavender active ── */
+  --widget-reactive-grid-dot-idle: rgba(176, 172, 184, 0.20);
+  --widget-reactive-grid-dot-active: rgba(179, 166, 212, 0.92);
+  --widget-reactive-grid-dot-glow: rgba(156, 143, 190, 0.42);
+
+  /* ── Playlist scroll ── */
+  --playlist-scroll-line-color: rgba(176, 172, 184, 0.5);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.04;
+  --playlist-scroll-ghost-color: rgba(176, 172, 184, 0.18);
+  --playlist-scroll-pad-color: rgba(184, 180, 192, 0.05);
+  --playlist-scroll-accent-color: rgba(156, 143, 190, 0.48);
+
+  /* ── Shadows — deep true-black; a lavender hairline only at the top elevation ── */
+  --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.60);
+  --shadow-accent: 0 12px 26px rgba(156, 143, 190, 0.20);
+  --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 0 0 1px rgba(188, 184, 196, 0.10);
+  --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 0 1px rgba(188, 184, 196, 0.11);
+  --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 0 1px rgba(156, 143, 190, 0.12);
+
+  /* ── Borders — neutral charcoal seams (not lavender); lavender reserved for focus ── */
+  --border-subtle: rgba(176, 172, 184, 0.08);
+  --border-default: rgba(176, 172, 184, 0.14);
+  --border-strong: rgba(188, 184, 196, 0.26);
+  --border-focus: rgba(156, 143, 190, 0.45);
+  --focus-outline: rgba(179, 166, 212, 0.60);
+
+  /* ── Surface backgrounds — matte black; only a faint neutral sheen carries depth (no color bath) ── */
+  --surface-body-background:
+    radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.022), rgba(22, 21, 23, 0) 30%),
+    radial-gradient(circle at 82% 86%, rgba(255, 255, 255, 0.014), rgba(22, 21, 23, 0) 28%),
+    linear-gradient(180deg, #1a191c, #121113 84%);
+
+  --surface-shell-background:
+    linear-gradient(180deg, rgba(32, 31, 35, 0.98), rgba(22, 21, 23, 0.98)),
+    var(--bg-base);
+
+  --surface-titlebar-background:
+    linear-gradient(90deg, rgba(30, 29, 33, 0.98), rgba(20, 19, 22, 0.98));
+
+  --surface-sidebar-background:
+    linear-gradient(180deg, rgba(26, 25, 29, 0.98), rgba(18, 17, 19, 0.98)),
+    var(--bg-sidebar);
+
+  --surface-main-stage-background:
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.022), rgba(22, 21, 24, 0) 28%),
+    radial-gradient(circle at 78% 84%, rgba(255, 255, 255, 0.014), rgba(22, 21, 24, 0) 26%),
+    linear-gradient(180deg, #1d1c20, #161517 80%);
+
+  --surface-main-stage-overlay:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 82%, rgba(255, 255, 255, 0.018)),
+    radial-gradient(circle at 50% 66%, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0) 36%);
+
+  --surface-main-stage-glow:
+    radial-gradient(circle at 50% 55%, rgba(255, 255, 255, 0.018), rgba(22, 21, 23, 0) 22%),
+    radial-gradient(circle at 50% 96%, rgba(255, 255, 255, 0.014), rgba(22, 21, 23, 0) 18%);
+
+  --surface-card-background:
+    linear-gradient(180deg, rgba(32, 31, 35, 0.92), rgba(25, 24, 28, 0.96)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.022), transparent 58%);
+
+  --surface-input-background: rgba(19, 18, 21, 0.92);
+  --surface-input-background-strong: rgba(14, 13, 16, 0.78);
+  --surface-toolbar-background: rgba(25, 24, 27, 0.88);
+
+  --surface-prompt-chip-background: rgba(255, 255, 255, 0.035);
+  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.055);
+  --surface-prompt-chip-border: rgba(176, 172, 184, 0.16);
+  --surface-prompt-chip-border-hover: rgba(156, 143, 190, 0.34);
+
+  --surface-assistant-sprite-background:
+    radial-gradient(circle at 32% 28%, rgba(236, 231, 246, 0.18), rgba(236, 231, 246, 0) 42%),
+    linear-gradient(180deg, rgba(34, 33, 38, 0.97), rgba(23, 22, 26, 0.98));
+  --surface-assistant-sprite-border: rgba(156, 143, 190, 0.30);
+  --surface-assistant-sprite-holo:
+    rgba(199, 158, 196, 0.92) 0deg,
+    rgba(179, 166, 212, 0.92) 90deg,
+    rgba(201, 169, 106, 0.90) 180deg,
+    rgba(143, 179, 196, 0.90) 270deg,
+    rgba(199, 158, 196, 0.92) 360deg;
+
+  --surface-interactive-card-background:
+    linear-gradient(180deg, rgba(32, 31, 35, 0.96), rgba(19, 18, 21, 0.96)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.022), transparent 48%);
+
+  --surface-notice-background:
+    linear-gradient(180deg, rgba(46, 40, 22, 0.70), rgba(30, 26, 12, 0.70)),
+    rgba(24, 20, 10, 0.66);
+
+  --surface-composer-inner:
+    linear-gradient(180deg, rgba(32, 31, 35, 0.94), rgba(23, 22, 26, 0.97)),
+    rgba(23, 22, 26, 0.94);
+  --surface-composer-signal-background: rgba(23, 22, 26, 0.78);
+  --surface-composer-mode-background: rgba(23, 22, 26, 0.72);
+
+  --surface-user-bubble-background:
+    linear-gradient(180deg, rgba(38, 37, 42, 0.96), rgba(28, 27, 31, 0.98));
+
+  --surface-auth-overlay: rgba(8, 7, 9, 0.80);
+  --surface-auth-card: linear-gradient(180deg, rgba(32, 31, 35, 0.98), rgba(23, 22, 26, 0.98));
+
+  --surface-popover-background: linear-gradient(180deg, rgba(33, 32, 37, 0.98), rgba(24, 23, 27, 0.98));
+  --surface-popover-row: rgba(52, 50, 58, 0.46);
+  --surface-popover-row-hover: rgba(66, 64, 73, 0.58);
+
+  --surface-dev-row-background: rgba(32, 31, 35, 0.5);
+  --surface-dev-row-border: rgba(156, 143, 190, 0.16);
+
+  /* ── Material hierarchy ── */
+  --mat-chrome-bg: linear-gradient(90deg, rgba(30, 29, 33, 0.98), rgba(20, 19, 22, 0.98));
+  --mat-chrome-border: rgba(176, 172, 184, 0.10);
+  --mat-chrome-text: var(--text-secondary);
+  --mat-chrome-accent: var(--text-primary);
+  --mat-work-bg:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.018), rgba(22, 21, 24, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(255, 255, 255, 0.013), rgba(22, 21, 24, 0) 28%),
+    #1b1a1e;
+  --mat-work-border: var(--border-default);
+  --mat-work-text: var(--text-primary);
+  --mat-work-accent: var(--text-secondary);
+  --mat-live-bg: var(--surface-sidebar-background);
+  --mat-live-accent: var(--accent-cyan);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
+  --mat-live-text: var(--text-primary);
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-text: var(--text-primary);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.48),
+    0 2px 6px rgba(0, 0, 0, 0.32);
+
+  /* ── Widget tokens ── */
+
+  /* Buttons — lavender primary, ink text */
+  --widget-button-primary-bg: linear-gradient(180deg, #b3a6d4, #9c8fbe);
+  --widget-button-primary-color: #161318;
+  --widget-button-primary-shadow: rgba(156, 143, 190, 0.34);
+  --widget-button-secondary-bg: rgba(32, 31, 35, 0.94);
+  --widget-button-secondary-border: rgba(176, 172, 184, 0.20);
+  --widget-button-secondary-color: #dddbe0;
+  --widget-button-danger-bg: rgba(224, 140, 150, 0.14);
+  --widget-button-danger-border: rgba(224, 140, 150, 0.28);
+  --widget-button-danger-color: #e6a6ae;
+  --widget-button-session-bg: linear-gradient(180deg, #d8bd86, #c9a96a);
+  --widget-button-session-color: #241c08;
+  --widget-close-hover-bg: #a85656;
+  --widget-hero-avatar-bg: linear-gradient(180deg, #b3a6d4, #9c8fbe);
+
+  /* Sidebar & item states */
+  --widget-item-active-bg: linear-gradient(180deg, rgba(156, 143, 190, 0.16), rgba(156, 143, 190, 0.04));
+  --widget-item-active-border: rgba(156, 143, 190, 0.26);
+  --widget-badge-bg: rgba(255, 255, 255, 0.04);
+  --widget-badge-border: rgba(176, 172, 184, 0.10);
+  --widget-badge-color: #b4b1bb;
+  --widget-badge-secondary-color: #77747e;
+  --widget-action-color: #b4b1bb;
+  --widget-action-bg: rgba(255, 255, 255, 0.04);
+  --widget-action-border: rgba(176, 172, 184, 0.14);
+  --widget-action-hover-bg: rgba(156, 143, 190, 0.14);
+  --widget-action-hover-border: rgba(156, 143, 190, 0.32);
+  --widget-action-hover-color: #faf9f5;
+  --widget-action-delete-hover-bg: rgba(224, 140, 150, 0.14);
+  --widget-action-delete-hover-border: rgba(224, 140, 150, 0.28);
+  --widget-action-delete-hover-color: #e6a6ae;
+  --widget-scrollbar-color: rgba(176, 172, 184, 0.28);
+  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(156, 143, 190, 0.20), rgba(179, 166, 212, 0.24));
+  --widget-collapsed-item-color: #161318;
+  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(179, 166, 212, 0.92), rgba(156, 143, 190, 0.90));
+
+  /* Chat & copy */
+  --widget-chat-meta-color: #77747e;
+  --widget-chat-meta-error-color: #e6a6ae;
+  --widget-copy-chip-bg: linear-gradient(180deg, rgba(32, 31, 35, 0.98), rgba(23, 22, 26, 0.98));
+  --widget-copy-chip-border: rgba(176, 172, 184, 0.22);
+  --widget-copy-chip-color: #dddbe0;
+
+
+  /* Sprite streaming — lavender live signal */
+  --widget-sprite-color: rgba(231, 229, 234, 0.94);
+  --widget-sprite-streaming-border: rgba(156, 143, 190, 0.36);
+  --widget-sprite-streaming-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.42),
+    0 12px 30px rgba(156, 143, 190, 0.14),
+    0 0 22px rgba(156, 143, 190, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* Home orbit */
+  --widget-face-glow-color: var(--accent-cyan);
+  --widget-face-shine-color: rgba(236, 231, 246, 0.84);
+  --widget-face-aura-primary: rgba(156, 143, 190, 0.14);
+  --widget-face-aura-secondary: rgba(176, 172, 184, 0.10);
+  /* Tool calls — running + approval light lavender */
+  --widget-tool-bg:
+    linear-gradient(180deg, rgba(32, 31, 35, 0.84), rgba(23, 22, 26, 0.92)),
+    radial-gradient(circle at left center, rgba(255, 255, 255, 0.018), transparent 55%);
+  --widget-tool-border: rgba(176, 172, 184, 0.20);
+  --widget-tool-pending-border: rgba(201, 169, 106, 0.36);
+  --widget-tool-running-border: rgba(156, 143, 190, 0.36);
+  --widget-tool-error-border: rgba(224, 140, 150, 0.30);
+  --widget-tool-color: #dddbe0;
+  --widget-tool-name-color: #faf9f5;
+  --widget-tool-success-color: rgba(169, 200, 166, 0.92);
+  --widget-tool-error-color: rgba(230, 166, 174, 0.9);
+  --widget-tool-denied-color: rgba(140, 138, 148, 0.7);
+  --widget-tool-code-bg: rgba(0, 0, 0, 0.34);
+  --widget-tool-code-color: rgba(214, 213, 218, 0.88);
+  --widget-approve-bg: linear-gradient(180deg, rgba(179, 166, 212, 0.84), rgba(156, 143, 190, 0.90));
+  --widget-approve-border: rgba(195, 182, 224, 0.34);
+  --widget-approve-color: #161318;
+  --widget-approve-hover-border: rgba(195, 182, 224, 0.48);
+  --widget-deny-bg: rgba(32, 31, 35, 0.74);
+  --widget-deny-border: rgba(176, 172, 184, 0.22);
+  --widget-deny-color: rgba(231, 229, 234, 0.84);
+
+
+  /* Composer — send pops lavender */
+  --widget-placeholder-color: #63616b;
+  --widget-placeholder-focus-color: #b4b1bb;
+  --widget-composer-mode-active-bg: rgba(156, 143, 190, 0.20);
+  --widget-send-bg: linear-gradient(180deg, #b3a6d4, #9c8fbe);
+  --widget-send-border: rgba(156, 143, 190, 0.40);
+  --widget-send-color: #161318;
+  --widget-send-hover-bg: linear-gradient(180deg, #c3b6e0, #b3a6d4);
+  --widget-send-hover-color: #161318;
+  --widget-composer-signal-border: rgba(176, 172, 184, 0.20);
+  --widget-select-caret-color: #77747e;
+  --widget-select-hover-color: #faf9f5;
+  --widget-select-option-bg: var(--bg-surface);
+  --widget-select-option-color: #dddbe0;
+  --widget-composer-meta-color: #63616b;
+  --widget-composer-scrollbar-color: rgba(176, 172, 184, 0.50);
+  --widget-token-pill-bg: rgba(32, 31, 35, 0.66);
+  --widget-token-pill-color: #b4b1bb;
+  --widget-jump-color: rgba(188, 184, 192, 0.84);
+  --widget-jump-hover-color: #faf9f5;
+
+  /* Interactive mode — lavender for active selection */
+  --widget-interactive-card-border: rgba(176, 172, 184, 0.24);
+  --widget-interactive-pending-border: rgba(156, 143, 190, 0.34);
+  --widget-interactive-intro-color: rgba(231, 229, 234, 0.92);
+  --widget-interactive-option-bg: rgba(32, 31, 35, 0.36);
+  --widget-interactive-option-border: rgba(176, 172, 184, 0.18);
+  --widget-interactive-option-color: rgba(231, 229, 234, 0.92);
+  --widget-interactive-option-hover-bg: rgba(44, 43, 49, 0.52);
+  --widget-interactive-option-hover-border: rgba(176, 172, 184, 0.36);
+  --widget-interactive-option-selected-bg: rgba(156, 143, 190, 0.28);
+  --widget-interactive-option-selected-border: rgba(179, 166, 212, 0.50);
+  --widget-interactive-option-selected-color: #161318;
+  --widget-interactive-input-bg: rgba(19, 18, 21, 0.88);
+  --widget-interactive-input-color: rgba(243, 242, 246, 0.94);
+  --widget-interactive-label-color: rgba(152, 150, 158, 0.86);
+  --widget-interactive-prompt-color: rgba(243, 242, 246, 0.94);
+  --widget-interactive-note-color: rgba(168, 166, 176, 0.74);
+  --widget-interactive-disabled-color: rgba(152, 150, 158, 0.5);
+  --widget-input-focus-border: rgba(156, 143, 190, 0.45);
+  --widget-input-focus-glow: rgba(156, 143, 190, 0.22);
+
+  /* Settings shell — lavender accents */
+  --widget-settings-badge-bg: rgba(156, 143, 190, 0.20);
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+
+  /* Personality */
+  --widget-personality-preview-color: rgba(224, 222, 228, 0.92);
+
+  /* Mermaid */
+
+  /* Artifact focus */
+  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+
+  /* Activity states */
+  --widget-activity-pending-glow: rgba(156, 143, 190, 0.12);
+  --widget-activity-pending-border: rgba(156, 143, 190, 0.50);
+  --widget-activity-pending-color: #c3b6e0;
+  --widget-activity-success-color: rgba(169, 200, 166, 0.92);
+  --widget-activity-error-color: #e6a6ae;
+  --widget-activity-pulse-color: rgba(156, 143, 190, 0.16);
+
+  /* Attachments */
+  --widget-attachment-bg: rgba(32, 31, 35, 0.88);
+  --widget-attachment-border: rgba(176, 172, 184, 0.18);
+  --widget-attachment-color: #dddbe0;
+  --widget-attachment-meta-color: #77747e;
+  --widget-attachment-remove-color: #b4b1bb;
+  --widget-attachment-clear-color: #77747e;
+
+  /* Popover badge & stop */
+  --widget-popover-badge-active-bg: rgba(201, 169, 106, 0.20);
+  --widget-popover-badge-active-color: #c9a96a;
+  --widget-stop-bg: rgba(224, 140, 150, 0.16);
+  --widget-stop-color: #e6a6ae;
+
+  /* Composer holo draw — restrained dusk iridescence, not vivid rainbow */
+  --composer-holo-opacity-active: 0.55;
+  --composer-holo-opacity-streaming: 0.48;
+  --composer-holo-draw-glow-alpha-scale: 1.4;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-palette="darkroom"] .composer { background: rgba(32, 31, 35, 0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-palette="darkroom"] .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  :root[data-palette="darkroom"] .composer { background: rgba(32, 31, 35, 0.97); }
+}

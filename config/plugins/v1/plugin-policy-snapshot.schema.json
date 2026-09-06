@@ -1,0 +1,174 @@
+{
+  "contract": "PluginPolicySnapshotV1",
+  "contract_version": 1,
+  "frozen": true,
+  "defs": {
+    "capability": {
+      "type": "enum",
+      "values": [
+        "chat.read",
+        "chat.write",
+        "fs.workspace.read",
+        "fs.workspace.write",
+        "network.fetch",
+        "mcp.stdio",
+        "ui.view",
+        "tool.execute",
+        "full_host.enable",
+        "secret_value_delivery",
+        "publisher_retrust",
+        "downgrade.explicit",
+        "quarantine.release"
+      ]
+    },
+    "reason_text": {
+      "type": "string",
+      "pattern": "^[\\x20-\\x7E]{1,200}$",
+      "max_utf8_bytes": 200
+    },
+    "capability_match": {
+      "type": "object",
+      "required": [],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "publisher_id": { "type": "ref", "ref": "publisher_id" },
+        "plugin_id": { "type": "ref", "ref": "plugin_id" },
+        "capability": { "type": "ref", "ref": "capability" }
+      }
+    },
+    "hard_invariant_rule": {
+      "type": "object",
+      "required": ["rule_id", "match", "decision", "reason"],
+      "max_keys": 4,
+      "additional_properties": "reject",
+      "properties": {
+        "rule_id": { "type": "string", "format": "nfc_identifier" },
+        "match": { "type": "ref", "ref": "capability_match" },
+        "decision": { "type": "const", "value": "deny" },
+        "reason": { "type": "ref", "ref": "reason_text" }
+      }
+    },
+    "ceiling_rule": {
+      "type": "object",
+      "required": ["rule_id", "match", "mode", "reason"],
+      "max_keys": 4,
+      "additional_properties": "reject",
+      "properties": {
+        "rule_id": { "type": "string", "format": "nfc_identifier" },
+        "match": { "type": "ref", "ref": "capability_match" },
+        "mode": {
+          "type": "enum",
+          "values": ["allow", "ask", "deny", "required"]
+        },
+        "reason": { "type": "ref", "ref": "reason_text" }
+      }
+    },
+    "authority_rule": {
+      "type": "object",
+      "required": ["rule_id", "match", "decision", "reason", "source"],
+      "max_keys": 5,
+      "additional_properties": "reject",
+      "properties": {
+        "rule_id": { "type": "string", "format": "nfc_identifier" },
+        "match": { "type": "ref", "ref": "capability_match" },
+        "decision": { "type": "enum", "values": ["deny", "ask", "auto"] },
+        "reason": { "type": "ref", "ref": "reason_text" },
+        "source": {
+          "type": "enum",
+          "values": ["user_policy", "electron_grant"]
+        }
+      }
+    },
+    "workspace_rule": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "workspace_incarnation_id",
+        "match",
+        "decision",
+        "reason"
+      ],
+      "max_keys": 5,
+      "additional_properties": "reject",
+      "properties": {
+        "rule_id": { "type": "string", "format": "nfc_identifier" },
+        "workspace_incarnation_id": {
+          "type": "string",
+          "format": "nfc_identifier"
+        },
+        "match": { "type": "ref", "ref": "capability_match" },
+        "decision": {
+          "type": "enum",
+          "values": ["deny", "ask"]
+        },
+        "reason": { "type": "ref", "ref": "reason_text" }
+      }
+    },
+    "manifest_request_entry": {
+      "type": "object",
+      "required": ["publisher_id", "plugin_id", "requested_capabilities"],
+      "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "publisher_id": { "type": "ref", "ref": "publisher_id" },
+        "plugin_id": { "type": "ref", "ref": "plugin_id" },
+        "requested_capabilities": {
+          "type": "array",
+          "max_items": 16,
+          "items": { "type": "ref", "ref": "capability" }
+        }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "policy_schema_version",
+      "revision",
+      "canonical_hash",
+      "hard_invariants",
+      "machine_ceiling",
+      "user_policy",
+      "workspace_overrides",
+      "manifest_requests"
+    ],
+    "max_keys": 9,
+    "additional_properties": "reject",
+    "properties": {
+      "policy_schema_version": { "type": "const", "value": 1 },
+      "revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "canonical_hash": { "type": "ref", "ref": "sha256_hex" },
+      "hard_invariants": {
+        "type": "array",
+        "max_items": 64,
+        "items": { "type": "ref", "ref": "hard_invariant_rule" }
+      },
+      "machine_ceiling": {
+        "type": "array",
+        "max_items": 256,
+        "items": { "type": "ref", "ref": "ceiling_rule" }
+      },
+      "user_policy": {
+        "type": "array",
+        "max_items": 256,
+        "items": { "type": "ref", "ref": "authority_rule" }
+      },
+      "workspace_overrides": {
+        "type": "array",
+        "max_items": 256,
+        "items": { "type": "ref", "ref": "workspace_rule" }
+      },
+      "manifest_requests": {
+        "type": "array",
+        "max_items": 256,
+        "unique_by": ["publisher_id", "plugin_id"],
+        "items": { "type": "ref", "ref": "manifest_request_entry" }
+      }
+    }
+  }
+}

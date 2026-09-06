@@ -1,0 +1,136 @@
+[
+  {
+    "payload": {
+      "type": "started",
+      "streamId": "stream_29"
+    },
+    "context": {
+      "turn_id": "stream_29",
+      "event_id": "stream_29:started:0",
+      "primary_user_message_id": "user_stream_29",
+      "primary_assistant_message_id": "assistant_stream_29",
+      "sort_key": [0, 0, 0]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_use",
+      "streamId": "stream_29",
+      "callId": "call-29-1",
+      "toolName": "exit_plan_mode",
+      "status": "pending_approval",
+      "approvalState": "pending",
+      "approvalId": "approval-29-1",
+      "summary": "Request approval for Pin plan approval parity",
+      "input": {
+        "title": "Pin plan approval parity",
+        "summary": "Lock the live and hydrated plan card to one terminal row.",
+        "steps": [
+          "Author scenario 29 fixture",
+          "Verify live and hydrated row parity",
+          "Run focused timeline regressions"
+        ],
+        "notes": "Keep every pre-existing fixture byte-identical.",
+        "verification": "Run the timeline replay acceptance suite."
+      }
+    },
+    "context": {
+      "turn_id": "stream_29",
+      "event_id": "stream_29:tool_use:0",
+      "primary_user_message_id": "user_stream_29",
+      "primary_tool_message_id": "tool_use_stream_29",
+      "tool_result_message_id": "tool_result_stream_29",
+      "sort_key": [1, 0, 40]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_approval_needed",
+      "streamId": "stream_29",
+      "callId": "call-29-1",
+      "toolName": "exit_plan_mode",
+      "approvalId": "approval-29-1",
+      "summary": "Approve Pin plan approval parity",
+      "planDocument": {
+        "plan_id": "plan-29-1",
+        "tool_call_id": "call-29-1",
+        "approval_id": "approval-29-1",
+        "state": "pending",
+        "title": "Pin plan approval parity",
+        "summary": "Lock the live and hydrated plan card to one terminal row.",
+        "steps": [
+          "Author scenario 29 fixture",
+          "Verify live and hydrated row parity",
+          "Run focused timeline regressions"
+        ],
+        "notes": "Keep every pre-existing fixture byte-identical.",
+        "verification": "Run the timeline replay acceptance suite.",
+        "feedback": "",
+        "files_read": [
+          "tests/timeline-replay-corpus.test.js",
+          "renderer/chat/renderer-turn-reducer-canonical-rows.js"
+        ],
+        "parent_stream_id": "stream_29",
+        "plan_edited": false,
+        "render_collapsed": false
+      }
+    },
+    "context": {
+      "turn_id": "stream_29",
+      "event_id": "stream_29:approval_requested:0",
+      "primary_user_message_id": "user_stream_29",
+      "primary_tool_message_id": "tool_use_stream_29",
+      "sort_key": [2, 0, 45]
+    }
+  },
+  {
+    "payload": {
+      "type": "tool_result",
+      "streamId": "stream_29",
+      "callId": "call-29-1",
+      "toolName": "exit_plan_mode",
+      "content": "Plan approved.",
+      "isError": false,
+      "summary": "Plan approved",
+      "metadata": {
+        "result_kind": "plan_mode_transition",
+        "plan_decision": "approved",
+        "plan_feedback": "",
+        "plan_edited": false,
+        "plan": {
+          "title": "Pin plan approval parity",
+          "summary": "Lock the live and hydrated plan card to one terminal row.",
+          "steps": [
+            "Author scenario 29 fixture",
+            "Verify live and hydrated row parity",
+            "Run focused timeline regressions"
+          ],
+          "notes": "Keep every pre-existing fixture byte-identical.",
+          "verification": "Run the timeline replay acceptance suite."
+        }
+      }
+    },
+    "context": {
+      "turn_id": "stream_29",
+      "event_id": "stream_29:tool_result:0",
+      "primary_user_message_id": "user_stream_29",
+      "primary_tool_message_id": "tool_use_stream_29",
+      "tool_result_message_id": "tool_result_stream_29",
+      "sort_key": [3, 0, 50]
+    }
+  },
+  {
+    "payload": {
+      "type": "complete",
+      "streamId": "stream_29",
+      "status": "complete"
+    },
+    "context": {
+      "turn_id": "stream_29",
+      "event_id": "stream_29:complete:0",
+      "primary_user_message_id": "user_stream_29",
+      "primary_assistant_message_id": "assistant_stream_29",
+      "sort_key": [4, 0, 0]
+    }
+  }
+]

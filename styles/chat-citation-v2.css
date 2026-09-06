@@ -1,0 +1,38 @@
+.chat-bubble-markdown a[href^="#message:"],
+.chat-bubble-markdown a[href^="#tool:"],
+.chat-bubble-markdown a[href^="#row:"] {
+  border-bottom: none;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.chat-bubble-markdown a[href^="#message:"]:hover,
+.chat-bubble-markdown a[href^="#tool:"]:hover,
+.chat-bubble-markdown a[href^="#row:"]:hover {
+  text-decoration-style: solid;
+}
+
+.chat-entry.chat-citation-target-highlight,
+.chat-row.chat-citation-target-highlight {
+  outline: 2px solid var(--accent-cyan);
+  outline: 2px solid color-mix(in srgb, var(--accent-cyan) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-cyan) 16%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-cyan) 12%, transparent);
+}
+
+.chat-row.chat-citation-target-highlight {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chat-entry.chat-citation-target-highlight,
+  .chat-row.chat-citation-target-highlight {
+    transition: outline-color var(--motion-duration-regular) var(--motion-ease-standard),
+      box-shadow var(--motion-duration-regular) var(--motion-ease-standard);
+  }
+}

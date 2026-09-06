@@ -1,0 +1,876 @@
+.diagnostics-issue-header,
+.diagnostics-issue {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(13rem, 1.5fr) minmax(8rem, 0.8fr) 6.5rem 3.5rem auto;
+  align-items: start;
+  column-gap: var(--space-6);
+}
+
+.diagnostics-issue-header {
+  min-height: 34px;
+  align-items: center;
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-toolbar-background);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.diagnostics-issue {
+  min-height: 72px;
+  padding: var(--space-7) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+}
+
+.diagnostics-issue:last-child {
+  border-bottom: 0;
+}
+
+.diagnostics-issue:hover {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.diagnostics-issue-level {
+  color: var(--state-warning);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.diagnostics-issue[data-severity="ERROR"] .diagnostics-issue-level {
+  color: var(--state-danger);
+}
+
+.diagnostics-issue-copy,
+.diagnostics-issue-meta {
+  min-width: 0;
+}
+
+.diagnostics-issue-copy strong,
+.diagnostics-issue-meta {
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-issue-copy strong code,
+.diagnostics-issue-meta code {
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-issue-copy p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+}
+
+.diagnostics-issue-copy p.diagnostics-muted {
+  color: var(--text-muted);
+}
+
+.diagnostics-issue-correlations {
+  display: flex;
+  gap: var(--space-2) var(--space-5);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+.diagnostics-issue-correlations > span {
+  display: inline-flex;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.diagnostics-issue-correlations code {
+  max-width: 15rem;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-issue-meta {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.diagnostics-issue-meta span {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+.diagnostics-issue time,
+.diagnostics-issue-count {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diagnostics-issue-count {
+  text-align: right;
+}
+
+.diagnostics-issue-action {
+  margin-top: calc(var(--space-3) * -1);
+  white-space: nowrap;
+}
+
+.diagnostics-inspect-action.btn {
+  color: var(--text-secondary);
+}
+
+.diagnostics-remediation {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-5) !important;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.diagnostics-remediation span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.diagnostics-source-table-shell,
+.phase-percentiles-table-shell,
+.observability-pane {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.diagnostics-source-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-source-table th,
+.diagnostics-source-table td {
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.diagnostics-source-table thead th {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.diagnostics-source-table tbody tr:last-child th,
+.diagnostics-source-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.diagnostics-source-table tbody th code,
+.diagnostics-source-table time {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.diagnostics-source-table time {
+  color: var(--text-muted);
+}
+
+.diagnostics-source-state {
+  color: var(--text-secondary);
+}
+
+.diagnostics-source-table tr[data-state="observed"] .diagnostics-source-state,
+.diagnostics-source-table tr[data-state="capturing"] .diagnostics-source-state {
+  color: var(--state-success);
+}
+
+.diagnostics-source-table tr[data-state="unavailable"] .diagnostics-source-state,
+.diagnostics-source-table tr[data-state="failed"] .diagnostics-source-state,
+.diagnostics-source-drop {
+  color: var(--state-danger);
+}
+
+.diagnostics-source-drop {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+}
+
+.diagnostics-integrity-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  border-top: 1px solid var(--border-default);
+}
+
+.diagnostics-integrity-summary > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.diagnostics-integrity-summary span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.diagnostics-integrity-summary strong {
+  color: var(--state-warning);
+}
+
+.diagnostics-integrity-summary[data-tone="complete"] strong {
+  color: var(--state-success);
+}
+
+.diagnostics-integrity-summary p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: right;
+}
+
+.diagnostics-runtime-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-5) var(--space-6);
+  padding: var(--space-8);
+}
+
+.diagnostics-runtime-summary .settings-badge {
+  align-self: start;
+  min-height: 22px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--state-pending-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-pending-bg);
+  color: var(--state-pending);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+}
+
+.diagnostics-runtime-summary .settings-badge[data-tone="success"] {
+  border-color: var(--state-success-border);
+  background: var(--state-success-bg);
+  color: var(--state-success);
+}
+
+.diagnostics-runtime-summary .settings-badge[data-tone="warning"] {
+  border-color: var(--state-warning-border);
+  background: var(--state-warning-bg);
+  color: var(--state-warning);
+}
+
+.diagnostics-runtime-summary .settings-badge[data-tone="danger"] {
+  border-color: var(--state-danger-border);
+  background: var(--state-danger-bg);
+  color: var(--state-danger);
+}
+
+.diagnostics-runtime-summary .settings-summary-row {
+  min-width: 0;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.diagnostics-runtime-summary .settings-note {
+  grid-column: 2;
+  margin: calc(var(--space-3) * -1) 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.diagnostics-performance > *:not(.diagnostics-section-heading) {
+  margin-inline: var(--space-8);
+}
+
+.diagnostics-performance > *:last-child {
+  margin-bottom: var(--space-8);
+}
+
+.diagnostics-performance-summary,
+.diagnostics-compact-empty {
+  padding-block: var(--space-7);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-performance-summary strong,
+.diagnostics-compact-empty strong {
+  font-size: var(--font-size-base);
+}
+
+.diagnostics-performance-summary[data-tone="warn"] strong {
+  color: var(--state-warning);
+}
+
+.diagnostics-performance-summary[data-tone="ok"] strong {
+  color: var(--state-success);
+}
+
+.diagnostics-performance-summary p,
+.diagnostics-compact-empty p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.diagnostics-performance-summary ul {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostics-performance-summary li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-performance-summary code {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+}
+
+.diagnostics-budget-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding-block: var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-budget-list > div {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-inline-end: 1px solid var(--border-subtle);
+}
+
+.diagnostics-budget-list > div:last-child {
+  border-inline-end: 0;
+}
+
+.diagnostics-budget-list dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.diagnostics-budget-list dd {
+  margin: 0;
+  color: var(--state-success);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.diagnostics-budget-list [data-tone="warn"] dd {
+  color: var(--state-warning);
+}
+
+.phase-percentiles-table-shell {
+  width: auto;
+  margin-top: var(--space-6);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+}
+
+.phase-percentiles-empty {
+  display: grid;
+  place-items: center;
+  min-height: 104px;
+  padding: var(--space-10);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.phase-percentiles-empty strong {
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.phase-percentiles-empty[data-tone="error"] strong {
+  color: var(--state-danger);
+}
+
+.phase-percentiles-empty p {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+}
+
+.phase-percentiles-table,
+.observability-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-percentiles-table th,
+.phase-percentiles-table td,
+.observability-table th,
+.observability-table td {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.phase-percentiles-table th:first-child,
+.phase-percentiles-table td:first-child,
+.observability-table th:first-child,
+.observability-table td:first-child {
+  min-width: 190px;
+  text-align: left;
+  white-space: normal;
+}
+
+.phase-percentiles-table thead th,
+.observability-table thead th {
+  background: var(--surface-toolbar-background);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.phase-percentiles-table tbody tr:last-child td,
+.observability-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.phase-verdict {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 20px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--state-muted-border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.phase-verdict-pass {
+  border-color: var(--state-success-border);
+  color: var(--state-success);
+}
+
+.phase-verdict-warn {
+  border-color: var(--state-warning-border);
+  color: var(--state-warning);
+}
+
+.phase-verdict-fail {
+  border-color: var(--state-danger-border);
+  color: var(--state-danger);
+}
+
+.diagnostics-health-grid {
+  display: grid;
+  gap: var(--space-7);
+  margin-top: var(--space-7);
+}
+
+.diagnostics-health-grid > section {
+  min-width: 0;
+}
+
+.diagnostics-health-grid h4 {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.observability-pane {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+}
+
+.observability-empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 76px;
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.observability-empty-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.observability-cell-num {
+  text-align: right !important;
+}
+
+.observability-cell-tool code,
+.observability-cell-code code,
+.observability-list-tool,
+.observability-trace-id code {
+  font-family: var(--font-family-mono);
+}
+
+.observability-cell-warn {
+  color: var(--state-danger);
+}
+
+.observability-cell-warn-soft {
+  color: var(--state-warning);
+}
+
+.observability-cell-muted {
+  color: var(--text-muted);
+}
+
+.observability-list,
+.observability-trace-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.observability-list-row {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 1fr) auto;
+  gap: var(--space-4) var(--space-5);
+  align-items: baseline;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.observability-list-row:last-child {
+  border-bottom: 0;
+}
+
+.observability-list-time,
+.observability-list-link-cell,
+.observability-list-meta {
+  color: var(--text-muted);
+}
+
+.observability-list-duration {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.observability-list-link-cell {
+  display: flex;
+  grid-column: 2 / -1;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.observability-trace-row {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.observability-trace-row:last-child {
+  border-bottom: 0;
+}
+
+.observability-trace-row-header {
+  display: grid;
+  grid-template-columns: auto auto minmax(6rem, 1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-4) var(--space-6);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+}
+
+.observability-trace-row-header:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.observability-trace-row-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.observability-trace-status,
+.observability-trace-duration,
+.observability-trace-meta {
+  font-size: var(--font-size-sm);
+}
+
+.observability-trace-status-success {
+  color: var(--state-success);
+}
+
+.observability-trace-status-danger {
+  color: var(--state-danger);
+}
+
+.observability-trace-status-warning {
+  color: var(--state-warning);
+}
+
+.observability-trace-duration,
+.observability-trace-meta {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.observability-trace-model,
+.observability-trace-mode,
+.observability-trace-caret {
+  display: none;
+}
+
+.observability-trace-row-header .observability-trace-meta:nth-of-type(6) {
+  display: none;
+}
+
+.observability-trace-detail {
+  padding: var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.observability-trace-detail[hidden] {
+  display: none;
+}
+
+.observability-trace-detail-ids,
+.observability-trace-detail-phases {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.observability-trace-id,
+.observability-trace-phase {
+  display: inline-flex;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.observability-trace-id-label {
+  text-transform: uppercase;
+}
+
+.observability-trace-detail-grid {
+  display: grid;
+  gap: var(--space-3);
+  margin-block: var(--space-5);
+}
+
+.observability-trace-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Runtime inventory: flat ruled rows, not nested cards. Row rules run full
+   bleed like .diagnostics-source-table above it, and severity is carried by the
+   value colour only -- no borders, badges, or accent bars. */
+.diagnostics-inventory-list {
+  display: grid;
+  margin: 0;
+}
+
+.diagnostics-inventory-list > div {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.55fr) minmax(0, 1.45fr);
+  gap: var(--space-6);
+  align-items: baseline;
+  min-height: 30px;
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-inventory-list > div:last-child {
+  border-bottom: 0;
+}
+
+/* Single divider between the harness facets and the platform facets. */
+.diagnostics-inventory-list > div[data-group-start="true"] {
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-strong);
+}
+
+.diagnostics-inventory-list dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.diagnostics-inventory-list dd {
+  display: -webkit-box;
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.diagnostics-inventory-list > div[data-mono="true"] dd {
+  font-family: var(--font-family-mono);
+}
+
+.diagnostics-inventory-list > div[data-tone="warn"] dd {
+  color: var(--state-warning);
+}
+
+.diagnostics-inventory-list > div[data-tone="danger"] dd {
+  color: var(--state-danger);
+}
+
+.diagnostics-inventory-list > div[data-tone="muted"] dd {
+  color: var(--text-muted);
+}
+
+.diagnostics-inventory-stamp {
+  margin: 0;
+  padding: var(--space-4) var(--space-8) var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.diagnostics-runtime-inventory .diagnostics-compact-empty {
+  padding-inline: var(--space-8);
+  border-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .diagnostics-issue-header {
+    display: none;
+  }
+
+  .diagnostics-issue {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--space-6);
+  }
+
+  .diagnostics-issue [data-label] {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .diagnostics-issue [data-label]::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .diagnostics-issue-copy,
+  .diagnostics-issue-meta {
+    grid-column: 1 / -1;
+  }
+
+  .diagnostics-issue-action {
+    align-self: end;
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .diagnostics-integrity-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .diagnostics-integrity-summary p {
+    text-align: left;
+  }
+
+  .diagnostics-budget-list {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics-budget-list > div {
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .diagnostics-budget-list > div:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diagnostics-shell * {
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .diagnostics-section,
+  .diagnostics-overall,
+  .observability-pane,
+  .phase-percentiles-table-shell {
+    border-color: CanvasText;
+  }
+
+  .diagnostics-issue-level,
+  .diagnostics-issue[data-severity="ERROR"] .diagnostics-issue-level,
+  .diagnostics-source-state,
+  .diagnostics-integrity-summary strong,
+  .diagnostics-inventory-list > div[data-tone="warn"] dd,
+  .diagnostics-inventory-list > div[data-tone="danger"] dd,
+  .diagnostics-inventory-list > div[data-tone="muted"] dd {
+    color: CanvasText;
+  }
+
+  .observability-trace-row-header:focus-visible {
+    outline-color: Highlight;
+  }
+}

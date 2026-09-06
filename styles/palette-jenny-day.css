@@ -1,0 +1,381 @@
+:root[data-palette="jenny-day"] {
+  color-scheme: light;
+  --widget-context-weave-line-color: rgba(38, 74, 82, 0.34);
+  --widget-context-weave-spacing: 102;
+  --widget-context-weave-pointer-radius: 150;
+  --widget-context-weave-interlace: 3;
+  --widget-context-weave-weft-alpha: 0.72;
+  --widget-context-weave-lit-gain: 2.2;
+  --widget-context-weave-density: 0.92;
+
+  /* ── Base palette ── XJ-9 daytime: cool icy teal-slate world, Jenny-cyan brand, dark-teal ink ── */
+  --bg-base: #d4e0e3;
+  --bg-surface: #e6eef0;
+  --bg-surface-2: #d8e3e6;
+  --bg-sidebar: #c4d4d8;
+  --bg-panel: #ecf2f4;
+  --line: rgba(10, 35, 41, 0.18);
+  --line-strong: rgba(10, 35, 41, 0.30);
+
+  /* ── Text ── deep teal-near-black ink (comic-panel readability) ── */
+  --text-primary: #0a2329;
+  --text-secondary: #3a5860;
+  --text-muted: #50636a; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #6c8690;
+  --text-bright: #0a2329;
+  --text-accent-soft: #1f4a52;
+  --text-danger-soft: #b53d34;
+  --text-success-soft: #1e6b44;
+  --text-danger-emphasis: #b53d34;
+  --status-gradient-end: #d2a82c;
+
+  /* ── Accents — Jenny body teal leads; cyan pop, pigtail amber, Brad red as accents ── */
+  --accent: #4fa9b0;
+  --accent-primary: var(--accent);
+  --accent-strong: #1f4a52;
+  --text-link: #1f4a52;
+  --text-active: #1f4a52;
+  --accent-cyan: #5fc6cd;
+  --accent-amber: #d2a82c;
+
+  /* ── Holo palette — show-true four-pop wheel ── */
+  --holo-periwinkle: #4fa9b0;
+  --holo-lavender: #5fc6cd;
+  --holo-pink: #c8453c;
+  --holo-cyan: #5fc6cd;
+
+  /* ── Doodle field — deep teal strokes on icy panel ── */
+
+  /* ── Atomic burst — Jenny teal lead, pigtail amber, Brad red sparkles ── */
+  /* MLAATR daytime palette: Jenny sky blue, sunshine gold, bubblegum coral. */
+  --widget-atomic-burst-color-a: rgba(74, 174, 230, 0.88);
+  --widget-atomic-burst-color-b: rgba(255, 196, 88, 0.86);
+  --widget-atomic-burst-color-c: rgba(255, 122, 144, 0.84);
+  --widget-atomic-burst-flare-color: rgba(255, 252, 240, 0.98);
+  --widget-atomic-burst-link-color: rgba(255, 232, 178, 0.72);
+  --widget-atomic-burst-wave-color: rgba(255, 152, 168, 0.86);
+  --widget-atomic-burst-size: 28;
+  --widget-atomic-burst-density: 9.2;
+
+  /* ── Circuit trace — deep teal grid; pigtail amber hover line for contrast ── */
+  --widget-circuit-trace-grid-color: rgba(31, 74, 82, 0.28);
+  --widget-circuit-trace-line-color: rgba(232, 158, 24, 0.92);
+  --widget-circuit-trace-glow-color: rgba(95, 198, 205, 0.94);
+  --widget-circuit-trace-accent-color: rgba(20, 132, 148, 0.90);
+  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-density: 1.0;
+
+  /* ── Reactive grid: teal idle, amber active ── */
+  --widget-reactive-grid-dot-idle: rgba(79, 169, 176, 0.32);
+  --widget-reactive-grid-dot-active: rgba(232, 158, 24, 0.98);
+  --widget-reactive-grid-dot-glow: rgba(79, 169, 176, 0.50);
+
+  /* ── Playlist scroll ── */
+  --playlist-scroll-line-color: rgba(31, 74, 82, 0.50);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.04;
+  --playlist-scroll-ghost-color: rgba(31, 74, 82, 0.18);
+  --playlist-scroll-pad-color: rgba(48, 110, 122, 0.04);
+  --playlist-scroll-accent-color: rgba(31, 74, 82, 0.55);
+
+  /* ── Shadows ── */
+  --shadow-soft: 0 18px 42px rgba(10, 35, 41, 0.20);
+  --shadow-accent: 0 12px 26px rgba(79, 169, 176, 0.22);
+  --shadow-elevation-1: 0 1px 4px rgba(10, 35, 41, 0.10), 0 0 0 1px rgba(31, 74, 82, 0.10);
+  --shadow-elevation-2: 0 4px 16px rgba(10, 35, 41, 0.12), 0 0 0 1px rgba(31, 74, 82, 0.12);
+  --shadow-elevation-3: 0 8px 32px rgba(10, 35, 41, 0.14), 0 0 0 1px rgba(31, 74, 82, 0.12);
+
+  /* ── Borders — deep teal alpha for that comic-panel ink feel ── */
+  --border-subtle: rgba(10, 35, 41, 0.10);
+  --border-default: rgba(10, 35, 41, 0.18);
+  --border-strong: rgba(10, 35, 41, 0.28);
+  --border-focus: rgba(79, 169, 176, 0.46);
+  --focus-outline: rgba(79, 169, 176, 0.72);
+
+  /* ── Surface backgrounds ── icy slate-teal washes ── */
+  --surface-body-background:
+    radial-gradient(circle at 20% 18%, rgba(95, 198, 205, 0.14), rgba(220, 230, 233, 0) 32%),
+    radial-gradient(circle at 80% 14%, rgba(31, 74, 82, 0.08), rgba(220, 230, 233, 0) 28%),
+    #d8e2e5;
+
+  --surface-shell-background:
+    linear-gradient(180deg, rgba(238, 244, 246, 0.98), rgba(218, 228, 232, 0.98)),
+    var(--bg-base);
+
+  --surface-titlebar-background:
+    linear-gradient(90deg, rgba(232, 240, 242, 0.98), rgba(216, 226, 230, 0.98));
+
+  --surface-sidebar-background:
+    linear-gradient(180deg, rgba(220, 230, 234, 0.98), rgba(198, 212, 218, 0.98)),
+    var(--bg-sidebar);
+
+  --surface-main-stage-background:
+    radial-gradient(circle at 20% 18%, rgba(95, 198, 205, 0.12), rgba(220, 230, 233, 0) 28%),
+    radial-gradient(circle at 78% 84%, rgba(210, 168, 44, 0.08), rgba(220, 230, 233, 0) 24%),
+    linear-gradient(180deg, #ecf2f4, #d4e0e3 80%);
+
+  --surface-main-stage-overlay:
+    linear-gradient(90deg, rgba(31, 74, 82, 0.05), rgba(255, 255, 255, 0) 18%, rgba(255, 255, 255, 0) 82%, rgba(95, 198, 205, 0.05)),
+    radial-gradient(circle at 50% 66%, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 36%);
+
+  --surface-main-stage-glow:
+    radial-gradient(circle at 50% 55%, rgba(79, 169, 176, 0.10), rgba(220, 230, 233, 0) 22%),
+    radial-gradient(circle at 50% 96%, rgba(210, 168, 44, 0.08), rgba(220, 230, 233, 0) 18%);
+
+  --surface-card-background:
+    linear-gradient(180deg, rgba(248, 252, 253, 0.94), rgba(228, 238, 240, 0.96)),
+    radial-gradient(circle at top left, rgba(79, 169, 176, 0.10), transparent 58%);
+
+  --surface-input-background: rgba(248, 252, 253, 0.92);
+  --surface-input-background-strong: rgba(238, 246, 248, 0.94);
+  --surface-toolbar-background: rgba(236, 244, 246, 0.86);
+
+  --surface-prompt-chip-background: rgba(248, 252, 253, 0.84);
+  --surface-prompt-chip-hover: rgba(255, 255, 255, 0.96);
+  --surface-prompt-chip-border: rgba(10, 35, 41, 0.18);
+  --surface-prompt-chip-border-hover: rgba(79, 169, 176, 0.40);
+
+  --surface-assistant-sprite-background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(216, 230, 234, 0.98));
+  --surface-assistant-sprite-border: rgba(10, 35, 41, 0.24);
+  --surface-assistant-sprite-holo:
+    rgba(79, 169, 176, 0.96) 0deg,
+    rgba(95, 198, 205, 0.96) 90deg,
+    rgba(210, 168, 44, 0.96) 180deg,
+    rgba(200, 69, 60, 0.92) 270deg,
+    rgba(79, 169, 176, 0.96) 360deg;
+
+  --surface-interactive-card-background:
+    linear-gradient(180deg, rgba(248, 252, 253, 0.96), rgba(220, 230, 234, 0.96)),
+    radial-gradient(circle at top left, rgba(79, 169, 176, 0.08), transparent 48%);
+
+  --surface-notice-background:
+    linear-gradient(180deg, rgba(248, 232, 196, 0.92), rgba(238, 218, 168, 0.94)),
+    rgba(244, 224, 184, 0.86);
+
+  --surface-composer-inner:
+    linear-gradient(180deg, rgba(248, 252, 253, 0.96), rgba(228, 238, 240, 0.96)),
+    rgba(238, 244, 246, 0.96);
+  --surface-composer-signal-background: rgba(214, 226, 230, 0.86);
+  --surface-composer-mode-background: rgba(214, 226, 230, 0.82);
+
+  --surface-user-bubble-background:
+    linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
+
+  --surface-auth-overlay: rgba(208, 220, 224, 0.78);
+  --surface-auth-card: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
+
+  --surface-popover-background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(220, 230, 234, 0.98));
+  --surface-popover-row: rgba(216, 228, 232, 0.88);
+  --surface-popover-row-hover: rgba(196, 212, 218, 0.94);
+
+  --surface-dev-row-background: rgba(220, 234, 238, 0.94);
+  --surface-dev-row-border: rgba(31, 74, 82, 0.18);
+
+  /* ── Material hierarchy ── */
+  --mat-chrome-bg: linear-gradient(90deg, rgba(228, 238, 240, 0.98), rgba(208, 222, 226, 0.98));
+  --mat-chrome-border: rgba(10, 35, 41, 0.10);
+  --mat-chrome-text: var(--text-secondary);
+  --mat-chrome-accent: var(--text-primary);
+  --mat-work-bg:
+    radial-gradient(circle at 18% 12%, rgba(79, 169, 176, 0.10), rgba(220, 230, 234, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(210, 168, 44, 0.06), rgba(220, 230, 234, 0) 28%),
+    #e2eced;
+  --mat-work-border: var(--border-default);
+  --mat-work-text: var(--text-primary);
+  --mat-work-accent: var(--text-secondary);
+  --mat-live-bg: var(--surface-sidebar-background);
+  --mat-live-accent: var(--accent-cyan);
+  --mat-live-border: color-mix(in srgb, var(--mat-live-accent) 14%, var(--border-subtle));
+  --mat-live-text: var(--text-primary);
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-text: var(--text-primary);
+  --mat-ephemeral-shadow:
+    0 6px 24px rgba(10, 35, 41, 0.16),
+    0 2px 6px rgba(10, 35, 41, 0.10);
+
+  /* ── Widget tokens ── */
+
+  /* Buttons — Jenny-teal primary, dark-teal secondary */
+  --widget-button-primary-bg: linear-gradient(180deg, #5fc6cd, #4fa9b0);
+  --widget-button-primary-color: #062029;
+  --widget-button-primary-shadow: rgba(79, 169, 176, 0.32);
+  --widget-button-secondary-bg: rgba(220, 232, 236, 0.94);
+  --widget-button-secondary-border: rgba(10, 35, 41, 0.20);
+  --widget-button-secondary-color: #0a2329;
+  --widget-button-danger-bg: rgba(200, 69, 60, 0.12);
+  --widget-button-danger-border: rgba(200, 69, 60, 0.28);
+  --widget-button-danger-color: #a8352c;
+  --widget-button-session-bg: linear-gradient(180deg, #e8b73c, #d2a82c);
+  --widget-button-session-color: #2a1d00;
+  --widget-close-hover-bg: #b53d34;
+  --widget-hero-avatar-bg: linear-gradient(180deg, #5fc6cd, #4fa9b0);
+
+  /* Sidebar & item states */
+  --widget-item-active-bg: linear-gradient(180deg, rgba(79, 169, 176, 0.14), rgba(79, 169, 176, 0.04));
+  --widget-item-active-border: rgba(79, 169, 176, 0.28);
+  --widget-badge-bg: rgba(10, 35, 41, 0.05);
+  --widget-badge-border: rgba(10, 35, 41, 0.12);
+  --widget-badge-color: #3a5860;
+  --widget-badge-secondary-color: #5a737b;
+  --widget-action-color: #3a5860;
+  --widget-action-bg: rgba(10, 35, 41, 0.04);
+  --widget-action-border: rgba(10, 35, 41, 0.16);
+  --widget-action-hover-bg: rgba(79, 169, 176, 0.12);
+  --widget-action-hover-border: rgba(79, 169, 176, 0.36);
+  --widget-action-hover-color: #0a2329;
+  --widget-action-delete-hover-bg: rgba(200, 69, 60, 0.12);
+  --widget-action-delete-hover-border: rgba(200, 69, 60, 0.28);
+  --widget-action-delete-hover-color: #a8352c;
+  --widget-scrollbar-color: rgba(10, 35, 41, 0.28);
+  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(79, 169, 176, 0.18), rgba(31, 74, 82, 0.22));
+  --widget-collapsed-item-color: #ffffff;
+  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(95, 198, 205, 0.94), rgba(79, 169, 176, 0.92));
+
+  /* Chat & copy */
+  --widget-chat-meta-color: #6c8690;
+  --widget-chat-meta-error-color: #a8352c;
+  --widget-copy-chip-bg: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(228, 238, 240, 0.98));
+  --widget-copy-chip-border: rgba(10, 35, 41, 0.20);
+  --widget-copy-chip-color: #0a2329;
+
+
+  /* Sprite streaming */
+  --widget-sprite-color: rgba(10, 35, 41, 0.92);
+  --widget-sprite-streaming-border: rgba(79, 169, 176, 0.36);
+  --widget-sprite-streaming-shadow:
+    0 0 0 1px rgba(10, 35, 41, 0.10),
+    0 12px 30px rgba(79, 169, 176, 0.14),
+    0 0 22px rgba(79, 169, 176, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+
+  /* Home orbit */
+  --widget-face-glow-color: var(--accent-cyan);
+  --widget-face-shine-color: rgba(255, 255, 255, 0.88);
+  --widget-face-aura-primary: rgba(79, 169, 176, 0.12);
+  --widget-face-aura-secondary: rgba(95, 198, 205, 0.10);
+  /* Tool calls */
+  --widget-tool-bg:
+    linear-gradient(180deg, rgba(248, 252, 253, 0.94), rgba(220, 232, 234, 0.96)),
+    radial-gradient(circle at left center, rgba(79, 169, 176, 0.08), transparent 55%);
+  --widget-tool-border: rgba(10, 35, 41, 0.20);
+  --widget-tool-pending-border: rgba(210, 168, 44, 0.40);
+  --widget-tool-running-border: rgba(95, 198, 205, 0.38);
+  --widget-tool-error-border: rgba(200, 69, 60, 0.30);
+  --widget-tool-color: #0a2329;
+  --widget-tool-name-color: #062029;
+  --widget-tool-success-color: rgba(34, 140, 80, 0.92);
+  --widget-tool-error-color: rgba(168, 53, 44, 0.9);
+  --widget-tool-denied-color: rgba(108, 134, 144, 0.7);
+  --widget-tool-code-bg: rgba(10, 35, 41, 0.06);
+  --widget-tool-code-color: rgba(10, 35, 41, 0.88);
+  --widget-approve-bg: linear-gradient(180deg, rgba(95, 198, 205, 0.84), rgba(79, 169, 176, 0.90));
+  --widget-approve-border: rgba(79, 169, 176, 0.34);
+  --widget-approve-color: #062029;
+  --widget-approve-hover-border: rgba(79, 169, 176, 0.48);
+  --widget-deny-bg: rgba(220, 232, 236, 0.78);
+  --widget-deny-border: rgba(10, 35, 41, 0.20);
+  --widget-deny-color: rgba(10, 35, 41, 0.84);
+
+
+  /* Composer — send pops Jenny-cyan */
+  --widget-placeholder-color: #6c8690;
+  --widget-placeholder-focus-color: #3a5860;
+  --widget-composer-mode-active-bg: rgba(79, 169, 176, 0.18);
+  --widget-send-bg: linear-gradient(180deg, #5fc6cd, #4fa9b0);
+  --widget-send-border: rgba(79, 169, 176, 0.40);
+  --widget-send-color: #062029;
+  --widget-send-hover-bg: linear-gradient(180deg, #7ad6dc, #5fc6cd);
+  --widget-send-hover-color: #062029;
+  --widget-composer-signal-border: rgba(10, 35, 41, 0.20);
+  --widget-select-caret-color: #6c8690;
+  --widget-select-hover-color: #0a2329;
+  --widget-select-option-bg: #ecf2f4;
+  --widget-select-option-color: #0a2329;
+  --widget-composer-meta-color: #6c8690;
+  --widget-composer-scrollbar-color: rgba(10, 35, 41, 0.36);
+  --widget-token-pill-bg: rgba(214, 226, 230, 0.7);
+  --widget-token-pill-color: #3a5860;
+  --widget-jump-color: rgba(58, 88, 96, 0.84);
+  --widget-jump-hover-color: #0a2329;
+
+  /* Interactive mode — teal active */
+  --widget-interactive-card-border: rgba(10, 35, 41, 0.22);
+  --widget-interactive-pending-border: rgba(79, 169, 176, 0.34);
+  --widget-interactive-intro-color: rgba(10, 35, 41, 0.92);
+  --widget-interactive-option-bg: rgba(248, 252, 253, 0.42);
+  --widget-interactive-option-border: rgba(10, 35, 41, 0.18);
+  --widget-interactive-option-color: rgba(10, 35, 41, 0.90);
+  --widget-interactive-option-hover-bg: rgba(220, 232, 234, 0.56);
+  --widget-interactive-option-hover-border: rgba(79, 169, 176, 0.34);
+  --widget-interactive-option-selected-bg: rgba(79, 169, 176, 0.20);
+  --widget-interactive-option-selected-border: rgba(79, 169, 176, 0.46);
+  --widget-interactive-option-selected-color: #1f4a52;
+  --widget-interactive-input-bg: rgba(248, 252, 253, 0.92);
+  --widget-interactive-input-color: rgba(10, 35, 41, 0.92);
+  --widget-interactive-label-color: rgba(58, 88, 96, 0.82);
+  --widget-interactive-prompt-color: rgba(10, 35, 41, 0.94);
+  --widget-interactive-note-color: rgba(58, 88, 96, 0.70);
+  --widget-interactive-disabled-color: rgba(58, 88, 96, 0.5);
+  --widget-input-focus-border: rgba(79, 169, 176, 0.42);
+  --widget-input-focus-glow: rgba(79, 169, 176, 0.20);
+
+  /* Settings shell */
+  --widget-settings-badge-bg: rgba(79, 169, 176, 0.16);
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+
+  /* Personality */
+  --widget-personality-preview-color: rgba(10, 35, 41, 0.86);
+
+  /* Mermaid */
+
+  /* Artifact focus */
+  --artifact-surface-focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+
+  /* Activity states */
+  --widget-activity-pending-glow: rgba(79, 169, 176, 0.10);
+  --widget-activity-pending-border: rgba(79, 169, 176, 0.50);
+  --widget-activity-pending-color: #1f4a52;
+  --widget-activity-success-color: #228c50;
+  --widget-activity-error-color: #a8352c;
+  --widget-activity-pulse-color: rgba(79, 169, 176, 0.16);
+
+  /* Attachments */
+  --widget-attachment-bg: rgba(220, 232, 234, 0.88);
+  --widget-attachment-border: rgba(10, 35, 41, 0.18);
+  --widget-attachment-color: #0a2329;
+  --widget-attachment-meta-color: #6c8690;
+  --widget-attachment-remove-color: #3a5860;
+  --widget-attachment-clear-color: #6c8690;
+
+  /* Popover badge & stop */
+  --widget-popover-badge-active-bg: rgba(210, 168, 44, 0.20);
+  --widget-popover-badge-active-color: #8a6210;
+  --widget-stop-bg: rgba(200, 69, 60, 0.14);
+  --widget-stop-color: #a8352c;
+
+  /* Composer holo draw */
+  --composer-holo-opacity-active: 0.62;
+  --composer-holo-opacity-streaming: 0.54;
+  --composer-holo-draw-glow-alpha-scale: 1.6;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-palette="jenny-day"] .composer { background: rgba(238, 246, 248, 0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-palette="jenny-day"] .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  :root[data-palette="jenny-day"] .composer { background: rgba(238, 246, 248, 0.97); }
+}

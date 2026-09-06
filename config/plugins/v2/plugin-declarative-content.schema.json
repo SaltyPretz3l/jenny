@@ -1,0 +1,72 @@
+{
+  "contract": "PluginDeclarativeContentV2", "contract_version": 2, "frozen": true,
+  "defs": {
+    "field": {
+      "type": "tagged_union", "tag_field": "type",
+      "variants": {
+        "boolean": { "type": "object", "required": ["type", "key", "label", "default"], "max_keys": 4, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "boolean" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "label": { "type": "ref", "ref": "display_string" }, "default": { "type": "boolean" } } },
+        "integer": { "type": "object", "required": ["type", "key", "label", "default", "minimum", "maximum"], "max_keys": 6, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "integer" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "label": { "type": "ref", "ref": "display_string" }, "default": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }, "minimum": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }, "maximum": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } } },
+        "string": { "type": "object", "required": ["type", "key", "label", "default", "max_length"], "max_keys": 5, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "string" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "label": { "type": "ref", "ref": "display_string" }, "default": { "type": "string", "max_utf8_bytes": 1024 }, "max_length": { "type": "integer", "minimum": 0, "maximum": 1024 } } },
+        "enum": { "type": "object", "required": ["type", "key", "label", "default", "values"], "max_keys": 5, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "enum" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "label": { "type": "ref", "ref": "display_string" }, "default": { "type": "string", "max_utf8_bytes": 64 }, "values": { "type": "array", "max_items": 32, "unique_by": [], "items": { "type": "string", "max_utf8_bytes": 64 } } } }
+      }
+    },
+    "binding_source": {
+      "type": "tagged_union", "tag_field": "source",
+      "variants": {
+        "literal_string": { "type": "object", "required": ["source", "value"], "max_keys": 2, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "literal_string" }, "value": { "type": "string", "max_utf8_bytes": 4096 } } },
+        "literal_integer": { "type": "object", "required": ["source", "value"], "max_keys": 2, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "literal_integer" }, "value": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } } },
+        "literal_boolean": { "type": "object", "required": ["source", "value"], "max_keys": 2, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "literal_boolean" }, "value": { "type": "boolean" } } },
+        "setting": { "type": "object", "required": ["source", "settings_contribution_id", "key"], "max_keys": 3, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "setting" }, "settings_contribution_id": { "type": "ref", "ref": "contribution_id" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 } } },
+        "invocation_input": { "type": "object", "required": ["source", "key"], "max_keys": 2, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "invocation_input" }, "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 } } },
+        "node_output": { "type": "object", "required": ["source", "node_id"], "max_keys": 2, "additional_properties": "reject", "properties": { "source": { "type": "const", "value": "node_output" }, "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 } } }
+      }
+    },
+    "binding": {
+      "type": "object", "required": ["target", "value"], "max_keys": 2, "additional_properties": "reject",
+      "properties": { "target": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "value": { "type": "ref", "ref": "binding_source" } }
+    },
+    "workflow_node": {
+      "type": "tagged_union", "tag_field": "type",
+      "variants": {
+        "prompt": { "type": "object", "required": ["type", "node_id", "target_contribution_id", "bindings", "max_attempts", "timeout_ms"], "max_keys": 6, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "prompt" }, "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "target_contribution_id": { "type": "ref", "ref": "contribution_id" }, "bindings": { "type": "array", "max_items": 16, "unique_by": ["target"], "items": { "type": "ref", "ref": "binding" } }, "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 } } },
+        "tool": { "type": "object", "required": ["type", "node_id", "tool_id", "bindings", "max_attempts", "timeout_ms"], "max_keys": 6, "additional_properties": "reject", "properties": { "type": { "type": "const", "value": "tool" }, "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "tool_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "bindings": { "type": "array", "max_items": 16, "unique_by": ["target"], "items": { "type": "ref", "ref": "binding" } }, "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 } } }
+      }
+    }
+  },
+  "root": {
+    "type": "object", "required": ["content_schema_version", "publisher_id", "plugin_id", "contribution_id", "payload"], "max_keys": 5, "additional_properties": "reject",
+    "properties": {
+      "content_schema_version": { "type": "const", "value": 2 }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "contribution_id": { "type": "ref", "ref": "contribution_id" },
+      "payload": {
+        "type": "tagged_union", "tag_field": "kind",
+        "variants": {
+          "skill": { "type": "object", "required": ["kind", "instructions"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "skill" }, "instructions": { "type": "string", "max_utf8_bytes": 16384 } } },
+          "prompt": { "type": "object", "required": ["kind", "template", "placeholders"], "max_keys": 3, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "prompt" }, "template": { "type": "string", "max_utf8_bytes": 16384 }, "placeholders": { "type": "array", "max_items": 16, "unique_by": [], "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "max_utf8_bytes": 64 } } } },
+          "theme": { "type": "object", "required": ["kind", "tokens"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "theme" }, "tokens": { "type": "array", "max_items": 11, "unique_by": ["token"], "items": { "type": "object", "required": ["token", "value"], "max_keys": 2, "additional_properties": "reject", "properties": { "token": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }, "value": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$", "max_utf8_bytes": 7 } } } } } },
+          "settings_schema": { "type": "object", "required": ["kind", "fields"], "max_keys": 2, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "settings_schema" }, "fields": { "type": "array", "max_items": 32, "unique_by": ["key"], "items": { "type": "ref", "ref": "field" } } } },
+          "command": { "type": "object", "required": ["kind", "target_kind", "target_contribution_id", "inputs"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "command" }, "target_kind": { "type": "enum", "values": ["prompt", "workflow"] }, "target_contribution_id": { "type": "ref", "ref": "contribution_id" }, "inputs": { "type": "array", "max_items": 16, "unique_by": ["key"], "items": { "type": "ref", "ref": "field" } } } },
+          "workflow": {
+            "type": "object", "required": ["kind", "entry_node_id", "nodes", "edges", "total_timeout_ms"], "max_keys": 5, "additional_properties": "reject",
+            "properties": {
+              "kind": { "type": "const", "value": "workflow" },
+              "entry_node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 },
+              "nodes": { "type": "array", "max_items": 32, "unique_by": ["node_id"], "items": { "type": "ref", "ref": "workflow_node" } },
+              "edges": {
+                "type": "array", "max_items": 64, "unique_by": ["from_node_id", "to_node_id"],
+                "items": {
+                  "type": "object", "required": ["from_node_id", "to_node_id"], "max_keys": 2, "additional_properties": "reject",
+                  "properties": {
+                    "from_node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 },
+                    "to_node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 }
+                  }
+                }
+              },
+              "total_timeout_ms": { "type": "integer", "minimum": 1, "maximum": 300000 }
+            }
+          },
+          "mcp_descriptor": { "type": "object", "required": ["kind", "display_name", "transport_class", "capabilities"], "max_keys": 4, "additional_properties": "reject", "properties": { "kind": { "type": "const", "value": "mcp_descriptor" }, "display_name": { "type": "ref", "ref": "display_string" }, "transport_class": { "type": "enum", "values": ["native_stdio", "remote_http"] }, "capabilities": { "type": "array", "max_items": 32, "unique_by": [], "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 } } } }
+        }
+      }
+    }
+  }
+}

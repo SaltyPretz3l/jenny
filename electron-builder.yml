@@ -1,0 +1,172 @@
+appId: com.jenny.shell
+productName: Jenny Shell
+# Make the PyInstaller sidecar executable on macOS after packing (a copied
+# --onefile binary can lose its +x bit). No-op on Windows.
+afterPack: build/afterPack.js
+publish:
+  - provider: github
+    owner: SaltyPretz3l
+    repo: jenny
+win:
+  icon: build/icon.ico
+  # Version-free artifact name so the permanent GitHub URL
+  # releases/latest/download/Jenny-Setup-x64.exe always resolves to the newest
+  # release (the download-site button depends on this exact name). Version info
+  # still lives in the release tag and in the generated latest.yml.
+  artifactName: "Jenny-Setup-${arch}.${ext}"
+  target:
+    - target: nsis
+      arch:
+        - x64
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+  # Unsigned update channel: the NSIS updater rejects unsigned updates when
+  # this is true, and releases currently ship without Authenticode (no signing
+  # secrets configured). Update integrity still rests on the latest.yml SHA512
+  # over HTTPS, and UpdateService refuses updates lacking SHA512. Flip back to
+  # true when signing lands (see docs/BUILDING.md "Auto-update
+  # notes").
+  verifyUpdateCodeSignature: false
+  # Windows v1 ships the verified CPython 3.13 runtime bundle. The package
+  # command checks every manifest/hash before electron-builder runs.
+  extraResources:
+    - from: build/sidecar
+      to: sidecar
+      filter:
+        - "**/*"
+    - from: build/restricted-host
+      to: restricted-host
+      filter:
+        - "**/*"
+    - from: build/plugin-full-host-supervisor
+      to: native
+      filter:
+        - "**/*"
+    - from: vendor/python-embed
+      to: python-embed
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
+    - from: vendor/python-runtime-wheels
+      to: python-runtime-wheels
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
+    # Owner-signed first-party plugin archives. The source directory is always
+    # present; release packaging copies only finalized .jenny-plugin bundles.
+    - from: plugins
+      to: plugins
+      filter:
+        - "*.jenny-plugin"
+nsis:
+  # True one-click install (owner decision, 2026-08-19): running the exe
+  # installs immediately with no wizard pages. allowToChangeInstallationDirectory
+  # is incompatible with oneClick and must stay absent.
+  oneClick: true
+  perMachine: false
+  include: build/installer.nsh
+# macOS target. Built ONLY on a macOS runner (GitHub Actions macos-latest) --
+# electron-builder cannot produce/sign a .app from Windows, and the PyInstaller
+# sidecar is platform-specific. arm64-first; add a macos-13 Intel leg later if
+# needed. The `zip` target is REQUIRED for electron-updater on macOS (it cannot
+# update from a .dmg), even though auto-update stays disabled until the build is
+# signed + notarized (see services/update-service.js + docs/BUILDING.md).
+mac:
+  # A >=512px PNG; electron-builder generates the multi-resolution .icns at build time.
+  icon: build/icon.png
+  # Version-free name for the same releases/latest/download reason as win above
+  # (applies to both the dmg and the updater zip: Jenny-arm64.dmg / Jenny-arm64.zip).
+  artifactName: "Jenny-${arch}.${ext}"
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  extraResources:
+    - from: build/sidecar
+      to: sidecar
+      filter:
+        - "**/*"
+    - from: build/restricted-host
+      to: restricted-host
+      filter:
+        - "**/*"
+    - from: build/plugin-full-host-supervisor
+      to: native
+      filter:
+        - "**/*"
+    - from: plugins
+      to: plugins
+      filter:
+        - "*.jenny-plugin"
+dmg:
+  writeUpdateInfo: true
+  contents:
+    - x: 120
+      y: 190
+      type: file
+      name: Jenny Shell.app
+    - x: 420
+      y: 190
+      type: link
+      path: /Applications
+    - x: 270
+      y: 340
+      type: file
+      path: uninstall.command
+      name: Uninstall Jenny.command
+files:
+  # Root-level *.js includes preload.bundle.js -- the sandboxed, self-contained
+  # preload the main window loads. It is (re)built by `npm run build:preload`,
+  # which the pack:* / release:* scripts run before electron-builder.
+  # build-preload.js can skip the esbuild step when its content-hash stamp
+  # (.preload-build-stamp.json) says nothing changed; pack:release and
+  # release:windows run `build:preload:force` (a --force argv flag, not an env
+  # var, because npm uses cmd.exe on Windows but sh elsewhere) so a stale or
+  # racy stamp never ships a dead bundle to a user. Do NOT rely on preload.js source at
+  # runtime under sandbox:true (see main-window-composition.js).
+  - "*.js"
+  # Dev/test-only root entrypoints -- never loaded by the packaged app.
+  - "!capture-*.js"
+  - "!smoke-shell-ui.js"
+  - "!start.js"
+  - "!preload.js"
+  - "!uninstall-preload.js"
+  - "!plugin-view-preload.js"
+  - "!plugin-consent-preload.js"
+  - "!renderer/shell/renderer-surface-gallery-utils.js"
+  - "!styles/views-surface-gallery.css"
+  - "*.html"
+  - "*.css"
+  - services/**/*
+  - renderer/**/*
+  - styles/**/*
+  # Self-hosted fonts referenced by styles/foundation.css @font-face rules
+  # (Fraunces, Anastasia). Without this glob they 404 in packaged builds and
+  # the renderer silently falls back to system serif.
+  - assets/fonts/**/*
+  - config/**/*
+  - comet/**/*
+  - skills/**/*
+  - vendor/pretext-layout.umd.js
+  - package.json
+  # The app loads Monaco's AMD build (min/vs) only; drop the ESM/dev builds
+  # and source maps from the package (~40MB). min/vs/base/worker/workerMain.js
+  # and min/vs/language/** must survive - verify with pack:dir + asar list.
+  - "!node_modules/monaco-editor/esm/**"
+  - "!node_modules/monaco-editor/dev/**"
+  - "!node_modules/monaco-editor/min-maps/**"
+asarUnpack:
+  # @lydell/node-pty ships N-API prebuilds + ConPTY runtime files (conpty.dll,
+  # OpenConsole.exe) that must live outside the asar. Smart-unpack detects this
+  # anyway (proven in PTY_SPIKE_REPORT.md section 4); explicit is deterministic
+  # across electron-builder upgrades. Verify with pack:dir + asar list.
+  - "node_modules/@lydell/**"

@@ -1,0 +1,70 @@
+{
+  "contract": "PluginViewBridgeV1",
+  "contract_version": 1,
+  "frozen": true,
+  "root": {
+    "type": "object",
+    "required": [
+      "bridge_schema_version",
+      "view_instance_id",
+      "contribution_id",
+      "artifact_digest",
+      "commit_epoch",
+      "lifecycle_epoch",
+      "method",
+      "payload_json",
+      "limits"
+    ],
+    "max_keys": 9,
+    "additional_properties": "reject",
+    "properties": {
+      "bridge_schema_version": { "type": "const", "value": 1 },
+      "view_instance_id": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "max_utf8_bytes": 64
+      },
+      "contribution_id": { "type": "ref", "ref": "contribution_id" },
+      "artifact_digest": { "type": "ref", "ref": "sha256_hex" },
+      "commit_epoch": { "type": "ref", "ref": "commit_epoch" },
+      "lifecycle_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "method": {
+        "type": "enum",
+        "values": ["request", "subscribe", "unsubscribe", "cancel"]
+      },
+      "payload_json": {
+        "type": "string",
+        "max_utf8_bytes": 16384
+      },
+      "limits": {
+        "type": "object",
+        "required": [
+          "max_depth",
+          "max_nodes",
+          "max_object_keys",
+          "max_array_items",
+          "max_message_utf8_bytes",
+          "max_response_utf8_bytes",
+          "max_messages_per_second",
+          "max_queue_length"
+        ],
+        "max_keys": 8,
+        "additional_properties": "reject",
+        "properties": {
+          "max_depth": { "type": "integer", "minimum": 1, "maximum": 16 },
+          "max_nodes": { "type": "integer", "minimum": 1, "maximum": 2048 },
+          "max_object_keys": { "type": "integer", "minimum": 1, "maximum": 128 },
+          "max_array_items": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "max_message_utf8_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+          "max_response_utf8_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+          "max_messages_per_second": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "max_queue_length": { "type": "integer", "minimum": 1, "maximum": 1000 }
+        }
+      }
+    }
+  }
+}

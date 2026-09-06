@@ -1,0 +1,328 @@
+/* The rail is a flush column; its header hairline mirrors the content masthead. */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-nav-header {
+  padding: var(--space-10) var(--space-8) var(--space-6);
+  border-bottom: 1px solid var(--rail-divider);
+}
+
+.settings-nav-kicker {
+  /* shape from .kicker utility; retain font-weight/size specific to nav */
+  font-weight: 700;
+  font-size: var(--font-size-xs);
+}
+
+.settings-nav-title {
+  margin-top: var(--space-4);
+  color: var(--text-primary);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-6xl);
+  line-height: 1.05;
+}
+
+.settings-nav-copy {
+  margin: var(--space-5) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1.6;
+}
+
+/* ── Settings search (settings_search flag) ─────────────────────────────── */
+.settings-search {
+  position: relative;
+  margin-top: var(--space-6);
+}
+
+.settings-search-input.inv-text-field {
+  gap: 0;
+}
+
+.settings-search-results {
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--settings-shell-nav-border);
+  border-radius: var(--radius-md);
+  background: var(--settings-shell-nav-bg);
+  box-shadow: var(--settings-shell-nav-shadow);
+}
+
+.settings-search-result {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.settings-search-result:hover,
+.settings-search-result.active {
+  background: var(--settings-shell-chip-bg);
+}
+
+.settings-search-result-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-search-result-section {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-kicker-sm);
+}
+
+/* UIUX-038: no-results announcement -- shares the results dropdown's visual
+   surface (same position/box) so a real zero-hit query reads as an explicit
+   answer, not a silent blank. :empty collapses it to nothing (no stray gap)
+   when there is nothing to announce. */
+.settings-search-status {
+  margin: 0;
+}
+
+.settings-search-status:empty {
+  display: none;
+}
+
+.settings-search-status:not(:empty) {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--settings-shell-nav-border);
+  border-radius: var(--radius-md);
+  background: var(--settings-shell-nav-bg);
+  box-shadow: var(--settings-shell-nav-shadow);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settings-nav-item-search-hidden {
+  display: none !important;
+}
+
+.settings-nav-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6);
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail-scrollbar-color) transparent;
+}
+
+.settings-nav-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.settings-nav-divider {
+  height: 1px;
+  margin: var(--space-5) var(--space-2);
+  background: var(--rail-divider);
+}
+
+.settings-nav-label {
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.settings-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.settings-nav-item:hover {
+  background: var(--rail-hover-bg);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.settings-nav-item:focus-visible {
+  background: var(--rail-hover-bg);
+  border-color: transparent;
+  color: var(--text-primary);
+  outline: none;
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+}
+
+.settings-nav-item.active {
+  background: var(--settings-shell-nav-item-active-bg);
+  color: var(--text-primary);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Label + fixed badge slot. The slot is always in the DOM (empty at zero) so a
+   count appearing never changes the row's geometry; only Readiness uses it. */
+.settings-nav-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-item-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 1.5ch;
+  margin-left: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: transparent;
+}
+
+/* A plain toned number - no pill, no border, no background. */
+.settings-nav-item-badge[data-tone="warning"] { color: var(--state-warning); }
+.settings-nav-item-badge[data-tone="pending"] { color: var(--accent-cyan); }
+.settings-nav-item-badge[data-tone="success"] { color: var(--state-success); }
+
+/* Unsaved-changes indicator. Renderer toggles [data-dirty="true"] on the
+   nav item when the corresponding section has uncommitted changes. Readiness
+   is status-only and owns that right-side slot for its count badge, so the
+   dot is scoped away from it - the two indicators never stack. */
+.settings-nav-item:not([data-settings-section="readiness"])[data-dirty="true"]::after {
+  content: "";
+  position: absolute;
+  right: var(--space-5);
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--state-warning) 24%, transparent);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-item {
+    transition: none;
+  }
+}
+
+.settings-nav-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-nav-disclosure.active,
+.settings-nav-disclosure:hover {
+  background: var(--rail-hover-bg);
+  border-color: transparent;
+}
+
+.settings-nav-disclosure:hover .settings-nav-label-inline,
+.settings-nav-disclosure:focus-visible .settings-nav-label-inline {
+  color: var(--text-primary);
+}
+
+.settings-nav-disclosure:focus-visible {
+  outline: none;
+  border-color: var(--widget-input-focus-border);
+  box-shadow: 0 0 0 1px var(--widget-input-focus-glow);
+}
+
+.settings-nav-label-inline {
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  letter-spacing: 0.12em;
+}
+
+.settings-nav-disclosure-icon {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition:
+    transform var(--motion-duration-regular) var(--motion-ease-elastic),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-nav-disclosure[aria-expanded="true"] .settings-nav-disclosure-icon {
+  transform: rotate(225deg);
+  border-color: var(--text-primary);
+}
+
+.settings-nav-children {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.settings-nav-item-child {
+  padding-left: calc(var(--space-5) + var(--space-6));
+}
+
+@media (forced-colors: active) {
+  .settings-nav-item.active {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}

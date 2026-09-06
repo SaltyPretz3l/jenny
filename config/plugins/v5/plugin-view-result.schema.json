@@ -1,0 +1,4 @@
+{
+  "contract": "PluginViewResultV5", "contract_version": 5, "frozen": true,
+  "root": { "type": "object", "required": ["result_schema_version", "request_id", "status", "reason_code", "retryable", "payload_json"], "max_keys": 6, "additional_properties": "reject", "properties": { "result_schema_version": { "type": "const", "value": 5 }, "request_id": { "type": "ref", "ref": "operation_id" }, "status": { "type": "enum", "values": ["succeeded", "rejected", "failed", "cancelled"] }, "reason_code": { "type": "string", "pattern": "^(|[a-z][a-z0-9_-]{0,63})$", "max_utf8_bytes": 64 }, "retryable": { "type": "boolean" }, "payload_json": { "type": "ref", "ref": "payload_json" } } }
+}

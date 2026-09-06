@@ -1,0 +1,33 @@
+{
+  "schema_version": 6,
+  "sessions": {
+    "sess_v7_legacy": {
+      "id": "sess_v7_legacy",
+      "title": "v7 legacy session needing model fallback",
+      "session_type": "chat",
+      "created_at": "2026-01-12T13:00:00.000Z",
+      "updated_at": "2026-01-12T13:10:00.000Z",
+      "message_count": 2,
+      "last_message_preview": "",
+      "last_model_used": "qwen3:14b",
+      "linked_session_ids": [],
+      "messages": [
+        {
+          "id": "msg_v7_user",
+          "role": "user",
+          "content": "what is in the README?",
+          "kind": "user_prompt",
+          "created_at": "2026-01-12T13:00:00.000Z"
+        },
+        {
+          "id": "msg_v7_assistant_no_model",
+          "role": "assistant",
+          "content": "let me check",
+          "kind": "assistant_text",
+          "created_at": "2026-01-12T13:01:00.000Z"
+        }
+      ],
+      "turn_events": []
+    }
+  }
+}

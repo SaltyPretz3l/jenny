@@ -1,0 +1,581 @@
+/* Owns the Composer V2 rail toolbar cluster. Use foundation/widget tokens and
+ * motion tokens so reduced-motion modes remain effective. Loads after
+ * chat-composer-v2.css. */
+
+.composer-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.composer-rail .inv-chip {
+  background: var(--widget-composer-rail-pill-bg);
+  border-color: var(--widget-composer-rail-pill-border);
+  color: var(--widget-composer-rail-pill-color);
+}
+
+.composer-rail .inv-chip:hover:not(.inv-chip--disabled) {
+  background: var(--widget-composer-rail-pill-hover-bg);
+  border-color: var(--widget-composer-rail-pill-hover-border);
+  color: var(--widget-composer-rail-pill-hover-color);
+}
+
+.composer-rail .inv-chip-count {
+  color: var(--widget-tools-chip-count-color);
+}
+
+/* Tools chip + popover (B3): the chip renders into the tool-toggle slot,
+ * which anchors its popover. */
+#composerToolToggleSlot {
+  position: relative;
+  display: inline-flex;
+}
+
+.composer-tools-popover {
+  bottom: calc(100% + var(--space-3));
+  right: 0;
+  min-width: 260px;
+}
+
+/* Section label framing the toggle list. */
+.composer-tools-popover-header {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.composer-tools-popover .inv-composer-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Rows bleed to the popover's inner edges (negative inline margin == the
+ * .inv-popover var(--space-4) padding) so the hover surface reads as a
+ * full-width menu item while the icon still lines up with the header text. */
+.composer-tools-popover .inv-composer-toggle-item {
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 calc(-1 * var(--space-4));
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.composer-tools-popover .inv-composer-toggle-item:hover {
+  background: var(--surface-popover-row);
+}
+
+.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--disabled) {
+  cursor: default;
+}
+
+.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--disabled):hover {
+  background: transparent;
+}
+
+/* Fixed icon box keeps every label on a shared left edge regardless of glyph
+ * width; tints to the accent when the row's tool is enabled. */
+.composer-tools-popover .composer-tools-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--on) .composer-tools-row-icon {
+  color: var(--accent);
+}
+
+.composer-tools-popover .inv-toggle {
+  flex: 1;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+
+.composer-tools-popover .inv-popover-footer {
+  margin-top: var(--space-2);
+}
+
+/* Ambient context ring (D1): replaces the token chip + context meter text.
+ * Renders via the inventory chip primitive (icon-only round button); the
+ * full "X / Y tokens · Z%" string lives in the hover/focus tooltip, while
+ * click opens the context-detail popover. 0–79%: thin muted arc; >=80%:
+ * thicker warning arc; >=95%: danger arc + a single pulse per usage tick. */
+.inv-context-usage--ring {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.inv-context-ring {
+  padding: var(--space-1);
+  min-width: 32px;
+  min-height: 32px;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  line-height: 0;
+}
+
+.inv-context-ring:hover:not(.inv-chip--disabled) {
+  background: var(--widget-composer-rail-pill-hover-bg);
+  border-color: transparent;
+}
+
+.inv-context-ring .inv-chip-icon {
+  display: inline-flex;
+}
+
+/* Out-specify the generic `.inv-chip-icon svg { width:14px }` (specificity
+   0,1,1) so the ring keeps its intended 18px gauge size — the stroke weights
+   and round caps are tuned for an 18px circle in a 20-unit viewBox. */
+.inv-chip-icon svg.inv-context-ring-svg {
+  width: 18px;
+  height: 18px;
+}
+
+.inv-context-ring-svg {
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+.inv-context-ring-track,
+.inv-context-ring-arc {
+  fill: none;
+  stroke-width: 1.5;
+  /* Ease the threshold escalation (1.5->2.5 weight + accent->warning/danger
+     color) instead of a hard pop; nulled under reduced-motion below. */
+  transition:
+    stroke-width var(--motion-duration-fast) var(--motion-ease-standard),
+    stroke var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-context-ring-track {
+  stroke: var(--widget-context-ring-track);
+}
+
+.inv-context-ring-arc {
+  stroke: var(--widget-context-ring-arc);
+  stroke-linecap: round;
+}
+
+.inv-context-ring--warning .inv-context-ring-track,
+.inv-context-ring--warning .inv-context-ring-arc,
+.inv-context-ring--danger .inv-context-ring-track,
+.inv-context-ring--danger .inv-context-ring-arc {
+  stroke-width: 2.5;
+}
+
+.inv-context-ring--warning .inv-context-ring-arc {
+  stroke: var(--widget-context-ring-warning);
+}
+
+.inv-context-ring--danger .inv-context-ring-arc {
+  stroke: var(--widget-context-ring-danger);
+}
+
+/* ChatGPT plan-usage ring: a sibling of the context ring (same gauge
+ * geometry, same escalation strokes) plus a short percent label so the plan
+ * figure reads at a glance. Warning/danger thresholds live in the module. */
+.composer-plan-usage-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.composer-plan-usage-slot:empty:not(.is-leaving) {
+  display: none;
+}
+
+.composer-plan-usage-slot .inv-plan-usage {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-plan-usage-slot.is-entering .inv-plan-usage,
+.composer-plan-usage-slot.is-leaving .inv-plan-usage {
+  opacity: 0;
+  transform: translateY(2px);
+}
+
+.inv-plan-ring {
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+}
+
+.inv-plan-ring .inv-chip-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--composer-secondary-control-color);
+}
+
+.inv-plan-ring--warning .inv-chip-label {
+  color: var(--widget-context-ring-warning);
+}
+
+.inv-plan-ring--danger .inv-chip-label,
+.inv-plan-ring--exhausted .inv-chip-label {
+  color: var(--widget-context-ring-danger);
+}
+
+.inv-plan-details-popover {
+  min-width: 260px;
+}
+
+.inv-plan-account,
+.inv-plan-updated,
+.inv-plan-window-reset {
+  margin: 0;
+  font-size: 11px;
+  color: var(--composer-secondary-control-color);
+}
+
+.inv-plan-limit {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--widget-context-ring-danger);
+}
+
+.inv-plan-window {
+  margin-top: var(--space-3);
+}
+
+.inv-plan-window--expired {
+  opacity: 0.6;
+}
+
+.inv-plan-window-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+
+.inv-plan-window-percent {
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-plan-bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin: var(--space-1) 0;
+}
+
+.inv-plan-bar-track {
+  fill: var(--widget-context-ring-track);
+}
+
+.inv-plan-bar-fill {
+  fill: var(--widget-context-ring-arc);
+}
+
+.inv-plan-ring--warning ~ .inv-popover .inv-plan-bar-fill,
+.inv-plan-ring--danger ~ .inv-popover .inv-plan-bar-fill,
+.inv-plan-ring--exhausted ~ .inv-popover .inv-plan-bar-fill {
+  fill: var(--widget-context-ring-danger);
+}
+
+.inv-context-ring--pulse .inv-context-ring-svg {
+  animation: inv-context-ring-pulse var(--motion-duration-fast) var(--motion-ease-standard) 1;
+}
+
+/* Subtler one-shot for the 80% warning crossing — an opacity fade, not a scale,
+   so it reads as "heads up" while danger (the scale pulse) escalates above it. */
+.inv-context-ring--warn-pulse .inv-context-ring-svg {
+  animation: inv-context-ring-warn-pulse var(--motion-duration-fast) var(--motion-ease-standard) 1;
+}
+
+/* Explicit 0%/100% frames keep the base rotate(-90deg) from being dropped
+   mid-animation if the base transform ever changes. */
+@keyframes inv-context-ring-pulse {
+  0% { transform: rotate(-90deg) scale(1); }
+  50% { transform: rotate(-90deg) scale(1.2); }
+  100% { transform: rotate(-90deg) scale(1); }
+}
+
+@keyframes inv-context-ring-warn-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.55; }
+  100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No motion or flashing under reduced-motion: the persistent warning/danger
+     color + thicker stroke remain the visual signal, and the composer's
+     aria-live announcer carries the actionable message for AT users. */
+  .inv-context-ring--pulse .inv-context-ring-svg,
+  .inv-context-ring--warn-pulse .inv-context-ring-svg {
+    animation: none;
+  }
+
+  .inv-context-ring-track,
+  .inv-context-ring-arc {
+    transition: none;
+  }
+
+  .composer-plan-usage-slot .inv-plan-usage {
+    transition: none;
+  }
+}
+
+/* Model pill + popover (D3): the pill chip renders into the slot, which
+ * anchors the static popover hosting the themed picker and hidden carriers. */
+.composer-model-pill-slot {
+  position: relative;
+  display: inline-flex;
+}
+
+.composer-model-popover {
+  bottom: calc(100% + var(--space-3));
+  right: 0;
+  min-width: 300px;
+  max-width: 340px;
+}
+
+/* An author display beats the UA [hidden] rule; keep the attribute meaningful. */
+.composer-model-carriers[hidden],
+.composer-model-popover .composer-select-shell[hidden] {
+  display: none;
+}
+
+.composer-model-picker-search {
+  margin: 0 0 var(--space-2);
+}
+
+.composer-model-picker-search input {
+  width: 100%;
+  font-size: var(--font-size-xs);
+}
+
+.composer-model-picker-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0 calc(-1 * var(--space-4));
+}
+
+.composer-model-picker-group {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.composer-model-picker-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.composer-model-picker-option:hover {
+  background: var(--surface-popover-row-hover);
+}
+
+.composer-model-picker-option.is-active {
+  background: var(--surface-popover-row);
+}
+
+.composer-model-picker-option.is-unavailable {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.composer-model-picker-option.is-unavailable:hover {
+  background: transparent;
+}
+
+/* Inset: the list is a scroll container and the segment group clips, so an
+ * outward ring would be cut off on the first/last row and segment edges. */
+.composer-model-picker-option:focus-visible,
+.composer-model-picker-segment:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.composer-model-picker-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-model-picker-family {
+  color: var(--text-primary);
+}
+
+.composer-model-picker-tag {
+  color: var(--text-secondary);
+}
+
+.composer-model-picker-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.composer-model-picker-glyph {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+.composer-model-picker-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-model-picker-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-model-picker-check {
+  color: var(--text-primary);
+}
+
+.composer-model-picker-empty {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.composer-model-picker-thinking {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.composer-model-picker-thinking-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.composer-model-picker-segments {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.composer-model-picker-segment {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.composer-model-picker-segment.is-active {
+  background: var(--surface-popover-row);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.composer-model-picker-segment:hover:not(.is-active) {
+  color: var(--text-primary);
+}
+
+.composer-model-popover .inv-popover-footer {
+  margin-top: var(--space-3);
+}
+
+.composer-model-pill .inv-chip-label {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.composer-model-pill-dot {
+  flex: none;
+}
+
+@media (max-width: 900px) {
+  .composer-model-pill .inv-chip-label {
+    max-width: 140px;
+  }
+}
+
+/* Floating jump cluster (D3): thread navigation leaves the composer and
+ * floats over the timeline's bottom-right inside #chatThreadStage
+ * (position: relative; the cluster sits after the scroll shell in DOM
+ * order, so it paints above it). The .composer-jump-tools class is the
+ * render-pipeline contract for show/hide — keep it. */
+.chat-jump-cluster {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Gear posture dot (D3): "Local only" collapses to a dot on the gear;
+ * offline readiness reuses it (status-dot--active / --error from
+ * foundation.css carry the state colors). */
+.composer-gear {
+  position: relative;
+}
+
+.composer-gear .composer-gear-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+}
+
+/* Rail config controls lock only during the brief preflight window; the
+ * ring and the send/stop slot stay live. Streaming deliberately does NOT
+ * lock the rail (COMPOSER_RUN_MODE_SPEC §6 matrix: run-mode switcher,
+ * model pill, tools toggles, and settings gear stay usable mid-turn —
+ * they are next-send preferences). */
+.composer[data-send-lifecycle='preflight'] .composer-rail [data-rail-config] {
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-rail .inv-chip,
+  .composer[data-send-lifecycle='preflight'] .composer-rail [data-rail-config] {
+    transition: none;
+  }
+}

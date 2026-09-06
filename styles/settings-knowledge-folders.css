@@ -1,0 +1,37 @@
+/* styles/settings-knowledge-folders.css
+ *
+ * Settings > Tools > "Knowledge folders" group (knowledge_layer, default-off).
+ * Reuses the shared settings primitives (.settings-group, .settings-field-row,
+ * .settings-actions, .settings-note) — this file only adds the bits those
+ * primitives don't cover, mirroring settings-model-library.css.
+ */
+
+.knowledge-folders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.knowledge-folders-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.knowledge-folders-row-path {
+  word-break: break-all;
+}
+
+.knowledge-folders-add-input {
+  min-width: 0;
+}
+
+.knowledge-folders-error {
+  min-height: 1em;
+}
+
+.knowledge-folders-error:not(:empty) {
+  color: var(--status-error, #d66);
+}

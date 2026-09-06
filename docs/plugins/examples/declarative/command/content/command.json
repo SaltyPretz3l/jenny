@@ -1,0 +1,11 @@
+{
+  "content_schema_version": 1,
+  "publisher_id": "example-labs",
+  "plugin_id": "example-command",
+  "contribution_id": "run_target_prompt",
+  "payload": {
+    "kind": "command",
+    "target_kind": "prompt",
+    "target_contribution_id": "target_prompt"
+  }
+}

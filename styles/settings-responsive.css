@@ -1,0 +1,162 @@
+@media (max-width: 700px) {
+  .composer-popover {
+    min-width: min(280px, calc(100vw - 20px));
+    max-width: calc(100vw - 20px);
+    padding: var(--space-5);
+  }
+
+  .composer-command-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+  }
+
+  .composer-command-action-badge {
+    min-width: 44px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .settings-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  :root {
+    --content-column-width: min(700px, calc(100vw - var(--sidebar-current-width) - 144px));
+    --composer-width: min(700px, calc(100vw - var(--sidebar-current-width) - 144px));
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-stack {
+    width: min(520px, calc(100vw - 64px));
+  }
+
+  .composer-tools {
+    gap: 12px;
+  }
+
+  .composer-jump-tools {
+    width: 100%;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-6);
+    padding: var(--space-7);
+  }
+
+  .settings-nav-header {
+    padding: var(--space-7) var(--space-6) var(--space-4);
+    border-bottom: none;
+  }
+
+  .settings-nav-title {
+    font-size: var(--font-size-4xl);
+  }
+
+  .settings-nav-scroll {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: 0 var(--space-6) var(--space-6);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-nav-group {
+    display: contents;
+  }
+
+  .settings-nav-group-advanced {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .settings-nav-label {
+    display: none;
+  }
+
+  .settings-nav-disclosure {
+    width: auto;
+    min-height: 36px;
+    padding: 0 var(--space-5);
+  }
+
+  .settings-nav-disclosure .settings-nav-label-inline {
+    display: inline;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+  }
+
+  .settings-nav-children {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .settings-nav-children[hidden] {
+    display: none;
+  }
+
+  .settings-nav-item-child {
+    padding-left: var(--space-5);
+  }
+
+  .settings-nav-divider {
+    display: none;
+  }
+
+  .settings-appearance-swatch-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .settings-layout {
+    padding: var(--space-6);
+  }
+
+  .settings-nav-header {
+    padding: var(--space-7) var(--space-6) var(--space-4);
+  }
+
+  .settings-overview-chip-row {
+    gap: var(--space-2);
+  }
+
+  .chat-view .attachment-chip {
+    gap: 6px;
+    padding: 0 6px 0 10px;
+  }
+
+  .chat-view .attachment-chip-image {
+    min-height: 42px;
+    padding: 4px 6px 4px 4px;
+    border-radius: var(--radius-md);
+  }
+
+  .chat-view .attachment-chip-preview {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-base);
+  }
+
+  .chat-view .attachment-chip-name {
+    max-width: min(132px, calc(100vw - 210px));
+  }
+
+  .chat-view .message-attachments {
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  .chat-view .message-attachment-card {
+    max-width: min(100%, calc(100vw - 96px));
+  }
+
+  .chat-view .message-attachment-image-preview {
+    width: min(220px, calc(100vw - 112px));
+  }
+}

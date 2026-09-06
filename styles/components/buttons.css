@@ -1,0 +1,154 @@
+/* styles/components/buttons.css
+ *
+ * Shared button primitive (homepage v2 foundation).
+ *
+ * Legacy .page-button styles remain in the compatibility section; new surfaces
+ * use .btn directly.
+ *
+ * Variants: --primary | --secondary (default) | --ghost | --danger
+ * Sizes:    --sm | --md (default) | --lg
+ * States:   :hover | :active | :focus-visible | :disabled | [aria-busy]
+ *           | [aria-pressed]
+ *
+ * No raw <button> overrides — this only attaches via the .btn class so the
+ * raw-html-primitives policy check is unaffected.
+ */
+
+.btn {
+  --btn-radius: var(--radius-pill);
+  --btn-padding-block: 10px;
+  --btn-padding-inline: 14px;
+  --btn-min-height: 40px;
+  --btn-font-size: var(--font-size-base);
+  --btn-bg: color-mix(in srgb, var(--widget-button-secondary-bg) 92%, transparent);
+  --btn-border: color-mix(in srgb, var(--widget-button-secondary-border) 92%, transparent);
+  --btn-color: var(--widget-button-secondary-color);
+  --btn-hover-bg: var(--btn-bg);
+  --btn-hover-border: color-mix(in srgb, var(--accent) 42%, var(--widget-button-secondary-border));
+  --btn-hover-color: var(--text-primary);
+  --btn-active-bg: color-mix(in srgb, var(--widget-item-active-bg) 82%, var(--widget-button-secondary-bg));
+  --btn-active-border: color-mix(in srgb, var(--widget-item-active-border) 92%, var(--widget-button-secondary-border));
+  --btn-shadow: none;
+  --btn-hover-shadow: none;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: var(--btn-min-height);
+  padding: var(--btn-padding-block) var(--btn-padding-inline);
+  border: 1px solid var(--btn-border);
+  border-radius: var(--btn-radius);
+  background: var(--btn-bg);
+  color: var(--btn-color);
+  font-size: var(--btn-font-size);
+  font-weight: 700;
+  line-height: 1.15;
+  cursor: pointer;
+  box-shadow: var(--btn-shadow);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.btn:hover {
+  transform: translateY(calc(var(--motion-hover-lift) * -1));
+  background: var(--btn-hover-bg);
+  border-color: var(--btn-hover-border);
+  color: var(--btn-hover-color);
+  box-shadow: var(--btn-hover-shadow);
+}
+
+.btn:active {
+  background: var(--btn-active-bg);
+  border-color: var(--btn-active-border);
+  color: var(--text-primary);
+}
+
+.btn:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn[aria-pressed="true"] {
+  background: var(--widget-item-active-bg);
+  border-color: var(--btn-active-border);
+  color: var(--text-primary);
+}
+
+/* aria-busy renders as a faint loading state without inserting a spinner —
+   the button keeps its label so screen-readers still announce it. */
+.btn[aria-busy="true"] {
+  opacity: 0.7;
+  cursor: progress;
+  pointer-events: none;
+}
+
+/* ── Sizes ── */
+
+.btn--sm {
+  --btn-min-height: 32px;
+  --btn-padding-block: 6px;
+  --btn-padding-inline: 10px;
+  --btn-font-size: var(--font-size-sm);
+}
+
+.btn--lg {
+  --btn-min-height: 44px;
+  --btn-padding-block: 12px;
+  --btn-padding-inline: 18px;
+  --btn-font-size: var(--font-size-md);
+}
+
+/* ── Variants ── */
+
+.btn--primary {
+  --btn-bg: var(--widget-button-primary-bg);
+  --btn-border: color-mix(in srgb, var(--widget-button-primary-shadow) 58%, var(--widget-button-secondary-border));
+  --btn-color: var(--widget-button-primary-color);
+  --btn-hover-border: color-mix(in srgb, var(--widget-button-primary-shadow) 74%, var(--widget-button-secondary-border));
+  --btn-hover-color: var(--widget-button-primary-color);
+  /* No glow: the legacy drop shadow read as a halo on dense surfaces. */
+  --btn-shadow: none;
+  --btn-hover-shadow: none;
+}
+
+.btn--ghost {
+  --btn-bg: transparent;
+  --btn-border: transparent;
+  --btn-color: var(--text-secondary);
+  --btn-hover-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+  --btn-hover-border: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.btn--danger {
+  --btn-bg: var(--widget-button-danger-bg);
+  --btn-border: var(--widget-button-danger-border);
+  --btn-color: var(--widget-button-danger-color);
+  --btn-hover-border: color-mix(in srgb, var(--state-danger) 48%, var(--widget-button-danger-border));
+}
+
+/* Legacy compatibility — this class co-exists with .btn on the same element,
+   so only semantic overrides are needed; the .btn baseline already applies. */
+
+.page-button {
+  --btn-radius: 10px;
+  --btn-bg: color-mix(in srgb, var(--surface-input-background) 84%, transparent);
+  --btn-color: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  --btn-hover-bg: color-mix(in srgb, var(--accent) 10%, var(--surface-input-background));
+  --btn-hover-border: color-mix(in srgb, var(--accent) 32%, var(--widget-button-secondary-border));
+}
+
+.page-button:focus-visible {
+  outline-color: var(--widget-input-focus-border);
+}

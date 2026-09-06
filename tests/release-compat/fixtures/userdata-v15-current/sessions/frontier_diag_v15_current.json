@@ -1,0 +1,107 @@
+{
+  "schema_version": 15,
+  "session": {
+    "id": "frontier_diag_v15_current",
+    "title": "Frontier diagnostics frontier_v15_current",
+    "session_type": "chat",
+    "diagnostic_mode": "frontier",
+    "diagnostic_run_id": "frontier_v15_current",
+    "diagnostic_provider": "codex-cli",
+    "diagnostic_model": "gpt-5",
+    "created_at": "2026-06-20T03:10:00.000Z",
+    "updated_at": "2026-06-20T03:10:02.000Z",
+    "message_count": 2,
+    "last_message_preview": "The frontier run failed at step 3.",
+    "last_model_used": "gpt-5",
+    "session_start_date": "2026-06-19",
+    "preferred_model": "gpt-5",
+    "reasoning_effort": "default",
+    "conversation_mode": "chat",
+    "pending_question_batch": null,
+    "pending_plan_proposal": null,
+    "interactive_sequence_state": "idle",
+    "interactive_round_count": 0,
+    "plan_mode": false,
+    "pinned": false,
+    "archived_at": null,
+    "context_preferences": {},
+    "active_turn": null,
+    "compaction_snapshot": {
+      "version": 99,
+      "strategy": "experimental",
+      "boundary_message_id": "assistant_stream_v15_clean",
+      "boundary_message_count": 2,
+      "messages": "not-a-list"
+    },
+    "session_incarnation": "inc_v15_current",
+    "turn_generation": 7,
+    "branch_origin": null,
+    "linked_session_ids": [],
+    "messages": [
+      {
+        "id": "user_v15_clean",
+        "role": "user",
+        "kind": "",
+        "content": "Diagnose the frontier run.",
+        "timestamp": "2026-06-20T03:10:00.000Z",
+        "status": "completed",
+        "event_seq": 0
+      },
+      {
+        "id": "assistant_stream_v15_clean",
+        "role": "assistant",
+        "kind": "",
+        "content": "The frontier run failed at step 3.",
+        "timestamp": "2026-06-20T03:10:02.000Z",
+        "status": "completed",
+        "event_seq": 1,
+        "model_used": "gpt-5"
+      }
+    ],
+    "message_seq_counter": 2,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 2,
+    "turn_events": [
+      {
+        "event_id": "stream_v15_clean:reasoning_phase:live:0",
+        "event_seq": 0,
+        "turn_id": "stream_v15_clean",
+        "kind": "reasoning_phase",
+        "status": "completed",
+        "primary_message_id": "assistant_stream_v15_clean",
+        "source_message_ids": ["assistant_stream_v15_clean"],
+        "phase_id": "phase_reasoning_iter1",
+        "started_at": "2026-06-20T03:10:00.100Z",
+        "completed_at": "2026-06-20T03:10:02.000Z",
+        "payload": {
+          "phase_id": "phase_reasoning_iter1",
+          "phase_kind": "reasoning",
+          "thinking_id": "think_iter1",
+          "summary": "Reviewed the frontier run",
+          "entries": [
+            {
+              "id": "reasoning_entry_1",
+              "text": "Considering the frontier logs, the error trace, and the fix",
+              "thinkingId": "think_iter1"
+            }
+          ],
+          "chunk_count": 3
+        }
+      },
+      {
+        "event_id": "stream_v15_clean:assistant_text_segment:live:0",
+        "event_seq": 1,
+        "turn_id": "stream_v15_clean",
+        "kind": "assistant_text_segment",
+        "status": "completed",
+        "primary_message_id": "assistant_stream_v15_clean",
+        "source_message_ids": ["assistant_stream_v15_clean"],
+        "payload": {
+          "segment_id": "segment_stream_v15_clean_1",
+          "segment_index": 0,
+          "text": "The frontier run failed at step 3."
+        }
+      }
+    ]
+  }
+}

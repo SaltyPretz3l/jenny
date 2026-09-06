@@ -1,0 +1,131 @@
+/* ── Composer V2 — failed-send notice + bubble ── */
+.composer-failed-send-notice {
+  display: none;
+}
+
+.composer-failed-send-notice[data-composer-v2="on"]:not(.hidden) {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md, 12px);
+  background: color-mix(in srgb, var(--state-danger) 14%, var(--surface-input-background, transparent));
+  border: 1px solid color-mix(in srgb, var(--state-danger) 48%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-elevation-1);
+}
+
+.composer-failed-send-notice-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-failed-send-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.composer-failed-send-notice-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--composer-secondary-meta-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: var(--composer-control-transition);
+}
+
+.composer-failed-send-notice-button:hover,
+.composer-failed-send-notice-button:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary) 36%, transparent);
+}
+
+.composer-failed-send-notice-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.composer-failed-send-notice-button--retry {
+  background: color-mix(in srgb, var(--state-danger) 22%, transparent);
+  border-color: color-mix(in srgb, var(--state-danger) 55%, transparent);
+}
+
+.composer-failed-send-notice-button--retry:hover,
+.composer-failed-send-notice-button--retry:focus-visible {
+  background: color-mix(in srgb, var(--state-danger) 32%, transparent);
+  border-color: color-mix(in srgb, var(--state-danger) 72%, transparent);
+}
+
+/* data-send-state comes directly from message.send_failure; recoverable failures
+ * use warning styling. renderer-composer-v2-render.js also maintains
+ * data-message-state for the notice-mounted bubble. */
+.chat-bubble[data-message-state="failed"],
+.chat-bubble[data-send-state="failed"] {
+  position: relative;
+  opacity: 0.78;
+  border: 1px solid color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 46%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 18%, transparent),
+    0 6px 14px color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 8%, transparent);
+}
+
+/* Markup chip replaces the old ::after pseudo-content so the label is
+ * visible to screen readers and tests. */
+.chat-bubble-send-status {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 78%, var(--text-primary));
+}
+
+/* ── Composer V2 — attachment preview pill ── */
+.attachment-preview-pill {
+  display: none;
+}
+
+.attachment-preview-pill[data-composer-v2="on"]:not(.hidden) {
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  min-height: var(--composer-secondary-meta-height);
+  padding: 0 var(--space-4);
+  margin: 0 0 var(--space-2) auto;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent, var(--text-primary)) 14%, var(--composer-secondary-control-bg));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--text-primary)) 38%, var(--composer-secondary-control-border));
+  color: var(--text-primary);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  box-shadow: var(--composer-secondary-control-shadow);
+}
+
+/* ── Composer V2 — meta row below the card ── */
+/* Composer meta row below the card: the run-mode hint lives here now;
+ * the turn timer joins this row later. */
+.composer-mode-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin: var(--space-2) 0 0;
+}
+
+.composer-mode-chips[data-composer-meta-align="right"] {
+  justify-content: flex-end;
+}

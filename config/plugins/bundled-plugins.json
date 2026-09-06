@@ -1,0 +1,14 @@
+{
+  "bundled_plugins_schema_version": 1,
+  "plugins": [
+    {
+      "publisher_id": "jenny-official",
+      "plugin_id": "chatgpt-subscription",
+      "version": "1.0.1",
+      "package_resource": "plugins/chatgpt-subscription.jenny-plugin",
+      "package_sha256": "2a1ee3c1644aee05473b80f6ebdb9dbb274e065e8136c3f4f57d2af3ac0ea94f",
+      "signing_key_id": "7ed60652328f0fbbdb7417c97a9fbd4f2f54ef223af774e9d83ddf213a1291f5",
+      "status": "pinned"
+    }
+  ]
+}

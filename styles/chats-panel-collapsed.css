@@ -1,0 +1,294 @@
+/* Collapsed chats view-panel strip; never call this the context panel. */
+
+/* The strip is the only visible panel content while collapsed. */
+html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.chats-strip) {
+  display: none;
+}
+
+.chats-strip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  height: 100%;
+  padding: var(--space-6) 0 var(--space-7);
+}
+
+/* An author display beats the UA [hidden] rule; keep the attribute meaningful. */
+.chats-strip[hidden] {
+  display: none !important;
+}
+
+/* Expand toggle at the head of the strip: the collapse counterpart lives in
+   the expanded panel's header (.chats-panel-collapse-toggle). The mirrored
+   glyph puts the divider on the right — "the panel belongs on the left". */
+.chats-strip__panel-toggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: var(--space-2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* An author display beats the UA [hidden] rule; keep the attribute meaningful. */
+.chats-strip__panel-toggle[hidden] {
+  display: none;
+}
+
+.chats-strip__panel-toggle:hover,
+.chats-strip__panel-toggle:focus-visible {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.chats-strip__panel-toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.chats-strip__panel-toggle svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: scaleX(-1);
+}
+
+.chats-strip__new-chat {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--rail-item-radius);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.chats-strip__new-chat:hover,
+.chats-strip__new-chat:focus-visible {
+  background: var(--rail-hover-bg);
+  border-color: transparent;
+  color: var(--accent);
+  outline: none;
+}
+
+.chats-strip__new-chat:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.chats-strip__new-chat svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.chats-strip__chips {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.chats-strip__chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chats-strip__chip {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chats-strip__chip:hover,
+.chats-strip__chip:focus-visible {
+  transform: none;
+  background: var(--rail-hover-bg);
+  border-color: transparent;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.chats-strip__chip:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.chats-strip__chip--active {
+  background: var(--rail-selected-bg);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.chats-strip__chip-monogram {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.chats-strip__chip-monogram--provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chats-strip__chip-monogram--provider-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chats-strip__lockdown-badge {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  width: 13px;
+  height: 13px;
+  padding: 1px;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: var(--mat-chrome-bg);
+  pointer-events: none;
+}
+
+.chats-strip__lockdown-badge svg {
+  width: 9px;
+  height: 9px;
+}
+
+.chats-strip__more {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Pin notch (top-right) — pinned chips lead the strip but stay scannable. */
+.chats-strip__chip--pinned::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* State dot (bottom-right), colored by the same tokens as the row dots. */
+.chats-strip__chip[data-session-dominant-state="streaming"]::after,
+.chats-strip__chip[data-session-dominant-state="approval"]::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--mat-chrome-bg) 92%, transparent);
+  background: var(--text-muted);
+  pointer-events: none;
+}
+
+.chats-strip__chip[data-session-dominant-state="streaming"]::after {
+  background: var(--sidebar-state-streaming-color);
+}
+
+.chats-strip__chip[data-session-dominant-state="approval"]::after {
+  background: var(--sidebar-state-approval-color);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chats-strip__chip[data-session-dominant-state="streaming"]::after {
+    animation: sidebar-state-pulse calc(var(--motion-duration-emphasis) * 5) var(--motion-ease-standard) infinite alternate;
+  }
+}
+
+/* Quick-peek flyout. No `display` here so the popover's hidden attribute
+   keeps working; pointer-events off so it can never trap the hover. */
+.chats-strip__peek {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 90;
+  min-width: 180px;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--view-panel-flyout-border);
+  border-radius: var(--view-panel-flyout-radius);
+  background: var(--view-panel-flyout-bg);
+  box-shadow: var(--view-panel-flyout-shadow);
+  pointer-events: none;
+}
+
+.chats-strip__peek-title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chats-strip__peek-meta {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.chats-strip__peek-state {
+  margin-top: var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+@media (forced-colors: active) {
+  .chats-strip__chip--active {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}

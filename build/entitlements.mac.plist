@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened-runtime entitlements for the signed macOS build.
+
+    Jenny spawns a separately-built PyInstaller sidecar binary and talks to a
+    local Ollama daemon; Electron/V8 and some native code JIT. These entitlements
+    let a hardened-runtime app do that:
+      - allow-jit / allow-unsigned-executable-memory: V8 + JITed code.
+      - disable-library-validation: load the separately-signed/built sidecar
+        binary that ships under Contents/Resources/sidecar.
+      - allow-dyld-environment-variables: the launcher passes env (e.g.
+        JENNY_BACKEND_PYTHON) to the sidecar child.
+    Unsigned dev builds ignore entitlements; they matter once signing is enabled.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

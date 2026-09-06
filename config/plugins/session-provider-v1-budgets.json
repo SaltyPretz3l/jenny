@@ -1,0 +1,19 @@
+{
+  "budget_schema_version": 1,
+  "frozen": true,
+  "limits": {
+    "state_bytes": 16384,
+    "invoke_arguments_bytes": 16384,
+    "transcript_page_messages": 50,
+    "transcript_page_bytes": 49152,
+    "message_operation_metadata_bytes": 1024,
+    "session_operation_metadata_bytes": 262144,
+    "attachment_ticket_ttl_ms": 300000,
+    "artifact_bytes": 67108864,
+    "operation_frames": 4096,
+    "poll_frame_batch": 256,
+    "operation_frame_bytes": 8192,
+    "poll_interval_ms": 250,
+    "poll_backoff_max_ms": 2000
+  }
+}

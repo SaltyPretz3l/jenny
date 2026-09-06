@@ -1,0 +1,93 @@
+[
+  {
+    "payload": { "type": "started", "streamId": "stream_28" },
+    "context": {
+      "turn_id": "stream_28",
+      "event_id": "stream_28:started:0",
+      "primary_user_message_id": "user_stream_28",
+      "primary_assistant_message_id": "assistant_stream_28",
+      "sort_key": [0, 0, 0]
+    }
+  },
+  {
+    "payload": {
+      "type": "delta",
+      "streamId": "stream_28",
+      "content": "",
+      "aggregate": "",
+      "phase": {
+        "phase_id": "phase_reasoning_28",
+        "phase_kind": "reasoning",
+        "iteration": 1,
+        "thinking_id": "think_28"
+      },
+      "reasoning": {
+        "source": "provider",
+        "entriesDelta": [
+          { "id": "e1", "text": "Working through the answer.", "timestamp": "" }
+        ]
+      }
+    },
+    "context": {
+      "turn_id": "stream_28",
+      "event_id": "stream_28:reasoning_phase:0",
+      "primary_user_message_id": "user_stream_28",
+      "primary_assistant_message_id": "assistant_stream_28",
+      "sort_key": [1, 0, 20]
+    }
+  },
+  {
+    "payload": {
+      "type": "delta",
+      "streamId": "stream_28",
+      "content": "Here is the answer.",
+      "aggregate": "Here is the answer.",
+      "phase": { "phase_id": "phase_text_28", "phase_kind": "text", "iteration": 1 }
+    },
+    "context": {
+      "turn_id": "stream_28",
+      "event_id": "stream_28:assistant_text_segment:0",
+      "primary_user_message_id": "user_stream_28",
+      "primary_assistant_message_id": "assistant_stream_28",
+      "segment_id": "seg_28",
+      "segment_text": "Here is the answer.",
+      "segment_index": 0,
+      "assistant_phase": "final_answer",
+      "sort_key": [1, 1, 30]
+    }
+  },
+  {
+    "payload": {
+      "type": "delta",
+      "streamId": "stream_28",
+      "content": "",
+      "aggregate": "Here is the answer.",
+      "phase": {
+        "phase_id": "phase_reasoning_28",
+        "phase_kind": "reasoning",
+        "iteration": 1,
+        "thinking_id": "think_28",
+        "completed": true,
+        "completed_at": "2026-08-29T12:00:00.000Z"
+      },
+      "reasoning": {
+        "source": "provider",
+        "entriesDelta": [
+          {
+            "id": "e1",
+            "text": "Working through the answer.",
+            "timestamp": "",
+            "completed": true
+          }
+        ]
+      }
+    },
+    "context": {
+      "turn_id": "stream_28",
+      "event_id": "stream_28:reasoning_phase:1",
+      "primary_user_message_id": "user_stream_28",
+      "primary_assistant_message_id": "assistant_stream_28",
+      "sort_key": [1, 2, 20]
+    }
+  }
+]

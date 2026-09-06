@@ -1,0 +1,198 @@
+{
+  "turns": [
+    {
+      "turn_id": "stream_23",
+      "branch_id": "user_stream_23",
+      "events": [
+        {
+          "event_id": "stream_23:user_prompt:0",
+          "turn_id": "stream_23",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_23",
+          "source_message_ids": [
+            "user_stream_23"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Edit test.py",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_23:tool_use:0",
+          "turn_id": "stream_23",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "edit_file",
+            "input": {
+              "file_path": "test.py"
+            },
+            "input_json": "{\"file_path\":\"test.py\"}",
+            "approval_state": "pending",
+            "summary": "Edit test.py",
+            "parent_stream_id": "stream_23"
+          },
+          "tool_call_id": "call_23",
+          "status": "running"
+        },
+        {
+          "event_id": "stream_23:approval_requested:0",
+          "turn_id": "stream_23",
+          "kind": "approval_requested",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            1,
+            45
+          ],
+          "payload": {
+            "approval_state": "pending"
+          },
+          "tool_call_id": "call_23",
+          "status": "pending_approval"
+        },
+        {
+          "event_id": "stream_23:tool_executing:0",
+          "turn_id": "stream_23",
+          "kind": "tool_executing",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            2,
+            47
+          ],
+          "payload": {
+            "tool_name": "edit_file"
+          },
+          "tool_call_id": "call_23",
+          "status": "running"
+        }
+      ],
+      "primary_user_message_id": "user_stream_23",
+      "primary_assistant_message_id": "tool_use_stream_23",
+      "source_message_ids": [
+        "user_stream_23",
+        "tool_use_stream_23"
+      ]
+    }
+  ],
+  "byTurnId": {
+    "stream_23": {
+      "turn_id": "stream_23",
+      "branch_id": "user_stream_23",
+      "events": [
+        {
+          "event_id": "stream_23:user_prompt:0",
+          "turn_id": "stream_23",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_23",
+          "source_message_ids": [
+            "user_stream_23"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Edit test.py",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_23:tool_use:0",
+          "turn_id": "stream_23",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "edit_file",
+            "input": {
+              "file_path": "test.py"
+            },
+            "input_json": "{\"file_path\":\"test.py\"}",
+            "approval_state": "pending",
+            "summary": "Edit test.py",
+            "parent_stream_id": "stream_23"
+          },
+          "tool_call_id": "call_23",
+          "status": "running"
+        },
+        {
+          "event_id": "stream_23:approval_requested:0",
+          "turn_id": "stream_23",
+          "kind": "approval_requested",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            1,
+            45
+          ],
+          "payload": {
+            "approval_state": "pending"
+          },
+          "tool_call_id": "call_23",
+          "status": "pending_approval"
+        },
+        {
+          "event_id": "stream_23:tool_executing:0",
+          "turn_id": "stream_23",
+          "kind": "tool_executing",
+          "primary_message_id": "tool_use_stream_23",
+          "source_message_ids": [
+            "tool_use_stream_23"
+          ],
+          "sort_key": [
+            1,
+            2,
+            47
+          ],
+          "payload": {
+            "tool_name": "edit_file"
+          },
+          "tool_call_id": "call_23",
+          "status": "running"
+        }
+      ],
+      "primary_user_message_id": "user_stream_23",
+      "primary_assistant_message_id": "tool_use_stream_23",
+      "source_message_ids": [
+        "user_stream_23",
+        "tool_use_stream_23"
+      ]
+    }
+  },
+  "byMessageId": {
+    "user_stream_23": "stream_23",
+    "tool_use_stream_23": "stream_23"
+  }
+}

@@ -1,0 +1,54 @@
+.model-library-folders {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.model-library-folders-title,
+.model-library-folders-list,
+.model-library-folders-status {
+  grid-column: 1 / -1;
+}
+
+.model-library-folders-title {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.model-library-folders-list {
+  display: grid;
+  gap: 6px;
+}
+
+.model-library-folders-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-library-folders-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-library-folders-row .btn {
+  flex: 0 0 auto;
+}
+
+.model-library-folders-empty,
+.model-library-folders-status {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.model-library-folders-status:empty {
+  display: none;
+}

@@ -1,0 +1,268 @@
+.home-body {
+  animation: homeSurfaceSettle calc(var(--motion-duration-emphasis) + var(--motion-stagger) * 2) var(--motion-ease-emphasis) calc(var(--motion-stagger) * 3) both;
+}
+
+.home-card-note {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* Plain eyebrow text — the pill background/min-height chrome is gone. */
+.home-card-eyebrow {
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-lg);
+  text-transform: uppercase;
+}
+
+.home-skeleton-stack {
+  min-height: 96px;
+  width: 100%;
+}
+
+/* Load-time host for #homeOpenLoopsPanel only: the Daybook's open-loops widget
+   adopts that panel on first render, so this box is empty from then on. It
+   carries no spacing of its own -- an empty box must not paint a gap. */
+.home-body {
+  position: relative;
+  display: grid;
+  align-items: start;
+}
+
+/* Open section: the panel carries no chrome of its own. Only the zoned
+   Open Loops variant below opts into the depth level-1 recipe. */
+.home-panel {
+  display: grid;
+  gap: var(--space-7);
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+
+/* Depth level 1 (the full-width Open Loops zone): solid one-step surface fill,
+   1px hairline, 8px corners. No gradient sheen, no shadow, no hover lift. */
+.home-panel--board {
+  gap: var(--space-8);
+  padding: var(--space-10);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+
+.home-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-7);
+}
+
+.home-card-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-5);
+}
+
+/* Panel headings conform to the page's single heading system — the same
+ * uppercase tracked eyebrow as .dashboard-card__title, quieted by color. */
+.home-panel--board h3 {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-lg);
+  text-transform: uppercase;
+}
+
+.home-panel h4 {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.home-summary-list {
+  display: grid;
+  gap: var(--space-5);
+}
+
+/* Loop rows sit inside the Open Loops zone (already depth level 1), so they
+ * stay flat: a hairline divider between rows instead of nested boxes. */
+.home-summary-item {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-7) 0;
+  border: none;
+  background: none;
+}
+
+.home-summary-list > .home-summary-item + .home-summary-item {
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 62%, transparent);
+}
+
+/* Due / resolved / archived stay distinguishable by a flat tint (no gradient). */
+.home-summary-item[data-loop-due="true"] {
+  background: color-mix(in srgb, var(--home-live-accent) 7%, transparent);
+}
+
+.home-summary-item[data-loop-status="resolved"] {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.home-summary-item[data-loop-status="archived"] {
+  opacity: 0.88;
+}
+
+/* The first/oldest active loop gets no distinct treatment — the side accent
+ * bar, elevated fill, and glow are retired (no side bars anywhere on Home).
+ * `.memory-commitment-item--first` is still set by the renderer as a hook. */
+
+/* Resolve-in-progress: fade the card during the 6s undo window.
+   --motion-duration-emphasis zeroes under prefers-reduced-motion globally. */
+.home-summary-item.memory-commitment-item[data-loop-resolving="true"] {
+  pointer-events: none;
+  animation: loop-fade-out var(--motion-duration-emphasis) var(--motion-ease-emphasis) forwards;
+}
+
+.home-summary-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-lg);
+  text-transform: uppercase;
+}
+
+.home-summary-value {
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.home-summary-meta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.4;
+}
+
+.home-loop-meta-block {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.home-loop-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+/* Plain secondary-text counts — the pill chrome (fill, radius, min-height)
+ * and the per-variant accent fills are retired. */
+.home-loop-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.home-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.home-loop-history {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 62%, transparent);
+}
+
+.home-loop-history-toggle {
+  cursor: pointer;
+  color: color-mix(in srgb, var(--text-primary) 90%, transparent);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  list-style: none;
+}
+
+.home-loop-history-list {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding-left: var(--space-2);
+}
+
+.home-loop-history-item {
+  display: grid;
+  gap: var(--space-1);
+  padding-left: var(--space-5);
+  border-left: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
+}
+
+/* Depth level 1 (form zone): solid one-step fill, 1px hairline, 8px corners. */
+.home-inline-form {
+  animation: fade-up var(--motion-duration-regular) var(--motion-ease-emphasis);
+  display: grid;
+  gap: var(--space-6);
+  margin-top: var(--space-7);
+  padding: var(--space-8);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+
+.home-inline-form[hidden] {
+  display: none;
+}
+
+.home-inline-form-field {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.home-card-divider {
+  height: 1px;
+  margin: var(--space-2) 0 var(--space-1);
+  background: color-mix(in srgb, var(--border-default) 78%, transparent);
+}
+
+/* Collapsible loop subsections (Deferred / Recently Completed / Archived)
+ * keep the parent board's vertical rhythm and disappear entirely when empty. */
+.home-loop-subsection {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.home-loop-subsection[hidden] {
+  display: none;
+}
+
+/* Heading + count on one line, mirroring the subsection header rhythm. */
+.home-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+/* The 0.72 opacity quiet-down is gone with the pill: the eyebrow already sits
+   on --text-secondary, and dimming it further drops below the 4.5:1 floor. */
+.home-card-title-row .home-card-eyebrow {
+  align-self: center;
+}
+
+.home-card-header--subsection {
+  margin-top: var(--space-1);
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-5);
+}

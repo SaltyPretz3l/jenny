@@ -1,0 +1,41 @@
+repos:
+  - repo: local
+    hooks:
+      # Per-commit gate: policy checks only (~20s). The heavy hooks below run
+      # once per integration instead of per commit, via
+      # scripts/worktree-agent.ps1 (verify / remove -Merge) or
+      # `pre-commit run --hook-stage manual --all-files`.
+      - id: policy-checks
+        name: Policy Checks
+        entry: python scripts/checks/run_all.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: mypy-sidecar
+        name: Mypy Sidecar
+        entry: python -m mypy sidecar
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+      - id: sidecar-fast-tests
+        name: Sidecar Fast Tests
+        entry: python -m pytest tests/sidecar/test_server.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+      - id: eslint
+        name: ESLint
+        entry: npm run lint
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+      - id: repo-hygiene-node-tests
+        name: Repo Hygiene Node Tests
+        entry: node scripts/run-node-tests-safe.js tests/repo-hygiene.test.js
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]

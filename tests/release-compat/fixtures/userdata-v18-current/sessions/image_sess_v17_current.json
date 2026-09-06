@@ -1,0 +1,35 @@
+{
+  "schema_version": 18,
+  "session": {
+    "id": "image_sess_v17_current",
+    "title": "Current image plugin v18",
+    "session_type": "plugin",
+    "plugin_session": {
+      "schema_version": 1,
+      "publisher_id": "jenny-official",
+      "plugin_id": "local-image-generation",
+      "provider_contribution_id": "local_image_generation",
+      "view_contribution_id": "image_workspace",
+      "provider_name": "Local image generation",
+      "icon_token": "image",
+      "plugin_version_at_creation": "1.0.0",
+      "state_schema_version": 1,
+      "state_revision": 0,
+      "state": {
+        "model_id": "HiDream-ai/HiDream-O1-Image",
+        "resolution": "2048x2048",
+        "steps": 50
+      },
+      "active_operation": null
+    },
+    "created_at": "2026-08-12T12:01:00.000Z",
+    "updated_at": "2026-08-12T12:01:00.000Z",
+    "session_incarnation": "inc_v18_plugin",
+    "messages": [],
+    "message_count": 0,
+    "message_seq_counter": 0,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 0,
+    "turn_events": []
+  }
+}

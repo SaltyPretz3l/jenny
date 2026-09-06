@@ -1,0 +1,201 @@
+/* Hover actions — the per-message action row (.chat-hover-*) + copy chip.
+ * Single owner file (base structure formerly lived in chat-tools.css; merged
+ * here by the quiet-timeline overhaul). .chat-hover-action is the
+ * highest-instance interactive selector in the timeline (~3 per assistant
+ * message), so background-color is intentionally NOT in the transition list —
+ * that paint cost compounds across all instances on hover. */
+
+.chat-hover-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  min-height: 28px;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.chat-entry:hover .chat-hover-row,
+.chat-entry:focus-within .chat-hover-row {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.chat-entry.user .chat-hover-row {
+  justify-content: flex-end;
+}
+
+.chat-hover-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-hover-meta-empty {
+  visibility: hidden;
+}
+
+.chat-entry.assistant[data-message-status="error"] .chat-hover-meta {
+  color: var(--widget-chat-meta-error-color);
+}
+
+.chat-hover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+}
+
+.chat-unsaved-reply-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--state-warning-border);
+  border-radius: var(--tl-radius-control);
+  background: color-mix(in srgb, var(--state-warning-bg) 72%, transparent);
+}
+
+.chat-unsaved-reply-state,
+.chat-unsaved-reply-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.chat-unsaved-reply-state {
+  min-width: 0;
+}
+
+.chat-unsaved-reply-detail {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-meta);
+}
+
+.chat-unsaved-reply-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.chat-unsaved-reply-action {
+  min-height: calc(26px * var(--chat-zoom-factor, 1));
+  padding-inline: var(--space-4);
+  white-space: nowrap;
+}
+
+.chat-unsaved-reply-notice[data-busy="true"] {
+  opacity: 0.72;
+}
+
+.chat-hover-action {
+  display: grid;
+  place-items: center;
+  width: calc(28px * var(--chat-zoom-factor, 1));
+  height: calc(28px * var(--chat-zoom-factor, 1));
+  padding: 0;
+  border-radius: var(--tl-radius-control);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.chat-hover-action:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.chat-hover-action:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text-primary);
+}
+
+.chat-hover-action:active {
+  transform: translateY(1px) scale(0.98);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-surface));
+}
+
+.chat-hover-action:disabled,
+.chat-hover-action[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  background: color-mix(in srgb, var(--text-muted) 4%, transparent);
+  border-color: var(--line);
+  color: var(--text-muted);
+}
+
+.chat-hover-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-hover-action-text {
+  width: auto;
+  min-width: calc(28px * var(--chat-zoom-factor, 1));
+  padding: 0 var(--space-5);
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-label);
+  letter-spacing: var(--tracking-ui);
+}
+
+.chat-copy-chip {
+  position: absolute;
+  z-index: 2;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--tl-radius-chip);
+  border: 1px solid var(--widget-copy-chip-border);
+  background: var(--widget-copy-chip-bg);
+  box-shadow: var(--shadow-card);
+  color: var(--widget-copy-chip-color);
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px) scale(0.96);
+  animation: chat-copy-chip-fade var(--motion-duration-feedback) var(--motion-ease-standard) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-hover-row {
+    transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+    transform: none !important;
+  }
+  .chat-hover-action {
+    transition: none !important;
+  }
+  .chat-hover-action:hover,
+  .chat-hover-action:active {
+    transform: none !important;
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "contract": "PluginProviderDescriptorV5",
+  "contract_version": 5,
+  "frozen": true,
+  "defs": {
+    "header": {
+      "type": "object", "required": ["name", "value"], "max_keys": 2,
+      "additional_properties": "reject",
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,63}$", "max_utf8_bytes": 64 },
+        "value": { "type": "string", "pattern": "^[^\\x00-\\x1F\\x7F]{1,256}$", "max_utf8_bytes": 256 }
+      }
+    },
+    "model": {
+      "type": "object", "required": ["id", "label", "context_length"], "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", "max_utf8_bytes": 128 },
+        "label": { "type": "ref", "ref": "display_string" },
+        "context_length": { "type": "integer", "minimum": 1024, "maximum": 10485760 }
+      }
+    },
+    "lookup_entry": {
+      "type": "object", "required": ["from", "to"], "max_keys": 2,
+      "additional_properties": "reject",
+      "properties": {
+        "from": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$", "max_utf8_bytes": 64 },
+        "to": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$", "max_utf8_bytes": 64 }
+      }
+    },
+    "lookup_table": {
+      "type": "object", "required": ["name", "entries"], "max_keys": 2,
+      "additional_properties": "reject",
+      "properties": {
+        "name": { "type": "ref", "ref": "bounded_id" },
+        "entries": { "type": "array", "max_items": 32, "unique_by": ["from"], "items": { "type": "ref", "ref": "lookup_entry" } }
+      }
+    },
+    "safe_scalar_rule": {
+      "type": "object", "required": ["name", "kind", "max_utf8_bytes", "minimum", "maximum"], "max_keys": 5,
+      "additional_properties": "reject",
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,63}$", "max_utf8_bytes": 64 },
+        "kind": { "type": "enum", "values": ["string", "integer", "number", "boolean"] },
+        "max_utf8_bytes": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "minimum": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        "maximum": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+      }
+    },
+    "error_mapping": {
+      "type": "object", "required": ["status_code", "provider_code", "reason_code", "retryable"], "max_keys": 4,
+      "additional_properties": "reject",
+      "properties": {
+        "status_code": { "type": "integer", "minimum": 0, "maximum": 599 },
+        "provider_code": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{0,64}$", "max_utf8_bytes": 64 },
+        "reason_code": { "type": "ref", "ref": "bounded_id" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "stream_mapping": {
+      "type": "object", "required": ["event", "output_kind", "source_path"], "max_keys": 3,
+      "additional_properties": "reject",
+      "properties": {
+        "event": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$", "max_utf8_bytes": 128 },
+        "output_kind": { "type": "enum", "values": ["text_delta", "reasoning_delta", "output_item", "completed", "failed", "usage"] },
+        "source_path": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$", "max_utf8_bytes": 128 }
+      }
+    }
+  },
+  "root": {
+    "type": "object",
+    "required": [
+      "descriptor_schema_version", "provider_id", "engine_type", "endpoint", "auth_profile", "headers",
+      "request_template", "input_template", "tool_template", "lookup_tables", "safe_scalar_rules",
+      "error_map", "stream_map", "model_catalog", "core_adapters"
+    ],
+    "max_keys": 15,
+    "additional_properties": "reject",
+    "properties": {
+      "descriptor_schema_version": { "type": "const", "value": 5 },
+      "provider_id": { "type": "ref", "ref": "bounded_id" },
+      "engine_type": { "type": "const", "value": "chatgpt" },
+      "endpoint": { "type": "ref", "ref": "endpoint_url" },
+      "auth_profile": { "type": "enum", "values": ["chatgpt_subscription_oauth"] },
+      "headers": { "type": "array", "max_items": 16, "unique_by": ["name"], "items": { "type": "ref", "ref": "header" } },
+      "request_template": { "type": "enum", "values": ["openai_responses_v1"] },
+      "input_template": { "type": "enum", "values": ["openai_responses_input_v1"] },
+      "tool_template": { "type": "enum", "values": ["openai_function_tools_v1"] },
+      "lookup_tables": { "type": "array", "max_items": 16, "unique_by": ["name"], "items": { "type": "ref", "ref": "lookup_table" } },
+      "safe_scalar_rules": { "type": "array", "max_items": 32, "unique_by": ["name"], "items": { "type": "ref", "ref": "safe_scalar_rule" } },
+      "error_map": { "type": "array", "max_items": 32, "unique_by": ["status_code", "provider_code"], "items": { "type": "ref", "ref": "error_mapping" } },
+      "stream_map": { "type": "array", "max_items": 64, "unique_by": ["event"], "items": { "type": "ref", "ref": "stream_mapping" } },
+      "model_catalog": { "type": "array", "max_items": 32, "unique_by": ["id"], "items": { "type": "ref", "ref": "model" } },
+      "core_adapters": { "type": "array", "max_items": 2, "unique_by": [], "items": { "type": "enum", "values": ["citation_marker_normalizer", "reasoning_item_replay_cache"] } }
+    }
+  }
+}

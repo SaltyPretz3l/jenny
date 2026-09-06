@@ -1,0 +1,46 @@
+{
+  "schema_version": 3,
+  "sessions": {
+    "sess_v4_legacy": {
+      "id": "sess_v4_legacy",
+      "title": "v4 legacy session with dup ids and stale pending approval",
+      "session_type": "chat",
+      "created_at": "2025-10-01T10:00:00.000Z",
+      "updated_at": "2025-10-01T10:30:00.000Z",
+      "message_count": 3,
+      "last_message_preview": "",
+      "last_model_used": "qwen2.5-coder:14b",
+      "linked_session_ids": [],
+      "messages": [
+        {
+          "id": "msg_dup_001",
+          "role": "user",
+          "content": "first version of message",
+          "kind": "user_prompt",
+          "created_at": "2025-10-01T10:00:00.000Z"
+        },
+        {
+          "id": "msg_dup_001",
+          "role": "user",
+          "content": "second (winning) version of message",
+          "kind": "user_prompt",
+          "created_at": "2025-10-01T10:01:00.000Z"
+        },
+        {
+          "id": "msg_tool_use_stale",
+          "role": "assistant",
+          "content": "",
+          "kind": "tool_use",
+          "tool_call": {
+            "call_id": "call_stale_001",
+            "tool_name": "read_file",
+            "status": "pending_approval",
+            "approval_state": "pending"
+          },
+          "created_at": "2025-10-01T10:02:00.000Z"
+        }
+      ],
+      "turn_events": []
+    }
+  }
+}

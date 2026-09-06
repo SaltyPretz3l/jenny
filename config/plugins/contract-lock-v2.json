@@ -1,0 +1,12 @@
+{
+  "lock_schema_version": 1,
+  "contracts": {
+    "config/plugins/v2/_common.schema.json": "63e3af93d049b6120d81071bf7382756b785ad8ab15da6813eab7298f8219b0d",
+    "config/plugins/v2/plugin-command-invocation.schema.json": "e03288f837ccb55f0b1d071b9ac594a5c7bf97633f89c7f10b28401e35fb59ae",
+    "config/plugins/v2/plugin-declarative-content.schema.json": "584b235af3615ac13c9b1c37cda2140c154177085a4adb9351037e2e9f89c470",
+    "config/plugins/v2/plugin-generation.schema.json": "434b44a715da0e87f8fcdfdac0b784b179d015245036dab6970e1fd6dd229794",
+    "config/plugins/v2/plugin-manifest.schema.json": "1d1fe7f0e8843c75d293619ecbdb1257bd1e8c7767ae1f9a559975d1e3a76cc6",
+    "config/plugins/v2/plugin-runtime-snapshot.schema.json": "0ad847e9906f73aec1991af6997ccce501fdd76400cb6fb92e0fcc6ac0d3d512",
+    "config/plugins/v2/plugin-settings-state.schema.json": "2c2f230b8c85e1dcc451208b961f00f92a796127637d6f10671a55216b12d881"
+  }
+}

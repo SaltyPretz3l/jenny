@@ -1,0 +1,33 @@
+{
+  "nodes": [
+    {
+      "id": "a.js",
+      "label": "a.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 1,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "edges": [],
+  "findings": {
+    "hubs": [
+      "a.js"
+    ],
+    "cycles": [],
+    "orphans": [
+      "a.js"
+    ]
+  },
+  "meta": {
+    "scanned": 1,
+    "total": 1,
+    "durationMs": 0
+  }
+}

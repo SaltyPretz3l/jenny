@@ -1,0 +1,45 @@
+/* styles/ide-gutter.css - git change-bars in the Monaco gutter (lines-decorations
+ * lane) for the active editor. Reuses the shared git state palette vars so the
+ * strip re-themes with every palette, exactly like the tree git decorations in
+ * ide-source-control.css. Monaco sizes the decoration element inline, so the
+ * width/height overrides below are intentional (!important) to paint a thin bar
+ * rather than fill the whole margin cell. */
+
+.ide-gutter-change {
+  width: 3px !important;
+  margin-left: 2px;
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+.ide-gutter-change--added {
+  background: var(--state-success);
+}
+
+.ide-gutter-change--modified {
+  background: var(--state-warning);
+}
+
+/* Deleted lines (no longer in the buffer): a small red boundary marker drawn
+ * with borders on a zero-size box, sitting at the line where the deletion was. */
+.ide-gutter-change--deleted {
+  width: 0 !important;
+  height: 0 !important;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--state-danger);
+  border-radius: 0;
+}
+
+/* Line-bookmark glyph (separate glyph-margin lane, separate decoration-id array
+ * from the change-bars above). A small accent ribbon drawn with clip-path so it
+ * stays CSP-safe on file:// (no data URI / @font-face); color follows the
+ * palette accent var, so it re-themes with every palette. */
+.ide-bookmark-glyph {
+  background: var(--accent);
+  width: 10px !important;
+  height: 13px;
+  margin-left: 3px;
+  clip-path: polygon(15% 0, 85% 0, 85% 100%, 50% 68%, 15% 100%);
+  cursor: pointer;
+}

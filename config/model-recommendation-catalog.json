@@ -1,0 +1,106 @@
+{
+  "catalogVersion": 8,
+  "updatedAt": "2026-08-19",
+  "source": "bundled-default",
+  "_comment": "Hardware -> local model catalog. TUNABLE. VRAM/RAM values include runtime headroom; downloadSizeMb is the registry-displayed model size and disk headroom is derived at runtime. pullTag is the literal `ollama pull` argument. Accelerator fits rank first, otherwise the strongest model fitting available RAM is recommended for slower CPU inference. This file ships in the app and is the remote-refresh source. Bump catalogVersion on every change and keep it in sync with sidecar/runtime/hardware_profile.py::_FALLBACK_CATALOG.",
+  "models": [
+    {
+      "tier": "challenger",
+      "modelId": "batiai/gemma4-26b:q6",
+      "displayName": "Gemma 4 26B A4B",
+      "params": "26B-A4B",
+      "quant": "Q6_K",
+      "vramRequiredMb": 20000,
+      "ramRequiredMb": 24000,
+      "downloadSizeMb": 23000,
+      "contextLength": 32768,
+      "pullTag": "batiai/gemma4-26b:q6"
+    },
+    {
+      "tier": "daily",
+      "modelId": "batiai/gemma4-12b:q6",
+      "displayName": "Gemma 4 12B",
+      "params": "12B",
+      "quant": "Q6_K",
+      "vramRequiredMb": 13000,
+      "ramRequiredMb": 16000,
+      "downloadSizeMb": 9800,
+      "contextLength": 32768,
+      "pullTag": "batiai/gemma4-12b:q6"
+    },
+    {
+      "tier": "coder",
+      "modelId": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q8_0",
+      "displayName": "Ornith 1.5 9B (coder)",
+      "params": "9B",
+      "quant": "Q8_0",
+      "vramRequiredMb": 12000,
+      "ramRequiredMb": 14000,
+      "downloadSizeMb": 9530,
+      "contextLength": 49152,
+      "pullTag": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q8_0",
+      "preferred": true
+    },
+    {
+      "tier": "coder-lite",
+      "modelId": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "displayName": "Ornith 1.5 9B (lean coder)",
+      "params": "9B",
+      "quant": "Q4_K_M",
+      "vramRequiredMb": 7500,
+      "ramRequiredMb": 10000,
+      "downloadSizeMb": 5630,
+      "contextLength": 32768,
+      "pullTag": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "preferred": true
+    },
+    {
+      "tier": "compact",
+      "modelId": "batiai/gemma4-12b:q4",
+      "displayName": "Gemma 4 12B (lean)",
+      "params": "12B",
+      "quant": "Q4_K",
+      "vramRequiredMb": 9000,
+      "ramRequiredMb": 12000,
+      "downloadSizeMb": 7400,
+      "contextLength": 16384,
+      "pullTag": "batiai/gemma4-12b:q4"
+    },
+    {
+      "tier": "small",
+      "modelId": "batiai/gemma4-e4b:q6",
+      "displayName": "Gemma 4 E4B",
+      "params": "4B",
+      "quant": "Q6_K",
+      "vramRequiredMb": 7500,
+      "ramRequiredMb": 8000,
+      "downloadSizeMb": 6200,
+      "contextLength": 32768,
+      "pullTag": "batiai/gemma4-e4b:q6"
+    },
+    {
+      "tier": "baseline",
+      "modelId": "batiai/gemma4-e4b:q6",
+      "displayName": "Gemma 4 E4B (CPU)",
+      "params": "4B",
+      "quant": "Q6_K",
+      "vramRequiredMb": 0,
+      "ramRequiredMb": 8000,
+      "downloadSizeMb": 6200,
+      "contextLength": 8192,
+      "pullTag": "batiai/gemma4-e4b:q6"
+    },
+    {
+      "tier": "tiny",
+      "modelId": "batiai/gemma4-e2b:q4",
+      "displayName": "Gemma 4 E2B",
+      "params": "2B",
+      "quant": "Q4_K",
+      "vramRequiredMb": 0,
+      "ramRequiredMb": 4000,
+      "downloadSizeMb": 3400,
+      "contextLength": 8192,
+      "pullTag": "batiai/gemma4-e2b:q4"
+    }
+  ]
+}

@@ -1,0 +1,341 @@
+/* Root-level assistant messages: no dot — top-level like user messages */
+.chat-thread-root-assistant > .chat-thread-node-row >
+.chat-thread-toggle,
+.chat-thread-root-assistant > .chat-thread-node-row > .chat-thread-toggle-spacer {
+  display: none;
+}
+
+.chat-thread-node-row {
+  display: grid;
+  grid-template-columns: var(--thread-dot-hit-size) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-5);
+  position: relative;
+  min-width: 0;
+}
+
+.chat-thread-node-article {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.chat-thread-root-assistant > .chat-thread-node-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-thread-root-assistant > .chat-thread-node-row > .chat-thread-node-article {
+  grid-column: 1;
+}
+
+.thread-compat-anchor {
+  display: none !important;
+}
+
+.chat-thread-node-article >
+.chat-entry {
+  width: 100%;
+}
+
+/* ── Turn rhythm (quiet grammar) ──
+   The row list has no flex gap (chat-thread.css); spacing is adjacency-driven
+   so each pair carries its own distance: machinery rows sit contiguous
+   (--tl-row-gap), prose paragraphs keep their comfortable gap, and machinery
+   clusters break from prose with --tl-cluster-gap. */
+.turn-row-list .chat-row + .chat-row {
+  margin-block-start: var(--tl-row-gap);
+}
+
+.turn-row-list .chat-row[data-row-kind="assistant_text"] + .chat-row[data-row-kind="assistant_text"] {
+  margin-block-start: var(--space-4);
+}
+
+.turn-row-list .chat-row[data-row-kind="assistant_text"] + .chat-row:not([data-row-kind="assistant_text"]),
+.turn-row-list .chat-row:not([data-row-kind="assistant_text"]) + .chat-row[data-row-kind="assistant_text"] {
+  margin-block-start: var(--tl-cluster-gap);
+}
+
+.turn-row-list .chat-row[data-row-kind="tool_step"][data-row-state="awaiting_approval"] {
+  padding-inline-start: var(--space-3);
+  border-inline-start: 3px solid var(--widget-tool-pending-border);
+}
+
+.turn-row-list .chat-row[data-row-kind="system_notice"] {
+  padding-block: var(--space-1);
+  font-size: var(--tl-font-ui);
+  color: var(--text-muted);
+}
+
+.turn-row-list .chat-row[data-row-kind="system_notice"] .chat-system-notice {
+  color: inherit;
+}
+
+.turn-row-list .chat-row[data-row-kind="reasoning"] .thinking-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--tl-font-ui);
+  font-style: italic;
+  color: var(--text-muted);
+  opacity: 0.82;
+}
+
+/* Legacy bare error row (rendered only when the V2 card module is
+ * unavailable — see renderer-turn-row-render-utils.js:694). The V2
+ * recovery card owns its own themed chrome, so exclude --recovery here:
+ * this rule's higher specificity was overriding the card's nullifier and
+ * double-painting a second (un-themed #d33) wash + border under the card. */
+.turn-row-list .chat-row[data-row-kind="system_notice"] .chat-error-row:not(.chat-error-row--recovery) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-danger-emphasis) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-danger-emphasis) 28%, transparent);
+}
+
+.turn-row-list .chat-row[data-row-kind="system_notice"] .chat-error-row .chat-error-code {
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-emphasis);
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--text-danger-emphasis) 88%, var(--text-primary));
+}
+
+.turn-row-list .chat-row[data-row-kind="system_notice"] .chat-error-row .chat-error-message {
+  font-size: var(--tl-font-ui);
+  color: var(--text-primary);
+}
+
+.chat-thread-toggle,
+.chat-thread-toggle-spacer {
+  position: absolute;
+  left: calc(-1 * var(--_dot-offset) - var(--thread-dot-hit-size) / 2);
+  top: var(--space-2);
+  display: grid;
+  place-items: center;
+  width: var(--thread-dot-hit-size);
+  height: var(--thread-dot-hit-size);
+  min-width: var(--thread-dot-hit-size);
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: 0;
+  z-index: 1;
+}
+
+.chat-thread-toggle::before,
+.chat-thread-toggle-spacer::before {
+  content: "";
+  width: var(--thread-dot-size);
+  height: var(--thread-dot-size);
+  border-radius: 50%;
+  background: var(--_dot-bg);
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 1px var(--_dot-ring);
+  /* B6 (compositing): box-shadow removed from the transition list.
+     Thread dots are small ring elements that appear many times across
+     the timeline; transitioning box-shadow forces a full-layer repaint
+     for every dot on hover / state change. The ring colour delta is
+     visually negligible, so snapping it is acceptable. Transform,
+     background-color, and opacity still animate to preserve the
+     existing affordance feel. */
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chat-thread-toggle-spacer {
+  pointer-events: none;
+}
+
+.chat-thread-toggle-spacer::before {
+  opacity: 0.9;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--_dot-ring) 65%, transparent);
+}
+
+.chat-thread-toggle {
+  cursor: pointer;
+}
+
+.chat-thread-toggle::before {
+  background: color-mix(in srgb, var(--_dot-bg) 72%, var(--widget-input-focus-glow));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--widget-input-focus-glow) 22%, var(--_dot-ring));
+}
+
+.chat-thread-toggle[aria-expanded="true"]::before {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-glow) 60%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--widget-input-focus-glow) 18%, transparent);
+}
+
+.chat-thread-toggle[aria-expanded="false"]::before {
+  opacity: 0.92;
+}
+
+.chat-thread-toggle:hover::before {
+  background: color-mix(in srgb, var(--widget-input-focus-glow) 48%, var(--_dot-bg));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--widget-input-focus-glow) 72%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--widget-input-focus-glow) 20%, transparent);
+  transform: scale(1.12);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--widget-input-focus-glow) 80%, transparent));
+}
+
+.chat-thread-toggle:active::before {
+  transform: scale(0.96);
+}
+
+.chat-thread-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.chat-thread-toggle-count {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Per-row thread node dots ── */
+
+.chat-row-node-dot {
+  display: none;
+}
+
+.chat-thread-node-nested .chat-thread-node-article .chat-row {
+  position: relative;
+}
+
+.chat-thread-node-nested .chat-thread-node-article .chat-row .chat-row-node-dot {
+  display: block;
+  position: absolute;
+  /*
+    Horizontal: place dot centre at -(--_dot-offset) from .chat-thread-node-row's
+    left edge — the same horizontal axis as the toggle button and rail.
+    .chat-row left edge = article left edge = grid column 2 start
+                        = thread-dot-hit-size + space-5 from the row's left.
+    dot centre from .chat-row left = -(dot-offset + hit-size + space-5)
+    dot visual left edge           = that centre - dot-size / 2
+  */
+  left: calc(
+    -1 * (var(--_dot-offset) + var(--thread-dot-hit-size) + var(--space-5))
+    - var(--thread-dot-size) / 2
+  );
+  top: var(--space-5);
+  width: var(--thread-dot-size);
+  height: var(--thread-dot-size);
+  border-radius: 50%;
+  background: var(--_dot-bg);
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--_dot-ring) 78%, transparent);
+  opacity: 0.9;
+  pointer-events: none;
+  z-index: 1;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    filter var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot {
+  transform: scale(1.15);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--widget-input-focus-glow) 80%, transparent));
+  opacity: 1;
+}
+
+/*
+  Collapsible nodes already have a .chat-thread-toggle button as the visual dot
+  for the first content landmark. Suppress the first row's dot to avoid doubling.
+*/
+.chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
+  .chat-thread-node-article
+  .chat-row:first-child
+  .chat-row-node-dot {
+  display: none;
+}
+
+/* system_notice rows are small one-line status bars — no dot indicator needed */
+.chat-thread-node-nested .chat-thread-node-article
+  .chat-row[data-row-kind="system_notice"] .chat-row-node-dot {
+  display: none;
+}
+
+.chat-thread-children {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--thread-node-gap);
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.chat-thread-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--thread-dot-hit-size) + var(--space-5) + (var(--thread-dot-hit-size) / 2));
+  width: var(--thread-rail-width);
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--border-default);
+  opacity: var(--thread-rail-opacity);
+  pointer-events: none;
+}
+
+.chat-thread-root-user > .chat-thread-children::before,
+.chat-thread-root-assistant > .chat-thread-children::before,
+.chat-thread-node-nested > .chat-thread-children::before {
+  display: none;
+}
+
+.chat-thread-children[hidden] {
+  display: none !important;
+}
+
+/* Thread rail — JS sets --_rail-top / --_rail-height so the line
+   starts at the first dot and ends at the last dot. */
+.chat-thread-root::before {
+  content: "";
+  position: absolute;
+  top: var(--_rail-top, 0);
+  height: var(--_rail-height, 0);
+  left: calc(-1 * var(--_dot-offset) - var(--thread-rail-width) / 2);
+  width: var(--thread-rail-width);
+  border-radius: var(--radius-pill);
+  background: var(--border-default);
+  opacity: var(--thread-rail-opacity);
+  pointer-events: none;
+  transition:
+    background var(--motion-duration-regular) var(--motion-ease-standard),
+    opacity var(--motion-duration-regular) var(--motion-ease-standard);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thread-toggle::before,
+  .chat-thread-toggle-spacer::before,
+  .chat-row-node-dot,
+  .turn-row-list .chat-row > .chat-row-node-dot {
+    transition: none !important;
+  }
+
+  .chat-thread-toggle:hover::before,
+  .chat-thread-toggle:active::before,
+  .chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot,
+  .turn-row-list .chat-row:hover > .chat-row-node-dot {
+    transform: none !important;
+    filter: none !important;
+  }
+}

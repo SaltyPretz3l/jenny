@@ -1,0 +1,36 @@
+{
+  "schema_version": 18,
+  "session": {
+    "id": "frontier_diag_v17_current",
+    "title": "Current chat v18",
+    "session_type": "chat",
+    "plugin_session": null,
+    "created_at": "2026-08-12T12:00:00.000Z",
+    "updated_at": "2026-08-12T12:00:00.000Z",
+    "session_incarnation": "inc_v18_chat",
+    "context_preferences": {
+      "history_scope": "recent",
+      "include_personality": true,
+      "include_memory": false,
+      "include_research_mode": true
+    },
+    "compaction_snapshot": {
+      "version": 1,
+      "created_at": "2026-08-12T12:00:00.000Z",
+      "strategy": "full",
+      "tokens_before": 100,
+      "tokens_after": 40,
+      "boundary_message_id": "legacy-boundary",
+      "boundary_message_count": 1,
+      "messages": [
+        { "role": "system", "content": "Legacy manual summary." }
+      ]
+    },
+    "messages": [],
+    "message_count": 0,
+    "message_seq_counter": 0,
+    "turn_event_log_version": 2,
+    "turn_event_seq_counter": 0,
+    "turn_events": []
+  }
+}

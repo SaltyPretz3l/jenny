@@ -1,0 +1,156 @@
+{
+  "nodes": [
+    {
+      "id": "a.js",
+      "label": "a.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 6,
+      "inbound": 0,
+      "outbound": 6,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "t-cjs.cjs",
+      "label": "t-cjs.cjs",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    },
+    {
+      "id": "t-js.js",
+      "label": "t-js.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 114
+    },
+    {
+      "id": "t-jsx.jsx",
+      "label": "t-jsx.jsx",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 138
+    },
+    {
+      "id": "t-mjs.mjs",
+      "label": "t-mjs.mjs",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 162
+    },
+    {
+      "id": "t-ts.ts",
+      "label": "t-ts.ts",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 186
+    },
+    {
+      "id": "t-tsx.tsx",
+      "label": "t-tsx.tsx",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 210
+    }
+  ],
+  "edges": [
+    {
+      "from": "a.js",
+      "to": "t-cjs.cjs",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.js",
+      "to": "t-js.js",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.js",
+      "to": "t-jsx.jsx",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.js",
+      "to": "t-mjs.mjs",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.js",
+      "to": "t-ts.ts",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.js",
+      "to": "t-tsx.tsx",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "t-cjs.cjs",
+      "t-js.js",
+      "t-jsx.jsx",
+      "t-mjs.mjs",
+      "t-ts.ts"
+    ],
+    "cycles": [],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 7,
+    "total": 7,
+    "durationMs": 0
+  }
+}

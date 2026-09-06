@@ -1,0 +1,170 @@
+/* Shared Settings primitives, loaded after settings-layout.css. Surfaces stay
+ * flat and token-driven, with 1px borders and no glow, lift, or gradient. */
+
+/* ── T1 — ruled control group with an accessible heading ──────────────── */
+/* Wraps a set of related controls under an <h4 class="settings-group-heading">.
+   The separator rule makes scope boundaries explicit (Models, Context, etc.).
+   Inner controls keep their own margin-based rhythm, so this is a block wrapper
+   rather than a flex stack — no need to neutralise every child's margin. */
+.settings-group {
+  margin-top: var(--space-9);
+  padding-top: var(--space-8);
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+}
+
+/* First group in a card sits right under the description — no top rule. */
+.settings-group--flush {
+  margin-top: var(--space-7);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-group-heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.settings-group-copy {
+  margin: var(--space-3) 0 0;
+  max-width: 62ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+/* Avoid stacking the field label's default top margin with the group's spacing. */
+.settings-group > .settings-field-label:first-of-type,
+.settings-group-copy + .settings-field-label {
+  margin-top: var(--space-6);
+}
+
+/* ── T2 — merged subsection treatment (Skills, Tips, nested MCP) ───────── */
+/* These classes already exist in index.html with zero CSS; this gives them a
+   real separator + heading. The header is a row (h4 + .settings-badge), with
+   the description as a sibling <p class="settings-copy">. */
+.settings-subsection {
+  margin-top: var(--space-9);
+  padding-top: var(--space-8);
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+}
+
+/* Neutralise the card-corner trick the base .settings-card-header applies
+   (negative margin / padding / rounded top / accent bottom border) — a
+   subsection header is an inline label row, not the card masthead. */
+.settings-card-header--subsection {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  border-bottom: 0;
+  background: none;
+  gap: var(--space-5);
+}
+
+.settings-card-header--subsection h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-family-display, inherit);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+/* The subsection description tucks under its header without the full card-copy
+   top margin (the header row already provides separation). */
+.settings-card-header--subsection + .settings-copy {
+  margin-top: var(--space-4);
+}
+
+/* Depth cue for a nested subsection (Skills -> MCP Servers): swap the full
+   top rule for a left accent rail + indent so nesting reads at a glance. */
+.settings-subsection .settings-subsection {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  padding-left: var(--space-7);
+  border-top: 0;
+  border-left: 2px solid color-mix(in srgb, var(--settings-shell-muted-border) 60%, transparent);
+}
+
+/* ── T5 — badge tone + loading->live convention ───────────────────────── */
+/* Opt-in: only badges whose renderer sets data-state pick up a tone, so the
+   many static .settings-badge instances are unaffected until migrated. */
+.settings-badge[data-state="success"],
+.settings-badge[data-state="live"] {
+  color: var(--status-fg-success);
+  background: var(--status-bg-success);
+  border-color: var(--status-border-success);
+}
+.settings-badge[data-state="info"],
+.settings-badge[data-state="busy"],
+.settings-badge[data-state="pending"] {
+  color: var(--status-fg-info);
+  background: var(--status-bg-info);
+  border-color: var(--status-border-info);
+}
+.settings-badge[data-state="warn"],
+.settings-badge[data-state="warning"] {
+  color: var(--status-fg-warning);
+  background: var(--status-bg-warning);
+  border-color: var(--status-border-warning);
+}
+.settings-badge[data-state="error"],
+.settings-badge[data-state="danger"] {
+  color: var(--status-fg-danger);
+  background: var(--status-bg-danger);
+  border-color: var(--status-border-danger);
+}
+.settings-badge[data-state="muted"] {
+  color: var(--status-fg-muted);
+  background: var(--status-bg-muted);
+  border-color: var(--status-border-muted);
+}
+
+/* While a badge is still resolving, hide its stale text and show a placeholder
+   so hardcoded HTML badges ("Disabled" / "Waiting") stop flashing wrong. */
+.settings-badge[data-badge-state="loading"],
+[data-badge-state="loading"] .inv-badge { visibility: hidden; }
+/* ── T4 — settings toggle list (injected inventory switches) ───────────── */
+/* A vertical column of injected inventory switches.
+   .inv-toggle carries no self-margin, so the grid supplies the inter-row gap;
+   each switch fills its row with the control trailing the label. The row
+   surface and label typography mirror .tools-config-field-row (settings-
+   controls.css) so every switch in the Session group — Context, Tools — reads
+   as one control family rather than two slightly different cards. */
+.settings-toggle-list {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+.settings-toggle-list .inv-toggle {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--settings-shell-muted-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+/* The base .inv-toggle-label is xs / --text-secondary (sized for the composer
+   chrome). Promote it to a primary control label here, matching the Tools
+   capability rows so labels share one voice across the group. */
+.settings-toggle-list .inv-toggle-label {
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+/* ── T10 — cascade "requires X" cue ───────────────────────────────────── */
+.settings-requires-note {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}

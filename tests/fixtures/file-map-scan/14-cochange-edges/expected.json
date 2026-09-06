@@ -1,0 +1,70 @@
+{
+  "nodes": [
+    {
+      "id": "src/x.js",
+      "label": "x.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 1,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "src/y.js",
+      "label": "y.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 1,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 24
+    },
+    {
+      "id": "src/z.js",
+      "label": "z.js",
+      "dir": "src",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 0,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 48
+    }
+  ],
+  "edges": [
+    {
+      "from": "src/x.js",
+      "to": "src/y.js",
+      "kind": "cochange",
+      "weight": 2
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "src/x.js",
+      "src/y.js",
+      "src/z.js"
+    ],
+    "cycles": [],
+    "orphans": [
+      "src/z.js"
+    ]
+  },
+  "meta": {
+    "scanned": 3,
+    "total": 3,
+    "durationMs": 0
+  }
+}

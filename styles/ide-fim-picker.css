@@ -1,0 +1,65 @@
+/* styles/ide-fim-picker.css
+ *
+ * The statusbar completion-model (FIM) menu. Extends the shared chip popover
+ * (.ide-chip-popover / .ide-chip-option in ide-view.css) with a wider body, a
+ * header, a trailing loaded-state dot per row, and a Load/Unload footer. Loaded
+ * after ide-view.css so these rules layer on the chip-popover base. All colors
+ * are design tokens. */
+
+.ide-fim-popover {
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.ide-fim-popover__header {
+  padding: 2px 9px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ide-fim-popover .ide-chip-option {
+  width: 100%;
+}
+
+/* Trailing loaded-state dot, pushed to the right edge of the row. */
+.ide-fim-dot {
+  margin-left: auto;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.ide-fim-dot--on {
+  color: var(--accent);
+}
+
+.ide-fim-popover__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 6px 4px 2px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-fim-status {
+  display: block;
+  padding: 4px 6px 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.ide-fim-status--ok {
+  color: var(--accent);
+}
+
+.ide-fim-status--warn {
+  color: var(--accent-amber);
+}
+
+.ide-fim-empty {
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--text-muted);
+}

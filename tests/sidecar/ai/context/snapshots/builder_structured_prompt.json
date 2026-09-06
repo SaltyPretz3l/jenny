@@ -1,0 +1,56 @@
+[
+  {
+    "name": "static",
+    "cacheable": true,
+    "heading": "Base system prompt.",
+    "content": "Base system prompt."
+  },
+  {
+    "name": "static",
+    "cacheable": true,
+    "heading": "### IDENTITY.md",
+    "content": "### IDENTITY.md\nIdentity prompt."
+  },
+  {
+    "name": "static",
+    "cacheable": true,
+    "heading": "## Current Date",
+    "content": "## Current Date\nThe effective `current_date` for this request is `2026-05-07`. Use this value consistently unless the user provides a different explicit date."
+  },
+  {
+    "name": "executable_tools",
+    "cacheable": false,
+    "heading": "## Executable Tools",
+    "content": "## Executable Tools\nThis is the current capability digest for this request. If the user asks what tools or capabilities are available, answer from this block; do not call diagnostic or harness-inspection tools to inventory capabilities.\nSkills are guidance only. Only tools listed as available in this block may be called.\nTool names in this block are Jenny tool IDs, not shell commands. Do not use `run_command` with `which`, `where`, or `Get-Command` to check a listed tool; call the listed tool directly when needed.\nAvailable now:\n- `read_file`: Read files.\nAny tool not listed as available in this block is unavailable for this request."
+  },
+  {
+    "name": "requested_tool_availability",
+    "cacheable": false,
+    "heading": "## Requested Tool Availability",
+    "content": "## Requested Tool Availability\nUse the request-scoped executable-tool contract as the source of truth.\n- `read_file` is available for this request. If it is needed, call it directly; do not simulate tool use in prose.\nIf the user explicitly requests a tool and it is available, call it directly.\nTool names are Jenny tool IDs, not shell commands; do not use `run_command` with `which`, `where`, or `Get-Command` to check a listed tool.\nIf the requested tool is unavailable, state the exact blocker from this block.\nDo not mentally run, simulate, pretend, or describe using unavailable tools."
+  },
+  {
+    "name": "tool_loop_guidance",
+    "cacheable": false,
+    "heading": "## Tool Use Discipline",
+    "content": "## Tool Use Discipline\n- Before the first tool call, give one concise update about what you expect to learn.\n- After tools have started, do not acknowledge the request again. Add another update only for a material finding, changed approach, or meaningful milestone; otherwise call the next tool directly.\n- If a tool returns an error or \"not found\", do not immediately retry with a near-identical argument. Try a different path, a different tool, or stop and summarize.\n- If two consecutive tool calls fail for the same apparent reason, change approach or tell the user what you found and could not resolve. A transient tool-infrastructure failure may receive one safe retry when the operation is read-only or known not to have started.\n- After roughly 4 tool calls with no information gain, successful state change, or new verification evidence, reassess the approach and summarize if blocked. Tool or infrastructure failures do not count as lack of progress. Continue when the next call tests a materially different hypothesis or advances the current task.\n- End your turn with an assistant reply (not another tool call) as soon as you have enough to answer.\n- Never narrate mechanical tool status (e.g. \"Calling tool 'X'...\"); call the tool directly instead. Execution is already shown to the user by the harness.\n- Never state that a file was read, created, or updated, or that a task is complete, unless a successful tool result for that exact action exists earlier in this conversation."
+  },
+  {
+    "name": "workspace_instructions",
+    "cacheable": false,
+    "heading": "## Workspace Instructions (agentj.md)",
+    "content": "## Workspace Instructions (agentj.md)\nFollow workspace instructions."
+  },
+  {
+    "name": "workspace_source_guidance",
+    "cacheable": false,
+    "heading": "## Workspace Source Access",
+    "content": "## Workspace Source Access\nThe configured workspace is the Jenny source repository. For repo, source-code, architecture, file, reducer, or pipeline questions, inspect the workspace with `read_file`, `grep_search`, `glob_files`, and `list_dir` when those tools are available; do not claim you lack access to source files. `jenny_status` is only for runtime capability diagnostics; it is not a substitute for reading source files."
+  },
+  {
+    "name": "learned_lessons",
+    "cacheable": false,
+    "heading": "## Learned Lessons",
+    "content": "## Learned Lessons\nApply these lessons only when they are relevant to the current request.\n- Respect concise-response requests (confidence 0.80, kind response_style): Keep concise answers tight."
+  }
+]

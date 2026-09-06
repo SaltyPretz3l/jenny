@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "fixture_family": "tool_delta_then_final_text",
+    "provider": "vllm",
+    "model": "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "description": "vLLM stream where a mid-stream tool_call delta is followed by visible-text deltas (e.g. assistant explains the call). Text after the tool delta surfaces as TokenDeltaEvent and chat.token; tool.executing is owned by the post-approval dispatch layer.",
+    "target_phase": 4
+  },
+  "raw_chunks": [
+    {"sse": "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"call_grep\", \"function\": {\"name\": \"grep\", \"arguments\": \"{\\\"pattern\\\": \\\"TODO\\\"}\"}}]}}]}"},
+    {"sse": "data: {\"choices\": [{\"delta\": {\"content\": \"I am running the grep now.\"}, \"finish_reason\": \"tool_calls\"}]}"},
+    {"sse": "data: [DONE]"}
+  ],
+  "expected_engine_events": [
+    {"_class": "ToolCallRequest", "tool_id": "grep", "arguments": {"pattern": "TODO"}, "call_id": "call_grep"},
+    {"_class": "StreamingEvent", "kind": "content", "text": "I am running the grep now."}
+  ],
+  "expected_loop_events": [
+    {"_class": "TokenDeltaEvent", "delta": "I am running the grep now.", "token_index": 1}
+  ],
+  "expected_notifications": [
+    {"method": "chat.token", "params": {"delta": "I am running the grep now.", "role": "assistant", "sequence": 1}}
+  ],
+  "expected_turn_events": [
+    {
+      "event_id": "t_replay:canonical:1",
+      "turn_id": "t_replay",
+      "kind": "assistant_text_segment",
+      "status": "",
+      "primary_message_id": "assistant_t_replay",
+      "source_message_ids": [
+        "assistant_t_replay"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "text": "I am running the grep now.",
+        "assistant_phase": "final_answer",
+        "segment_id": "assistant_t_replay_seg_0",
+        "segment_group_index": 0,
+        "canonical_event_type": "text_part_completed",
+        "canonical_part_id": "t_replay:text_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:2",
+      "turn_id": "t_replay",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_t_replay_call_grep",
+      "source_message_ids": [
+        "tool_use_t_replay_call_grep"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_grep",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "grep",
+        "tool_input": {
+          "pattern": "TODO"
+        },
+        "sequence": 1,
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "t_replay:tool_part:2",
+        "canonical_seq": 2
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:3",
+      "turn_id": "t_replay",
+      "kind": "tool_executing",
+      "status": "running",
+      "primary_message_id": "tool_use_t_replay_call_grep",
+      "source_message_ids": [
+        "tool_use_t_replay_call_grep"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_grep",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "grep",
+        "tool_input": {
+          "pattern": "TODO"
+        },
+        "canonical_event_type": "tool_execution_started",
+        "canonical_part_id": "t_replay:tool_part:3",
+        "canonical_seq": 3
+      }
+    },
+    {
+      "event_id": "t_replay:canonical:4",
+      "turn_id": "t_replay",
+      "kind": "tool_result",
+      "status": "completed",
+      "primary_message_id": "tool_result_t_replay_call_grep",
+      "source_message_ids": [
+        "tool_result_t_replay_call_grep"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "call_grep",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "payload": {
+        "tool_name": "grep",
+        "success": true,
+        "tool_output_summary": "",
+        "content_type": "text",
+        "tool_input": {
+          "pattern": "TODO"
+        },
+        "canonical_event_type": "tool_execution_completed",
+        "canonical_part_id": "t_replay:tool_part:4",
+        "canonical_seq": 4
+      }
+    }
+  ],
+  "expected_generation_result": {
+    "content": "I am running the grep now.",
+    "thinking_text": "",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {"tool_id": "grep", "arguments": {"pattern": "TODO"}, "call_id": "call_grep"}
+    ]
+  }
+}

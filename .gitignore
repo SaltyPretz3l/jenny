@@ -1,0 +1,141 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+coverage.json
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Node
+node_modules/
+
+# JS coverage (c8 / NODE_V8_COVERAGE)
+coverage/
+.nyc_output/
+*.lcov
+
+# Build outputs
+dist/
+/build/
+
+# Generated sandboxed preload bundle (built by scripts/build/build-preload.js on
+# every dev launch and before packaging; never hand-edited, never committed).
+preload.bundle.js
+uninstall-preload.bundle.js
+plugin-view-preload.bundle.js
+# The stamp records the bundle source-graph hash so an unchanged dev launch
+# can skip esbuild; it is regenerated, never committed.
+.preload-build-stamp.json
+
+# Workspace-local state
+.claude/
+.jenny/
+study/
+# Fable 5 executor-handoff working docs (local-only build queue + per-file touchpoint map)
+docs/plans/executor-handoffs/
+.jenny-diagnostics/
+.tmp/
+artifacts/
+!services/plugins/artifacts/
+!services/plugins/artifacts/**
+!tests/plugins/artifacts/
+!tests/plugins/artifacts/**
+prototypes/
+tests/orb-stream-demo.test.js
+tests/feature-lab-*.test.js
+repomix/
+repomix*.md
+repomix*.log
+llama_server_extract/
+vendor/unsloth/
+.github-stage-marker
+*.gguf
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.app/
+*.dmg
+*.pkg
+
+# Electron
+out/
+/restricted-host/target/
+/native/plugin-full-host-supervisor/target/
+/build/plugin-full-host-supervisor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+*.enc
+config.json
+.env
+scripts/plugins/*.pem
+
+# Logs
+*.log
+tmp-*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Legacy / superseded (removed from the distribution; defensive)
+archive/
+!docs/archive/
+docs/archive/*
+!docs/archive/HARDENING_HISTORY.md
+!docs/archive/JENNY_UNINSTALL_AND_DATA_PORTABILITY.md
+!docs/archive/PLUGIN_STAGE7_SANDBOXED_UI_AND_PROVIDER_RETROFIT.md
+!docs/archive/PLUGIN_STAGE8_PRIVILEGED_ADAPTERS.md
+!docs/archive/JENNY_CHAT_RENDERER_REMEDIATION_PLAN_ARCHIVED_2026-08-10.md
+!docs/archive/TOOL_HARDENING_REMEDIATION_PLAN.md
+!docs/archive/TOOL_ROW_REDESIGN_SPEC.md
+!docs/archive/CHAT_TIMELINE_CODE_SURFACES_SPEC.md
+!docs/archive/CHAT_TIMELINE_PROSE_SPEC.md
+plugin-consent-preload.bundle.js
+gc3/
+face/
+
+# Windows-only shell helpers (not portable across the team)
+*.cmd
+*.vbs
+# ...except the desktop-shortcut launcher, which tests and dist_manifest.json require
+!launch-jenny.cmd
+
+# Cross-session test-run serialization lock (scripts/run-node-tests-safe.js)
+.test-run.lock
+
+# Safe-runner last-run record backing --last-failed (scripts/run-node-tests-safe.js)
+tests/.last-test-run.json
+# Safe-runner bounded timing/history telemetry (scripts/run-node-tests-safe-history.js)
+tests/.run-node-tests-safe-history.json
+
+# spec-first working dir (red-phase snapshots / scratch; never committed)
+.spec-first/
+
+# Jenny tools-workspace root when pointed inside the repo (owner smoke runs
+# write here, e.g. workspace/hellodemo.md + .jenny state) — never source
+/workspace/
+
+# Disposable isolated Electron outputs used by Stage 8 packaged acceptance.
+/dist-stage8-smoke*/

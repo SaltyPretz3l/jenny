@@ -1,0 +1,74 @@
+{
+  "nodes": [
+    {
+      "id": "a.css",
+      "label": "a.css",
+      "dir": ".",
+      "isTest": false,
+      "loc": 2,
+      "inbound": 0,
+      "outbound": 2,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "b.css",
+      "label": "b.css",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    },
+    {
+      "id": "c.css",
+      "label": "c.css",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 114
+    }
+  ],
+  "edges": [
+    {
+      "from": "a.css",
+      "to": "b.css",
+      "kind": "import",
+      "weight": 1
+    },
+    {
+      "from": "a.css",
+      "to": "c.css",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "b.css",
+      "c.css",
+      "a.css"
+    ],
+    "cycles": [],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 3,
+    "total": 3,
+    "durationMs": 0
+  }
+}

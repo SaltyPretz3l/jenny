@@ -1,0 +1,461 @@
+/* Timeline-spine agenda for the Home calendar. */
+
+.cal-agenda {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.cal-agenda__group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cal-agenda__day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  color: var(--text-muted);
+}
+
+.cal-agenda__day-label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.cal-agenda__day--today .cal-agenda__day-label {
+  color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
+}
+
+.cal-agenda__day--selected .cal-agenda__day-label {
+  font-weight: 700;
+}
+
+.cal-agenda__day-rule {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+}
+
+.cal-agenda__day-count {
+  min-width: 4.25rem;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cal-agenda__list {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0 0 0 72px;
+  list-style: none;
+}
+
+.cal-agenda__list::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 64px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  content: "";
+}
+
+/* Flex, not block: an event row IS a <button> and a button cannot contain a
+ * button, so its undo affordance has to sit BESIDE the row inside this wrap.
+ * The refusal note takes a full basis and drops onto its own line under it. */
+.cal-agenda__item-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  list-style: none;
+}
+
+.cal-agenda__item-wrap > .cal-agenda__item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cal-agenda__item {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-5);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  isolation: isolate;
+}
+
+.cal-agenda__item::before {
+  position: absolute;
+  inset-block: 0;
+  right: calc(-1 * var(--space-5));
+  left: calc(-1 * var(--space-5));
+  z-index: -1;
+  content: "";
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cal-agenda__item:hover::before {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.cal-agenda__item:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.cal-agenda__time {
+  position: absolute;
+  left: -72px;
+  width: 54px;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cal-agenda__dot {
+  position: absolute;
+  left: -12px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--cal-event-hue, var(--state-muted));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
+}
+
+.cal-agenda__title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-agenda__meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cal-agenda__category::before {
+  content: "· ";
+}
+
+.cal-agenda__rel {
+  min-width: 4.5rem;
+  text-align: right;
+}
+
+.cal-agenda__badge {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.cal-agenda__item--next::before {
+  background: color-mix(in srgb, var(--cal-event-hue, var(--accent)) 12%, transparent);
+}
+
+.cal-agenda__item--next .cal-agenda__title {
+  font-weight: 700;
+}
+
+.cal-agenda__item--next .cal-agenda__time {
+  color: var(--text-secondary);
+}
+
+.cal-agenda__item--readonly {
+  cursor: default;
+}
+
+.cal-agenda__item--readonly .cal-agenda__dot {
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 2px var(--cal-event-hue, var(--state-muted)),
+    0 0 0 3px color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
+}
+
+.cal-agenda__item--past .cal-agenda__time,
+.cal-agenda__item--past .cal-agenda__title {
+  color: var(--text-muted);
+}
+
+.cal-agenda__item--past .cal-agenda__dot {
+  background: color-mix(in srgb, var(--cal-event-hue, var(--state-muted)) 45%, transparent);
+}
+
+/* Open slot: the add-an-event row every day carries. It is a full agenda row —
+ * same grid, same padding, same hover band — held one notch quieter than a real
+ * event so a busy day still reads events-first, and lifted to full weight on
+ * hover/focus. Row height matches an event row so an empty week reads as seven
+ * usable slots rather than seven thin labels. */
+.cal-agenda__item--open {
+  min-height: 34px;
+  color: var(--text-muted);
+}
+
+.cal-agenda__item--open:hover,
+.cal-agenda__item--open:focus-visible {
+  color: var(--text-secondary);
+}
+
+.cal-agenda__item--open .cal-agenda__title {
+  font-weight: 500;
+}
+
+.cal-agenda__item--open .cal-agenda__title,
+.cal-agenda__item--open .cal-agenda__time {
+  color: inherit;
+}
+
+/* Hollow dot: the slot is an invitation, not a scheduled thing. */
+.cal-agenda__item--open .cal-agenda__dot {
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
+}
+
+/* Show the invitation on hover/focus; the button aria-label always preserves the full accessible name. */
+.cal-agenda__open-hint {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cal-agenda__item--open:hover .cal-agenda__open-hint,
+.cal-agenda__item--open:focus-visible .cal-agenda__open-hint {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cal-agenda__open-hint {
+    transition: none;
+  }
+}
+
+@container (max-width: 720px) {
+  .cal-agenda__meta {
+    max-width: 42%;
+    overflow: hidden;
+  }
+
+  .cal-agenda__category,
+  .cal-agenda__badge {
+    display: none;
+  }
+}
+
+/* ---- Daybook week strip (lives inside the agenda card, not the rail) ---- */
+
+.cal-week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.cal-week-strip__day {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cal-week-strip__day:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.cal-week-strip__day:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.cal-week-strip__letter {
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.cal-week-strip__num {
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.cal-week-strip__day--today .cal-week-strip__num {
+  color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
+  font-weight: 700;
+}
+
+.cal-week-strip__day--selected {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.cal-week-strip__dots {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-height: 6px;
+}
+
+.cal-week-strip__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--cal-event-hue, var(--state-muted));
+}
+
+/* ---- Reminder rows + the standing (interval-cadence) footer ---- */
+
+/* Reminders read as a distinct kind, not another event: a violet-family accent
+ * (the palette's --accent-strong) instead of a category hue, and no bar. */
+.cal-agenda__item--reminder {
+  --cal-event-hue: var(--accent-strong);
+
+  cursor: default;
+}
+
+.cal-agenda__item--reminder .cal-agenda__dot {
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 2px var(--accent-strong),
+    0 0 0 3px color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
+}
+
+.cal-agenda__item--reminder .cal-agenda__title {
+  font-weight: 500;
+}
+
+.cal-agenda__item--reminder .cal-agenda__badge {
+  color: color-mix(in srgb, var(--accent-strong) 70%, var(--text-secondary));
+}
+
+.cal-agenda__reminder-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cal-agenda__item--reminder:hover .cal-agenda__reminder-actions,
+.cal-agenda__reminder-actions:focus-within {
+  opacity: 1;
+}
+
+.cal-agenda__standing {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.cal-agenda__standing-label {
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.cal-agenda__standing-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.cal-agenda__standing-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-agenda__standing-cadence {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- "added by jenny" attribution + one-click undo ---- */
+
+/* The same violet family the reminder rows use, blended TOWARD the text color
+ * rather than painted raw: a bare accent loses contrast on the light palettes
+ * (the category dots take the same approach with --cal-event-hue). */
+.cal-agenda__jenny {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
+  color: color-mix(in srgb, var(--accent-strong) 45%, var(--text-primary));
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-kicker-sm);
+}
+
+/* Undo is a recovery affordance, not a primary one: it reveals on hover/focus
+ * exactly like the reminder actions, so a row at rest reads as just a row. */
+.cal-agenda__row-actions {
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.cal-agenda__item-wrap:hover .cal-agenda__row-actions,
+.cal-agenda__row-actions:focus-within {
+  opacity: 1;
+}
+
+/* A refused undo mutates nothing, so its reason is written next to the row and
+ * expires on its own — no toast, and no contribution to the render key. */
+.cal-agenda__undo-note {
+  flex: 0 0 100%;
+  padding: 0 0 var(--space-2) var(--space-1);
+  color: color-mix(in srgb, var(--state-warning) 40%, var(--text-secondary));
+  font-size: var(--font-size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cal-agenda__row-actions {
+    transition: none;
+  }
+}
+
+/* Deliberately AFTER the hover rules above (equal specificity, later wins):
+ * narrow/touch has no hover, so the reminder affordances stay visible. */
+@container (max-width: 720px) {
+  .cal-agenda__reminder-actions,
+  .cal-agenda__row-actions,
+  .cal-agenda__open-hint {
+    opacity: 1;
+  }
+}

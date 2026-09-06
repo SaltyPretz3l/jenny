@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
+  >
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mermaid Preview</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    #diagram-root {
+      width: 100%;
+    }
+
+    #diagram-root svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="diagram-root" aria-live="polite"></div>
+  <script src="node_modules/mermaid/dist/mermaid.min.js"></script>
+  <script src="renderer/frames/mermaid-frame-init.js"></script>
+</body>
+</html>

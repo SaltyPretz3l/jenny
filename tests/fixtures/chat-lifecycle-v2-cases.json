@@ -1,0 +1,39 @@
+{
+  "identifier_values": [
+    "turn_ascii-1",
+    " turn_trimmed ",
+    "会話-1",
+    "emoji_😀",
+    "combining_é",
+    "bad id",
+    "",
+    0,
+    false,
+    ["turn_array"],
+    {"id": "turn_object"},
+    null
+  ],
+  "terminal_values": [
+    "complete",
+    "completed",
+    "runtime-error",
+    "canceled",
+    "failure",
+    "future_status",
+    "",
+    0,
+    null
+  ],
+  "truncate_cases": [
+    {"value": "ascii", "bytes": 4},
+    {"value": "会話abc", "bytes": 7},
+    {"value": "😀abc", "bytes": 5},
+    {"value": "éabc", "bytes": 3}
+  ],
+  "structure_cases": [
+    {"kind": "value", "value": {"text": "ASCII 会話 😀 é"}},
+    {"kind": "depth", "depth": 14},
+    {"kind": "array", "size": 129},
+    {"kind": "bytes", "size": 33000}
+  ]
+}

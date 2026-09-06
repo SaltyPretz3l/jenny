@@ -1,0 +1,15 @@
+{
+  "budget_schema_version": 1,
+  "frozen": true,
+  "limits": {
+    "component_bytes": 67108864, "guest_linear_memory_bytes": 67108864, "helper_working_set_bytes": 134217728,
+    "tables": 4, "elements": 10000, "instances_per_host": 4, "hosts_global": 4, "hosts_per_plugin": 1,
+    "concurrent_invocations_global": 16, "concurrent_invocations_per_host": 1, "queued_invocations_global": 64, "queued_invocations_per_host": 16,
+    "token_lifetime_ms": 30000, "token_uses": 32, "secret_handle_lifetime_ms": 5000, "secret_handle_uses": 1,
+    "frames": 256, "frame_bytes": 8192, "stream_bytes": 65536, "result_bytes": 65536, "unacked_window": 8, "pause_ceiling_ms": 1000,
+    "transport_message_bytes": 131072, "transport_queue": 64, "invocation_deadline_ms": 120000, "load_deadline_ms": 30000,
+    "bootstrap_deadline_ms": 2000, "attestation_deadline_ms": 5000, "guest_cancel_ms": 250, "host_settlement_ms": 1000,
+    "shutdown_grace_ms": 1000, "forced_exit_ms": 3000, "stderr_tail_bytes": 16384,
+    "retained_events_per_contribution": 128, "retained_events_global": 1024, "crash_restarts": 3, "crash_window_ms": 600000
+  }
+}

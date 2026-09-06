@@ -1,0 +1,62 @@
+{
+  "fixture_id": "streams/text_and_reasoning",
+  "schema_version": 1,
+  "description": "Interleaved reasoning-summary and output-text deltas terminated by response.completed carrying usage. Baseline case: every provider event maps 1:1 to one output event via a plain field lookup.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_text_and_thinking_stream_returns_usage"
+  ],
+  "declarative_verdict": "yes",
+  "notes": "response.reasoning_summary_text.delta and response.reasoning_text.delta both map to the same output kind (an alias, not two behaviors) -- a plain event-type-to-output-kind table with a delta field lookup covers this case.",
+  "cases": [
+    {
+      "case_id": "interleaved_thinking_and_content",
+      "executable": true,
+      "binding": "sse_stream",
+      "input": {
+        "sse_lines": [
+          {"type": "response.reasoning_summary_text.delta", "delta": "Plan "},
+          {"type": "response.output_text.delta", "delta": "Hello"},
+          {"type": "response.reasoning_text.delta", "delta": "checked"},
+          {"type": "response.output_text.delta", "delta": " world"},
+          {
+            "type": "response.completed",
+            "response": {
+              "usage": {"input_tokens": 12, "output_tokens": 7, "total_tokens": 19}
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stream_items": [
+          {"kind": "thinking", "text": "Plan "},
+          {"kind": "content", "text": "Hello"},
+          {"kind": "thinking", "text": "checked"},
+          {"kind": "content", "text": " world"}
+        ],
+        "result": {
+          "content": "Hello world",
+          "thinking_text": "Plan checked",
+          "finish_reason": "stop",
+          "tool_calls": [],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 7,
+            "total_tokens": 19,
+            "provider": "chatgpt",
+            "model": "gpt-5.5"
+          }
+        },
+        "diagnostics": {
+          "output_text_delta_count": 2,
+          "output_text_delta_chars": 11,
+          "output_text_done_count": 0,
+          "terminal_event_type": "response.completed",
+          "terminal_text_source": "delta",
+          "finish_reason": "stop"
+        }
+      },
+      "rule": "Text deltas emit kind='content' and reasoning deltas (both event names) emit kind='thinking'; usage is lifted verbatim off the terminal event and stamped with provider='chatgpt' plus the engine's resolved model."
+    }
+  ],
+  "non_executable": []
+}

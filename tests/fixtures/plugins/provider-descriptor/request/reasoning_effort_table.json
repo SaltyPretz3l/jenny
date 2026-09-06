@@ -1,0 +1,93 @@
+{
+  "fixture_id": "request/reasoning_effort_table",
+  "schema_version": 1,
+  "description": "normalize_reasoning_effort() in sidecar/ai/engines/chatgpt_subscription_request.py: a closed alias and allow-list whose invalid or absent values are omitted from the wire.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_request_payload_headers_and_reasoning_effort"
+  ],
+  "declarative_verdict": "yes",
+  "notes": "A pure alias table with no state or cross-event behavior. The allow-list is {low, medium, high, xhigh, max}; every other input is omitted so provider defaults remain authoritative.",
+  "cases": [
+    {
+      "case_id": "absent_effort_is_omitted",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": null},
+      "expect": {"wire_value": null},
+      "rule": "None is not an error and is omitted from the provider request."
+    },
+    {
+      "case_id": "empty_string_is_omitted",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": ""},
+      "expect": {"wire_value": null},
+      "rule": "An empty string normalizes to the same omitted value as None."
+    },
+    {
+      "case_id": "low_is_an_allowed_wire_value",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "low"},
+      "expect": {"wire_value": "low"},
+      "rule": "An allow-listed value passes through unchanged."
+    },
+    {
+      "case_id": "medium_is_an_allowed_wire_value",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "medium"},
+      "expect": {"wire_value": "medium"},
+      "rule": "An allow-listed value passes through unchanged."
+    },
+    {
+      "case_id": "high_is_an_allowed_wire_value",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "high"},
+      "expect": {"wire_value": "high"},
+      "rule": "An allow-listed value passes through unchanged."
+    },
+    {
+      "case_id": "xhigh_is_an_allowed_wire_value",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "xhigh"},
+      "expect": {"wire_value": "xhigh"},
+      "rule": "An allow-listed value passes through unchanged."
+    },
+    {
+      "case_id": "max_is_an_allowed_wire_value",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "max"},
+      "expect": {"wire_value": "max"},
+      "rule": "An allow-listed value passes through unchanged."
+    },
+    {
+      "case_id": "ultra_is_a_product_alias_for_max",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "ultra"},
+      "expect": {"wire_value": "max"},
+      "rule": "The one true alias row: product-level 'ultra' is rewritten to wire-level 'max', mirroring Codex."
+    },
+    {
+      "case_id": "unrecognized_value_is_omitted",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "turbo"},
+      "expect": {"wire_value": null},
+      "rule": "An unrecognized value is never sent on the wire and does not override the provider default."
+    },
+    {
+      "case_id": "case_and_surrounding_whitespace_are_normalized",
+      "executable": true,
+      "binding": "reasoning_effort",
+      "input": {"value": "  HIGH  "},
+      "expect": {"wire_value": "high"},
+      "rule": "Lookup happens after strip()+lower(), so casing and padding never push a real value onto the default row."
+    }
+  ],
+  "non_executable": []
+}

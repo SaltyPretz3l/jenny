@@ -1,0 +1,280 @@
+/* Chat tool markers — Phase 6F-B (P.1 stuck-loop, P.2 orphan, P.7 approval-gap UX) */
+
+/* ── Marker banner (above tool result rows) ── */
+
+.tool-marker-banner {
+  --marker-accent: var(--text-muted);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0 0 0;
+  border-radius: var(--tl-radius-panel);
+  border-left: 3px solid var(--marker-accent);
+  background: color-mix(in srgb, var(--marker-accent) 10%, var(--bg-surface));
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+  line-height: 1.45;
+}
+
+.tool-marker-banner[data-marker-kind="stuck-loop"] {
+  --marker-accent: var(--tl-status-warn);
+}
+
+.tool-marker-banner[data-marker-kind="orphan"] {
+  --marker-accent: var(--tl-status-active);
+}
+
+.tool-marker-banner[data-marker-kind="budget"] {
+  --marker-accent: var(--tl-status-error);
+}
+
+.tool-marker-banner-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--marker-accent);
+  flex: 0 0 auto;
+  margin-top: 5px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--marker-accent) 22%, transparent);
+}
+
+.tool-marker-banner-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tool-marker-banner-title {
+  font-weight: var(--tl-weight-emphasis);
+  color: var(--text-primary);
+}
+
+.tool-marker-banner-detail {
+  font-family: var(--font-family-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: var(--tl-font-meta);
+  color: var(--marker-accent);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--marker-accent) 14%, transparent);
+}
+
+.tool-marker-banner-meta {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+
+/* ── Orphan carry stripe (system_notice subkind=orphan_carry) ── */
+
+.system-notice-orphan-carry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+  border-radius: var(--tl-radius-control);
+  background: color-mix(in srgb, var(--tl-status-active) 9%, var(--bg-surface));
+  border-left: 2px solid color-mix(in srgb, var(--tl-status-active) 50%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-meta);
+  font-style: italic;
+}
+
+.system-notice-orphan-carry-icon {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tl-status-active);
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+/* ── Approval-gap row visual distinction (P.7) ── */
+
+.approval-gap-row[data-approval-status="pending"] {
+  position: relative;
+  border-radius: var(--tl-radius-panel);
+}
+
+/* Keep approval liveness on the informative kicker dot, not row decoration. */
+@keyframes approval-kicker-breathe {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+
+.approval-gap-row[data-approval-status="pending"] .tool-approval-kicker-dot {
+  animation: approval-kicker-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.approval-gap-row[data-approval-resolved="true"] .tool-approval-kicker-dot {
+  animation: none;
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .approval-gap-row[data-approval-status="pending"] .tool-approval-kicker-dot {
+    animation: none;
+  }
+}
+
+.tool-approval-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tl-status-warn);
+  margin-bottom: var(--space-2);
+}
+
+.tool-approval-kicker-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tl-status-warn);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tl-status-warn) 28%, transparent);
+}
+
+/* ── Approval batch banner (P.7) ── */
+
+.approval-batch-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  border-radius: var(--tl-radius-panel);
+  background: color-mix(in srgb, var(--tl-status-warn) 8%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--tl-status-warn) 36%, var(--border-default));
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tl-status-warn) 14%, transparent);
+}
+
+.approval-batch-banner-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.approval-batch-banner-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tl-status-warn);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tl-status-warn) 22%, transparent);
+}
+
+.approval-batch-banner-title {
+  font-weight: var(--tl-weight-emphasis);
+  letter-spacing: 0;
+}
+
+.approval-batch-banner-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.approval-batch-action {
+  appearance: none;
+  font-family: inherit;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
+  letter-spacing: 0;
+  text-transform: none;
+  padding: calc(var(--space-2) * var(--chat-zoom-factor, 1)) calc(var(--space-4) * var(--chat-zoom-factor, 1));
+  border-radius: var(--tl-radius-chip);
+  border: 1px solid color-mix(in srgb, var(--border-default) 76%, transparent);
+  background: color-mix(in srgb, var(--surface-input-background) 88%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.approval-batch-action:hover {
+  border-color: color-mix(in srgb, var(--tl-status-warn) 56%, var(--border-default));
+  color: var(--tl-status-warn);
+}
+
+.approval-batch-action:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.approval-batch-action--allow {
+  border-color: color-mix(in srgb, var(--widget-tool-success-color) 50%, var(--border-default));
+  color: var(--widget-tool-success-color);
+}
+
+.approval-batch-action--allow:hover {
+  background: color-mix(in srgb, var(--widget-tool-success-color) 12%, transparent);
+  border-color: var(--widget-tool-success-color);
+  color: var(--widget-tool-success-color);
+}
+
+.approval-batch-action--allow-once {
+  border-color: color-mix(in srgb, var(--tl-status-active) 44%, var(--border-default));
+  color: var(--tl-status-active);
+}
+
+.approval-batch-action--allow-once:hover {
+  background: color-mix(in srgb, var(--tl-status-active) 12%, transparent);
+  border-color: var(--tl-status-active);
+  color: var(--tl-status-active);
+}
+
+.approval-batch-action--deny {
+  border-color: color-mix(in srgb, var(--text-danger-emphasis) 44%, var(--border-default));
+  color: var(--text-danger-emphasis);
+}
+
+.approval-batch-action--deny:hover {
+  background: color-mix(in srgb, var(--text-danger-emphasis) 12%, transparent);
+  border-color: var(--text-danger-emphasis);
+  color: var(--text-danger-emphasis);
+}
+
+.resume-turn-affordance {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--tl-radius-panel);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+}
+
+.resume-turn-action {
+  flex: 0 0 auto;
+}
+
+.resume-turn-hint {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+}

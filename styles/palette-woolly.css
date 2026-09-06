@@ -1,0 +1,303 @@
+:root[data-palette="woolly"] {
+  --widget-context-weave-line-color: rgba(86, 74, 54, 0.32);
+  --widget-context-weave-spacing: 108;
+  --widget-context-weave-pointer-radius: 140;
+  --widget-context-weave-interlace: 3.5;
+  --widget-context-weave-weft-alpha: 0.72;
+  --widget-context-weave-lit-gain: 2.2;
+  --widget-context-weave-density: 0.86;
+  color-scheme: light;
+  --bg-base: #e4d8c2;
+  --bg-surface: #f5efe4;
+  --bg-surface-2: #ede5d6;
+  --bg-sidebar: #ddd2be;
+  --bg-panel: #f2ebe0;
+  --line: rgba(128, 112, 88, 0.16);
+  --line-strong: rgba(108, 92, 68, 0.26);
+  --text-primary: #2c2417;
+  --text-secondary: #6b5a42;
+  --text-muted: #685c4b; /* UIUX-022 readable muted (>=4.5:1 vs core bgs) */
+  --text-decorative: #9a8a72;
+  --accent: #3d8c2a;
+  --accent-primary: var(--accent);
+  --accent-strong: #2d7a1e;
+  --accent-cyan: #3888cc;
+  --accent-amber: #b8840e;
+  --widget-reactive-grid-dot-idle: rgba(61, 140, 42, 0.28);
+  --widget-reactive-grid-dot-active: rgba(98, 178, 232, 0.96);
+  --widget-reactive-grid-dot-glow: rgba(61, 140, 42, 0.48);
+  --playlist-scroll-line-color: rgba(72, 108, 52, 0.6);
+  --playlist-scroll-lane-alpha: 0.10;
+  --playlist-scroll-bar-alpha: 0.18;
+  --playlist-scroll-sub-alpha: 0.07;
+  --playlist-scroll-band-alpha: 0.04;
+  --playlist-scroll-ghost-color: rgba(72, 108, 52, 0.20);
+  --playlist-scroll-pad-color: rgba(95, 140, 70, 0.05);
+  --playlist-scroll-accent-color: rgba(72, 108, 52, 0.7);
+
+  /* ── Doodle field — warm dark ink on paper-tan ── */
+
+  /* ── Atomic burst — green + soft-blue + warm-amber on tan ── */
+  --widget-atomic-burst-color-a: rgba(61, 140, 42, 0.82);
+  --widget-atomic-burst-color-b: rgba(56, 136, 204, 0.80);
+  --widget-atomic-burst-color-c: rgba(184, 132, 14, 0.82);
+  --widget-atomic-burst-flare-color: rgba(255, 250, 235, 0.96);
+  --widget-atomic-burst-link-color: rgba(140, 196, 130, 0.58);
+  --widget-atomic-burst-wave-color: rgba(61, 140, 42, 0.82);
+  --widget-atomic-burst-size: 28;
+  --widget-atomic-burst-density: 8.5;
+
+  /* ── Circuit trace — green grid, soft-blue hover line for contrast, warm-red trace heads, amber accent ── */
+  --widget-circuit-trace-grid-color: rgba(61, 140, 42, 0.28);
+  --widget-circuit-trace-line-color: rgba(56, 136, 204, 0.92);
+  --widget-circuit-trace-glow-color: rgba(184, 64, 64, 0.92);
+  --widget-circuit-trace-accent-color: rgba(184, 132, 14, 0.92);
+  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-density: 1.0;
+
+  --holo-periwinkle: #5cb83a;
+  --holo-lavender: #d4a020;
+  --holo-pink: #b84040;
+  --holo-cyan: #3888cc;
+  --shadow-soft: 0 18px 42px rgba(108, 92, 68, 0.14);
+  --shadow-accent: 0 12px 26px rgba(61, 140, 42, 0.16);
+  --surface-body-background:
+    radial-gradient(circle at 18% 12%, rgba(61, 140, 42, 0.08), rgba(228, 216, 194, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(184, 132, 14, 0.06), rgba(228, 216, 194, 0) 28%),
+    #f0e6d2;
+  --surface-shell-background:
+    linear-gradient(180deg, rgba(252, 248, 240, 0.98), rgba(240, 230, 210, 0.98)),
+    var(--bg-base);
+  --surface-titlebar-background: linear-gradient(90deg, rgba(248, 242, 230, 0.98), rgba(236, 226, 208, 0.98));
+  --surface-sidebar-background:
+    linear-gradient(180deg, rgba(243, 236, 222, 0.98), rgba(228, 218, 198, 0.98)),
+    var(--bg-sidebar);
+  --surface-main-stage-background:
+    radial-gradient(circle at 18% 18%, rgba(61, 140, 42, 0.08), rgba(240, 230, 210, 0) 28%),
+    radial-gradient(circle at 78% 82%, rgba(184, 132, 14, 0.06), rgba(240, 230, 210, 0) 24%),
+    linear-gradient(180deg, #fcf5e8, #e4d8c2 78%);
+  --surface-main-stage-overlay:
+    linear-gradient(90deg, rgba(61, 140, 42, 0.04), rgba(255, 255, 255, 0) 18%, rgba(255, 255, 255, 0) 82%, rgba(184, 132, 14, 0.04)),
+    radial-gradient(circle at 50% 66%, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0) 38%);
+  --surface-main-stage-glow:
+    radial-gradient(circle at 50% 55%, rgba(61, 140, 42, 0.06), rgba(240, 230, 210, 0) 26%),
+    radial-gradient(circle at 50% 96%, rgba(184, 132, 14, 0.06), rgba(240, 230, 210, 0) 22%);
+  --surface-card-background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.94), rgba(243, 236, 222, 0.98)),
+    radial-gradient(circle at top left, rgba(61, 140, 42, 0.06), transparent 58%);
+  --surface-input-background: rgba(255, 253, 248, 0.9);
+  --surface-input-background-strong: rgba(248, 242, 232, 0.92);
+  --surface-toolbar-background: rgba(248, 242, 232, 0.82);
+  --surface-prompt-chip-background: rgba(255, 253, 248, 0.82);
+  --surface-prompt-chip-hover: rgba(255, 253, 248, 0.98);
+  --surface-prompt-chip-border: rgba(128, 112, 88, 0.18);
+  --surface-prompt-chip-border-hover: rgba(61, 140, 42, 0.3);
+  --surface-assistant-sprite-background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(240, 232, 218, 0.98));
+  --surface-assistant-sprite-border: rgba(128, 112, 88, 0.24);
+  --surface-interactive-card-background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(240, 232, 218, 0.96)),
+    radial-gradient(circle at top left, rgba(61, 140, 42, 0.06), transparent 48%);
+  --surface-notice-background:
+    linear-gradient(180deg, rgba(252, 237, 186, 0.9), rgba(243, 226, 178, 0.94)),
+    rgba(240, 222, 172, 0.84);
+  --surface-composer-inner:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(243, 236, 222, 0.96)),
+    rgba(248, 242, 232, 0.96);
+  --surface-composer-signal-background: rgba(234, 224, 206, 0.84);
+  --surface-composer-mode-background: rgba(234, 224, 206, 0.82);
+  --surface-user-bubble-background: linear-gradient(180deg, rgba(248, 242, 232, 0.98), rgba(234, 224, 206, 0.98));
+  --surface-auth-overlay: rgba(221, 210, 190, 0.74);
+  --surface-auth-card: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(243, 236, 222, 0.98));
+  --surface-popover-background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(240, 232, 218, 0.98));
+  --surface-popover-row: rgba(234, 224, 206, 0.88);
+  --surface-popover-row-hover: rgba(221, 210, 190, 0.94);
+  --surface-dev-row-background: rgba(228, 242, 220, 0.94);
+  --surface-dev-row-border: rgba(61, 140, 42, 0.18);
+  --focus-outline: rgba(61, 140, 42, 0.58);
+
+  /* ── Material hierarchy ── */
+  --mat-chrome-bg: linear-gradient(90deg, rgba(234, 224, 206, 0.98), rgba(221, 210, 190, 0.98));
+  --mat-chrome-border: rgba(128, 112, 88, 0.1);
+  --mat-chrome-text: var(--text-secondary);
+  --mat-chrome-accent: var(--text-primary);
+  --mat-work-bg:
+    radial-gradient(circle at 18% 12%, rgba(61, 140, 42, 0.08), rgba(228, 216, 194, 0) 30%),
+    radial-gradient(circle at 84% 16%, rgba(184, 132, 14, 0.06), rgba(228, 216, 194, 0) 28%),
+    #f2eadb;
+  --mat-work-border: var(--border-default);
+  --mat-work-text: var(--text-primary);
+  --mat-work-accent: var(--text-secondary);
+  --mat-live-bg: var(--surface-sidebar-background);
+  --mat-live-border: color-mix(in srgb, #3d8c2a 10%, var(--border-subtle));
+  --mat-live-text: var(--text-primary);
+  --mat-live-accent: #3d8c2a;
+  --mat-ephemeral-bg: var(--surface-popover-background);
+  --mat-ephemeral-border: var(--border-default);
+  --mat-ephemeral-text: var(--text-primary);
+  --mat-ephemeral-shadow:
+    0 8px 32px rgba(108, 92, 68, 0.16),
+    0 2px 8px rgba(108, 92, 68, 0.08);
+
+  /* ── Widget tokens ── */
+  --widget-button-primary-bg: linear-gradient(180deg, #4a9e34, #3d8c2a);
+  --widget-button-primary-color: #ffffff;
+  --widget-button-primary-shadow: rgba(61, 140, 42, 0.18);
+  --widget-button-secondary-bg: rgba(234, 224, 206, 0.92);
+  --widget-button-secondary-border: rgba(128, 112, 88, 0.22);
+  --widget-button-secondary-color: #3a3020;
+  --widget-button-danger-bg: rgba(184, 64, 64, 0.12);
+  --widget-button-danger-border: rgba(184, 64, 64, 0.22);
+  --widget-button-danger-color: #9b2c2c;
+  --widget-button-session-bg: linear-gradient(180deg, #d4a020, #b8840e);
+  --widget-button-session-color: #2c2000;
+  --widget-close-hover-bg: #b84040;
+  --widget-item-active-bg: linear-gradient(180deg, rgba(61, 140, 42, 0.08), rgba(61, 140, 42, 0.03));
+  --widget-item-active-border: rgba(61, 140, 42, 0.16);
+  --widget-badge-bg: rgba(128, 112, 88, 0.1);
+  --widget-badge-border: rgba(128, 112, 88, 0.14);
+  --widget-badge-color: #9a8a72;
+  --widget-badge-secondary-color: #9a8a72;
+  --widget-action-color: #9a8a72;
+  --widget-action-bg: rgba(234, 224, 206, 0.5);
+  --widget-action-border: rgba(128, 112, 88, 0.16);
+  --widget-action-hover-bg: rgba(221, 210, 190, 0.78);
+  --widget-action-hover-border: rgba(61, 140, 42, 0.24);
+  --widget-action-hover-color: #3a3020;
+  --widget-action-delete-hover-bg: rgba(184, 64, 64, 0.12);
+  --widget-action-delete-hover-border: rgba(184, 64, 64, 0.24);
+  --widget-action-delete-hover-color: #9b2c2c;
+  --widget-scrollbar-color: rgba(128, 112, 88, 0.28);
+  --widget-collapsed-item-bg: linear-gradient(180deg, rgba(128, 112, 88, 0.18), rgba(108, 92, 68, 0.26));
+  --widget-collapsed-item-color: #3a3020;
+  --widget-collapsed-item-active-bg: linear-gradient(180deg, rgba(74, 158, 52, 0.96), rgba(61, 140, 42, 0.94));
+  --widget-chat-meta-color: #9a8a72;
+  --widget-chat-meta-error-color: #9b2c2c;
+  --widget-copy-chip-bg: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(243, 236, 222, 0.98));
+  --widget-copy-chip-border: rgba(128, 112, 88, 0.2);
+  --widget-copy-chip-color: #3a3020;
+  --widget-placeholder-color: #9a8a72;
+  --widget-placeholder-focus-color: #6b5a42;
+  --widget-composer-mode-active-bg: rgba(61, 140, 42, 0.18);
+  --widget-send-bg: linear-gradient(180deg, #4a9e34, #3d8c2a);
+  --widget-send-border: rgba(61, 140, 42, 0.2);
+  --widget-send-color: #ffffff;
+  --widget-send-hover-bg: linear-gradient(180deg, #56ac3e, #4a9e34);
+  --widget-send-hover-color: #ffffff;
+  --widget-select-caret-color: #9a8a72;
+  --widget-select-hover-color: #3a3020;
+  --widget-select-option-bg: #f5efe4;
+  --widget-select-option-color: #3a3020;
+  --widget-composer-meta-color: #9a8a72;
+  --widget-composer-signal-border: rgba(128, 112, 88, 0.18);
+  --widget-token-pill-bg: rgba(128, 112, 88, 0.12);
+  --widget-token-pill-color: #6b5a42;
+  --widget-jump-color: #9a8a72;
+  --widget-jump-hover-color: #6b5a42;
+  --widget-composer-scrollbar-color: rgba(128, 112, 88, 0.5);
+  --widget-hero-avatar-bg: linear-gradient(180deg, #4a9e34, #3d8c2a);
+  --widget-sprite-color: rgba(44, 36, 23, 0.92);
+  --widget-sprite-streaming-border: rgba(61, 140, 42, 0.3);
+  --widget-sprite-streaming-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 12px 30px rgba(61, 140, 42, 0.12),
+    0 0 22px rgba(61, 140, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --widget-face-glow-color: #3d8c2a;
+  --widget-face-shine-color: rgba(228, 242, 220, 0.82);
+  --widget-face-aura-primary: rgba(92, 184, 58, 0.1);
+  --widget-face-aura-secondary: rgba(61, 140, 42, 0.1);
+  --widget-tool-bg:
+    linear-gradient(180deg, rgba(243, 236, 222, 0.94), rgba(234, 224, 206, 0.96)),
+    radial-gradient(circle at left center, rgba(61, 140, 42, 0.06), transparent 55%);
+  --widget-tool-border: rgba(108, 92, 66, 0.32);
+  --widget-tool-pending-border: rgba(166, 111, 8, 0.52);
+  --widget-tool-running-border: rgba(42, 118, 184, 0.46);
+  --widget-tool-error-border: rgba(168, 52, 52, 0.42);
+  --widget-tool-color: #3a3020;
+  --widget-tool-name-color: #2c2417;
+  --widget-tool-success-color: rgba(38, 112, 24, 0.96);
+  --widget-tool-error-color: rgba(160, 46, 46, 0.96);
+  --widget-tool-denied-color: rgba(96, 80, 58, 0.78);
+  --widget-tool-code-bg: rgba(221, 210, 190, 0.5);
+  --widget-tool-code-color: #3a3020;
+  --widget-approve-bg: linear-gradient(180deg, rgba(74, 158, 52, 0.82), rgba(61, 140, 42, 0.86));
+  --widget-approve-border: rgba(92, 184, 58, 0.26);
+  --widget-approve-color: #ffffff;
+  --widget-approve-hover-border: rgba(92, 184, 58, 0.4);
+  --widget-deny-bg: rgba(234, 224, 206, 0.64);
+  --widget-deny-border: rgba(128, 112, 88, 0.2);
+  --widget-deny-color: rgba(58, 48, 32, 0.78);
+  --widget-interactive-card-border: rgba(128, 112, 88, 0.22);
+  --widget-interactive-pending-border: rgba(61, 140, 42, 0.3);
+  --widget-interactive-intro-color: rgba(44, 36, 23, 0.92);
+  --widget-interactive-option-bg: rgba(234, 224, 206, 0.36);
+  --widget-interactive-option-border: rgba(128, 112, 88, 0.2);
+  --widget-interactive-option-color: rgba(44, 36, 23, 0.9);
+  --widget-interactive-option-hover-bg: rgba(221, 210, 190, 0.52);
+  --widget-interactive-option-hover-border: rgba(61, 140, 42, 0.3);
+  --widget-interactive-option-selected-bg: rgba(198, 226, 184, 0.5);
+  --widget-interactive-option-selected-border: rgba(61, 140, 42, 0.4);
+  --widget-interactive-option-selected-color: #2d7a1e;
+  --widget-interactive-input-bg: rgba(255, 253, 248, 0.88);
+  --widget-interactive-input-color: #3a3020;
+  --widget-interactive-label-color: rgba(107, 90, 66, 0.84);
+  --widget-interactive-prompt-color: rgba(44, 36, 23, 0.94);
+  --widget-interactive-note-color: rgba(128, 112, 88, 0.74);
+  --widget-interactive-disabled-color: rgba(128, 112, 88, 0.62);
+  --widget-settings-badge-bg: rgba(61, 140, 42, 0.14);
+  --settings-shell-accent: var(--mat-live-accent);
+  --settings-shell-nav-bg: var(--surface-sidebar-background);
+  --settings-shell-masthead-bg: var(--surface-card-background);
+  --settings-shell-panel-bg: var(--surface-card-background);
+  --settings-shell-field-bg: var(--surface-input-background);
+  --widget-personality-preview-color: #6b5a42;
+  --widget-input-focus-border: rgba(61, 140, 42, 0.36);
+  --widget-input-focus-glow: rgba(61, 140, 42, 0.18);
+  --widget-popover-badge-active-bg: rgba(184, 132, 14, 0.2);
+  --widget-popover-badge-active-color: #7c5a12;
+  --widget-stop-bg: rgba(184, 64, 64, 0.14);
+  --widget-stop-color: #9b2c2c;
+  --artifact-surface-focus-ring: 0 0 0 2px rgba(61, 140, 42, 0.22);
+  --widget-attachment-bg: rgba(243, 236, 222, 0.88);
+  --widget-attachment-border: rgba(128, 112, 88, 0.18);
+  --widget-attachment-color: #3a3020;
+  --widget-attachment-meta-color: #9a8a72;
+  --widget-attachment-remove-color: #6b5a42;
+  --widget-attachment-clear-color: #9a8a72;
+  --widget-activity-pending-glow: rgba(61, 140, 42, 0.08);
+  --widget-activity-pending-border: rgba(61, 140, 42, 0.48);
+  --widget-activity-pending-color: #2d7a1e;
+  --widget-activity-success-color: #2d7a1e;
+  --widget-activity-error-color: #9b2c2c;
+  --widget-activity-pulse-color: rgba(61, 140, 42, 0.14);
+  --text-bright: #2c2417;
+  --text-danger-soft: #993440;
+  --text-accent-soft: #4a6233;
+  --text-success-soft: #2a6630;
+  --status-gradient-end: #c89420;
+  --text-danger-emphasis: #b03040;
+  --border-subtle: rgba(128, 112, 88, 0.08);
+  --border-default: rgba(128, 112, 88, 0.14);
+  --border-strong: rgba(128, 112, 88, 0.22);
+  --border-focus: rgba(61, 140, 42, 0.28);
+  --shadow-elevation-1: 0 1px 4px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(61, 140, 42, 0.06);
+  --shadow-elevation-2: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(61, 140, 42, 0.08);
+  --shadow-elevation-3: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(61, 140, 42, 0.08);
+  --composer-holo-opacity-active: 0.62;
+  --composer-holo-opacity-streaming: 0.54;
+  --composer-holo-draw-glow-alpha-scale: 1.6;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-palette="woolly"] .composer { background: rgba(248, 242, 230, 0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-palette="woolly"] .composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  :root[data-palette="woolly"] .composer { background: rgba(248, 242, 230, 0.97); }
+}

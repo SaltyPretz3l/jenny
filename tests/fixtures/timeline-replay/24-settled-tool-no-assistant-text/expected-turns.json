@@ -1,0 +1,160 @@
+{
+  "turns": [
+    {
+      "turn_id": "stream_24",
+      "branch_id": "user_stream_24",
+      "events": [
+        {
+          "event_id": "stream_24:user_prompt:0",
+          "turn_id": "stream_24",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_24",
+          "source_message_ids": [
+            "user_stream_24"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Write my notes file",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_24:tool_use:0",
+          "turn_id": "stream_24",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_24",
+          "source_message_ids": [
+            "tool_use_stream_24"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "Write",
+            "input": {
+              "path": "notes.txt"
+            },
+            "input_json": "{\"path\":\"notes.txt\"}",
+            "approval_state": "denied",
+            "summary": "write notes.txt",
+            "parent_stream_id": "stream_24"
+          },
+          "tool_call_id": "call_24",
+          "status": "denied"
+        },
+        {
+          "event_id": "stream_24:approval_resolved:0",
+          "turn_id": "stream_24",
+          "kind": "approval_resolved",
+          "primary_message_id": "tool_use_stream_24",
+          "source_message_ids": [
+            "tool_use_stream_24"
+          ],
+          "sort_key": [
+            1,
+            1,
+            46
+          ],
+          "payload": {
+            "approval_state": "denied"
+          },
+          "tool_call_id": "call_24",
+          "status": "denied"
+        }
+      ],
+      "primary_user_message_id": "user_stream_24",
+      "primary_assistant_message_id": "tool_use_stream_24",
+      "source_message_ids": [
+        "user_stream_24",
+        "tool_use_stream_24"
+      ]
+    }
+  ],
+  "byTurnId": {
+    "stream_24": {
+      "turn_id": "stream_24",
+      "branch_id": "user_stream_24",
+      "events": [
+        {
+          "event_id": "stream_24:user_prompt:0",
+          "turn_id": "stream_24",
+          "kind": "user_prompt",
+          "primary_message_id": "user_stream_24",
+          "source_message_ids": [
+            "user_stream_24"
+          ],
+          "sort_key": [
+            0,
+            0,
+            10
+          ],
+          "payload": {
+            "content": "Write my notes file",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "stream_24:tool_use:0",
+          "turn_id": "stream_24",
+          "kind": "tool_use",
+          "primary_message_id": "tool_use_stream_24",
+          "source_message_ids": [
+            "tool_use_stream_24"
+          ],
+          "sort_key": [
+            1,
+            0,
+            40
+          ],
+          "payload": {
+            "tool_name": "Write",
+            "input": {
+              "path": "notes.txt"
+            },
+            "input_json": "{\"path\":\"notes.txt\"}",
+            "approval_state": "denied",
+            "summary": "write notes.txt",
+            "parent_stream_id": "stream_24"
+          },
+          "tool_call_id": "call_24",
+          "status": "denied"
+        },
+        {
+          "event_id": "stream_24:approval_resolved:0",
+          "turn_id": "stream_24",
+          "kind": "approval_resolved",
+          "primary_message_id": "tool_use_stream_24",
+          "source_message_ids": [
+            "tool_use_stream_24"
+          ],
+          "sort_key": [
+            1,
+            1,
+            46
+          ],
+          "payload": {
+            "approval_state": "denied"
+          },
+          "tool_call_id": "call_24",
+          "status": "denied"
+        }
+      ],
+      "primary_user_message_id": "user_stream_24",
+      "primary_assistant_message_id": "tool_use_stream_24",
+      "source_message_ids": [
+        "user_stream_24",
+        "tool_use_stream_24"
+      ]
+    }
+  },
+  "byMessageId": {
+    "user_stream_24": "stream_24",
+    "tool_use_stream_24": "stream_24"
+  }
+}

@@ -1,0 +1,281 @@
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.settings-content-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space-8);
+}
+
+/* Flush compact header: the header belongs to the content column — no
+   floating-card chrome; a hairline separates it from the section card. */
+.settings-content-header {
+  max-width: min(var(--settings-shell-content-max), 100%);
+  width: 100%;
+  margin-inline: auto;
+  padding: 0 var(--space-2) var(--space-5);
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+  background: none;
+  box-shadow: none;
+}
+
+.settings-masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4) var(--space-6);
+  min-width: 0;
+}
+
+.settings-masthead-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.settings-masthead-title .page-title {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+/* The three overview chips demoted to one quiet inline text run. */
+.settings-overview-traits {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.settings-appearance-proof {
+  border: 1px solid var(--settings-shell-chip-border);
+  background: var(--settings-shell-chip-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-overview-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.settings-content-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 var(--space-16);
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+  color: var(--mat-work-text);
+}
+
+.settings-content-scroll .settings-card {
+  display: none;
+  max-width: min(var(--settings-shell-content-max), 100%);
+  margin-inline: auto;
+}
+
+.settings-content-scroll .settings-card + .settings-card {
+  margin-top: var(--space-8);
+}
+
+.settings-content-scroll .settings-card.settings-section-active {
+  display: block;
+  animation: scrim-in var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
+}
+
+
+/* Open-sections polish (2026-07): the section is a document region, not a
+   panel — no border, background, or shadow. The transparent 1px border stays
+   so the data-surface-state rules below can tint it without a layout shift. */
+.settings-card {
+  position: relative;
+  padding: var(--space-2) var(--space-2) var(--space-8);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: none;
+  box-shadow: none;
+  transition:
+    box-shadow var(--motion-duration-regular) var(--motion-ease-standard),
+    border-color var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+/*
+ * Settings v2 surface-state contract:
+ *   data-surface-state="busy"   → save/validation in flight
+ *   data-surface-state="active" → success flash after save
+ *   data-surface-state="error"  → save/validation failed
+ *
+ * Layered alongside the panel shadow because the generic rule in
+ * styles/surface-states.css replaces box-shadow wholesale, which would
+ * otherwise drop the panel's depth.
+ */
+.settings-card[data-surface-state~="busy"] {
+  box-shadow:
+    var(--settings-shell-panel-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--state-warning) 28%, transparent);
+  border-color: var(--state-warning-border);
+}
+
+.settings-card[data-surface-state~="active"] {
+  box-shadow:
+    var(--settings-shell-panel-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--state-info) 24%, transparent);
+  border-color: var(--state-info-border);
+}
+
+.settings-card[data-surface-state~="error"] {
+  box-shadow:
+    var(--settings-shell-panel-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--state-danger) 32%, transparent);
+  border-color: var(--state-danger-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-card { transition: none; }
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0 0 var(--space-5);
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+  background: none;
+}
+
+.settings-card h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-2xl);
+  font-family: var(--font-family-display);
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+/* Programmatic focus on the h3 (after a section switch) is silent.
+   Keyboard :focus-visible inherits the global rule in foundation.css. */
+.settings-card h3:focus:not(:focus-visible) { outline: 0; }
+
+.settings-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--settings-shell-badge-border);
+  background: var(--widget-settings-badge-bg);
+  color: var(--settings-shell-badge-color);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-lg);
+  text-transform: uppercase;
+}
+
+.settings-copy,
+.settings-note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-lg);
+  line-height: 1.65;
+}
+
+.settings-copy {
+  margin: var(--space-5) 0 0;
+  max-width: 62ch;
+}
+
+.settings-note {
+  margin-top: var(--space-4);
+}
+
+.settings-summary-row {
+  display: block;
+  margin-top: var(--space-6);
+}
+
+.settings-summary-row > .inv-status-row {
+  width: 100%;
+}
+
+.settings-note > .inv-status-row {
+  width: 100%;
+  margin-top: var(--space-4);
+}
+
+.settings-field-label {
+  margin-top: var(--space-8);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+/* Hide the Offline Intelligence status host when it has nothing to say. */
+#offlineStatus:empty {
+  display: none;
+}
+
+.settings-appearance-proof {
+  margin-top: var(--space-7);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+}
+
+.settings-appearance-swatch-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-top: 0;
+}
+
+.settings-appearance-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 48px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--settings-shell-muted-border);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.settings-appearance-swatch-chrome {
+  background: var(--mat-chrome-bg);
+}
+
+.settings-appearance-swatch-live {
+  background: var(--surface-composer-signal-background);
+}
+
+.settings-appearance-swatch-work {
+  background: var(--surface-card-background);
+}
+
+.settings-appearance-swatch-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.settings-appearance-swatch-value {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  line-height: 1.4;
+}

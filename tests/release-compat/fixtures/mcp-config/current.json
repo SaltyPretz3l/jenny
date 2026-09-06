@@ -1,0 +1,19 @@
+{
+  "mcp_config_schema_version": 1,
+  "mcp_sse_enabled": false,
+  "mcp_servers": [
+    {
+      "name": "docs",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["server.js"],
+      "enabled": true,
+      "trust": {
+        "status": "approved",
+        "configuration_digest": "4a45964c58332cfab35fd811c74257970bd77e17fcd03fb274befb17d851e654",
+        "advertised_tools_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reviewed_at": "2026-08-17T00:00:00Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,674 @@
+/* ── Chat Tools ── */
+
+/* ── Tool call blocks ──
+ * One-liner header, status accents, name/summary/meta/caret treatment all
+ * live in styles/chat-machinery.css (the quiet grammar). This file keeps the
+ * structural plumbing: expand/collapse mechanics, kv-grid, IO panes, bespoke
+ * shells (python/bash/monitor), approval, and recap. */
+
+.tool-call-block {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin: var(--space-1) 0;
+}
+
+.tool-call-details {
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(calc(-1 * var(--space-1)));
+  background: transparent;
+  -webkit-user-select: text;
+  user-select: text;
+  /* B6 (compositing): padding removed from the transition list — animating
+     padding relayouts a per-row panel every frame while max-height is already
+     carrying the expand motion, so the padding snap is imperceptible. */
+  transition:
+    max-height var(--motion-duration-regular) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tool-call-details.expanded {
+  max-height: none;
+  overflow: visible;
+  opacity: 1;
+  padding: calc(var(--space-2) * var(--chat-zoom-factor, 1)) 0 calc(var(--space-3) * var(--chat-zoom-factor, 1));
+  transform: none;
+}
+
+.chat-row[data-row-kind="tool_step"] .inv-artifact-list {
+  margin-top: var(--space-2);
+}
+
+/* Section header type treatment lives in chat-machinery.css; only spacing
+ * stays here. See renderer-tool-shell-utils.js section() helper. */
+.tool-call-section + .tool-call-section { margin-top: var(--space-5); }
+
+.tool-call-empty {
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-style: italic;
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
+}
+
+.tool-call-input,
+.tool-call-output {
+  font-family: var(--font-family-mono);
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: none;
+  overflow: visible;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Three-column args/result grid (label / value / meta). */
+.tool-kv-grid {
+  display: grid;
+  grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-5);
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-code);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.tool-kv-row { display: contents; }
+
+.tool-kv-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-kv-value {
+  color: var(--text-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.tool-kv-meta {
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tool-kv-row--block .tool-kv-value--block {
+  grid-column: 1 / -1;
+  margin-top: var(--space-2);
+}
+
+.tool-kv-pre {
+  margin: 0;
+  font: inherit;
+  color: var(--widget-tool-code-color);
+  white-space: pre;
+}
+
+.tool-call-output-error {
+  color: var(--widget-tool-error-color);
+}
+
+.tool-call-output-meta {
+  margin-top: var(--space-4);
+  font-size: calc(11px * var(--chat-zoom-factor, 1));
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--widget-tool-color) 76%, transparent);
+}
+
+.tool-call-output-text {
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--widget-tool-color) 88%, white 10%);
+}
+
+.tool-mermaid-preview {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-input-background);
+  min-height: 120px;
+  padding: var(--space-5);
+  margin: var(--space-3) 0;
+}
+
+.tool-mermaid-preview iframe {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  min-width: 280px;
+  min-height: 120px;
+  border-radius: var(--radius-base);
+  transition: height var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.python-output-image {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: var(--radius-sm);
+  margin: var(--space-4) 0;
+  object-fit: contain;
+  background: var(--widget-tool-code-bg);
+}
+
+.python-table-output {
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+}
+
+.python-table-output table {
+  border-collapse: collapse;
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  width: 100%;
+}
+
+.python-table-output th,
+.python-table-output td {
+  border: 1px solid var(--widget-tool-border);
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+}
+
+.python-output-error {
+  color: var(--widget-tool-error-color);
+}
+
+/* ── Tool approval block ── */
+
+.tool-approval-block {
+  --tool-approval-button-min-height: calc(36px * var(--chat-zoom-factor, 1));
+  --tool-approval-button-transition:
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-2);
+}
+
+/* The intent headline: what will happen, in the reader's terms. Hierarchy here
+   comes from type and spacing -- no rule, bar, or box marks this card out. */
+.tool-approval-prompt {
+  font-size: calc(13.5px * var(--chat-zoom-factor, 1));
+  color: var(--widget-tool-color);
+}
+
+/* Who is speaking: a stated intent is Jenny's claim about the call. */
+.tool-approval-intent-source {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+  font-weight: var(--tl-weight-emphasis);
+}
+
+.tool-approval-consequence,
+.tool-approval-policy-fallback {
+  margin: 0;
+  margin-top: calc(-1 * var(--space-1));
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+  overflow-wrap: anywhere;
+}
+
+/* App-derived facts, deliberately uniform: these are the check on the
+   headline, so none of them is styled as more alarming than another. */
+.tool-approval-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tool-approval-fact {
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  /* --tool-call-accent is set on tool-call rows, not on the approval gap
+     row this list lives in; without the fallback the chip border vanishes. */
+  border: 1px solid color-mix(in srgb, var(--tool-call-accent, var(--tl-status-muted)) 20%, transparent);
+  border-radius: var(--tl-radius-control);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+  overflow-wrap: anywhere;
+}
+
+.tool-approval-fact[data-approval-fact="tool"] {
+  color: var(--widget-tool-color);
+  font-weight: var(--tl-weight-emphasis);
+}
+
+/* A multi-line payload folds; the reader opens it in one click. */
+.tool-approval-disclosure > summary {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+  cursor: pointer;
+}
+
+.tool-approval-disclosure[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+/* The verbatim command/args being approved (renderApprovalBlock commandText):
+   quoted, bounded, scrollable — the prompt paraphrases, this quotes. */
+.tool-approval-command {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: calc(9.5em * var(--chat-zoom-factor, 1));
+  overflow: auto;
+  font-family: var(--font-family-mono);
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--tool-call-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tool-call-accent) 22%, transparent);
+  border-radius: var(--tl-radius-control);
+}
+
+.tool-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.tool-approve-btn,
+.tool-deny-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: var(--tool-approval-button-min-height);
+  padding: var(--space-2) var(--space-8);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--tool-approval-button-border);
+  background: var(--tool-approval-button-bg);
+  color: var(--tool-approval-button-color);
+  font-size: var(--tl-font-detail);
+  font-weight: var(--tl-weight-emphasis);
+  cursor: pointer;
+  transition: var(--tool-approval-button-transition);
+}
+
+.tool-approve-btn {
+  --tool-approval-button-border: var(--widget-approve-border);
+  --tool-approval-button-bg: var(--widget-approve-bg);
+  --tool-approval-button-color: var(--widget-approve-color);
+  --tool-approval-button-hover-border: var(--widget-approve-hover-border);
+  --tool-approval-button-hover-bg: var(--widget-approve-bg);
+  --tool-approval-button-hover-color: var(--widget-approve-color);
+}
+
+/* The persistent choice sits between the two one-off ones and is drawn
+   quieter: an outline, filling in only on hover, so the reflex click lands
+   on "Allow once". */
+.tool-approve-always-btn {
+  --tool-approval-button-bg: transparent;
+  --tool-approval-button-color: var(--text-secondary);
+  --tool-approval-button-border: color-mix(in srgb, var(--widget-approve-border) 60%, transparent);
+}
+
+.tool-deny-btn {
+  --tool-approval-button-border: var(--widget-deny-border);
+  --tool-approval-button-bg: var(--widget-deny-bg);
+  --tool-approval-button-color: var(--widget-deny-color);
+  --tool-approval-button-hover-border: var(--widget-deny-hover-border);
+  --tool-approval-button-hover-bg: var(--widget-deny-hover-bg);
+  --tool-approval-button-hover-color: var(--text-bright);
+}
+
+.tool-approve-btn:hover,
+.tool-deny-btn:hover {
+  transform: translateY(-1px);
+  background: var(--tool-approval-button-hover-bg);
+  border-color: var(--tool-approval-button-hover-border);
+  color: var(--tool-approval-button-hover-color);
+}
+
+.tool-approve-btn:focus-visible,
+.tool-deny-btn:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-color: var(--tool-approval-button-hover-border);
+}
+
+.tool-approve-btn:active,
+.tool-deny-btn:active {
+  transform: translateY(0);
+}
+
+.interactive-recap-block {
+  width: min(100%, var(--chat-card-max-width));
+  margin: var(--space-3) 0 var(--space-1);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--widget-tool-border) 56%, transparent);
+  background: color-mix(in srgb, var(--widget-tool-bg) 52%, transparent);
+  overflow: hidden;
+  /* B6 (compositing): box-shadow removed from the transition list — the
+     is-partial ring delta is a 1px hairline, and transitioning box-shadow
+     repaints the whole card layer (precedent: chat-thread-rail.css dots). */
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-recap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-5) var(--space-7);
+  color: color-mix(in srgb, var(--widget-tool-color) 74%, white 8%);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-recap-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.interactive-recap-row:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.interactive-recap-caret {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-left: var(--space-1);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transform-origin: center;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-recap-row.expanded .interactive-recap-caret {
+  transform: rotate(-135deg);
+}
+
+.interactive-recap-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  line-height: 1.35;
+}
+
+.interactive-recap-state {
+  flex: 0 0 auto;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
+  color: var(--tl-status-active);
+}
+
+.interactive-recap-block.is-partial {
+  border-color: color-mix(in srgb, var(--accent-cyan, #16e9ff) 44%, var(--widget-tool-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan, #16e9ff) 18%, transparent);
+}
+
+/* Live-state pulse is opt-in motion; reduced-motion users keep the static
+   accent color as the in-progress signal. */
+@media (prefers-reduced-motion: no-preference) {
+  .interactive-recap-block.is-partial .interactive-recap-state {
+    animation: assistant-stream-pulse var(--motion-duration-pulse-fast) var(--motion-ease-standard) infinite;
+  }
+}
+
+.interactive-recap-panel {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  /* B6 (compositing): padding removed — see .tool-call-details note. */
+  transition:
+    max-height var(--motion-duration-regular) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-recap-panel.expanded {
+  max-height: 380px;
+  opacity: 1;
+  transform: translateY(0);
+  padding: 0 var(--space-7) var(--space-6);
+}
+
+.interactive-recap-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-top: var(--space-2);
+}
+
+.interactive-recap-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-6);
+  border-left: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
+}
+
+.interactive-recap-question {
+  color: color-mix(in srgb, var(--widget-tool-color) 70%, white 10%);
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  line-height: 1.45;
+}
+
+.interactive-recap-answer {
+  color: color-mix(in srgb, var(--widget-tool-color) 90%, white 22%);
+  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  line-height: 1.45;
+}
+
+.interactive-recap-empty {
+  padding: var(--space-3) 0 var(--space-1) var(--space-6);
+  border-left: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
+  color: color-mix(in srgb, var(--widget-tool-color) 64%, white 8%);
+  font-size: calc(12.5px * var(--chat-zoom-factor, 1));
+  line-height: 1.4;
+}
+
+.interactive-recap-block.expanded {
+  border-color: color-mix(in srgb, var(--widget-tool-border) 86%, white 8%);
+  background: color-mix(in srgb, var(--widget-tool-bg) 66%, transparent);
+}
+
+.interactive-recap-block.expanded .interactive-recap-row {
+  color: color-mix(in srgb, var(--widget-tool-color) 90%, white 16%);
+}
+
+.interactive-recap-row:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Hover-actions row (.chat-hover-*) + copy chip moved to
+   styles/chat-hover-actions-v2.css — one file owns the whole affordance. */
+
+/* Structured-diff styles live in styles/chat-tool-diff.css. */
+
+/* ───── Bash Tool ───── */
+
+.bash-exit-badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-5);
+  margin: var(--space-3) var(--space-6) var(--space-4);
+  font-size: calc(11px * var(--chat-zoom-factor, 1));
+  font-family: var(--font-family-mono);
+  border-radius: var(--radius-pill, 100px);
+  font-weight: 500;
+}
+
+.bash-exit-success {
+  color: var(--widget-tool-success-color, rgba(100, 220, 140, 0.9));
+  background: color-mix(in srgb, var(--widget-tool-success-color, #64dc8c) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--widget-tool-success-color, #64dc8c) 22%, transparent);
+}
+
+.bash-exit-error {
+  color: var(--widget-tool-error-color, rgba(255, 110, 110, 0.9));
+  background: color-mix(in srgb, var(--widget-tool-error-color, #ff6e6e) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--widget-tool-error-color, #ff6e6e) 22%, transparent);
+}
+
+.tool-call-section-label-error {
+  color: var(--widget-tool-error-color, rgba(255, 110, 110, 0.9));
+}
+
+/* .chat-entry.user .chat-bubble moved to styles/chat-thread.css with the rest
+   of the bubble family (quiet-timeline overhaul). */
+
+/* === Trace mode: ToolCallRow and ToolResultRow ===
+   The legacy card treatment (raised surface, hover lift, running pulse,
+   colored left rails, 28px icon pills) is retired — chat-machinery.css owns
+   the quiet one-liner grammar; chat-tool-block-v2.css keeps the structural
+   remainder (row layout, flat detail sections, notices). */
+
+.tool-result-row .tool-result-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.tool-call-row .tool-call-status-badge,
+.tool-result-row .tool-result-duration {
+  font-size: var(--tl-font-meta);
+  color: var(--text-secondary);
+}
+
+.tool-result-row .tool-result-duration {
+  margin-left: auto;
+}
+
+/* Combined tool card (.tool-call-row .tool-result-body) styling lives in
+   chat-tool-block-v2.css with the rest of the trace-row V2 finish layer. */
+
+/* .tool-result-notice* (the severity-aware tool-result error/stop notice that
+   replaced the old red .tool-result-error-banner) lives in
+   chat-tool-block-v2.css with the rest of the trace-row V2 finish layer. */
+
+.tool-monitor-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.tool-monitor-heading {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tool-monitor-description {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tool-monitor-meta {
+  color: var(--text-secondary);
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+}
+
+.tool-monitor-events {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.tool-monitor-event {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface-2) 72%, transparent);
+  color: var(--text-primary);
+}
+
+.tool-monitor-event-stream {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-meta);
+}
+
+.tool-monitor-event-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: var(--font-family-mono);
+  font-size: calc(12px * var(--chat-zoom-factor, 1));
+}
+
+.approval-gap-row {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-2) 0;
+}
+
+.approval-gap-row[data-approval-variant="plan"] {
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+}
+
+.approval-gap-row .tool-approval-block {
+  padding-left: var(--space-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-row,
+  .tool-result-row {
+    transition: none;
+    transform: none !important;
+  }
+  .tool-call-row[data-tool-status="running"] {
+    animation: none;
+  }
+  /* Belt-and-braces: these durations already resolve to 0ms via the
+     --motion-duration-* reduce override in foundation.css; the explicit
+     transition:none matches the coverage style of the sibling chat files. */
+  .tool-call-details,
+  .tool-mermaid-preview iframe,
+  .tool-approve-btn,
+  .tool-deny-btn,
+  .interactive-recap-block,
+  .interactive-recap-row,
+  .interactive-recap-caret,
+  .interactive-recap-panel {
+    transition: none;
+  }
+}
+
+/* WS3 ⤢ "Open in panel" — icon-only additive affordance (T1); it must never
+   wrap the single-row card. */
+.inv-artifact-action.inv-artifact-panel {
+  flex: none;
+}

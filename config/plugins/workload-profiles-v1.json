@@ -1,0 +1,39 @@
+{
+  "workload_profiles_schema_version": 1,
+  "frozen": true,
+  "default_profile_id": "default_full_host_v1",
+  "profiles": [
+    {
+      "profile_id": "default_full_host_v1",
+      "active_process_limit": 16,
+      "process_memory_hard_bytes": 2147483648,
+      "job_memory_hard_bytes": 2147483648,
+      "cpu_hard_cap_percent": 75,
+      "provisioning_deadline_ms": 600000,
+      "host_absolute_lease_ms": 3600000,
+      "retained_data_budget_bytes": 10737418240,
+      "transient_data_budget_bytes": 10737418240,
+      "forced_termination_proof_ms": 10000,
+      "minimum_free_disk_bytes": 0,
+      "minimum_total_vram_bytes": 0,
+      "minimum_free_vram_bytes": 0,
+      "exclusive_gpu": false
+    },
+    {
+      "profile_id": "gpu_image_v1",
+      "active_process_limit": 192,
+      "process_memory_hard_bytes": 34359738368,
+      "job_memory_hard_bytes": 51539607552,
+      "cpu_hard_cap_percent": 90,
+      "provisioning_deadline_ms": 14400000,
+      "host_absolute_lease_ms": 18000000,
+      "retained_data_budget_bytes": 68719476736,
+      "transient_data_budget_bytes": 103079215104,
+      "forced_termination_proof_ms": 30000,
+      "minimum_free_disk_bytes": 64424509440,
+      "minimum_total_vram_bytes": 17179869184,
+      "minimum_free_vram_bytes": 15032385536,
+      "exclusive_gpu": true
+    }
+  ]
+}

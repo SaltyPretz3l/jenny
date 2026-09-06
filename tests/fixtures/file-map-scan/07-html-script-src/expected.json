@@ -1,0 +1,53 @@
+{
+  "nodes": [
+    {
+      "id": "app.js",
+      "label": "app.js",
+      "dir": ".",
+      "isTest": false,
+      "loc": 1,
+      "inbound": 1,
+      "outbound": 0,
+      "cochangeDegree": 0,
+      "importance": 1,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 90
+    },
+    {
+      "id": "index.html",
+      "label": "index.html",
+      "dir": ".",
+      "isTest": false,
+      "loc": 6,
+      "inbound": 0,
+      "outbound": 1,
+      "cochangeDegree": 0,
+      "importance": 0,
+      "externalRefs": 0,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "index.html",
+      "to": "app.js",
+      "kind": "import",
+      "weight": 1
+    }
+  ],
+  "findings": {
+    "hubs": [
+      "app.js",
+      "index.html"
+    ],
+    "cycles": [],
+    "orphans": []
+  },
+  "meta": {
+    "scanned": 2,
+    "total": 2,
+    "durationMs": 0
+  }
+}

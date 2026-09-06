@@ -1,0 +1,79 @@
+{
+  "fixture_id": "model_catalog",
+  "schema_version": 1,
+  "description": "CHATGPT_MODEL_CONTEXT_LENGTHS in sidecar/ai/engines/chatgpt_subscription.py: the entire model catalog is a static id -> context_length dict plus one fallback default, now carrying an explicit version + provenance stamp. There is no dynamic 'GET /models' discovery call in the shipped code despite the original integration plan (§3.2) describing one.",
+  "source_tests": [
+    "tests/sidecar/ai/engines/test_chatgpt_subscription.py::test_model_context_catalog_and_fallback",
+    "tests/sidecar/ai/engines/test_chatgpt_model_catalog.py::test_model_catalog_is_version_stamped",
+    "tests/sidecar/ai/engines/test_chatgpt_model_catalog.py::test_no_catalog_entry_exceeds_the_conservative_default",
+    "tests/sidecar/ai/engines/test_chatgpt_model_catalog.py::test_codex_spark_matches_the_owner_captured_first_party_catalog"
+  ],
+  "constants": {
+    "CHATGPT_MODEL_CATALOG_VERSION": "2026-08-12",
+    "CHATGPT_MODEL_CATALOG_SOURCE": "codex rust-v0.146.0 models-manager/models.json + Codex app models_cache.json"
+  },
+  "declarative_verdict": "yes",
+  "notes": "The 2026-08-12 catalog keeps the seven existing models at 272000 and adds GPT-5.3-Codex-Spark at the 128000 window captured from the first-party Codex app model cache. The values are conservative floors: every consumer treats the window as a ceiling, so a value that is too low only compacts earlier while one that is too high causes hard request failures. A value may only be raised from an owner-captured response, with the version bumped in the same edit.",
+  "cases": [
+    {
+      "case_id": "constant_identity_catalog_version",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "CHATGPT_MODEL_CATALOG_VERSION"},
+      "expect": {"value": "${CHATGPT_MODEL_CATALOG_VERSION}"},
+      "rule": "The version stamp is the thing that makes a silent catalog edit detectable; pin it so a value change without a stamp bump fails here too."
+    },
+    {
+      "case_id": "constant_identity_catalog_source",
+      "executable": true,
+      "binding": "constant_identity",
+      "input": {"name": "CHATGPT_MODEL_CATALOG_SOURCE"},
+      "expect": {"value": "${CHATGPT_MODEL_CATALOG_SOURCE}"},
+      "rule": "Provenance is part of the contract: the numbers are comparison evidence from first-party Codex clients, NOT captured traffic against the private chatgpt.com/backend-api/codex endpoint."
+    },
+    {
+      "case_id": "catalog_is_eight_entries_at_conservative_floors",
+      "executable": true,
+      "binding": "context_catalog",
+      "input": {"unknown_model": "future-model"},
+      "expect": {
+        "catalog": {
+          "gpt-5.6-sol": 272000,
+          "gpt-5.6-terra": 272000,
+          "gpt-5.6-luna": 272000,
+          "gpt-5.3-codex-spark": 128000,
+          "gpt-5.5": 272000,
+          "gpt-5.4": 272000,
+          "gpt-5.4-mini": 272000,
+          "gpt-5.2": 272000
+        },
+        "catalog_version": "${CHATGPT_MODEL_CATALOG_VERSION}",
+        "catalog_source": "${CHATGPT_MODEL_CATALOG_SOURCE}",
+        "fallback_context_length": 272000
+      },
+      "rule": "The catalog is a closed 8-entry dict; an unknown model id resolves to the 272000 default rather than raising or returning zero."
+    },
+    {
+      "case_id": "known_model_returns_its_catalog_entry",
+      "executable": true,
+      "binding": "model_context_length",
+      "input": {"model": "gpt-5.6-sol"},
+      "expect": {"context_length": 272000},
+      "rule": "get_model_context_length() is a plain dict lookup on the engine's resolved model slug."
+    },
+    {
+      "case_id": "unknown_model_falls_back_to_the_default",
+      "executable": true,
+      "binding": "model_context_length",
+      "input": {"model": "future-model"},
+      "expect": {"context_length": 272000},
+      "rule": "The lookup has a mandatory default row, so a model the catalog has never heard of still gets a usable window."
+    }
+  ],
+  "non_executable": [
+    {
+      "section": "plan_vs_implementation_gap",
+      "reason": "CHATGPT_SUBSCRIPTION_ENGINE_PLAN.md §3.2/§8 describe entitlement-filtered dynamic discovery via an authenticated GET .../codex/models with a bundled fallback catalog. No such call ships: sidecar/ai/engines/catalog.py has discovery helpers for ollama/vllm/openai-compatible and none for chatgpt. The seam now EXISTS as a documented no-op -- sidecar/runtime/provider_capabilities.py::entitled_chatgpt_models filters the static catalog by an `entitlements` set, and every caller passes entitlements=None, so it returns the catalog unchanged and fails open in both directions. There is nothing to assert about a call that is not made; if the deferred fix ships, it is still expressible declaratively as an endpoint descriptor (GET path, response shape, id/context_length field paths) with the static dict as its fallback."
+    }
+  ]
+}

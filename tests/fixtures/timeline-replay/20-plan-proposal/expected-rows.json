@@ -1,0 +1,105 @@
+[
+  {
+    "turn_id": "stream_20",
+    "rows": [
+      {
+        "row_id": "row:stream_20:user_prompt:0",
+        "turn_id": "stream_20",
+        "kind": "user_bubble",
+        "primary_message_id": "user_stream_20",
+        "render_message_id": "user_stream_20",
+        "source_message_ids": [
+          "user_stream_20"
+        ],
+        "first_event_sort_key": [
+          0,
+          0,
+          10
+        ],
+        "source_events": [
+          "stream_20:user_prompt:0"
+        ],
+        "payload": {
+          "content": "Can you organize my photo library?",
+          "attachments": []
+        }
+      },
+      {
+        "row_id": "row:assistant_text:stream_20:0",
+        "turn_id": "stream_20",
+        "kind": "assistant_text",
+        "primary_message_id": "assistant_stream_20",
+        "render_message_id": "assistant_stream_20",
+        "source_message_ids": [
+          "assistant_stream_20"
+        ],
+        "first_event_sort_key": [
+          1,
+          0,
+          30
+        ],
+        "source_events": [
+          "stream_20:assistant_text_segment:0"
+        ],
+        "payload": {
+          "assistant_phase": "final_answer",
+          "text": "Happy to - here's what I'd do.",
+          "segments": [
+            {
+              "segment_id": "seg_20",
+              "phase_id": "phase_text_20",
+              "text": "Happy to - here's what I'd do.",
+              "message_index": 1,
+              "segment_index": 0
+            }
+          ],
+          "segment_group_index": 0
+        },
+        "assistant_phase": "final_answer",
+        "segment_group_index": 0
+      },
+      {
+        "row_id": "row:stream_20:plan_proposal:0",
+        "turn_id": "stream_20",
+        "kind": "plan_proposal",
+        "primary_message_id": "plan_proposal_stream_20",
+        "render_message_id": "plan_proposal_stream_20",
+        "source_message_ids": [
+          "plan_proposal_stream_20"
+        ],
+        "first_event_sort_key": [
+          2,
+          0,
+          75
+        ],
+        "source_events": [
+          "stream_20:plan_proposal:0"
+        ],
+        "payload": {
+          "content": "Here's the plan I'd follow.",
+          "plan_proposal": {
+            "proposal_id": "pp_20",
+            "title": "Tidy the photo library",
+            "intro_text": "Three passes, all reversible.",
+            "steps": [
+              {
+                "id": "s1",
+                "label": "Scan for duplicates",
+                "detail": "Hash-compare the originals folder"
+              },
+              {
+                "id": "s2",
+                "label": "Group keepers by month"
+              },
+              {
+                "id": "s3",
+                "label": "Write an undo manifest",
+                "detail": "Every move is logged before it happens"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+]
