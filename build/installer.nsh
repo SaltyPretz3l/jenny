@@ -1,7 +1,13 @@
 !include "LogicLib.nsh"
 
-Var JennyRemovalMode
-Var JennyCleanupIncomplete
+; Both variables are only read and written inside the uninstaller macros
+; below, which electron-builder inserts solely in its BUILD_UNINSTALLER pass.
+; Declaring them in the installer pass too leaves them unreferenced there, and
+; makensis runs with -WX, so warning 6001 fails the whole NSIS build.
+!ifdef BUILD_UNINSTALLER
+  Var JennyRemovalMode
+  Var JennyCleanupIncomplete
+!endif
 
 !macro RemoveJennyProfileChild name
   !define JennyRemove_ID "JennyRemove_${__LINE__}"
