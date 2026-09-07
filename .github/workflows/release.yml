@@ -30,6 +30,12 @@ permissions:
 jobs:
   prepare:
     name: Prepare draft release
+    # The private source repository carries this same file (the public tree is an
+    # export of it) and the release tag is mirrored back onto it, so a tag push
+    # there would build again and try to publish into the public repository.
+    # Run only in the public repository; `build` needs this job, so it is skipped
+    # along with it.
+    if: github.repository == 'SaltyPretz3l/jenny'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
