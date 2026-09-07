@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "reasoning": "A flowchart of the command path is the clearest way to answer this. I'll sketch it with the diagram tool and then add a short explanation.",
+      "text": "Here's how a command flows through ledger-cli:",
+      "tool_calls": [
+        {
+          "tool_id": "mermaid_generate",
+          "arguments": {
+            "prompt": "flowchart LR\n  A[ledger add coffee 4.50] --> B[src/index.js parseArgs]\n  B --> C{command?}\n  C -->|add| D[commands/add.js]\n  C -->|list| E[commands/list.js]\n  C -->|total| F[commands/total.js]\n  D --> G[parser.js parseLine]\n  G --> H[(ledger.txt)]",
+            "diagram_type": "flowchart",
+            "title": "ledger-cli command path"
+          }
+        }
+      ]
+    },
+    {
+      "text": "Every command goes through the same front door: `src/index.js` parses the arguments, picks a command module, and that module reads or appends the plain-text ledger through `parser.js`. Nothing else touches the file, which keeps the format easy to reason about."
+    }
+  ]
+}

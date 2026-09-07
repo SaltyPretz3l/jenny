@@ -1362,6 +1362,7 @@
   <script src="renderer/features/renderer-ide-xterm-loader.js"></script>
   <!-- mermaid.min.js (~3.2 MB) is lazy-loaded on first diagram render via renderer-mermaid-runtime-loader.js (ensureMermaidRuntime). -->
   <script src="renderer/features/renderer-mermaid-runtime-loader.js"></script>
+  <script defer src="renderer/shared/async-fence.js"></script>
   <script defer src="renderer/features/renderer-mermaid-sanitize-utils.js"></script>
   <script defer src="renderer/features/renderer-mermaid-theme-utils.js"></script>
   <script defer src="renderer/features/renderer-mermaid-utils.js"></script>
@@ -1392,7 +1393,6 @@
   <script defer src="renderer/chat/chat-message-utils.js"></script>
   <script defer src="renderer/shared/string-utils.js"></script>
   <script defer src="renderer/shared/task-brief-utils.js"></script>
-  <script defer src="renderer/shared/async-fence.js"></script>
   <script defer src="renderer/shared/motion-height-utils.js"></script>
   <script defer src="renderer/shared/model-capability-utils.js"></script>
   <!-- UIUX-030: single motion-aware scroll-behavior gate; loaded before every

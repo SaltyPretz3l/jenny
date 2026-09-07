@@ -124,6 +124,31 @@ test('refresh() is the direct (appearance-driven) path and short-circuits until 
   assert.equal(calls.reinitialize, 1);
 });
 
+test('the lazily created shared bridge re-themes diagrams rendered before it existed', (t) => {
+  // applyAppearancePreferences creates the shared instance INSIDE the first
+  // palette change after boot: the attribute is already the new palette, and
+  // the rendered diagram still carries the old one.
+  const { dom, calls, bridge } = buildBridgeFixture(t);
+  bridge.dispose();
+  t.after(() => bridgeModule.disposeSharedMermaidThemeBridge());
+  const deps = {
+    documentRef: dom.window.document,
+    mermaidUtils: {
+      reinitializeMermaidTheme() { calls.reinitialize += 1; },
+      renderMermaidDirect(host) { calls.renderHosts.push(host.id || host.className); return Promise.resolve(); },
+    },
+    themeUtils: { buildThemeConfig() { return { key: 'theme-key-' + dom.window.document.documentElement.dataset.palette }; } },
+    mutationObserverCtor: dom.window.MutationObserver,
+  };
+
+  dom.window.document.documentElement.dataset.palette = 'paper';
+  assert.equal(bridgeModule.refreshSharedMermaidTheme(deps), true, 'first call re-themes');
+  assert.equal(calls.reinitialize, 1);
+  assert.deepEqual(calls.renderHosts.sort(), ['markdown-mermaid-preview', 'panel-host'].sort());
+  assert.equal(bridgeModule.refreshSharedMermaidTheme(), false, 'same palette again is a no-op');
+  assert.equal(calls.renderHosts.length, 2);
+});
+
 test('overlapping palette refreshes serialize each host and coalesce to the newest theme', async (t) => {
   const host = { theme: '', getAttribute: () => 'flowchart TD\nA-->B' };
   const root = { dataset: { palette: 'a' } };

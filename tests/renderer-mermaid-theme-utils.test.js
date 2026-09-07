@@ -361,6 +361,34 @@ test('buildThemeConfig exposes edgeStyles (lineColor/clusterFill/clusterBorder) 
   }
 });
 
+test('normalizeMermaidLabelContainers bakes the node fill onto every label-container shape Mermaid 11 emits', () => {
+  const { JSDOM: LocalJSDOM } = require('jsdom');
+  const dom = new LocalJSDOM('<!doctype html><html><body></body></html>');
+  const doc = dom.window.document;
+  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.innerHTML = [
+    '<g class="node default"><rect class="basic label-container" x="0" y="0" width="10" height="10"></rect></g>',
+    '<g class="node default"><polygon class="label-container" points="0,0 10,0 5,10"></polygon></g>',
+    // Cylinder ([(db)]) and stadium shapes are paths; circles are circles.
+    '<g class="node default"><path class="basic label-container outer-path" d="M0 0 L10 10"></path></g>',
+    '<g class="node default"><circle class="basic label-container" r="5"></circle></g>',
+    '<g class="node default"><path class="edge-thickness-normal flowchart-link" d="M0 0 L20 20"></path></g>',
+  ].join('');
+  doc.body.appendChild(svg);
+
+  themeUtils.normalizeMermaidLabelContainers(svg, {
+    containerFill: '#e6eaf3',
+    containerStroke: '#7c9bee',
+    textColor: '#1f2635',
+  });
+
+  for (const shape of svg.querySelectorAll('.label-container')) {
+    assert.equal(shape.getAttribute('fill'), '#e6eaf3', `${shape.tagName} label container gets the node fill`);
+    assert.equal(shape.getAttribute('stroke'), '#7c9bee', `${shape.tagName} label container gets the node stroke`);
+  }
+  assert.equal(svg.querySelector('.flowchart-link').getAttribute('fill'), null, 'edges are not label containers');
+});
+
 test('normalizeMermaidEdgeAndClusterColors bakes palette colors onto unstyled edges, markers, and cluster backgrounds', () => {
   const { JSDOM: LocalJSDOM } = require('jsdom');
   const dom = new LocalJSDOM('<!doctype html><html><body></body></html>');

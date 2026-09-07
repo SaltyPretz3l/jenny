@@ -46,8 +46,17 @@
     else node.removeAttribute('class');
   }
 
+  const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
   function hardenAttributes(node) {
     if (!node || typeof node.getAttribute !== 'function') return;
+    // Installed as an afterSanitizeAttributes hook on the SHARED DOMPurify
+    // instance, so this also runs for the Mermaid SVG sanitizer
+    // (renderer-mermaid-sanitize-utils.js). SVG elements never survive the
+    // Markdown allowlist above, and Mermaid's palette bake-in
+    // (normalizeMermaidLabelContainers) selects nodes by class, so leave
+    // SVG-namespace elements untouched instead of stripping their classes.
+    if (node.namespaceURI === SVG_NAMESPACE) return;
     const tagName = String(node.tagName || '').toLowerCase();
     sanitizeClasses(node, tagName);
     if (node.getAttribute('target')) node.setAttribute('rel', 'noopener noreferrer');

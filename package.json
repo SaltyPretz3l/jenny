@@ -60,7 +60,9 @@
     "dev:agent": "node start.js --agent",
     "dev:test-flags": "node scripts/dev/dev-test-flags.js",
     "setup": "node scripts/setup/setup.js",
-    "uninstall": "node scripts/uninstall.js"
+    "uninstall": "node scripts/uninstall.js",
+    "demo:record": "node scripts/demo/record-demo-clips.js",
+    "demo:encode": "node scripts/demo/encode-gif.js"
   },
   "engines": {
     "node": ">=22.23.2 <23 || >=24.19.0 <25",

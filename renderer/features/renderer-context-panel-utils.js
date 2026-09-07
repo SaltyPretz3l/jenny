@@ -12,7 +12,9 @@
 
   function normalizePreferences(value) {
     var source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    return { collapsed: source.collapsed === true };
+    // Collapsed unless the user explicitly expanded it (owner decision
+    // 2026-09-07): a stored `false` wins, an absent preference collapses.
+    return { collapsed: source.collapsed !== false };
   }
 
   function createContextPanelController(deps) {

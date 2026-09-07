@@ -248,7 +248,9 @@
       return;
     }
 
-    svgRoot.querySelectorAll('rect.basic.label-container, polygon.label-container').forEach(function applyContainerStyle(node) {
+    // Mermaid 11 draws cylinders/stadiums as <path> and circles as <circle>
+    // with the same `basic label-container` classes as rects and polygons.
+    svgRoot.querySelectorAll('rect.basic.label-container, polygon.label-container, path.basic.label-container, circle.basic.label-container').forEach(function applyContainerStyle(node) {
       if (containerFill) {
         node.setAttribute('fill', containerFill);
         node.style.fill = containerFill;

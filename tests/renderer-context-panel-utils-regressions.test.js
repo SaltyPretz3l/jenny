@@ -46,3 +46,44 @@ test('dispose cancels the delayed composer layout update after a panel toggle', 
     global.clearTimeout = originalClearTimeout;
   }
 });
+
+function bindWithStoredPreference(stored) {
+  const dom = new JSDOM('<button id="toggle"></button><aside id="panel"></aside>');
+  const documentRef = dom.window.document;
+  const originalLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => (stored === undefined ? null : JSON.stringify(stored)),
+      setItem() {},
+    },
+  });
+  try {
+    const controller = createContextPanelController({
+      state: { ui: { activeView: 'chat' } },
+      dom: {
+        chatContextPanel: documentRef.getElementById('panel'),
+        contextPanelToggle: documentRef.getElementById('toggle'),
+      },
+      callbacks: { updateComposerSafeOffset() {}, escapeHtml: String },
+      constants: {},
+    });
+    controller.bind();
+    const collapsed = documentRef.getElementById('panel').classList.contains('collapsed');
+    controller.dispose();
+    return collapsed;
+  } finally {
+    if (originalLocalStorage === undefined) {
+      delete globalThis.localStorage;
+    } else {
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalLocalStorage });
+    }
+  }
+}
+
+test('the context panel starts collapsed unless the user explicitly expanded it', () => {
+  assert.equal(bindWithStoredPreference(undefined), true, 'fresh profile collapses');
+  assert.equal(bindWithStoredPreference({}), true, 'stored prefs without the key collapse');
+  assert.equal(bindWithStoredPreference({ collapsed: true }), true);
+  assert.equal(bindWithStoredPreference({ collapsed: false }), false, 'an explicit expand is honored');
+});

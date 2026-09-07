@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "reasoning": "The user wants an overview of this workspace. I should list the project root first to see the layout, then read the README before summarizing anything.",
+      "text": "Let me look at the project layout first.",
+      "tool_calls": [
+        { "tool_id": "list_dir", "arguments": { "path": "." } }
+      ]
+    },
+    {
+      "text": "There's a README and a small src/ tree. Reading the README now.",
+      "tool_calls": [
+        { "tool_id": "read_file", "arguments": { "path": "README.md" } }
+      ]
+    },
+    {
+      "text": "This is **ledger-cli**, a small command-line expense tracker that keeps entries in a plain-text file you can edit and diff by hand.\n\n- `src/index.js` is the entry point: it parses argv and dispatches to one of the commands in `src/commands/` (`add`, `list`, `total`).\n- `src/parser.js` turns each ledger line into a typed entry, storing amounts as integer cents so totals never drift.\n- Tests live in `test/` and run with `node --test`.\n\nTry it with `node src/index.js add \"coffee 4.50\" --tag food`."
+    }
+  ]
+}

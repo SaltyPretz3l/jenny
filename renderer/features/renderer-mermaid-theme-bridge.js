@@ -140,8 +140,9 @@
 
     // Diagrams rendered before the bridge existed used the current theme
     // key — seed it so the first observer/refresh hit only fires on a
-    // real change.
-    lastAppliedKey = currentThemeKey();
+    // real change. `seedStale` (the lazily created shared instance) leaves
+    // the seed empty so the caller's refresh() re-renders them once.
+    lastAppliedKey = deps.seedStale ? '' : currentThemeKey();
     startObserver();
 
     return {
@@ -157,10 +158,14 @@
    */
   var sharedBridge = null;
 
-  function refreshSharedMermaidTheme() {
+  function refreshSharedMermaidTheme(deps) {
     if (!sharedBridge) {
-      sharedBridge = createMermaidThemeBridge();
-      return true;
+      // Created lazily, in practice INSIDE the first palette change after
+      // boot (applyAppearancePreferences): any diagram already on the page
+      // was rendered under the previous palette, so the seeded key must be
+      // treated as stale and every rendered diagram re-themed now.
+      // `deps` is only for tests; the app uses the module defaults.
+      sharedBridge = createMermaidThemeBridge(Object.assign({}, deps || {}, { seedStale: true }));
     }
     return sharedBridge.refresh();
   }
