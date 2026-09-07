@@ -313,7 +313,7 @@ Release decision: promote (owner instruction to publish, 2026-07-22)
 <!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
-| dist/Jenny-Setup-x64.exe | a1dfd8f3902f9f3e86dd24b9e538408806c5fe16dc415e9c4db099118052a644 |
-| dist/Jenny-Setup-x64.exe.blockmap | ce07e79e9759fbc315c7b2b7fc904d1211ac2698a489a6e8744f88a6dddd097c |
-| dist/latest.yml | 7c59fb1331de5d10230855def7dd52d7458417184ab2762c2e83574b83ae8127 |
+| dist/Jenny-Setup-x64.exe | 308f288dc9b2e5ae690d6858f7b38fac8ba328b814c1f9685bffa3b2fe576582 |
+| dist/Jenny-Setup-x64.exe.blockmap | 06426fdd76dafc10aa68ac5b188799b90136a85efe34680bca7033280c975e97 |
+| dist/latest.yml | 479ac264661f9973e3d00ab5a6512238cf714060c15ad561488aa396d3f0deb2 |
 <!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
