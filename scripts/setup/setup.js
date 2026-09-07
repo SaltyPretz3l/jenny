@@ -461,7 +461,7 @@ async function runSetup(options = {}) {
   // `npm run dev` so contributors still see live logs in their terminal.
   const distribution = isDistribution(repoRoot);
   const startLater = distribution
-    ? 'Start Jenny anytime from the "Jenny Shell" desktop shortcut, or run: npm run dev'
+    ? 'Start Jenny anytime from the "Jenny" desktop shortcut, or run: npm run dev'
     : 'Start Jenny anytime with: npm run dev';
   if (opts.noLaunch) {
     if (deferredCode === EXIT.MODEL) ui.warn(`Setup incomplete: the default model is unavailable. ${startLater}`);

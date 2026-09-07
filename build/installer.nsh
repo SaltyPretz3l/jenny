@@ -30,8 +30,8 @@
   StrCpy $JennyRemovalMode "preserve"
   ${ifNot} ${isUpdated}
     IfSilent done
-    IfFileExists "$INSTDIR\Jenny Shell.exe" 0 helper_failure
-    ExecWait '"$INSTDIR\Jenny Shell.exe" --uninstall-assistant --parent=nsis' $0
+    IfFileExists "$INSTDIR\Jenny.exe" 0 helper_failure
+    ExecWait '"$INSTDIR\Jenny.exe" --uninstall-assistant --parent=nsis' $0
     StrCmp $0 20 cancel
     StrCmp $0 21 done
     StrCmp $0 22 cleanup

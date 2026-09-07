@@ -84,6 +84,12 @@ the public repository (`github.com/SaltyPretz3l/jenny`).
 
 ### Also in 1.0.0 (landed after the 2 September cut)
 
+- **The app is called Jenny.** The product name *Jenny Shell* is retired:
+  the executable is `Jenny.exe` (`Jenny.app` on macOS), and the desktop
+  shortcut, Start menu entry, and Installed-apps entry all read *Jenny*. A
+  leftover *Jenny Shell* desktop shortcut from an earlier install is removed
+  on first launch. The application id is unchanged, so installing over
+  0.9.0 replaces it in place.
 - **Tasks rail.** A Tasks panel is the third chat-rail mode. The model keeps
   a per-session task board through the `task_board` tool, add rows carry a
   spawn chip that opens the task in its own session, and sessions spawned

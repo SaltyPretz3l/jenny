@@ -110,7 +110,7 @@ def test_build_backend_uses_separate_exact_hash_locked_toolchain() -> None:
     build_lock = (ROOT / "requirements-build-lock.txt").read_text(encoding="utf-8")
     for pin in (
         "packaging==25.0",
-        "pip==26.1.2",
+        "pip==26.2",
         "setuptools==83.0.0",
         "wheel==0.47.0",
     ):

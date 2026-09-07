@@ -1,5 +1,5 @@
 appId: com.jenny.shell
-productName: Jenny Shell
+productName: Jenny
 # Make the PyInstaller sidecar executable on macOS after packing (a copied
 # --onefile binary can lose its +x bit). No-op on Windows.
 afterPack: build/afterPack.js
@@ -113,7 +113,7 @@ dmg:
     - x: 120
       y: 190
       type: file
-      name: Jenny Shell.app
+      name: Jenny.app
     - x: 420
       y: 190
       type: link

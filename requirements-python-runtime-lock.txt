@@ -21,8 +21,8 @@ pandas==3.0.1 \
     --hash=sha256:9fea306c783e28884c29057a1d9baa11a349bbf99538ec1da44c8476563d1b25
 pillow==12.3.0 \
     --hash=sha256:1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8
-pip==26.1.2 \
-    --hash=sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab
+pip==26.2 \
+    --hash=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad
 pyparsing==3.3.2 \
     --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d
 python-dateutil==2.9.0.post0 \

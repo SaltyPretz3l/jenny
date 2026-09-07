@@ -6,9 +6,9 @@ if [ -f "$SCRIPT_DIR/package.json" ] && [ -f "$SCRIPT_DIR/scripts/uninstall.js" 
   exec node "$SCRIPT_DIR/scripts/uninstall.js" "$@"
 fi
 
-APP_PATH="/Applications/Jenny Shell.app"
-if [ ! -x "$APP_PATH/Contents/MacOS/Jenny Shell" ]; then
-  printf '%s\n' "Jenny Shell is not installed in /Applications."
+APP_PATH="/Applications/Jenny.app"
+if [ ! -x "$APP_PATH/Contents/MacOS/Jenny" ]; then
+  printf '%s\n' "Jenny is not installed in /Applications."
   exit 1
 fi
 
@@ -24,7 +24,7 @@ remove_profile_child() {
   fi
 }
 
-"$APP_PATH/Contents/MacOS/Jenny Shell" --uninstall-assistant --parent=macos
+"$APP_PATH/Contents/MacOS/Jenny" --uninstall-assistant --parent=macos
 RESULT=$?
 case "$RESULT" in
   20) exit 0 ;;
@@ -111,7 +111,7 @@ case "$RESULT" in
     ;;
 esac
 
-if ! osascript -e 'tell application "Finder" to delete POSIX file "/Applications/Jenny Shell.app"'; then
+if ! osascript -e 'tell application "Finder" to delete POSIX file "/Applications/Jenny.app"'; then
   printf '%s\n' "Jenny data handling completed, but the app could not be moved to Trash."
   exit 1
 fi

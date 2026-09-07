@@ -91,7 +91,7 @@ async function launchOfficialRemovalEntry({ platform, isPackaged, shellLike } = 
   if (platform === 'win32' && isPackaged) {
     await shellLike.openExternal('ms-settings:appsfeatures');
     return dataLifecycleResult('system_uninstaller_opened', {
-      instructions: 'Select Jenny Shell in Installed apps to continue.',
+      instructions: 'Select Jenny in Installed apps to continue.',
     });
   }
   if (platform === 'darwin' && isPackaged) {

@@ -264,12 +264,12 @@ def _remaining_timeout_seconds(*, deadline: float, step_cap: int) -> int:
 def _platform_packaged_candidates() -> tuple[list[Path], list[Path]]:
     dist = ROOT / "dist"
     if sys.platform.startswith("win"):
-        dirs, names = ("win-unpacked", "win-arm64-unpacked"), ("Jenny Shell.exe",)
+        dirs, names = ("win-unpacked", "win-arm64-unpacked"), ("Jenny.exe",)
     elif sys.platform.startswith("linux"):
-        dirs, names = ("linux-unpacked", "linux-arm64-unpacked"), ("Jenny Shell", "jenny")
+        dirs, names = ("linux-unpacked", "linux-arm64-unpacked"), ("Jenny", "jenny")
     elif sys.platform == "darwin":
-        mac = [dist / d / "Jenny Shell.app/Contents" for d in ("mac", "mac-arm64", "mac-universal")]
-        return [r / "Resources" for r in mac], [r / "MacOS" / "Jenny Shell" for r in mac]
+        mac = [dist / d / "Jenny.app/Contents" for d in ("mac", "mac-arm64", "mac-universal")]
+        return [r / "Resources" for r in mac], [r / "MacOS" / "Jenny" for r in mac]
     else:
         raise RuntimeError(f"unsupported packaged smoke platform: {sys.platform}")
     roots = [dist / d for d in dirs]

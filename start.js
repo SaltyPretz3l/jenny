@@ -132,7 +132,7 @@ function launch() {
     const { buildPreloadBundle } = require('./scripts/build/build-preload');
     buildPreloadBundle();
   } catch (error) {
-    console.error(`Jenny Shell launcher failed to build the preload bundle: ${String((error && error.message) || error)}`);
+    console.error(`Jenny launcher failed to build the preload bundle: ${String((error && error.message) || error)}`);
     process.exit(1);
   }
 
@@ -167,7 +167,7 @@ function launch() {
   });
 
   child.on('error', (error) => {
-    console.error(`Jenny Shell launcher failed to start Electron: ${String((error && error.message) || error)}`);
+    console.error(`Jenny launcher failed to start Electron: ${String((error && error.message) || error)}`);
     process.exit(1);
   });
 

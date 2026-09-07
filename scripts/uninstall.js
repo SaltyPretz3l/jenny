@@ -15,7 +15,9 @@ const { UNINSTALL_EXIT_CODES } = require('../services/data-lifecycle/uninstall-c
 const { ShellConfigService } = require('../services/shell-config-service');
 
 const GENERATED_ROOT_NAMES = Object.freeze(['node_modules', 'dist', 'release', 'out']);
-const WINDOWS_SHORTCUT_NAME = 'Jenny Shell.lnk';
+// Current shortcut name first, then the pre-1.0 "Jenny Shell" name so an
+// uninstall after the rename still clears the shortcut an older build wrote.
+const WINDOWS_SHORTCUT_NAMES = Object.freeze(['Jenny.lnk', 'Jenny Shell.lnk']);
 const JENNY_REPOSITORY_PATTERN = /(?:^|[:/])SaltyPretz3l\/jenny(?:-src)?(?:\.git)?$/i;
 
 function samePath(left, right) {
@@ -112,11 +114,11 @@ function removeGeneratedDependencies(rootPath) {
   return removed;
 }
 
-function inspectWindowsDesktopShortcut({ execFileSync = childProcess.execFileSync } = {}) {
+function inspectWindowsDesktopShortcut(shortcutName = WINDOWS_SHORTCUT_NAMES[0], { execFileSync = childProcess.execFileSync } = {}) {
   if (process.platform !== 'win32') return null;
   const script = [
     "$desktop=[Environment]::GetFolderPath('Desktop')",
-    `$link=Join-Path $desktop '${WINDOWS_SHORTCUT_NAME}'`,
+    `$link=Join-Path $desktop '${shortcutName}'`,
     'if (!(Test-Path -LiteralPath $link -PathType Leaf)) { exit 2 }',
     '$shell=New-Object -ComObject WScript.Shell',
     '$shortcut=$shell.CreateShortcut($link)',
@@ -146,20 +148,30 @@ function removeVerifiedCloneShortcut(rootPath, {
   if (platform !== 'win32') return { removed: false, reason: 'unsupported_platform' };
   const root = resolveSafeDirectoryRoot(rootPath);
   if (!root) return { removed: false, reason: 'unsafe_clone_root' };
-  const details = inspectShortcut();
-  if (!details) return { removed: false, reason: 'shortcut_absent' };
   const expectedTarget = path.join(root, 'launch-jenny.cmd');
-  if (
-    path.basename(details.shortcutPath).toLocaleLowerCase('en-US') !== WINDOWS_SHORTCUT_NAME.toLocaleLowerCase('en-US')
-    || !samePath(details.target, expectedTarget)
-    || !samePath(details.workingDirectory, root)
-  ) {
-    return { removed: false, reason: 'shortcut_not_owned' };
+  let reason = 'shortcut_absent';
+  let removed = false;
+  for (const shortcutName of WINDOWS_SHORTCUT_NAMES) {
+    const details = inspectShortcut(shortcutName);
+    if (!details) continue;
+    if (
+      path.basename(details.shortcutPath).toLocaleLowerCase('en-US') !== shortcutName.toLocaleLowerCase('en-US')
+      || !samePath(details.target, expectedTarget)
+      || !samePath(details.workingDirectory, root)
+    ) {
+      reason = 'shortcut_not_owned';
+      continue;
+    }
+    if (!fs.existsSync(details.shortcutPath)) continue;
+    const stat = fs.lstatSync(details.shortcutPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      reason = 'shortcut_unsafe';
+      continue;
+    }
+    fs.unlinkSync(details.shortcutPath);
+    removed = true;
   }
-  const stat = fs.lstatSync(details.shortcutPath);
-  if (!stat.isFile() || stat.isSymbolicLink()) return { removed: false, reason: 'shortcut_unsafe' };
-  fs.unlinkSync(details.shortcutPath);
-  return { removed: true };
+  return removed ? { removed: true } : { removed: false, reason };
 }
 
 function deleteVerifiedClone(rootPath, typedDirectoryName, inspection = inspectCloneRoot(rootPath)) {

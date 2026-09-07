@@ -9,7 +9,14 @@ name: Release
 # "open anyway"). Adding the secrets below flips the same workflow to signed.
 #
 # The macOS leg uses build/icon.png (electron-builder generates the .icns); fail-fast
-# is disabled so the Windows installer still ships even if the mac leg has trouble.
+# is disabled so the Windows installer still ships even if the mac leg has trouble,
+# and the leg is marked experimental (continue-on-error) so it cannot mark the run
+# failed while Windows shipped.
+#
+# The `prepare` job creates the draft release for the tag exactly once BEFORE the
+# build matrix. electron-builder's GitHub publisher creates a draft when it finds
+# none for the tag, and two legs starting together both created one on the 1.0.0
+# dry run, splitting the blockmap from the installer + latest.yml.
 
 on:
   push:
@@ -21,16 +28,60 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Prepare draft release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # On a tag push the tag is the ref; on workflow_dispatch (dry run) it is the
+      # same v-prefixed package.json version electron-builder derives, so both
+      # paths converge on one release name.
+      - name: Resolve the release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # A draft never creates the git tag, so a dry run still tags nothing. gh
+      # resolves drafts by tag name, which is what stops a second draft.
+      - name: Ensure exactly one draft release exists for the tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; the build legs upload into it"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" \
+              --notes "Assets are uploaded by the release workflow's build legs."
+          fi
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             eb_flag: "--win"
+            experimental: false
           - os: macos-latest
             eb_flag: "--mac"
+            experimental: true
     runs-on: ${{ matrix.os }}
+    # Unsigned, never run on real hardware, and its hash lock carries only win_amd64
+    # wheels today: the mac leg must not fail the Release run the Windows leg passed.
+    continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

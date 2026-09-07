@@ -26,7 +26,7 @@ content = [
     "html2text==2025.4.15",
 ]
 media = [
-    "Pillow==12.2.0",
+    "Pillow==12.3.0",
     "PyMuPDF==1.27.2.2",
 ]
 spreadsheet = [
@@ -38,7 +38,7 @@ office = [
 ]
 dev = [
     "html2text==2025.4.15",
-    "Pillow==12.2.0",
+    "Pillow==12.3.0",
     "PyMuPDF==1.27.2.2",
     "defusedxml==0.7.1",
     "openpyxl==3.1.5",
@@ -60,7 +60,7 @@ packaging = [
 all = [
     "ollama>=0.4.0",
     "html2text==2025.4.15",
-    "Pillow==12.2.0",
+    "Pillow==12.3.0",
     "PyMuPDF==1.27.2.2",
     "defusedxml==0.7.1",
     "openpyxl==3.1.5",

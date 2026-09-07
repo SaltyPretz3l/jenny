@@ -22,10 +22,12 @@ Write-Host '==================================================' -ForegroundColor
 Write-Host ''
 
 # Image names spawned by Jenny in dev or packaged mode.
-# - "Jenny Shell" / "electron"  : Electron main + child render/utility procs
+# - "Jenny" / "electron"        : Electron main + child render/utility procs
+#                                 ("Jenny Shell" = pre-1.0 installs)
 # - "ollama*"                   : Ollama CLI/server/runner/tray
 # - "sidecar" / "jenny-sidecar" : packaged Python sidecar (PyInstaller artifact)
 $names = @(
+    'Jenny',
     'Jenny Shell',
     'electron',
     'ollama',

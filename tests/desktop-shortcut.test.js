@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('path');
 
 const {
@@ -10,6 +11,8 @@ const {
   buildDesktopShortcutOptions,
   ensureDesktopShortcut,
   getDevLauncherPath,
+  LEGACY_WINDOWS_SHORTCUT_NAME,
+  WINDOWS_SHORTCUT_NAME,
 } = require('../services/desktop-shortcut');
 
 test('desktop shortcut options target the Windows launcher wrapper in development', () => {
@@ -30,7 +33,7 @@ test('desktop shortcut options target the Windows launcher wrapper in developmen
 });
 
 test('desktop shortcut options omit dot-args for packaged app launches', () => {
-  const execPath = 'C:\\Program Files\\Jenny Shell\\Jenny Shell.exe';
+  const execPath = 'C:\\Program Files\\Jenny\\Jenny.exe';
   const { details } = buildDesktopShortcutOptions({
     appRoot: 'C:\\ignored',
     execPath,
@@ -82,10 +85,10 @@ test('desktop shortcut repair creates or overwrites the Windows desktop shortcut
 
   assert.deepEqual(result, {
     ok: true,
-    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny Shell.lnk',
+    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny.lnk',
   });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].shortcutPath, 'C:\\Users\\example\\Desktop\\Jenny Shell.lnk');
+  assert.equal(calls[0].shortcutPath, 'C:\\Users\\example\\Desktop\\Jenny.lnk');
   assert.equal(calls[0].operation, 'create');
   assert.equal(calls[0].details.target.endsWith(DEV_LAUNCHER_NAME), true);
   assert.equal(calls[0].details.args, '');
@@ -110,11 +113,11 @@ test('desktop shortcut reports a bounded failure when read-back verification mis
     },
     logger(_level, event) { events.push(event); },
     platform: 'win32',
-    execPath: 'C:\\Program Files\\Jenny Shell\\Jenny Shell.exe',
+    execPath: 'C:\\Program Files\\Jenny\\Jenny.exe',
   });
   assert.deepEqual(result, {
     ok: false,
-    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny Shell.lnk',
+    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny.lnk',
     reason: 'verify-failed',
   });
   assert.equal(events.includes('shortcut.desktop_verify_failed'), true);
@@ -122,7 +125,7 @@ test('desktop shortcut reports a bounded failure when read-back verification mis
 
 test('desktop shortcut read-back verification checks args, cwd, and iconIndex', () => {
   let reads = 0;
-  const execPath = 'C:\\Program Files\\Jenny Shell\\Jenny Shell.exe';
+  const execPath = 'C:\\Program Files\\Jenny\\Jenny.exe';
   const result = ensureDesktopShortcut({
     app: {
       isPackaged: true,
@@ -222,4 +225,43 @@ test('Windows launcher clears ELECTRON_RUN_AS_NODE before launching Electron', {
   assert.equal(repoRootLine.slice('REPO_ROOT='.length).trim(), path.resolve(__dirname, '..'));
   assert.match(result.stdout, /ELECTRON_EXE=.*node_modules\\electron\\dist\\electron\.exe\s*$/m);
   assert.match(result.stdout, /^ELECTRON_RUN_AS_NODE=\s*$/m);
+});
+
+test('desktop shortcut repair removes the pre-rename "Jenny Shell" shortcut only when it is ours', () => {
+  const desktop = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-desktop-'));
+  const legacyPath = path.join(desktop, LEGACY_WINDOWS_SHORTCUT_NAME);
+  const execPath = 'C:\\Program Files\\Jenny\\Jenny.exe';
+  const { details: current } = buildDesktopShortcutOptions({ execPath, isPackaged: true });
+  const events = [];
+  const run = (legacyDetails) => {
+    fs.writeFileSync(legacyPath, 'fixture');
+    events.length = 0;
+    return ensureDesktopShortcut({
+      app: { isPackaged: true, getPath: () => desktop, getAppUserModelId: () => APP_USER_MODEL_ID },
+      shell: {
+        writeShortcutLink: () => true,
+        readShortcutLink(shortcutPath) {
+          if (shortcutPath === legacyPath) return legacyDetails;
+          return current;
+        },
+      },
+      logger(_level, event) { events.push(event); },
+      platform: 'win32',
+      execPath,
+    });
+  };
+  try {
+    const ours = run({ target: execPath, appUserModelId: APP_USER_MODEL_ID });
+    assert.equal(ours.ok, true);
+    assert.equal(ours.shortcutPath, path.join(desktop, WINDOWS_SHORTCUT_NAME));
+    assert.equal(fs.existsSync(legacyPath), false);
+    assert.equal(events.includes('shortcut.desktop_legacy_removed'), true);
+
+    const foreign = run({ target: 'C:\\Other\\app.exe', appUserModelId: 'com.other.app' });
+    assert.equal(foreign.ok, true);
+    assert.equal(fs.existsSync(legacyPath), true);
+    assert.equal(events.includes('shortcut.desktop_legacy_removed'), false);
+  } finally {
+    fs.rmSync(desktop, { recursive: true, force: true });
+  }
 });

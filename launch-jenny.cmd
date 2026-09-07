@@ -17,7 +17,7 @@ if defined JENNY_LAUNCHER_TEST_MODE (
 )
 
 if not exist "%ELECTRON_EXE%" (
-  >&2 echo Jenny Shell launcher could not find the local Electron runtime.
+  >&2 echo Jenny launcher could not find the local Electron runtime.
   >&2 echo Expected: "%ELECTRON_EXE%"
   exit /b 1
 )
@@ -25,6 +25,6 @@ if not exist "%ELECTRON_EXE%" (
 start "" /D "%REPO_ROOT%" "%ELECTRON_EXE%" "%REPO_ROOT%"
 set "LAUNCH_EXIT=%ERRORLEVEL%"
 if not "%LAUNCH_EXIT%"=="0" (
-  >&2 echo Jenny Shell launcher failed to start the local Electron runtime.
+  >&2 echo Jenny launcher failed to start the local Electron runtime.
 )
 exit /b %LAUNCH_EXIT%

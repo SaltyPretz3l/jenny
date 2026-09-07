@@ -26,7 +26,7 @@ WHEEL_FILENAMES = (
     "packaging-26.2-py3-none-any.whl",
     "pandas-3.0.1-cp313-cp313-win_amd64.whl",
     "pillow-12.3.0-cp313-cp313-win_amd64.whl",
-    "pip-26.1.2-py3-none-any.whl",
+    "pip-26.2-py3-none-any.whl",
     "pyparsing-3.3.2-py3-none-any.whl",
     "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
     "scipy-1.17.1-cp313-cp313-win_amd64.whl",
@@ -145,7 +145,7 @@ def test_bundle_contract_pins_cpython_and_build_backend() -> None:
         "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"
     )
     build_lock = (ROOT / "requirements-build-lock.txt").read_text(encoding="utf-8")
-    assert "pip==26.1.2" in build_lock
+    assert "pip==26.2" in build_lock
     assert "setuptools==83.0.0" in build_lock
     assert "wheel==0.47.0" in build_lock
 
@@ -263,10 +263,10 @@ def test_embeddable_runtime_bootstraps_pip_from_verified_wheel(
     python_executable.write_bytes(b"python")
     wheelhouse = tmp_path / "wheels"
     wheelhouse.mkdir()
-    pip_wheel = wheelhouse / "pip-26.1.2-py3-none-any.whl"
+    pip_wheel = wheelhouse / "pip-26.2-py3-none-any.whl"
     with zipfile.ZipFile(pip_wheel, "w") as archive:
         archive.writestr("pip/__init__.py", "")
-        archive.writestr("pip-26.1.2.dist-info/METADATA", "Name: pip\nVersion: 26.1.2\n")
+        archive.writestr("pip-26.2.dist-info/METADATA", "Name: pip\nVersion: 26.2\n")
     # The probe seam carries a failure detail now, not a bare bool, so the
     # bootstrap error can name its own cause. Same two-step contract: pip is
     # absent before extraction and present after it.
@@ -278,7 +278,7 @@ def test_embeddable_runtime_bootstraps_pip_from_verified_wheel(
     interpreter._ensure_offline_pip(python_executable, wheelhouse)
 
     assert (runtime / "Lib" / "site-packages" / "pip" / "__init__.py").is_file()
-    assert (runtime / "Lib" / "site-packages" / "pip-26.1.2.dist-info" / "METADATA").is_file()
+    assert (runtime / "Lib" / "site-packages" / "pip-26.2.dist-info" / "METADATA").is_file()
 
 
 @pytest.mark.parametrize("unsafe_name", ("../escape.py", "safe.py:stream", "CON.txt"))

@@ -109,20 +109,25 @@ describe('clone uninstall helpers', () => {
   it('removes only a Windows desktop shortcut proven to target this clone', () => {
     const root = makeTempRoot();
     try {
-      const shortcutPath = path.join(root, 'Jenny Shell.lnk');
+      const shortcutPath = path.join(root, 'Jenny.lnk');
+      const legacyShortcutPath = path.join(root, 'Jenny Shell.lnk');
       const cloneRoot = path.join(root, 'clone');
       fs.mkdirSync(cloneRoot);
       fs.writeFileSync(shortcutPath, 'fixture');
+      fs.writeFileSync(legacyShortcutPath, 'fixture');
+      const ownedDetails = (name) => ({
+        shortcutPath: path.join(root, name),
+        target: path.join(cloneRoot, 'launch-jenny.cmd'),
+        workingDirectory: cloneRoot,
+      });
       const owned = removeVerifiedCloneShortcut(cloneRoot, {
         platform: 'win32',
-        inspectShortcut: () => ({
-          shortcutPath,
-          target: path.join(cloneRoot, 'launch-jenny.cmd'),
-          workingDirectory: cloneRoot,
-        }),
+        inspectShortcut: ownedDetails,
       });
       assert.equal(owned.removed, true);
       assert.equal(fs.existsSync(shortcutPath), false);
+      // The pre-rename "Jenny Shell" shortcut is cleared in the same pass.
+      assert.equal(fs.existsSync(legacyShortcutPath), false);
 
       fs.writeFileSync(shortcutPath, 'fixture');
       const foreign = removeVerifiedCloneShortcut(cloneRoot, {

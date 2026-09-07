@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Production timers in this module are unref'd; see the helper.
+holdEventLoopUntilTestsFinish(test);
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 

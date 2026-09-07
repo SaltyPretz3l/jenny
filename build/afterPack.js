@@ -19,7 +19,7 @@ module.exports = async function afterPack(context) {
   const productFilename = context.packager
     && context.packager.appInfo
     && context.packager.appInfo.productFilename;
-  const appBundle = `${productFilename || 'Jenny Shell'}.app`;
+  const appBundle = `${productFilename || 'Jenny'}.app`;
   const sidecar = path.join(
     context.appOutDir,
     appBundle,

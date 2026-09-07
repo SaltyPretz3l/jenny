@@ -1,0 +1,29 @@
+# Dependabot policy for the public repository.
+#
+# Security updates are enabled in the repository settings and are NOT governed
+# by this file: GitHub's own rule is that security-update pull requests are not
+# subject to open-pull-requests-limit and do not count toward it.
+#
+# Version updates are switched off on purpose. Development happens in a private
+# repository and this public tree is a curated export refreshed with each
+# release (see CONTRIBUTING.md), so a version-bump PR opened here can never be
+# merged directly: every dependency bump is hand-ported upstream and lands in
+# the next export. Leaving version updates on would only pile up PRs that have
+# to be closed by hand.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0

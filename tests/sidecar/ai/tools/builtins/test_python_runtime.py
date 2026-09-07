@@ -1863,7 +1863,7 @@ def test_probe_pip_distinguishes_its_failure_modes(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         runner,
         "run",
-        lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="pip 26.1.2", stderr=""),
+        lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="pip 26.2", stderr=""),
     )
     assert probe(python, timeout=60) == (True, "")
 
@@ -1874,7 +1874,7 @@ def test_offline_pip_bootstrap_failure_names_the_cause(
     """The raised error must carry the probe detail, not just a bare sentence."""
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
-    (wheelhouse / "pip-26.1.2-py3-none-any.whl").write_bytes(b"")
+    (wheelhouse / "pip-26.2-py3-none-any.whl").write_bytes(b"")
     python = tmp_path / "python.exe"
     python.write_bytes(b"")
 

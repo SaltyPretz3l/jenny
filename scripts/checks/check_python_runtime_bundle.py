@@ -18,7 +18,7 @@ HEX_DIGITS = frozenset("0123456789abcdef")
 PIN_RE = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\s\\]+)")
 EXPECTED_BUILD_TOOLS = {
     "packaging": "25.0",
-    "pip": "26.1.2",
+    "pip": "26.2",
     "setuptools": "83.0.0",
     "wheel": "0.47.0",
 }

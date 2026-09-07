@@ -178,7 +178,7 @@ test('Settings delegates installed Windows removal to the official system uninst
   });
   assert.deepEqual(opened, ['ms-settings:appsfeatures']);
   assert.equal(result.status, 'system_uninstaller_opened');
-  assert.match(result.instructions, /Jenny Shell/);
+  assert.match(result.instructions, /Select Jenny in Installed apps/);
 });
 
 test('Settings provides fixed helper instructions for packaged macOS and clones', async () => {

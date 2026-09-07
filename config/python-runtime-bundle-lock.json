@@ -22,7 +22,7 @@
     "tabulate==0.10.0"
   ],
   "bootstrap_packages": [
-    "pip==26.1.2"
+    "pip==26.2"
   ],
   "build_lock": "requirements-build-lock.txt",
   "runtime_lock": "requirements-python-runtime-lock.txt",

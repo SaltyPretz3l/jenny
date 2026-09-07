@@ -52,6 +52,9 @@ describe('registerLlamaServerIpcHandlers', () => {
   });
 
   test('start passes only normalized launch keys to the manager', async () => {
+    // Absolute on every platform: a drive-rooted literal is relative on POSIX
+    // and normalizeSpec drops it there.
+    const modelPath = path.resolve('models', 'gemma.gguf');
     const ipc = createFakeIpcMain();
     const starts = [];
     const manager = {
@@ -64,7 +67,7 @@ describe('registerLlamaServerIpcHandlers', () => {
     registerLlamaServerIpcHandlers(ipc, { getManager: () => manager });
     const result = await ipc.invoke.get(invokeChannel('llamaServer.start'))({}, {
       modelTag: '  gemma4-12b-qat  ',
-      modelPath: '  C:\\models\\gemma.gguf  ',
+      modelPath: `  ${modelPath}  `,
       profileId: '  local-profile  ',
       mtp: { mode: '  mtp  ', draftNMax: '4', extra: 'drop-me' },
       extraArgs: ['--unsafe'],
@@ -72,7 +75,7 @@ describe('registerLlamaServerIpcHandlers', () => {
     });
     assert.deepEqual(starts, [{
       modelTag: 'gemma4-12b-qat',
-      modelPath: 'C:\\models\\gemma.gguf',
+      modelPath,
       profileId: 'local-profile',
       mtp: { mode: 'mtp', draftNMax: 4 },
     }]);

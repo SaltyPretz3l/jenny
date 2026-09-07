@@ -283,7 +283,7 @@ Until signing is set up, expect:
   **Run anyway**.
 - **macOS (Gatekeeper):** "Apple could not verify…" → right-click the app →
   **Open** (once), or run
-  `xattr -dr com.apple.quarantine "/Applications/Jenny Shell.app"`.
+  `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
 
 Tell friends to expect this; it is normal for an unsigned indie app.
 

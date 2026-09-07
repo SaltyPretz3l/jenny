@@ -55,9 +55,9 @@ def test_macos_arch_specific_bundle_uses_jenny_name(tmp_path: Path, monkeypatch)
     module = _load_module()
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module.sys, "platform", "darwin")
-    bundle = tmp_path / "dist" / "mac-arm64" / "Jenny Shell.app" / "Contents"
+    bundle = tmp_path / "dist" / "mac-arm64" / "Jenny.app" / "Contents"
     resources = bundle / "Resources"
-    executable = bundle / "MacOS" / "Jenny Shell"
+    executable = bundle / "MacOS" / "Jenny"
     resources.mkdir(parents=True)
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"app")
@@ -72,10 +72,12 @@ def test_packaged_app_resolution_rejects_same_platform_ambiguity(
     module = _load_module()
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module.sys, "platform", "linux")
-    unpacked = tmp_path / "dist" / "linux-unpacked"
-    unpacked.mkdir(parents=True)
-    (unpacked / "Jenny Shell").write_bytes(b"first")
-    (unpacked / "jenny").write_bytes(b"second")
+    # Two host-platform layouts both carrying the app: "Jenny" vs "jenny" in one
+    # directory would fold into a single path on a case-insensitive filesystem.
+    for layout, payload in (("linux-unpacked", b"first"), ("linux-arm64-unpacked", b"second")):
+        unpacked = tmp_path / "dist" / layout
+        unpacked.mkdir(parents=True)
+        (unpacked / "Jenny").write_bytes(payload)
 
     with pytest.raises(RuntimeError, match="ambiguous packaged app executable"):
         module._resolve_packaged_app_path()
@@ -86,7 +88,7 @@ def test_posix_packaged_timeout_terminates_owned_process_group(
 ) -> None:
     module = _load_module()
     monkeypatch.setattr(module.sys, "platform", "linux")
-    app_path = tmp_path / "Jenny Shell"
+    app_path = tmp_path / "Jenny"
     app_path.write_bytes(b"app")
     log_path = tmp_path / "smoke.log"
     output_path = tmp_path / "result.json"

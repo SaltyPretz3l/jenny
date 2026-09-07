@@ -1,6 +1,10 @@
+const fs = require('fs');
 const path = require('path');
 
-const WINDOWS_SHORTCUT_NAME = 'Jenny Shell.lnk';
+const WINDOWS_SHORTCUT_NAME = 'Jenny.lnk';
+// Shortcut name written by every build before the product was renamed from
+// "Jenny Shell" to "Jenny" (1.0.0). Removed once the new shortcut is in place.
+const LEGACY_WINDOWS_SHORTCUT_NAME = 'Jenny Shell.lnk';
 const APP_USER_MODEL_ID = 'com.jenny.shell';
 const DEV_LAUNCHER_NAME = 'launch-jenny.cmd';
 
@@ -22,7 +26,7 @@ function buildDesktopShortcutOptions({
       target,
       args: '',
       cwd,
-      description: 'Launch Jenny Shell',
+      description: 'Launch Jenny',
       icon,
       iconIndex: 0,
       appUserModelId,
@@ -38,6 +42,26 @@ function shortcutDetailsMatch(actual, expected) {
     && actual.icon === expected.icon
     && Number(actual.iconIndex || 0) === Number(expected.iconIndex || 0)
     && actual.appUserModelId === expected.appUserModelId;
+}
+
+// Delete the pre-rename desktop shortcut, but only when it is provably ours
+// (same AppUserModelId or same target); a foreign link with that name stays.
+function removeLegacyDesktopShortcut({ desktopPath, shell, details, logger }) {
+  const legacyPath = path.join(desktopPath, LEGACY_WINDOWS_SHORTCUT_NAME);
+  try {
+    if (!fs.existsSync(legacyPath) || typeof shell.readShortcutLink !== 'function') return;
+    const existing = shell.readShortcutLink(legacyPath);
+    const ours = existing
+      && (existing.appUserModelId === details.appUserModelId || existing.target === details.target);
+    if (!ours) return;
+    fs.unlinkSync(legacyPath);
+    logger('INFO', 'shortcut.desktop_legacy_removed', { shortcutPath: legacyPath });
+  } catch (error) {
+    logger('WARN', 'shortcut.desktop_legacy_remove_failed', {
+      shortcutPath: legacyPath,
+      message: String(error && error.message ? error.message : error),
+    });
+  }
 }
 
 function ensureDesktopShortcut({
@@ -72,6 +96,7 @@ function ensureDesktopShortcut({
         const existing = shell.readShortcutLink(shortcutPath);
         if (shortcutDetailsMatch(existing, details)) {
           logger('INFO', 'shortcut.desktop_unchanged', { shortcutPath });
+          removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
           return { ok: true, shortcutPath, unchanged: true };
         }
       } catch (_readError) {
@@ -108,6 +133,7 @@ function ensureDesktopShortcut({
       target: details.target,
       args: details.args,
     });
+    removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
     return { ok: true, shortcutPath };
   } catch (error) {
     logger('WARN', 'shortcut.desktop_create_failed', {
@@ -120,6 +146,8 @@ function ensureDesktopShortcut({
 module.exports = {
   APP_USER_MODEL_ID,
   DEV_LAUNCHER_NAME,
+  LEGACY_WINDOWS_SHORTCUT_NAME,
+  WINDOWS_SHORTCUT_NAME,
   buildDesktopShortcutOptions,
   ensureDesktopShortcut,
   getDevLauncherPath,

@@ -433,8 +433,11 @@ test('spec mtp overrides the persisted shell acceleration and drops junk keys', 
   const blobPath = path.join(os.tmpdir(), 'blobs', 'sha256-' + 'a'.repeat(64));
   assert.deepEqual(normalizeSpec({ modelPath: blobPath }), { modelPath: blobPath });
   assert.equal(normalizeSpec({ modelPath: path.join(os.tmpdir(), 'blobs', 'sha256-nothex') }), null);
-  assert.deepEqual(normalizeSpec({ modelPath: 'G:/m/main.GGUF', profileId: 'Gemma4-12B' }), {
-    modelPath: 'G:/m/main.GGUF',
+  // Absolute on every platform (a drive-rooted literal is relative on POSIX);
+  // the upper-case extension is the point of the case.
+  const upperCaseGguf = path.resolve('m', 'main.GGUF');
+  assert.deepEqual(normalizeSpec({ modelPath: upperCaseGguf, profileId: 'Gemma4-12B' }), {
+    modelPath: upperCaseGguf,
     profileId: 'gemma4-12b',
   });
   assert.equal(normalizeSpec({ modelPath: '../../evil.gguf' }), null, 'relative model paths are dropped');

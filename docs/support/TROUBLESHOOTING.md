@@ -25,15 +25,15 @@ first, compare its SHA-256 hash against the table in the release's
 
 ## macOS refuses to open the app
 
-**Symptom.** "Apple could not verify 'Jenny Shell' is free of malware," or
+**Symptom.** "Apple could not verify 'Jenny' is free of malware," or
 the app "is damaged and can't be opened."
 
 **Common cause.** Gatekeeper quarantine on the unsigned, best-effort macOS
 build.
 
-**Recovery.** Right-click **Jenny Shell.app** → **Open** → **Open**. If that
+**Recovery.** Right-click **Jenny.app** → **Open** → **Open**. If that
 option doesn't appear, clear the quarantine flag:
-`xattr -dr com.apple.quarantine "/Applications/Jenny Shell.app"`. Reminder:
+`xattr -dr com.apple.quarantine "/Applications/Jenny.app"`. Reminder:
 the macOS build is untested by the maintainer, and auto-update is disabled
 there — new versions are a manual download.
 

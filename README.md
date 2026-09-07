@@ -28,7 +28,7 @@ Jenny is not the right pick if you need cloud-grade frontier model quality on ev
 
 ## Install (Windows, one click)
 
-Download **[Jenny-Setup-x64.exe](https://github.com/SaltyPretz3l/jenny/releases/latest/download/Jenny-Setup-x64.exe)** from the latest release and run it. The installer is one-click — no wizard pages — and creates a **Jenny Shell** desktop shortcut when it finishes.
+Download **[Jenny-Setup-x64.exe](https://github.com/SaltyPretz3l/jenny/releases/latest/download/Jenny-Setup-x64.exe)** from the latest release and run it. The installer is one-click — no wizard pages — and creates a **Jenny** desktop shortcut when it finishes.
 
 **Expect a SmartScreen warning.** The installer is not code-signed (a deliberate cost call for a free hobby project), so on first run Windows shows *"Windows protected your PC"*:
 
@@ -43,7 +43,7 @@ On first launch Jenny walks you through the rest: installing [Ollama](https://ol
 
 Each release also publishes `Jenny-arm64.dmg` (Apple Silicon). Honest label: **it is built on CI and has never been run by the maintainer** — Windows is the supported platform.
 
-- Gatekeeper blocks the unsigned app: right-click **Jenny Shell.app** → **Open** → **Open**, or clear the quarantine flag with `xattr -dr com.apple.quarantine "/Applications/Jenny Shell.app"`.
+- Gatekeeper blocks the unsigned app: right-click **Jenny.app** → **Open** → **Open**, or clear the quarantine flag with `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
 - **Auto-update is disabled on macOS** (it requires a signed and notarized build). Update by downloading the new dmg from the releases page.
 - Install Ollama yourself from [ollama.com/download/mac](https://ollama.com/download/mac); the setup wizard links there and re-scans.
 
@@ -102,7 +102,7 @@ The default local model is **Ornith 1.5 9B** — pulled as `hf.co/ornith-ai/Orni
 
 ### Starting Jenny later
 
-**Windows** — after the first run a **Jenny Shell** desktop shortcut is created automatically; use it to start the app with **no console window**. You can also double-click **`launch-jenny.cmd`** in the project folder.
+**Windows** — after the first run a **Jenny** desktop shortcut is created automatically; use it to start the app with **no console window**. You can also double-click **`launch-jenny.cmd`** in the project folder.
 
 **macOS / Linux** — start Jenny from a terminal:
 

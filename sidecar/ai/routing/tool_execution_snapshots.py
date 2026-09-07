@@ -219,7 +219,10 @@ def freeze_effective_execution_inputs(  # noqa: C901, PLR0913 - authoritative tu
     canonical_arguments.pop("_jenny_read_only", None)
     canonical_arguments.pop("_jenny_approved_plan", None)
     canonical_arguments.pop(PLAN_ARTIFACT_WRITE_ARG, None)
-    attribution_arguments = {
+    # Typed as the callee's Mapping[str, object]: mypy 2.x (CI installs the
+    # newest) infers a Literal-keyed dict from the comprehension, and Mapping is
+    # key-invariant.
+    attribution_arguments: dict[str, object] = {
         key: canonical_arguments.pop(key)
         for key in ("_jenny_turn_id", "_jenny_tool_call_id", "_jenny_change_set_id")
         if key in canonical_arguments
