@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-07
 status: active
 ---
 
@@ -11,7 +11,9 @@ mappings see [TROUBLESHOOTING.md](TROUBLESHOOTING.md); the developer-facing
 error code registry lives at
 [docs/operations/error-codes.md](../operations/error-codes.md).
 
-## Why does Windows warn me when I run the installer?
+## Installing and updating
+
+### Why does Windows warn me when I run the installer?
 
 The installer is not code-signed (a deliberate cost decision for a free
 hobby project), so SmartScreen shows *"Windows protected your PC"* on first
@@ -20,113 +22,209 @@ release publishes SHA-256 hashes of its assets in `RELEASE_NOTES.md`, and
 auto-updates are validated against the release's SHA512 manifest over HTTPS
 before they install.
 
-## Is my data sent anywhere?
+### How do updates work?
+
+Jenny never checks for updates on its own. Open **Settings → About &
+Updates → Check for Updates**. If a newer release exists it is downloaded,
+verified, and installed when you press **Restart and Install**. On macOS
+auto-update is disabled (it needs a signed build); download the new dmg from
+the [releases page](https://github.com/SaltyPretz3l/jenny/releases).
+
+### Can I run Jenny on macOS or Linux?
+
+Windows is the supported platform. Each release also publishes a
+**best-effort macOS build** (`Jenny-arm64.dmg`, Apple Silicon): unsigned,
+built on CI, and never run by the maintainer. Gatekeeper blocks the first
+launch; approve it under **System Settings → Privacy & Security → Open
+Anyway** (or right-click the app → **Open** on older macOS). The sandboxed
+Python tool (`python_execute`) is Windows-only. Linux is source-only: clone
+the repo and run the setup script per the README.
+
+### How do I uninstall Jenny without losing my chats?
+
+Open **Settings → Data & Privacy** and choose **Uninstall Jenny**, then
+**Remove app only**. Jenny drains the running app and keeps the profile for
+automatic reuse after reinstall. The silent Windows uninstall and dragging
+the macOS app to Trash also preserve data. Source installs use
+`npm run uninstall` from the project folder.
+
+For an independent copy, choose **Keep a recoverable archive** instead.
+Jenny does not remove live data unless it can read back and verify the
+completed archive. A full archive restore is offered only into a fresh
+profile; individual chats can still be brought in with the session importer.
+
+### Does permanent removal delete Ollama models or project files?
+
+No. Shared Ollama models, GGUF files in folders you nominated, system-wide
+runtimes, external knowledge folders, unknown `.companion` children, and
+ordinary files outside a workspace `.jenny` directory are retained.
+Workspace `.jenny` removal is a separate option and is off by default. See
+[Uninstall and Data Recovery](../operations/UNINSTALL_AND_DATA_RECOVERY.md).
+
+## Privacy and data
+
+### Is my data sent anywhere?
 
 No. There is no telemetry or analytics; crash reporting is **opt-in and off
 by default**. Conversations, memory, and settings stay on your machine. The
-only background network calls are the ones you'd expect: model downloads you
-initiate, tools you approve (web search/fetch), an update check you trigger
-from Settings, and a throttled anonymous refresh of the bundled
-model-recommendation catalog (a plain file download, no user data attached).
+only background network calls are the ones you would expect: model downloads
+you start, tools you enable and approve (web search, web browsing, remote
+MCP servers), an update check you trigger from Settings, and a throttled
+refresh of the bundled model-recommendation catalog (a plain file download
+with no user data attached).
 
-## Why doesn't Jenny ask for an API key?
+### Does Jenny work offline?
 
-Jenny is local-first. The default engine path is [Ollama](https://ollama.com/)
-or another OpenAI-compatible local runtime, neither of which requires a
-hosted API key. Cloud engines are not configured out of the box; restoring
-one is a deliberate integration step, not a Settings toggle.
+Yes, once a model is pulled. The local engines run without a network. Tools
+that need the network (web search, web browsing, remote MCP) fail when it is
+unavailable, and the core chat loop is unaffected. **Settings → Offline**
+can force local inference so a cloud engine, if you ever configure one, is
+never used.
 
-## Does Jenny work offline?
+### Where does Jenny store my data?
 
-The local engine path is fully offline once the model is pulled. Tools that
-make network calls (web search, fetch) require connectivity when those tools
-are invoked, but the core chat loop works without a network.
-
-## Which model should I use?
-
-The setup wizard scans your hardware and recommends the strongest model that
-fits your GPU/RAM, with download and disk estimates. The default is
-**Ornith 1.5 9B** (`hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M`, ~5.6 GB) — a
-text-only agentic-coding model that fits comfortably in 8 GB of VRAM. With
-more VRAM the wizard offers the Q8_0 build or Gemma 4 tiers; Gemma 4 E4B
-remains the pick when you need image input. You can switch any time in
-Settings → Engines, or paste any tag your Ollama install can pull. One note:
-Jenny's voice is model-bound — if the persona suddenly feels different,
-check which model is active before editing personality files.
-
-## Where does Jenny store my data?
-
-Per-OS userData paths:
+Per-OS data directory:
 
 - **Windows:** `%APPDATA%\jenny\`
-- **macOS:** `~/Library/Application Support/jenny/` *(when packaged for
-  macOS — currently Windows-first)*
-- **Linux:** `~/.config/jenny/` *(when packaged for Linux — currently
-  Windows-first)*
+- **macOS:** `~/Library/Application Support/jenny/`
+- **Linux:** `~/.config/jenny/`
 
-The personality workspace (your `IDENTITY.md` + `SOUL.md`) lives under
-`<userData>/personality/<workspace-name>/`. Diagnostics dumps land under
-`<userData>/diagnostics/`. The session store is a JSON file under the same
-tree; back it up if you care about transcript history.
+Inside it: the session store (your conversations), the memory database, the
+personality workspace under `personality/default-workspace/`, MCP
+configuration in `mcp-servers.json`, process logs under `logs/`, and
+diagnostic dumps under `diagnostics/`. Back the whole folder up if you care
+about transcript history, or use **Settings → Data & Privacy** to create a
+verified archive.
 
-## How do I uninstall Jenny without losing my chats?
+### What is the difference between memory and long-term notes?
 
-Choose **Uninstall Jenny** under Settings -> Account & Setup -> Data & removal,
-then choose **Remove app only**. Jenny drains the running app but preserves the
-profile for automatic reuse after reinstall. Silent Windows uninstall and
-dragging the macOS app to Trash also preserve data.
+**Long-term notes** (Settings → Memory) is a single text you write: durable
+facts and preferences sent with every message. **Approved memories** are
+records Jenny proposes after a turn; nothing becomes durable until you
+choose Remember or Approve, and you can edit or delete each one in the same
+section.
 
-For an independent copy, choose **Keep a recoverable archive** instead. Jenny
-does not remove live data unless it can read back and verify the completed
-archive. Full archive restore is offered only into a fresh profile; individual
-chats can still use the existing session importer.
+## Models and engines
 
-## Does permanent removal delete Ollama models or project files?
+### Why doesn't Jenny ask for an API key?
 
-No. Shared Ollama models, the local-image plugin's retained runtime, global runtimes, external
-knowledge folders, unknown `.companion` children, and ordinary files outside a
-workspace `.jenny` directory are retained. Workspace `.jenny` removal is a
-separate option and is off by default. See
-[Uninstall and Data Recovery](../operations/UNINSTALL_AND_DATA_RECOVERY.md).
+Jenny is local-first. The engines that ship are [Ollama](https://ollama.com/),
+a managed `llama-server`, and any OpenAI-compatible local server you point
+her at (vLLM, LM Studio, a hand-run llama.cpp). None needs a hosted key.
+Cloud engines are not configured out of the box; the ChatGPT subscription
+connector is a separately distributed signed plugin, not a Settings toggle.
 
-The image plugin can remove its own downloaded runtime from its workspace after
-showing the measured size and asking for confirmation. Uninstalling the plugin
-alone preserves that runtime so reinstall can adopt it without downloading the
-model weights again.
+### Which model should I use?
 
-## Can I run Jenny on macOS or Linux?
+The setup checklist scans your hardware and recommends the strongest model
+that fits your GPU and RAM, with download and disk estimates. The default is
+**Ornith 1.5 9B** (`hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M`, about
+5.6 GB): a text-only coding model that runs comfortably in 8 GB of VRAM.
+With more VRAM the library offers the Q8_0 build or the Gemma 4 tiers;
+Gemma 4 E4B is the pick when you need image input. Switch any time from the
+model picker next to the composer, or with **Use** on a row of **Settings →
+Model library**. Jenny's voice is model-bound: if the persona suddenly feels different, check which
+model is active before editing personality files.
 
-Windows is the supported platform. Each release also publishes a
-**best-effort macOS build** (`Jenny-arm64.dmg`, Apple Silicon) — unsigned,
-built on CI, and never run by the maintainer: Gatekeeper requires
-right-click → **Open** the first time, and auto-update is disabled there
-(download new versions manually). Linux is source-only: clone the repo and
-run the setup script per the README.
+### Can I use a GGUF file I already have?
 
-## How do I add a new MCP server?
+Yes. **Settings → Model library** lists what Ollama has pulled and the GGUF
+files in folders you add (**Add folder…**). Models found that way run on the
+managed `llama-server`. Jenny estimates fit from the file's real size and
+parameter count and tells you what will fit in your VRAM before loading.
 
-Settings → MCP exposes discovered servers and lets you register new ones.
-The first-time walkthrough is at
+### What is the difference between Ollama and llama-server?
+
+Both run models locally. Ollama is the default and handles pulling models.
+The managed `llama-server` is Jenny's own llama.cpp process; it can run
+GGUF files directly, lets you edit the context window per model (with a
+restart confirmation), and speeds up verified models with speculative
+decoding. Choose the engine per model in the library's tune drawer. Details
+in [llama-server acceleration](../operations/LLAMA_SERVER_ACCELERATION.md).
+
+### Can Jenny see images?
+
+Yes, with a vision model. Attach or paste an image in the composer and Jenny
+sends it as a real vision turn on Ollama and on the managed `llama-server`.
+If the active model cannot see, the composer says so before you send:
+remove the image or switch to a vision model such as Gemma 4 E4B.
+
+### Why is the first message slow?
+
+The model is loaded into memory on the first turn after the engine starts.
+Later turns reuse the loaded weights and start much faster. If every turn
+is slow, see [TROUBLESHOOTING.md § First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
+
+## Using Jenny
+
+### What do Ask, Auto, and Plan mean?
+
+The **Run mode** control next to the composer. **Ask**: Jenny asks before
+every side-effecting tool call. **Auto**: tools run without asking, except
+destructive shell commands, which always stop for approval. **Plan**:
+read-only planning; Jenny proposes a plan you approve before anything is
+written. Plan mode works best with larger models.
+
+### What does "Always allow" cover?
+
+It saves a rule for that tool **and** the path or target the call named,
+not for the tool in general. Every saved rule is listed under **Settings →
+Tools → Approval rules** with a Remove action.
+
+### Why is a tool blocked?
+
+Most often because no workspace root is set. File, shell, and git tools
+stay off until you choose a folder under **Settings → Tools → Workspace
+root** (or the first-run checklist). Network tools and file changes are also
+off until you enable them under **Settings → Tools → Optional capabilities**.
+
+### How do I customize Jenny's personality?
+
+**Settings → Personality** has the name, a voice template, a personality
+note, and an "About you" box; one Save covers all of them. The walkthrough
+is [docs/tutorials/03-personality-customization.md](../tutorials/03-personality-customization.md).
+The files behind it (`PERSONALITY.md`, `USER.md`, `MEMORY.md`) live in the
+personality workspace and can be edited directly with **Open folder**.
+
+### How do I add a new MCP server?
+
+**Settings → Plugins & Extensions → MCP connections → Add connection**, then
+test and approve it. The walkthrough is
 [docs/tutorials/02-adding-mcp-server.md](../tutorials/02-adding-mcp-server.md).
 
-## Why is the first message slow?
+### What are skills, and how do I run one?
 
-Local model load happens on the first turn after the engine cold-starts.
-Subsequent turns reuse the loaded weights and respond faster. The
-diagnostic walkthrough for unusual slowness is at
-[TROUBLESHOOTING.md § First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
+A skill is a `SKILL.md` file: a named block of instructions Jenny can attach
+to a turn. Type `/` in the composer to pick one; it attaches as a chip on
+that message. Each skill can be disabled under **Settings → Plugins &
+Extensions → Skills**. Authoring is covered in [docs/SKILLS.md](../SKILLS.md).
 
-## How do I customize Jenny's personality?
+### Are there plugins?
 
-Settings → Personality exposes the name, profile, and free-form description.
-The walkthrough is at
-[docs/tutorials/03-personality-customization.md](../tutorials/03-personality-customization.md).
-The persona is steered by the `IDENTITY.md` / `SOUL.md` pair under the
-personality workspace; advanced edits live there.
+The plugin host ships in 1.0, but no plugins are bundled. Install a
+`.jenny-plugin` package from **Settings → Plugins & Extensions → Install
+plugin** (or drop the file there). Unsigned plugins are labelled and run in
+the developer profile; privileged plugin kinds are refused without a
+signature. First-party plugins are released separately.
 
-## How do I report a bug or request a feature?
+### Where is the IDE?
+
+The **Workspace** view: a file explorer, a Monaco editor with a git gutter,
+a terminal, and Jenny docked beside the editor. It works on the workspace
+root you chose.
+
+### How do I run setup again?
+
+**Settings → Local Profile & Setup → Run setup again**. It reopens the
+first-run checklist without deleting conversations or private data.
+
+## Reporting problems
+
+### How do I report a bug or request a feature?
 
 Open an issue at [github.com/SaltyPretz3l/jenny](https://github.com/SaltyPretz3l/jenny).
-Include your OS, the Node and Python versions, the model runtime
-(Ollama version, vLLM version), and reproduction steps. Security findings
-follow the disclosure flow in [SECURITY.md](../../SECURITY.md).
+Include your OS, whether you used the installer or a source install, the
+engine and model (Ollama version or `llama-server`), and reproduction
+steps. Diagnostic dumps under `<userData>/diagnostics/` help; review them
+before attaching. Security findings follow the disclosure flow in
+[SECURITY.md](../../SECURITY.md).

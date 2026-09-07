@@ -269,7 +269,7 @@ manifest per platform.
 
 #### What a friend downloads
 
-One file for their OS. First launch runs the in-app setup wizard: it installs
+One file for their OS. First launch runs the in-app setup checklist: it installs
 Ollama (auto on Windows; manual link on macOS — see below), downloads the
 default model, and configures workspace root + personality.
 

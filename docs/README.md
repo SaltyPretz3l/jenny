@@ -15,7 +15,8 @@ this folder holds the deeper documentation.
 - [Built-in tools reference](TOOLS.md) — what every tool family can do and the approval rules around it.
 - [Uninstall & data recovery](operations/UNINSTALL_AND_DATA_RECOVERY.md)
 - [Versioning & migration](operations/versioning-and-migration.md) — how config and session data survive upgrades.
-- [Running Qwen locally](operations/QWEN36_LOCAL_RUNTIME.md) — advanced local-model setup.
+- [llama-server acceleration](operations/LLAMA_SERVER_ACCELERATION.md) — how the managed `llama-server` engine speeds up verified models, and its kill switch.
+- [Running a hand-managed llama-server](operations/QWEN36_LOCAL_RUNTIME.md) — the older recipe for hosting a large GGUF yourself and pointing Jenny at it as an OpenAI-compatible endpoint.
 
 ## Extending Jenny
 

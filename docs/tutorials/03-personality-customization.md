@@ -1,6 +1,6 @@
 ---
 kind: tutorial
-last_reviewed: 2026-08-21
+last_reviewed: 2026-09-07
 ---
 
 # 03 — Personality customization
@@ -14,7 +14,8 @@ costs a few hundred tokens per turn instead of a few thousand.
 
 ## Settings → Personality
 
-One section, one **Save**:
+The same controls appear as the **Personality & name** step of the first-run
+checklist. One section, one **Save**:
 
 - **Name** — what Jenny calls herself. This is the whole assistant identity now.
 - **Voice** — Balanced, Concise, Creative, or Mentor. These are *templates*, not

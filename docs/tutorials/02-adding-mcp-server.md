@@ -1,22 +1,71 @@
 ---
 kind: tutorial
-last_reviewed: 2026-05-09
+last_reviewed: 2026-09-07
 ---
 
 # 02 — Adding an MCP server
 
 This walkthrough adds an MCP (Model Context Protocol) server to Jenny so her tool surface gains the server's tools. Estimated time: 10 minutes.
 
-[MCP](https://modelcontextprotocol.io/) is the Anthropic-defined open protocol for tool servers. Jenny implements an MCP client and a built-in MCP server that exposes Electron-owned tools to external MCP clients. This tutorial covers the client side — registering an external MCP server so its tools become Jenny's tools.
+[MCP](https://modelcontextprotocol.io/) is an open protocol for tool servers. Jenny implements an MCP client; this tutorial registers an external server so its tools become Jenny's tools.
 
 ## Prerequisites
 
 - Jenny installed and at least one chat completed (see [01 — First chat](01-first-chat.md)).
-- An MCP server you want to use. For this tutorial we'll use a hypothetical local stdio server. Common choices: the [official Anthropic MCP servers](https://github.com/modelcontextprotocol/servers) (filesystem, git, GitHub, Slack, etc.).
+- An MCP server you want to use. Common choices are the [reference servers](https://github.com/modelcontextprotocol/servers) (filesystem, git, and others). Most of them run through `npx`, so Node.js must be on your `PATH`.
 
-## 1. Find the config file
+## 1. Open the MCP connections list
 
-Jenny reads MCP server configuration from `mcp-servers.json` in the Electron user-data directory:
+Open Settings (the gear icon) → **Plugins & Extensions**. Below the Plugins and Skills groups is **MCP connections**, one row per configured server with a status badge. On a fresh install the list is empty.
+
+## 2. Add a connection
+
+Press **Add connection**. The drawer asks for:
+
+- **Connection name** — letters, digits, `_`, `.`, `-`, up to 64 characters. Tools from this server appear as `mcp__<name>__<tool>` in Jenny's tool list.
+- **Transport** — **Local stdio** (Jenny launches the server as a subprocess) or **Remote SSE** (an HTTP endpoint).
+- **Command** (stdio) or **HTTPS URL** (SSE).
+- **Arguments (one per line)** for stdio servers.
+- **Authentication** — None, Bearer token, or OAuth client credentials. For the last two, the secret is entered separately (step 4) and stored encrypted; it never goes into the config file.
+
+For the reference filesystem server the entry looks like:
+
+| Field | Value |
+|---|---|
+| Connection name | `filesystem` |
+| Transport | Local stdio |
+| Command | `npx` |
+| Arguments | `-y` / `@modelcontextprotocol/server-filesystem` / `C:\path\to\allowed\dir` (one per line) |
+
+Press **Create connection**. The new row shows **Review required**: nothing runs until you have looked at what the server offers.
+
+## 3. Test and approve the connection
+
+Press **Test connection**. Jenny shows the exact command or URL it is about to run and asks you to confirm, then performs a one-time inspection: it starts the server, asks it for its tool list, and shuts it down again. The result reports how many tools were found.
+
+Press **Review** to see the advertised tools and their digests, then **Approve tools**. The badge changes to **Approved**, the connection is enabled, and Jenny's runtime picks it up without a restart.
+
+Approval is tied to the configuration and to the advertised tool set. If you later edit the command, or the server starts advertising different tools, the row drops back to **Review required** and the server stays off until you approve it again.
+
+## 4. (Optional) Add a credential
+
+For a remote server that needs a token, choose **Bearer token** or **OAuth client credentials** when creating the connection, then press **Set credential** on the row and paste the secret. Credentials live in Jenny's encrypted secret store, keyed by a reference in the config; the config file itself never contains a plaintext token, and Jenny refuses a config that does.
+
+Remote SSE connections are also gated by `mcp_sse_enabled` in the config file (see below); the connections list shows whether remote transports are currently allowed.
+
+## 5. Use the new tools
+
+The tools appear with the `mcp__<server>__<tool>` prefix so they cannot collide with built-in names. Ask Jenny to do something the server enables, for example:
+
+> List the files in the folder the filesystem server exposes.
+
+MCP tools go through the same approval pipeline as built-in tools: in **Ask** run mode, side-effecting calls stop at the approval card, and **Always allow** is scoped to the tool and its target.
+
+You can also ask Jenny to run `jenny_status` and summarize the result; it reports which MCP servers are connected or failed.
+
+## The config file
+
+The connections list is a front end for `mcp-servers.json` in Jenny's data directory:
 
 | Platform | Path |
 |---|---|
@@ -24,92 +73,47 @@ Jenny reads MCP server configuration from `mcp-servers.json` in the Electron use
 | macOS | `~/Library/Application Support/jenny/mcp-servers.json` |
 | Linux | `~/.config/jenny/mcp-servers.json` |
 
-The file may not exist on a fresh install. The fastest way to open it is from the app:
-
-- Open Settings (gear icon) → **Skills**.
-- Click **Open MCP config**.
-- Jenny opens the file in your default text editor and creates it if missing.
-
-If the app isn't running, just create the file at the path above.
-
-## 2. Add a server entry
-
-The config file is JSON. Here's a minimal stdio server example:
+You do not need to edit it by hand, but it is plain JSON if you want to:
 
 ```json
 {
-  "servers": [
+  "mcp_config_schema_version": 1,
+  "mcp_sse_enabled": false,
+  "mcp_servers": [
     {
       "name": "filesystem",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"],
-      "enabled": true
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\path\\to\\allowed\\dir"],
+      "enabled": true,
+      "trust": { "status": "pending" }
     }
   ]
 }
 ```
 
-Key fields:
+Notes:
 
-- `name` — unique identifier for this server within Jenny. Tools from this server will appear as `mcp__filesystem__<tool>` in Jenny's tool list.
-- `transport` — `stdio` (subprocess over stdin/stdout) or `sse` (server-sent events over HTTP).
-- `command` and `args` — for stdio transport, the executable and arguments. Jenny launches this as a subprocess.
-- `url` — for sse transport, the SSE endpoint URL.
-- `env` (optional) — extra environment variables passed to the subprocess. Avoid secrets here; Jenny's [SecureStore](../operations/versioning-and-migration.md) is the right place for credentials.
-- `enabled` — set to `false` to keep the entry but skip the server on startup.
+- Allowed server keys are `name`, `transport`, `command`, `args`, `url`, `init_timeout_seconds`, `auth`, `enabled`, and `trust`. Unknown keys, including an `env` block, make the entry invalid.
+- A hand-added or edited server always starts disabled with trust `pending`; approve it from Settings.
+- Remote servers need `"transport": "sse"`, a `url` (http or https, no embedded credentials), and `"mcp_sse_enabled": true` at the top level.
+- The `trust` record is written by Jenny when you approve; leave it alone.
+- If Jenny cannot parse the file it keeps it unchanged, shows the reason in the connections list, and treats the list as read-only until you fix the JSON.
 
-Save the file.
+## Containment
 
-## 3. Restart Jenny
-
-MCP servers are loaded at sidecar startup. After editing `mcp-servers.json`, restart the app:
-
-- Close the Jenny window.
-- Run `npm run dev` again.
-
-(There is no live-reload of MCP config today. The Settings → Skills card has a **Refresh** button that re-reads the config file but a full restart is needed to actually launch the new server.)
-
-## 4. Verify the server is running
-
-Open Settings → **Skills**. You'll see one row per configured server:
-
-- A name and transport type.
-- Status: `configured`, `running`, `cooldown`, or `failed`.
-- Tool count derived from the server's `tools/list` response.
-
-If the server failed to start, the status row includes the failure reason. Common causes: command not on PATH, missing required arguments, the server's own startup error.
-
-You can also ask Jenny:
-
-> Run `jenny_status` and summarize the current runtime and tool status.
-
-She'll call `jenny_status` and report the current bounded status snapshot.
-
-## 5. Use the new tools
-
-The new tools become available immediately to Jenny. They appear with the `mcp__<server>__<tool>` namespace prefix to avoid collisions with built-in tool names. (Unique non-conflicting bare names also resolve through a one-major-version compat layer with a deprecation warning.)
-
-Tools imported from MCP servers go through the same approval pipeline as built-in tools: side-effecting calls require explicit approval, and the approval-plan fingerprint covers the full tool contract and arguments.
-
-## Containment and security
-
-Jenny applies the same sandbox model to MCP server subprocesses as to other side-effecting tools:
-
-- **Windows:** Job Object isolation with memory and process-tree caps; child processes terminate when Jenny exits.
-- **POSIX:** `setsid()` for process-group isolation; `RLIMIT_AS`, `RLIMIT_NOFILE`, `RLIMIT_CORE = 0`.
-- Stderr tails and JSON-RPC error messages from MCP servers are sanitized before surfacing.
-- CPU is a soft limit: sustained 100% over 30 seconds emits a warning event but does not kill the server (long-lived MCP servers legitimately spike during tool calls).
-
-Treat MCP servers the same as any other subprocess you run on your machine. They have the host's filesystem and network permissions; they are not isolated from the rest of your system. Pick servers you trust.
+MCP subprocesses run under the same containment as Jenny's other side-effecting subprocesses: a Job Object on Windows (children die with Jenny), a process group plus resource limits on POSIX, and sanitized stderr. That contains a crash; it does not sandbox the server. An MCP server has the same filesystem and network access as any program you run, so only add servers you trust. [Plugin security & trust model](../PLUGIN_SECURITY.md) has the full MCP trust design.
 
 ## Troubleshooting
 
-- **Server starts then immediately exits.** Check the failure reason in Settings → Skills. The most common cause is a missing dependency for the server's own runtime (e.g., `npx` not found, Python package missing).
-- **Tools don't appear.** The server may have started but failed to respond to `tools/list`. Check Settings → Skills for the tool count; zero tools usually means the server crashed during initialization.
-- **Tool calls fail mid-execution.** Jenny applies bounded reconnect/retry to MCP transports — see the MCP retry policy at [`sidecar/ai/mcp/retry_policy.py`](../../sidecar/ai/mcp/retry_policy.py). If the server crashes during a non-side-effecting tool call, Jenny will reconnect and retry once. Side-effecting tools schedule a reconnect for future calls but are not auto-replayed.
+- **Test connection fails immediately.** The failure reason is shown on the row. The usual cause is a missing runtime for the server itself (`npx` not on `PATH`, a Python package missing). Run the same command in a terminal to see the raw error.
+- **"URL points to a private or local address, which is blocked."** Remote SSE connections may not target loopback or private-network addresses. Run a local server over stdio instead.
+- **Zero tools found.** The server started but did not answer the tool-list request. Check its own logs or run it by hand.
+- **Row shows Failed or Cooling down.** The server crashed after approval. Jenny retries with a bounded cooldown; if it keeps failing, test the connection again to see the current error.
+- **Tools disappeared after an update to the server.** Its advertised tool set changed, so the row went back to **Review required**. Approve it again.
+- **Test connection is greyed out with "MCP inspection is unavailable until the local runtime is ready."** The backend is still starting. Wait for the titlebar health indicator, then retry.
 
 ## Next
 
 - Tour the built-in tool families: [docs/TOOLS.md](../TOOLS.md).
-- Read the MCP design notes: docs/operations/SUB_AGENT_DESIGN.md covers the broader tool-orchestration model.
+- Package tools of your own as a plugin instead: [docs/plugins/README.md](../plugins/README.md).

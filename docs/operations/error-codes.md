@@ -91,11 +91,11 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_MERMAID_FORMAT` | `CMP-TOOL-0022` | Mermaid output format invalid | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:332](../../sidecar/ai/tools/builtins/mermaid.py#L332) |
 | `CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE` | `CMP-TOOL-0023` | Mermaid render too large | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:338](../../sidecar/ai/tools/builtins/mermaid.py#L338) |
 | `CMP_TOOL_MERMAID_INTERNAL` | `CMP-TOOL-0024` | Mermaid internal renderer error | Conditional | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/mermaid.py:446](../../sidecar/ai/tools/builtins/mermaid.py#L446) |
-| `CMP_TOOL_APPLY_PATCH_PARSE_FAILED` | `CMP-TOOL-0025` | apply_patch envelope/section grammar invalid | No | `runtime_error` | "Patch could not be parsed: {detail}." | sidecar/ai/tools/builtins/apply_patch.py |
-| `CMP_TOOL_APPLY_PATCH_PREIMAGE_MISMATCH` | `CMP-TOOL-0026` | Hunk preimage did not match file contents | No | `runtime_error` | "Patch preimage did not match file contents." | sidecar/ai/tools/builtins/apply_patch.py |
-| `CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK` | `CMP-TOOL-0027` | apply_patch rolled back partially; some files left in uncertain state | No | `runtime_error` | "Patch failed; some files could not be restored." | sidecar/ai/tools/builtins/apply_patch.py:89 |
-| `CMP_TOOL_APPLY_PATCH_TARGET_EXISTS` | `CMP-TOOL-0028` | apply_patch Add target already exists | No | `runtime_error` | "Cannot add file: target already exists." | sidecar/ai/tools/builtins/apply_patch.py |
-| `CMP_TOOL_APPLY_PATCH_TARGET_MISSING` | `CMP-TOOL-0029` | apply_patch Update/Delete target missing | No | `runtime_error` | "Cannot modify file: target does not exist." | sidecar/ai/tools/builtins/apply_patch.py |
+| `CMP_TOOL_APPLY_PATCH_PARSE_FAILED` | `CMP-TOOL-0025` | apply_patch envelope/section grammar invalid | No | `runtime_error` | "Patch could not be parsed: {detail}." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_APPLY_PATCH_PREIMAGE_MISMATCH` | `CMP-TOOL-0026` | Hunk preimage did not match file contents | No | `runtime_error` | "Patch preimage did not match file contents." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK` | `CMP-TOOL-0027` | apply_patch rolled back partially; some files left in uncertain state | No | `runtime_error` | "Patch failed; some files could not be restored." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_APPLY_PATCH_TARGET_EXISTS` | `CMP-TOOL-0028` | apply_patch Add target already exists | No | `runtime_error` | "Cannot add file: target already exists." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_TOOL_APPLY_PATCH_TARGET_MISSING` | `CMP-TOOL-0029` | apply_patch Update/Delete target missing | No | `runtime_error` | "Cannot modify file: target does not exist." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_SUBAGENT_INVALID_PROMPT` | `CMP-TOOL-0030` | A delegate task or hidden legacy prompt is blank, malformed, or exceeds its UTF-8 bound | No | `runtime_error` | "Sub-agent prompt invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_INVALID_GRANTS` | `CMP-TOOL-0031` | Delegate arguments conflict, contain unknown fields, or use an ambiguous task-object shape; hidden legacy grant validation uses the same code | No | `runtime_error` | "Sub-agent grants invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_DEPTH_LIMIT` | `CMP-TOOL-0032` | `delegate` or a hidden legacy executor was called from inside another sub-agent | No | `runtime_error` | "Sub-agents cannot nest." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
@@ -342,7 +342,7 @@ the section id (`personality` / `user` / `memory`).
 
 ## COMPANION - `CMP-COMPANION-NNNN` (1 Node code, 0 dead)
 
-Electron-owned Companion Home and follow-up validation failures.
+Electron-owned Home (formerly Companion Home) follow-up validation failures.
 
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
