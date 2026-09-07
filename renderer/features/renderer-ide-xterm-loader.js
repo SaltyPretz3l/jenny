@@ -55,18 +55,63 @@
 
   let xtermRuntimePromise = null;
 
+  // Monaco's AMD loader owns window.define (with define.amd) and
+  // window.require in the real renderer, so xterm's UMD wrapper registers an
+  // anonymous AMD module instead of setting window.Terminal / window.FitAddon
+  // when injected as a plain <script>. Load through that loader and publish
+  // the globals ourselves (same shape as the KaTeX runtime loader).
+  function hasAmdLoader() {
+    return typeof window.define === 'function' && Boolean(window.define.amd)
+      && typeof window.require === 'function';
+  }
+
+  function loadViaAmd(src, isReady, publish) {
+    return new Promise(function amdLoad(resolve) {
+      try {
+        window.require([src], function onAmdLoad(mod) {
+          if (!isReady()) {
+            publish(mod);
+          }
+          resolve(isReady());
+        }, function onAmdLoadError() {
+          resolve(false);
+        });
+      } catch (_error) {
+        resolve(false);
+      }
+    });
+  }
+
+  function loadOne(loader, src, isReady, publish) {
+    if (hasAmdLoader()) {
+      return loadViaAmd(src, isReady, publish);
+    }
+    return loader.ensureScript({ src: src, isReady: isReady });
+  }
+
+  function publishTerminal(mod) {
+    if (mod && typeof mod.Terminal === 'function') {
+      window.Terminal = mod.Terminal;
+    }
+  }
+
+  function publishFitAddon(mod) {
+    const candidate = mod && typeof mod.FitAddon === 'function' ? mod : (typeof mod === 'function' ? mod : null);
+    if (candidate) {
+      window.FitAddon = candidate;
+    }
+  }
+
   function loadSequential(loader) {
-    return loader.ensureScript({
-      src: resolveUrl('node_modules/@xterm/xterm/lib/xterm.js'),
-      isReady: isTerminalReady,
-    }).then(function afterTerminal(terminalOk) {
+    return loadOne(
+      loader, resolveUrl('node_modules/@xterm/xterm/lib/xterm.js'), isTerminalReady, publishTerminal
+    ).then(function afterTerminal(terminalOk) {
       if (!terminalOk) {
         return false;
       }
-      return loader.ensureScript({
-        src: resolveUrl('node_modules/@xterm/addon-fit/lib/addon-fit.js'),
-        isReady: isFitAddonReady,
-      });
+      return loadOne(
+        loader, resolveUrl('node_modules/@xterm/addon-fit/lib/addon-fit.js'), isFitAddonReady, publishFitAddon
+      );
     });
   }
 
@@ -81,7 +126,7 @@
       return xtermRuntimePromise;
     }
     const loader = resolveScriptLoader();
-    if (!loader || typeof loader.ensureScript !== 'function') {
+    if (!hasAmdLoader() && (!loader || typeof loader.ensureScript !== 'function')) {
       return Promise.resolve(false);
     }
     xtermRuntimePromise = loadSequential(loader).then(function afterLoad(ok) {

@@ -49,7 +49,7 @@ No database, no daemon, no sync service.
   "license": "MIT",
   "bin": { "ledger": "src/index.js" },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test"
   }
 }
 `,
@@ -318,10 +318,12 @@ test('formatCents keeps two decimals and the sign', () => {
 const WORKING_TREE_EDIT = Object.freeze({
   path: 'src/parser.js',
   // Near the top of the file so the gutter hunk is on screen at every
-  // recording height without scrolling the editor.
+  // recording height without scrolling the editor. No regex literal here or
+  // in the assistant-edit replay: the tool-input panel's path redactor reads
+  // `/,/g` as a POSIX path and would print [redacted:path] in the clip.
   find: "  const cents = Math.round(Number(raw) * 100);\n",
   replace: "  // Accept thousands separators: '1,250.00' parses like '1250.00'.\n"
-    + "  const cents = Math.round(Number(String(raw).replace(/,/g, '')) * 100);\n",
+    + "  const cents = Math.round(Number(String(raw).split(',').join('')) * 100);\n",
 });
 
 function materialize(targetDir) {

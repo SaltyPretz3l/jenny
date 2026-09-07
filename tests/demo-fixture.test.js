@@ -45,3 +45,8 @@ test('materialize writes every fixture file unchanged', (t) => {
     assert.strictEqual(fs.readFileSync(absolutePath, 'utf8'), expected, relativePath);
   }
 });
+
+test('the fixture test script is the bare node runner (Node 22+ rejects a `test/` directory argument)', () => {
+  const pkg = JSON.parse(FIXTURE_FILES['package.json']);
+  assert.strictEqual(pkg.scripts.test, 'node --test');
+});

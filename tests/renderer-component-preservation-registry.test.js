@@ -163,6 +163,33 @@ test('a stale user-question receipt keeps its node identity across the same ques
   dom.window.close();
 });
 
+test('a status-expanded row does not force open a lazy collapsed replacement', () => {
+  // The awaiting-approval row renders expanded; once the call settles the
+  // replacement renders collapsed with its details unmaterialized. Restoring
+  // the old expansion would leave an open header over an empty body.
+  const dom = new JSDOM(`<!doctype html><body><div id="root">
+    <article data-message-id="m1">
+      <div class="tool-call-row" data-tool-call-id="call-1" data-expanded="true" data-tool-details-materialized="true">
+        <button data-action="toggle" aria-expanded="true">Old</button>
+        <div class="tool-call-row-body">approval body</div>
+      </div>
+    </article>
+  </div></body>`);
+  const root = dom.window.document.getElementById('root');
+  setChildrenHtmlPreservingKeyedNodes(root, `
+      <article data-message-id="m1">
+        <div class="tool-call-row" data-tool-call-id="call-1" data-expanded="false" data-tool-details-materialized="false">
+          <button data-action="toggle" aria-expanded="false">New</button>
+          <div class="tool-call-row-body" inert></div>
+        </div>
+      </article>
+  `, { documentRef: dom.window.document });
+  const row = root.querySelector('.tool-call-row');
+  assert.equal(row.getAttribute('data-expanded'), 'false');
+  assert.equal(row.querySelector('button').getAttribute('aria-expanded'), 'false');
+  assert.equal(row.querySelector('.tool-call-row-body').hasAttribute('inert'), true);
+});
+
 test('expanded row state and focused action restore across structural replacement', () => {
   const dom = new JSDOM(`<!doctype html><body><div id="root">
     <article data-message-id="m1">

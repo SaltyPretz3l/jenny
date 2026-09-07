@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "reasoning": "The question is about parseAmount in the file open in the editor. Answer from the code: integer cents, and the new comma-stripping line above it.",
+      "text": "`parseAmount` multiplies by 100 and rounds so every entry is stored as **integer cents**: `4.50` becomes `450`, and totals never drift the way floating-point sums do.\n\nThe uncommitted line above it strips thousands separators first, so `1,250.00` parses exactly like `1250.00`. The tests you just ran cover both paths."
+    }
+  ]
+}

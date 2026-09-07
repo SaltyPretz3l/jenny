@@ -12,15 +12,23 @@ Jenny is built around smaller models, roughly 9B–35B parameters. How well she 
 
 *Streaming with tool calls: the thinking row, a streamed reply, `list_dir` and `read_file` running for real, then the summary.*
 
-![The built-in Workspace IDE](docs/media/demo-ide-tour.gif)
+![A code change that waits for approval, then shows its diff](docs/media/demo-assistant-edit.gif)
 
-*The Workspace IDE: explorer, Monaco with the git gutter, Quick Open, and the terminal panel.*
+*Changes wait for you: `edit_file` stops at the approval block, then the diff card shows exactly what changed.*
+
+![Calendar and reminders from chat, ending on the Home agenda](docs/media/demo-calendar-week.gif)
+
+*Home from chat: add an event and a reminder, get the week summarized, and see it on the Home agenda.*
+
+![The built-in Workspace IDE with the terminal and chat dock](docs/media/demo-ide-tour.gif)
+
+*The Workspace IDE: explorer, Monaco with the git gutter, the terminal running the project's tests, and Jenny docked beside the editor.*
 
 ![Palettes and background effects switched live](docs/media/demo-palette-reel.gif)
 
 *Built-in palettes and animated background effects, switched live.*
 
-The clips are recorded from the real app driving a scripted replay engine (no live model). MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
+The clips are recorded from the real app driving a scripted replay engine (no live model); the history, calendar, and titlebar figures in frame are seeded for the recording. MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
 
 ## Install on Windows
 

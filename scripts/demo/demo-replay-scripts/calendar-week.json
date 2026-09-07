@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "reasoning": "Two writes to Home (an event and a reminder), then read the week back so the summary reflects what is actually on the calendar.",
+      "text": "Adding both now.",
+      "tool_calls": [
+        {
+          "tool_id": "home",
+          "arguments": {
+            "action": "event_upsert",
+            "title": "Budget review",
+            "start": "{{date+2}}T15:00",
+            "end": "{{date+2}}T16:00",
+            "category": "meeting"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "tool_id": "home",
+          "arguments": {
+            "action": "reminder_upsert",
+            "label": "Send the variance report",
+            "remind_at": "{{date+1}}T09:00"
+          }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "tool_id": "home",
+          "arguments": {
+            "action": "calendar_list",
+            "range_start": "{{date+0}}T00:00",
+            "range_end": "{{date+6}}T23:59"
+          }
+        }
+      ]
+    },
+    {
+      "text": "Both are in. Your week:\n\n- **{{weekday+0}}** · Cash-flow standup, 10:00\n- **{{weekday+1}}** · Vendor invoice review, 13:30 · reminder at 09:00 to send the variance report\n- **{{weekday+2}}** · Dentist, 09:00 · **Budget review, 15:00** (new)\n- **{{weekday+4}}** · Month-end close prep, all day\n\nThe budget review lands well clear of the dentist, so nothing overlaps."
+    }
+  ]
+}

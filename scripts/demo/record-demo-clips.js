@@ -18,11 +18,13 @@ const {
   DEMO_SCENES,
   STEP_TYPES,
   RECORDING,
+  PRESENTATION_DEFAULTS,
   outputFileName,
   assertScenesValid,
 } = require('./demo-scenes');
 const { OVERLAY_INSTALL_SCRIPT, DEMO_STYLE_CSS, typingDelays } = require('./demo-presentation');
 const { seedDemoProfile, cleanupDemoProfile } = require('./demo-profile');
+const { resolveDateTokens } = require('./demo-dates');
 const { trackDirectory, trackProcess } = require('../../tests/helpers/resource-cleanup');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -62,8 +64,13 @@ async function runScene(scene, {
   readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS,
 } = {}) {
   assertScenesValid([scene]);
-  const { base, profile, replayScriptPath } = seedDemoProfile(scene);
+  // One clock for the profile's seeded history and every date token in the
+  // scene's text, so "Thursday" in the prompt is the Thursday on the calendar.
+  const seeded = seedDemoProfile(scene);
+  const { base, profile, replayScriptPath, now } = seeded;
+  const withDates = (text) => resolveDateTokens(text, now);
   let app = null;
+  let failureSnapshot = null;
   try {
     await ensurePreloadBundle();
     trackDirectory(profile);
@@ -117,10 +124,36 @@ async function runScene(scene, {
     fs.mkdirSync(outputDir, { recursive: true });
     const webmPath = path.join(outputDir, outputFileName(scene, 'webm'));
     let recordStartedAt = null;
+    let currentStep = null;
+    // A failed scene leaves a screenshot and the step it died on next to the
+    // outputs, so the choreography can be fixed without re-running blind.
+    failureSnapshot = async (error) => {
+      const basename = path.join(outputDir, `${scene.outputBasename}.failure`);
+      const evidence = { step: currentStep, message: error && error.message ? error.message : String(error) };
+      try {
+        await page.screenshot({ path: `${basename}.png` });
+        evidence.dom = await page.evaluate(() => ({
+          activeView: document.querySelector('.main-view:not(.hidden)')?.id || '',
+          composerValue: document.getElementById('chatInput')?.value || '',
+          toolRows: document.querySelectorAll('#chatTimeline .tool-call-row').length,
+          approvalBlocks: document.querySelectorAll('#chatTimeline .tool-approval-block').length,
+          timelineTail: (document.getElementById('chatTimeline')?.innerText || '').slice(-1200),
+        }));
+      } catch (snapshotError) {
+        evidence.snapshotError = snapshotError && snapshotError.message ? snapshotError.message : String(snapshotError);
+      }
+      fs.writeFileSync(`${basename}.json`, JSON.stringify(evidence, null, 2), 'utf8');
+      console.error(`scene ${scene.id}: failure evidence -> ${basename}.png / .json`);
+    };
     // Centre of an element in viewport CSS px (the overlay cursor and the
-    // real mouse share this frame).
+    // real mouse share this frame). The element is scrolled into view first:
+    // a click at the centre of an off-screen target lands on whatever covers
+    // it (the approval buttons can sit under the composer once the Edit
+    // row's input panel is open).
     const centerOf = async (selector) => {
-      const box = await page.locator(selector).first().boundingBox();
+      const locator = page.locator(selector).first();
+      await locator.scrollIntoViewIfNeeded();
+      const box = await locator.boundingBox();
       if (!box) {
         throw new Error(`scene ${scene.id}: ${selector} has no layout box`);
       }
@@ -135,17 +168,31 @@ async function runScene(scene, {
       await page.mouse.move(target.x, target.y, { steps: 4 });
       return target;
     };
-    for (const step of scene.steps) {
+    for (const [stepIndex, step] of scene.steps.entries()) {
+      currentStep = { index: stepIndex, ...step };
       switch (step.type) {
         case 'record-start': {
           // The presentation overlay goes in before the first frame so the
           // cursor and the hidden replay-only chrome never pop mid-clip.
           await page.addStyleTag({ content: DEMO_STYLE_CSS });
           await page.evaluate(OVERLAY_INSTALL_SCRIPT);
-          await page.evaluate(({ crossfade, x, y }) => {
+          const pinned = await page.evaluate(({ crossfade, telemetry, modelLabel, x, y }) => {
             window.__demoPresentation.setCrossfade(crossfade);
             window.__demoPresentation.show(x, y);
-          }, { crossfade: scene.presentation.crossfade, x: Math.round(width * 0.9), y: Math.round(height * 0.55) });
+            return {
+              telemetry: window.__demoPresentation.pinMetrics(telemetry),
+              modelLabel: window.__demoPresentation.pinModelLabel(modelLabel),
+            };
+          }, {
+            crossfade: scene.presentation.crossfade,
+            telemetry: PRESENTATION_DEFAULTS.telemetry,
+            modelLabel: PRESENTATION_DEFAULTS.modelLabel,
+            x: Math.round(width * 0.9),
+            y: Math.round(height * 0.55),
+          });
+          if (pinned.telemetry !== true || pinned.modelLabel !== true) {
+            throw new Error(`scene ${scene.id}: presentation pins did not attach (${JSON.stringify(pinned)})`);
+          }
           await page.mouse.move(Math.round(width * 0.9), Math.round(height * 0.55));
           await page.waitForTimeout(350);
           await page.screencast.start({
@@ -159,7 +206,7 @@ async function runScene(scene, {
           await navigateToView(page, step.view);
           break;
         case 'send-prompt': {
-          const sent = await page.evaluate((text) => window.__jennyAgent.sendPrompt(text), step.text);
+          const sent = await page.evaluate((text) => window.__jennyAgent.sendPrompt(text), withDates(step.text));
           if (sent !== true) {
             throw new Error(`scene ${scene.id}: sendPrompt returned ${sent} (composer not mounted?)`);
           }
@@ -200,8 +247,9 @@ async function runScene(scene, {
           await page.keyboard.press(step.key);
           break;
         case 'type': {
-          const delays = typingDelays(step.text, step.delayMs || 0, step.seed);
-          const chars = Array.from(step.text);
+          const text = withDates(step.text);
+          const delays = typingDelays(text, step.delayMs || 0, step.seed);
+          const chars = Array.from(text);
           for (let index = 0; index < chars.length; index += 1) {
             await page.keyboard.type(chars[index]);
             if (delays[index] > 0) {
@@ -213,7 +261,13 @@ async function runScene(scene, {
         case 'move':
           await glideTo(step.selector, step.ms);
           break;
+        case 'dom-click':
+          await page.click(step.selector);
+          break;
         case 'click': {
+          if (step.optional === true && !(await page.$(step.selector))) {
+            break;
+          }
           const target = await centerOf(step.selector);
           const at = await page.evaluate(() => window.__demoPresentation.position());
           if (Math.hypot(target.x - at.x, target.y - at.y) > 3) {
@@ -244,7 +298,7 @@ async function runScene(scene, {
           }, { selector: step.selector, block: step.block, top: step.top });
           break;
         case 'caption':
-          await page.evaluate((text) => window.__demoPresentation.setCaption(text), step.text);
+          await page.evaluate((text) => window.__demoPresentation.setCaption(text), withDates(step.text));
           break;
         case 'select-option': {
           // DOM-level so the control can be driven while its dialog is closed
@@ -284,6 +338,7 @@ async function runScene(scene, {
       width: captureWidth,
       height: captureHeight,
       viewport: { width, height },
+      deviceScaleFactor: RECORDING.deviceScaleFactor,
       commit: currentCommit(),
       recordedAt: new Date().toISOString(),
     };
@@ -297,6 +352,11 @@ async function runScene(scene, {
       );
     }
     return { sceneId: scene.id, webmPath, metaPath, recordedMs };
+  } catch (error) {
+    if (failureSnapshot) {
+      await failureSnapshot(error);
+    }
+    throw error;
   } finally {
     if (app) {
       try {
@@ -305,7 +365,7 @@ async function runScene(scene, {
         // Already closed.
       }
     }
-    cleanupDemoProfile({ base });
+    cleanupDemoProfile(seeded);
   }
 }
 

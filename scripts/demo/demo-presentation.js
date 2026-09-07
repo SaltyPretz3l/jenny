@@ -5,11 +5,13 @@
 //
 //   - OVERLAY_INSTALL_SCRIPT  page-side source (run once per recording) that
 //                             installs window.__demoPresentation: an animated
-//                             cursor with a click pulse and a caption chip.
+//                             cursor with a click pulse, a caption chip, and
+//                             two pins for chrome the scripted engine cannot
+//                             drive itself (titlebar telemetry, model label).
 //   - DEMO_STYLE_CSS          demo-only stylesheet: the overlay's own styles,
-//                             the palette crossfade class, and the two chrome
-//                             pills that only carry meaning with a live model
-//                             (engine lifecycle, model name) hidden.
+//                             the palette crossfade class, and the engine
+//                             lifecycle pill (which only carries meaning with
+//                             a live model) hidden.
 //   - typingDelays()          human-looking per-character delays from a seed,
 //                             so a typed prompt is jittered but reproducible.
 //
@@ -21,12 +23,17 @@ const CROSSFADE_CLASS = 'demo-crossfade';
 const CROSSFADE_MS = 420;
 
 // Chrome that reads wrong under the scripted replay engine (it never loads a
-// real model, so the titlebar says "Starting engine" and the composer pill
-// names a placeholder model). Hidden with visibility so layout is untouched.
+// real model, so the engine lifecycle pill reports a placeholder state).
+// Hidden with visibility so layout is untouched. The composer model pill
+// stays visible and is relabelled by pinModelLabel instead.
 const HIDDEN_CHROME_SELECTORS = Object.freeze([
   '#workbenchHealthPillSlot',
-  '#composerModelPillSlot',
 ]);
+
+// Titlebar telemetry as it looks with a local model busy on the GPU. The
+// scripted engine never touches the GPU, so the real figures would read idle;
+// pinMetrics paints these (jittered each tick) in the app's own markup.
+const TELEMETRY_MARKUP_DIVIDER = '<span class="stat-divider" aria-hidden="true"></span>';
 
 const DEMO_STYLE_CSS = [
   `${HIDDEN_CHROME_SELECTORS.map((selector) => `${selector}, ${selector} *`).join(', ')} { visibility: hidden !important; }`,
@@ -126,7 +133,58 @@ const OVERLAY_INSTALL_SCRIPT = `(() => {
   function setCrossfade(enabled) {
     doc.documentElement.classList.toggle(${JSON.stringify(CROSSFADE_CLASS)}, enabled === true);
   }
-  window.__demoPresentation = { show, moveTo, press, setCaption, setCrossfade, position: () => ({ x: state.x, y: state.y }) };
+  ${seededRandom.toString()}
+  // Paint CPU / GPU / VRAM into #metricList and keep them there: the app
+  // rewrites the list on its own refresh timer, so a childList observer puts
+  // the pinned markup straight back (before the next paint).
+  function pinMetrics(spec) {
+    const list = doc.getElementById('metricList');
+    if (!list || !spec) return false;
+    const random = seededRandom(spec.seed || 1);
+    const jitter = (base, span) => Math.round(Number(base) + (random() * 2 - 1) * span);
+    const paint = () => {
+      const used = (Number(spec.vramUsedGb) + (random() * 2 - 1) * 0.15).toFixed(1);
+      const total = Number(spec.vramTotalGb).toFixed(1);
+      const items = [['CPU', jitter(spec.cpu, 5) + '%'], ['GPU', jitter(spec.gpu, 4) + '%'], ['VRAM', used + '/' + total + ' GB']];
+      state.metricsMarkup = items
+        .map(([label, value]) => '<span class="metric-item">' + label + ': ' + value + '</span>')
+        .join(${JSON.stringify(TELEMETRY_MARKUP_DIVIDER)});
+      if (list.innerHTML !== state.metricsMarkup) list.innerHTML = state.metricsMarkup;
+    };
+    paint();
+    new MutationObserver(() => {
+      if (state.metricsMarkup && list.innerHTML !== state.metricsMarkup) list.innerHTML = state.metricsMarkup;
+    }).observe(list, { childList: true });
+    setInterval(paint, Math.max(250, Number(spec.intervalMs) || 1500));
+    return true;
+  }
+  // Relabel the composer model pill (and show its loaded dot). The app
+  // re-syncs the label whenever its inputs change, so a subtree observer
+  // reapplies the pinned text the moment it is overwritten.
+  function pinModelLabel(text) {
+    const slot = doc.getElementById('composerModelPillSlot');
+    const value = String(text || '');
+    if (!slot || !value) return false;
+    const apply = () => {
+      const pill = doc.getElementById('composerModelPill');
+      const label = pill && pill.querySelector('.inv-chip-label');
+      if (!label) return;
+      if (label.textContent !== value) label.textContent = value;
+      if (!pill.querySelector('.composer-model-pill-dot')) {
+        const dot = doc.createElement('span');
+        dot.className = 'composer-model-pill-dot status-dot status-dot--ok';
+        dot.setAttribute('aria-hidden', 'true');
+        pill.insertBefore(dot, pill.firstChild);
+      }
+    };
+    apply();
+    new MutationObserver(apply).observe(slot, { childList: true, characterData: true, subtree: true });
+    return true;
+  }
+  window.__demoPresentation = {
+    show, moveTo, press, setCaption, setCrossfade, pinMetrics, pinModelLabel,
+    position: () => ({ x: state.x, y: state.y }),
+  };
   return true;
 })()`;
 
@@ -160,6 +218,7 @@ module.exports = {
   CROSSFADE_CLASS,
   CROSSFADE_MS,
   HIDDEN_CHROME_SELECTORS,
+  TELEMETRY_MARKUP_DIVIDER,
   DEMO_STYLE_CSS,
   OVERLAY_INSTALL_SCRIPT,
   typingDelays,

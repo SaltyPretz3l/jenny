@@ -20,6 +20,7 @@ const TOOL_IDS = new Set([
   'grep_search',
   'edit_file',
   'mermaid_generate',
+  'home',
 ]);
 const INTERNAL_COPY = /\b(?:replay|smoke|deterministic)\b/i;
 
@@ -69,5 +70,16 @@ test('demo replay scripts are valid, promo-facing, and terminate', () => {
       }
     }
     assertScriptedTurnTerminates(script.calls, fileName);
+  }
+});
+
+test('the assistant-edit strings carry no slash (the tool-input panel redacts /,/g as a path)', () => {
+  const { WORKING_TREE_EDIT } = require('../scripts/demo/demo-fixture');
+  const script = JSON.parse(fs.readFileSync(path.join(REPLAY_SCRIPT_DIR, 'assistant-edit.json'), 'utf8'));
+  const edit = script.calls.flatMap((call) => call.tool_calls || []).find((call) => call.tool_id === 'edit_file');
+  assert.ok(edit, 'assistant-edit.json has an edit_file call');
+  assert.ok(WORKING_TREE_EDIT.replace.includes(edit.arguments.old_string), 'old_string matches the seeded working-tree edit');
+  for (const value of [edit.arguments.old_string, edit.arguments.new_string]) {
+    assert.ok(!value.includes('/'), `${value} must not contain a slash`);
   }
 });

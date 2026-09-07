@@ -150,6 +150,12 @@
         source(node) { return readIdentity(node); },
         capture(node) { return node.getAttribute('data-expanded') === 'true'; },
         restore(node, expanded) {
+          // A replacement row rendered collapsed and lazy (details not
+          // materialized) has an empty body: forcing it open would show an
+          // expanded header over nothing. That shape only arises when the old
+          // row's expansion was status-driven (awaiting approval) rather than
+          // the user's, whose toggle the renderer already honours.
+          if (expanded && node.getAttribute('data-tool-details-materialized') === 'false') return;
           node.setAttribute('data-expanded', expanded ? 'true' : 'false');
           for (const toggle of queryAllSafe(node, '[aria-expanded]')) {
             toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
