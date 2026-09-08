@@ -60,13 +60,48 @@ Releases also include `Jenny-arm64.dmg` for Apple Silicon Macs. **The macOS buil
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
 - Install Ollama from [ollama.com/download/mac](https://ollama.com/download/mac). Jenny's setup links there and checks again after you install it.
 
-### Linux
+### Linux (experimental)
 
-There is no Linux installer. Follow the source setup below.
+Linux packages start with the next 1.0.x release; 1.0.0 has no Linux
+package, so run from source until then (see **Running from source**
+below). When available, download **`Jenny-x86_64.AppImage`** or
+**`Jenny-amd64.deb`** from the
+[releases page](https://github.com/SaltyPretz3l/jenny/releases) (they are
+listed only for releases whose Linux build succeeded).
+These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
+distributions with glibc 2.35 or newer.
+
+For the AppImage:
+
+```sh
+chmod +x Jenny-x86_64.AppImage
+./Jenny-x86_64.AppImage
+```
+
+Keep the AppImage in a folder you can write to so Jenny can replace it during
+an update.
+
+For the `.deb`:
+
+```sh
+sudo apt install ./Jenny-amd64.deb
+jenny
+```
+
+You can also launch the `.deb` install from the app menu. On Ubuntu 24.04, the
+AppImage runs without the Chromium sandbox and shows a one-time notice; prefer
+the `.deb` there to keep the sandbox on. Saved secrets require an installed and
+unlocked Secret Service keyring such as gnome-keyring or KWallet. Local chat
+still works with the automatic local profile when no protected keyring is
+available.
+
+The Linux packages are built automatically and have been verified by the
+maintainer under WSLg only, not on a bare-metal desktop. Windows remains the
+supported platform; please [report problems](https://github.com/SaltyPretz3l/jenny/issues).
 
 ## Running from source
 
-Use this section if you want to work on Jenny's code or run her on Linux. Otherwise, the Windows installer is the easiest way to get started.
+Use this optional section if you want to work on Jenny's code or run from source on any platform. Otherwise, use the Windows installer or an experimental Linux package above.
 
 Download or clone this repository, then open a terminal in the project folder.
 
@@ -208,7 +243,7 @@ Jenny is a hobby project maintained by one person. Bug reports are read, but rep
 
 ### Release 1.0.0
 
-Jenny 1.0 is the first stable release. It includes the Windows installer and guided setup, local coding tools with live command output, and support for plugins. No plugins are bundled; first-party plugins will be released separately when ready. Crash reporting is optional and off by default.
+This release includes the Windows installer, experimental Linux packages from the releases page, guided setup, local coding tools with live command output, and support for plugins. No plugins are bundled; first-party plugins will be released separately when ready. Crash reporting is optional and off by default.
 
 See [RELEASE_NOTES.md](RELEASE_NOTES.md) for release details, earlier changes, and SHA-256 download hashes.
 

@@ -213,6 +213,8 @@ Search file contents using a regular expression.
 
 ## Shell
 
+On Linux the packaged sidecar is a PyInstaller onefile binary that prepends its extraction directory to `LD_LIBRARY_PATH` for itself. Every external child it starts (the shell and background-shell tools, git, owned processes) receives the pre-PyInstaller value restored from `LD_LIBRARY_PATH_ORIG`, or no `LD_LIBRARY_PATH` at all, so the user's own `python3`, `node`, and `git` load system libraries; the sidecar's own environment is untouched (`sidecar/runtime/external_child_env.py`).
+
 Four tools for running scripts/commands and inspecting or stopping background commands. Off by default and tightly bounded behind a fail-closed classifier.
 
 ### `run_command` (alias `Bash`)

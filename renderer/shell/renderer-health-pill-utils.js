@@ -95,6 +95,42 @@
     return null;
   }
 
+  /* Linux packaging decision 2 (NEXT_STEPS.md): the AppImage runtime adds
+   * --no-sandbox where unprivileged user namespaces are restricted, and the
+   * main process records that in jenny_status.runtime.chromium_sandbox. The
+   * renderer paints model output, so the first snapshot that reports the OS
+   * sandbox off raises one sticky warning per profile; "Do not show again"
+   * persists in storage. No toast or storage dependency -> no notice. */
+  const SANDBOX_NOTICE_DISMISSED_KEY = 'jenny.chromiumSandboxNotice.dismissed';
+
+  // localStorage on an opaque origin throws on access (JSDOM about:blank), so
+  // tests inject a storage and production falls back to the window's, guarded.
+  function resolveNoticeStorage(injected, windowRef) {
+    if (injected && typeof injected.getItem === 'function' && typeof injected.setItem === 'function') {
+      return injected;
+    }
+    try {
+      const storage = windowRef ? windowRef.localStorage : null;
+      return storage && typeof storage.getItem === 'function' ? storage : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function readSandboxFacet(snapshot) {
+    const facet = snapshot && snapshot.runtime ? snapshot.runtime.chromium_sandbox : null;
+    return facet && typeof facet === 'object' && !Array.isArray(facet) ? facet : null;
+  }
+
+  function sandboxNoticeMessage(facet) {
+    if (facet.package_kind === 'appimage') {
+      return 'Jenny is running without the Chromium OS sandbox: this system restricts unprivileged '
+        + 'user namespaces, so the AppImage launcher disabled it. Install the .deb package for full sandboxing.';
+    }
+    return 'Jenny is running without the Chromium OS sandbox because it was launched with --no-sandbox. '
+      + 'Remove that flag to restore it.';
+  }
+
   function createHealthPillController(deps) {
     const dependencies = deps || {};
     const windowRef = dependencies.window || (typeof window !== 'undefined' ? window : null);
@@ -128,6 +164,10 @@
       && typeof dependencies.errorCenterStore.list === 'function'
       ? dependencies.errorCenterStore
       : null;
+    const showToastMessage = typeof dependencies.showToastMessage === 'function'
+      ? dependencies.showToastMessage
+      : null;
+    const noticeStorage = resolveNoticeStorage(dependencies.storage, windowRef);
     let unsubscribeErrorCenter = null;
     /* Retry is latched once, in the shell status controller: the failure toast
      * and this popover both call the same function, so clicking both fires one
@@ -151,6 +191,7 @@
       lastPillSig: '',
       lastPopoverSig: '',
       consecutiveFailures: 0,
+      sandboxNoticeShown: false,
     };
 
     let popoverNode = null;
@@ -404,6 +445,37 @@
       state.pollTimer = null;
     }
 
+    function announceSandboxNoticeOnce(snapshot) {
+      if (state.sandboxNoticeShown || !showToastMessage) return;
+      const facet = readSandboxFacet(snapshot);
+      if (!facet || facet.packaged !== true || facet.sandboxed !== false) return;
+      let dismissed;
+      try {
+        dismissed = Boolean(noticeStorage && noticeStorage.getItem(SANDBOX_NOTICE_DISMISSED_KEY) === '1');
+      } catch (_error) {
+        dismissed = false;
+      }
+      if (dismissed) return;
+      state.sandboxNoticeShown = true;
+      showToastMessage(sandboxNoticeMessage(facet), {
+        title: 'Chromium sandbox is off',
+        tone: 'warning',
+        sticky: true,
+        dedupeKey: 'chromium-sandbox-notice',
+        actions: [{
+          id: 'chromium_sandbox_notice_dismiss',
+          label: 'Do not show again',
+          onClick: () => {
+            try {
+              if (noticeStorage) noticeStorage.setItem(SANDBOX_NOTICE_DISMISSED_KEY, '1');
+            } catch (_error) {
+              /* storage unavailable: the notice simply returns next launch */
+            }
+          },
+        }],
+      });
+    }
+
     async function refresh(options) {
       if (state.disposed) return null;
       const silent = options && options.silent === true;
@@ -437,6 +509,7 @@
         state.consecutiveFailures = 0;
         state.error = '';
         state.lastFetchAt = Date.now();
+        announceSandboxNoticeOnce(state.snapshot);
         renderPill();
         if (state.open) refreshPopoverContent();
         return state.snapshot;

@@ -78,6 +78,7 @@ test('managed spawn writes a per-launch key, authenticates readiness, and remove
   const baseUrl = await listen(server);
 
   try {
+    process.env.JENNY_LLAMA_TEST_API_KEY = 'must-not-reach-llama-server';
     const handle = await startLlamaServer({
       modelTag: 'qwen3:0.5b',
       binaryPath: path.join(userDataPath, 'llama-server.exe'),
@@ -88,8 +89,8 @@ test('managed spawn writes a per-launch key, authenticates readiness, and remove
       readinessPollIntervalMs: 1,
       platform: 'win32',
       onExit: (info) => exits.push(info),
-      spawnImpl: (command, args) => {
-        spawnCalls.push({ command, args: [...args] });
+      spawnImpl: (command, args, options) => {
+        spawnCalls.push({ command, args: [...args], env: options.env });
         keyFileAtSpawn = fs.readFileSync(args[args.indexOf('--api-key-file') + 1], 'utf8');
         return child;
       },
@@ -106,6 +107,11 @@ test('managed spawn writes a per-launch key, authenticates readiness, and remove
     assert.match(path.basename(keyPath), /^llama-server-[0-9a-f]{8}\.key$/, 'key file name is per-launch');
     assert.deepEqual(launchArgs.slice(launchArgs.indexOf('-a') + 2), ['--api-key-file', keyPath, '--no-slots']);
     assert.equal(keyFileAtSpawn, `${handle.apiKey}\n`, 'the key is on disk when the child starts');
+    // The child env is sanitizeSpawnEnv's null-prototype copy, never process.env itself,
+    // so API-key-shaped variables never reach llama-server.
+    assert.equal(Object.getPrototypeOf(spawnCalls[0].env), null);
+    assert.equal(spawnCalls[0].env.JENNY_LLAMA_TEST_API_KEY, undefined);
+    delete process.env.JENNY_LLAMA_TEST_API_KEY;
     // llama-server reads the file while parsing args, so once readiness is
     // confirmed the key must no longer sit on disk for the server's lifetime.
     assert.equal(fs.existsSync(keyPath), false, 'key file is removed as soon as the server is ready');

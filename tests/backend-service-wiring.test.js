@@ -30,7 +30,7 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-function createBackendWiringFixture({ packaged = false } = {}) {
+function createBackendWiringFixture({ packaged = false, appOverrides = {}, processOverrides = {}, log = () => {} } = {}) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-backend-wiring-'));
   trackDirectory(userDataPath);
   const developmentRepoRoot = path.join(userDataPath, 'repo');
@@ -45,8 +45,9 @@ function createBackendWiringFixture({ packaged = false } = {}) {
       getPath: () => userDataPath,
       isReady: () => true,
       isPackaged: packaged,
+      ...appOverrides,
     },
-    processRef: { env: {}, platform: process.platform, resourcesPath, cwd: () => developmentRepoRoot },
+    processRef: { env: {}, platform: process.platform, resourcesPath, cwd: () => developmentRepoRoot, ...processOverrides },
     safeStorage: createFakeSafeStorage(),
     dialog: {},
     shellConfigService,
@@ -64,6 +65,7 @@ function createBackendWiringFixture({ packaged = false } = {}) {
     logStore: null,
     // main.js constructs the backend before assigning its mainWindow variable.
     getMainWindow: () => undefined,
+    log,
     shouldUsePackagedSidecarRuntime: () => packaged,
   });
   return { created, developmentRepoRoot, resourcesPath, worktreeService, userDataPath };
@@ -87,6 +89,43 @@ test('backend wiring injects worktreeService into the BackendService at construc
   const { created, worktreeService } = createBackendWiringFixture();
   try {
     assert.equal(created.backendService.worktreeService, worktreeService);
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('backend wiring records a packaged AppImage launched without the Chromium sandbox', () => {
+  const logEntries = [];
+  const { created } = createBackendWiringFixture({
+    packaged: true,
+    appOverrides: { commandLine: { hasSwitch: (name) => name === 'no-sandbox' } },
+    processOverrides: {
+      platform: 'linux', execPath: '/tmp/.mount_Jenny/usr/bin/jenny',
+      env: { APPIMAGE: '/tmp/Jenny-x86_64.AppImage', APPDIR: '/tmp/.mount_Jenny' },
+    },
+    log: (level, event, details) => logEntries.push({ level, event, details }),
+  });
+  try {
+    assert.equal(created.backendService.options.chromiumSandbox.sandboxed, false);
+    assert.deepEqual(logEntries.find((entry) => entry.event === 'chromium.sandbox_disabled'), {
+      level: 'WARN', event: 'chromium.sandbox_disabled',
+      details: { reason: 'no_sandbox_switch', package_kind: 'appimage', platform: 'linux' },
+    });
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('backend wiring constructs without commandLine and does not warn', () => {
+  const logEntries = [];
+  const { created } = createBackendWiringFixture({
+    packaged: true,
+    processOverrides: { platform: 'linux', env: {} },
+    log: (level, event, details) => logEntries.push({ level, event, details }),
+  });
+  try {
+    assert.equal(created.backendService.options.chromiumSandbox.sandboxed, null);
+    assert.equal(logEntries.some((entry) => entry.event === 'chromium.sandbox_disabled'), false);
   } finally {
     created.backendService.dispose?.();
   }

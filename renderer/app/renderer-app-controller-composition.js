@@ -154,6 +154,8 @@
     reportError: (...a) => reportErrorWhenActive(...a),
     /* EH-W11: badge + Recent errors popover section; optional. */
     errorCenterStore,
+    /* Linux decision 2: one sticky no-sandbox notice per profile, raised from the status poll. */
+    showToastMessage: (...a) => showToastMessage(...a),
   }) || null;
   if (healthPillController) {
     registerRendererCleanup(() => healthPillController.dispose?.());

@@ -7,8 +7,22 @@
   "sha256": "EB18BFB0CC74C01191479B76C152A79CB38291260054556A266B4214ACD4F99F",
   "license": "MIT",
   "manualFallbackUrl": "https://ollama.com/download/windows",
-  "updatePolicy": "Manually pin a specific OllamaSetup.exe release; bump version + re-hash sha256 each time.",
-  "packagingPath": "Downloaded at runtime to the OS temp dir; never bundled in the installer.",
-  "rollback": "Uninstall via Ollama's own uninstaller; Jenny never auto-uninstalls Ollama.",
-  "_comment": "PROVENANCE MANIFEST (per docs/BUILDING.md § Release Provenance and Evidence). Pinned to Ollama v0.30.10 (2026-06-24). To update: download the new OllamaSetup.exe, run `(Get-FileHash -Algorithm SHA256 .\\OllamaSetup.exe).Hash`, and update url/version/sizeBytes/sha256. If sha256 is ever left empty, getInstallPlan() reports available:false and installOllama() refuses to download (fail-closed)."
+  "platforms": {
+    "linux": {
+      "x64": {
+        "url": "https://github.com/ollama/ollama/releases/download/v0.33.3/ollama-linux-amd64.tar.zst",
+        "version": "0.33.3",
+        "sizeBytes": 1433825108,
+        "sha256": "c13cea8f3389db4145f8a6cb88d1747242a48639d7c13e3bda7c1ebdc6eebb2f",
+        "format": "tar.zst",
+        "installRoot": "xdg-data",
+        "manualFallbackUrl": "https://ollama.com/download/linux",
+        "digestSource": "sha256sum.txt published with the ollama/ollama v0.33.3 GitHub release (2026-09-02)"
+      }
+    }
+  },
+  "updatePolicy": "Manually pin a specific OllamaSetup.exe release; bump version + re-hash sha256 each time. Linux pins the release ollama-linux-amd64.tar.zst with the digest copied from that release's sha256sum.txt.",
+  "packagingPath": "Downloaded at runtime to the OS temp dir; never bundled in the installer. On Linux it is downloaded at runtime to the OS temp dir and extracted into $XDG_DATA_HOME/jenny/ollama (default ~/.local/share/jenny/ollama), never bundled.",
+  "rollback": "Uninstall via Ollama's own uninstaller; Jenny never auto-uninstalls Ollama. Jenny never removes the Linux user-space install directory.",
+  "_comment": "PROVENANCE MANIFEST (per docs/BUILDING.md § Release Provenance and Evidence). Pinned to Ollama v0.30.10 (2026-06-24). To update: download the new OllamaSetup.exe, run `(Get-FileHash -Algorithm SHA256 .\\OllamaSetup.exe).Hash`, and update url/version/sizeBytes/sha256. If sha256 is ever left empty, getInstallPlan() reports available:false and installOllama() refuses to download (fail-closed). The Linux x64 entry pins ollama-linux-amd64.tar.zst separately under platforms.linux.x64 with the digest copied from that release's sha256sum.txt."
 }

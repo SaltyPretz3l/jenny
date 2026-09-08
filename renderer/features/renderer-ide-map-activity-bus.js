@@ -12,9 +12,9 @@
  *   workspace-relative strings. normalizeRelPath() relativizes against the
  *   root path, posixifies, rejects scheme:// URLs and '..' escapes, and
  *   classifies out-of-root paths — those show only as an aggregate counter,
- *   never per-row noise. Matching rel paths to GRAPH ids (incl. Windows
- *   case-insensitivity and gitignored→bucket attribution) is the PAINTER's
- *   job — the bus stays graph-agnostic.
+ *   never per-row noise. Matching rel paths to GRAPH ids (incl. Windows-only
+ *   case folding and gitignored→bucket attribution) is the PAINTER's job —
+ *   the bus stays graph-agnostic.
  * - Turn lifecycle: a tool event with a NEW streamId starts a turn (the
  *   previous trail/heat clear); complete/error for the current stream ends
  *   it (turnActive=false — the painter fades, the controller unfreezes
@@ -107,10 +107,14 @@
     return /^[A-Za-z]:\//.test(p) || p.startsWith('//') || p.startsWith('/');
   }
 
+  function isWindowsPlatform(platform) {
+    return /^(win|windows)/i.test(String(platform || ''));
+  }
+
   // → { kind: 'inside', rel } | { kind: 'outside' } | { kind: 'rejected' }
   // rel is workspace-relative, '/'-separated, '.'-prefix-free. '..' segments
   // and scheme:// pseudo-paths are rejected outright (never trusted).
-  function normalizeRelPath(rootPath, rawPath) {
+  function normalizeRelPath(rootPath, rawPath, platform) {
     const raw = normalizeSlashes(rawPath);
     if (!raw) return { kind: 'rejected' };
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return { kind: 'rejected' };
@@ -118,9 +122,9 @@
     let rel;
     if (isAbsolutePath(raw)) {
       if (!root) return { kind: 'outside' };
-      const rawLower = raw.toLowerCase();
-      const rootLower = `${root.toLowerCase()}/`;
-      if (!rawLower.startsWith(rootLower)) return { kind: 'outside' };
+      const pathToCompare = isWindowsPlatform(platform) ? raw.toLowerCase() : raw;
+      const rootToCompare = isWindowsPlatform(platform) ? root.toLowerCase() : root;
+      if (!pathToCompare.startsWith(`${rootToCompare}/`)) return { kind: 'outside' };
       rel = raw.slice(root.length + 1);
     } else {
       rel = raw.startsWith('./') ? raw.slice(2) : raw;
@@ -146,6 +150,9 @@
     const d = deps || {};
     const getRootPath = typeof d.getRootPath === 'function' ? d.getRootPath : () => '';
     const now = typeof d.now === 'function' ? d.now : () => Date.now();
+    const platform = String(d.platform
+      || (typeof navigator !== 'undefined' ? navigator.platform : '')
+      || (typeof process !== 'undefined' ? process.platform : ''));
 
     // sessionId -> per-session turn state (LRU by last ingest).
     const sessions = new Map();
@@ -252,7 +259,7 @@
       const ts = now();
       let rel = null;
       if (rawPath) {
-        const norm = normalizeRelPath(getRootPath(), rawPath);
+        const norm = normalizeRelPath(getRootPath(), rawPath, platform);
         if (norm.kind === 'inside') {
           rel = norm.rel;
         } else if (norm.kind === 'outside') {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -35,14 +36,19 @@ def _is_current_frozen_executable(candidate: Path) -> bool:
 def _trusted_command_roots() -> tuple[Path, ...]:
     roots: list[Path] = []
     local_app_data = read_environment_value("LOCALAPPDATA")
-    for raw in (
+    raw_roots = [
         read_environment_value("ProgramFiles"),
         read_environment_value("ProgramFiles(x86)"),
         str(Path(local_app_data) / "Programs") if local_app_data else "",
         str(Path.home() / ".local" / "bin"),
         sys.prefix,
         sys.base_prefix,
-    ):
+    ]
+    if os.name != "nt":
+        raw_roots.extend(
+            ("/usr/bin", "/usr/local/bin", "/snap/bin", "/opt/homebrew/bin")
+        )
+    for raw in raw_roots:
         if raw:
             roots.append(_resolve_path(Path(raw)))
     return tuple(dict.fromkeys(roots))

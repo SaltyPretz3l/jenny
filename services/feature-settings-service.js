@@ -17,7 +17,7 @@ function resolveConfiguredTools(configState = {}) {
 }
 
 const TOOL_AVAILABILITY_OVERRIDES = Object.freeze({
-  pythonRuntime: Object.freeze({ windowsOnly: true }),
+  pythonRuntime: Object.freeze({ platforms: Object.freeze(['win32', 'linux']) }),
   lsp: Object.freeze({ workspaceRootRequired: true }),
   todo: Object.freeze({ workspaceRootRequired: true }),
   browser: Object.freeze({
@@ -36,7 +36,7 @@ const TOOL_AVAILABILITY_OVERRIDES = Object.freeze({
 
 function buildConfiguredToolAvailability(
   fields,
-  { managedSidecarActive, hasWorkspaceRoot, windowsOnly }
+  { managedSidecarActive, hasWorkspaceRoot, platform }
 ) {
   const availability = {};
   for (const field of Array.isArray(fields) ? fields : []) {
@@ -45,7 +45,6 @@ function buildConfiguredToolAvailability(
       continue;
     }
     const override = TOOL_AVAILABILITY_OVERRIDES[key] || {};
-    const requiresWindows = override.windowsOnly === true;
     const requiresWorkspaceRoot = override.workspaceRootRequired === true;
     const electronOnly = override.electronOnly === true;
     availability[key] = {
@@ -53,7 +52,7 @@ function buildConfiguredToolAvailability(
       ...override,
       enabled:
         (electronOnly || managedSidecarActive)
-        && (!requiresWindows || windowsOnly)
+        && (!override.platforms || override.platforms.includes(platform))
         && (!requiresWorkspaceRoot || hasWorkspaceRoot),
     };
   }
@@ -97,6 +96,7 @@ function buildFeatureStatePayload({
     availability: {
       runtime: {
         managedSidecarActive,
+        platform,
         windowsOnly,
         workspaceRootStatus,
       },
@@ -104,7 +104,7 @@ function buildFeatureStatePayload({
         ...buildConfiguredToolAvailability(toolConfigFields, {
           managedSidecarActive,
           hasWorkspaceRoot,
-          windowsOnly,
+          platform,
         }),
         workspaceRoot: {
           managedSidecarRequired: true,

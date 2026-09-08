@@ -284,8 +284,10 @@ def _posix_preexec_fn(
     return _apply_limits
 
 
-def _minimal_path(venv_python: Path) -> str:
+def _minimal_path(venv_python: Path, *, posix: bool) -> str:
     python_dir = str(venv_python.parent)
+    if posix:
+        return os.pathsep.join([python_dir, "/usr/local/bin", "/usr/bin", "/bin"])
     system_root = read_environment_value("SYSTEMROOT")
     segments = [python_dir]
     if system_root:
@@ -296,6 +298,48 @@ def _minimal_path(venv_python: Path) -> str:
             ]
         )
     return os.pathsep.join(segment for segment in segments if segment)
+
+
+def _child_environment(
+    venv_python: Path,
+    work_dir: Path,
+    working_directory: Path | None,
+    *,
+    posix: bool,
+) -> dict[str, str]:
+    env = {
+        "PATH": _minimal_path(venv_python, posix=posix),
+        "TEMP": str(work_dir),
+        "TMP": str(work_dir),
+        "JENNY_OUTPUT_DIR": str(work_dir),
+        "MPLCONFIGDIR": str(work_dir),
+        "VIRTUAL_ENV": str(venv_python.parent.parent),
+        # Bound native scientific worker pools within the sandbox memory budget.
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+    }
+    if posix:
+        env.update(
+            HOME=str(work_dir),
+            TMPDIR=str(work_dir),
+            LANG="C.UTF-8",
+            LC_ALL="C.UTF-8",
+        )
+    else:
+        system_root = read_environment_value("SYSTEMROOT")
+        env.update(
+            SYSTEMROOT=system_root,
+            # Matplotlib's Windows font discovery reads WINDIR directly.
+            WINDIR=read_environment_value("WINDIR") or system_root,
+            COMSPEC=read_environment_value("COMSPEC"),
+        )
+    if working_directory is not None:
+        # Tell user code where the configured workspace is without passing
+        # through the parent's broader environment.
+        env["JENNY_WORKSPACE_ROOT"] = str(working_directory)
+    return env
 
 
 def execute_sandboxed(
@@ -312,33 +356,12 @@ def execute_sandboxed(
     result_path = work_dir / "_result.json"
     wrapper_path = Path(__file__).with_name("_exec_wrapper.py")
     script_path.write_text(code, encoding="utf-8")
-    system_root = read_environment_value("SYSTEMROOT")
-
-    env = {
-        "PATH": _minimal_path(venv_python),
-        "SYSTEMROOT": system_root,
-        # Matplotlib's Windows font discovery reads WINDIR directly. Windows
-        # normally aliases it to SYSTEMROOT, but the scrubbed child environment
-        # must carry the alias explicitly.
-        "WINDIR": read_environment_value("WINDIR") or system_root,
-        "COMSPEC": read_environment_value("COMSPEC"),
-        "TEMP": str(work_dir),
-        "TMP": str(work_dir),
-        "JENNY_OUTPUT_DIR": str(work_dir),
-        "MPLCONFIGDIR": str(work_dir),
-        "VIRTUAL_ENV": str(venv_python.parent.parent),
-        # Scientific runtimes otherwise size native worker pools from the host
-        # CPU count before user code runs. Their thread stacks can exhaust the
-        # intentionally small Job Object memory budget on a trivial command.
-        "OPENBLAS_NUM_THREADS": "1",
-        "OMP_NUM_THREADS": "1",
-        "MKL_NUM_THREADS": "1",
-        "NUMEXPR_NUM_THREADS": "1",
-    }
-    if working_directory is not None:
-        # Tell user code where the configured workspace is without passing
-        # through the parent's broader environment.
-        env["JENNY_WORKSPACE_ROOT"] = str(working_directory)
+    env = _child_environment(
+        venv_python,
+        work_dir,
+        working_directory,
+        posix=(os.name != "nt"),
+    )
 
     preexec_fn: Callable[[], None] | None = None
     if os.name != "nt":

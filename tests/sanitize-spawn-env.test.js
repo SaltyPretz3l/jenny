@@ -39,6 +39,60 @@ test('credential-shaped keys are stripped by default', () => {
 });
 
 
+test('AppImage paths are scrubbed from loader and lookup variables', () => {
+  const out = sanitizeSpawnEnv({
+    APPDIR: '/tmp/.mount_JennyXYZ',
+    LD_LIBRARY_PATH: '/tmp/./.mount_JennyXYZ/usr/lib:/tmp/.mount_JennyXYZ/../system/lib:/usr/local/lib',
+    PATH: '/tmp/.mount_JennyXYZ:/tmp/.mount_JennyXYZ/usr/bin:/usr/bin:/bin',
+    XDG_DATA_DIRS: '/tmp/.mount_JennyXYZ/usr/share:/usr/share',
+  });
+
+  assert.equal(out.LD_LIBRARY_PATH, '/tmp/.mount_JennyXYZ/../system/lib:/usr/local/lib');
+  assert.equal(out.PATH, '/usr/bin:/bin');
+  assert.equal(out.XDG_DATA_DIRS, '/usr/share');
+});
+
+test('AppImage path keys are deleted when every entry belongs to APPDIR', () => {
+  const out = sanitizeSpawnEnv({
+    APPDIR: '/tmp/.mount_JennyXYZ/',
+    LD_LIBRARY_PATH: '/tmp/.mount_JennyXYZ:/tmp/.mount_JennyXYZ/usr/lib',
+  });
+
+  assert.equal(out.LD_LIBRARY_PATH, undefined);
+});
+
+test('AppImage scrub preserves sibling paths that only share the APPDIR prefix', () => {
+  const out = sanitizeSpawnEnv({
+    APPDIR: '/tmp/.mount_JennyXYZ',
+    LD_LIBRARY_PATH: '/tmp/.mount_JennyXYZ2/lib:/usr/lib',
+  });
+
+  assert.equal(out.LD_LIBRARY_PATH, '/tmp/.mount_JennyXYZ2/lib:/usr/lib');
+});
+
+test('lookup paths pass through unchanged when APPDIR is absent', () => {
+  const env = {
+    LD_LIBRARY_PATH: '/opt/app/lib:/usr/lib',
+    PATH: '/opt/app/bin:/usr/bin',
+    XDG_DATA_DIRS: '/opt/app/share:/usr/share',
+  };
+
+  assert.deepEqual({ ...sanitizeSpawnEnv(env) }, env);
+});
+
+test('AppImage PATH scrub also applies in allowOnly mode', () => {
+  const out = sanitizeSpawnEnv(
+    {
+      APPDIR: '/tmp/.mount_JennyXYZ',
+      PATH: '/tmp/.mount_JennyXYZ/usr/bin:/usr/bin:/bin',
+    },
+    { allowOnly: true }
+  );
+
+  assert.equal(out.PATH, '/usr/bin:/bin');
+});
+
+
 test('always-keep system keys survive', () => {
   const env = {
     PATH: '/usr/bin',

@@ -4,6 +4,7 @@ const { EventEmitter } = require('events');
 const path = require('path');
 
 const { FileJsonStore } = require('./backend/file-json-store');
+const { resolveLinuxPackageKind } = require('./linux-package-kind');
 
 const UPDATE_STORE_DEFAULT = {
   skippedVersion: '',
@@ -87,6 +88,10 @@ class UpdateService extends EventEmitter {
     storePath = '',
     logger = null,
     platform = process.platform,
+    // electron-updater keys on APPIMAGE; Jenny also anchors the executable
+    // under APPDIR so an inherited variable cannot enable AppImage updates.
+    env = process.env,
+    execPath = process.execPath,
     now = () => new Date(),
     // macOS auto-update only works for a signed + notarized app (Squirrel.Mac
     // refuses unsigned updates). Defaults off; the signed release build sets
@@ -101,6 +106,8 @@ class UpdateService extends EventEmitter {
       : loadAutoUpdater;
     this._autoUpdaterResolutionAttempted = false;
     this.platform = String(platform || '').trim().toLowerCase();
+    this.env = env && typeof env === 'object' ? env : {};
+    this.execPath = execPath;
     this.macUpdatesSigned = Boolean(macUpdatesSigned);
     this.now = typeof now === 'function' ? now : () => new Date();
     this.logger = typeof logger === 'function' ? logger : null;
@@ -308,8 +315,17 @@ class UpdateService extends EventEmitter {
           return 'Automatic updates on macOS require a signed build; download the latest DMG from the releases page.';
         }
         // Signed mac build: fall through to the electron-updater availability check.
+      } else if (this.platform === 'linux') {
+        if (resolveLinuxPackageKind({
+          platform: this.platform,
+          env: this.env,
+          execPath: this.execPath,
+        }) !== 'appimage') {
+          return 'Automatic updates are unavailable for this Linux package; download the latest .deb or AppImage from the releases page.';
+        }
+        // AppImage build: fall through to the electron-updater availability check.
       } else {
-        return 'Automatic updates are currently enabled only for Windows and macOS packaged builds.';
+        return 'Automatic updates are currently enabled only for Windows, macOS, and Linux AppImage packaged builds.';
       }
     }
     if (checkUpdater && (

@@ -58,7 +58,7 @@ def _release_workflow_yaml(*, build_preload: bool) -> str:
 
 
 def _write_release_workflows(root: Path, *, build_preload: bool = True) -> None:
-    for name in ("release.yml", "release-attestation.yml"):
+    for name in ("release.yml", "release-attestation.yml", "ci-linux-package.yml"):
         _write(
             root / ".github" / "workflows" / name,
             _release_workflow_yaml(build_preload=build_preload),
@@ -81,6 +81,7 @@ def _write_release_policy_fixture(root: Path, *, package_version: str = "0.1.0")
             '    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host && npm run build:full-host-supervisor && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
             '    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
             '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish always",\n'
+            '    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
             '    "release:smoke": "python scripts/packaging/smoke_packaged_flow.py"\n'
             "  },\n"
             '  "dependencies": {"electron-updater": "^6.6.2"}\n'
@@ -317,7 +318,7 @@ def test_release_workflow_missing_preload_build_is_rejected(tmp_path) -> None:
     violations = module.validate_release_version_policy(tmp_path)
 
     offenders = [v for v in violations if "electron-builder" in v]
-    assert len(offenders) == 2, violations
+    assert len(offenders) == len(module.RELEASE_WORKFLOWS), violations
     assert all("build:preload" in violation for violation in offenders)
 
 
@@ -325,7 +326,7 @@ def test_release_workflow_accepts_embedded_preload_npm_script(tmp_path) -> None:
     """``npm run release:windows`` already embeds the preload build."""
     module = _load_script_module("scripts/checks/check_release_version_policy.py")
     _write_release_policy_fixture(tmp_path)
-    for name in ("release.yml", "release-attestation.yml"):
+    for name in ("release.yml", "release-attestation.yml", "ci-linux-package.yml"):
         _write(
             tmp_path / ".github" / "workflows" / name,
             (

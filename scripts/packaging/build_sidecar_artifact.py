@@ -32,7 +32,12 @@ DEPENDENCY_LOCKS: tuple[tuple[str, str], ...] = (
     ("sidecar_build", "requirements-build-lock.txt"),
     ("managed_python_runtime", "requirements-python-runtime-lock.txt"),
 )
-PYTHON_RUNTIME_BUNDLE_CONTRACT = Path("config/python-runtime-bundle-lock.json")
+
+
+def python_runtime_bundle_contract(sys_platform: str = sys.platform) -> Path:
+    if sys_platform.startswith("linux"):
+        return Path("config/python-runtime-bundle-lock.linux-x64.json")
+    return Path("config/python-runtime-bundle-lock.json")
 
 BUNDLED_DATA_FILES: tuple[tuple[Path, str], ...] = (
     (ROOT / "services" / "tools" / "tool-manifest.json", "services/tools"),
@@ -320,11 +325,12 @@ def _dependency_provenance() -> dict[str, object]:
             "sha256": _sha256(path),
         }
     bundle_contract: dict[str, object] = {}
-    bundle_contract_path = ROOT / PYTHON_RUNTIME_BUNDLE_CONTRACT
+    bundle_contract_relative_path = python_runtime_bundle_contract()
+    bundle_contract_path = ROOT / bundle_contract_relative_path
     if not bundle_contract_path.is_file():
         raise RuntimeError(f"managed Python bundle contract is missing: {bundle_contract_path}")
     bundle_contract = {
-        "path": PYTHON_RUNTIME_BUNDLE_CONTRACT.as_posix(),
+        "path": bundle_contract_relative_path.as_posix(),
         "sha256": _sha256(bundle_contract_path),
     }
     try:
@@ -352,7 +358,7 @@ def _required_dependency_provenance() -> dict[str, object]:
         raise SystemExit(1) from error
 
 
-def _write_manifest(
+def _write_manifest(  # noqa: PLR0913 - cohesive artifact manifest boundary
     artifact_path: Path,
     *,
     python_executable: str,

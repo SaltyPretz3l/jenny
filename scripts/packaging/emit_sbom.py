@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REQUIREMENTS_LOCK = ROOT / "requirements-lock.txt"
 DEFAULT_BUILD_REQUIREMENTS_LOCK = ROOT / "requirements-build-lock.txt"
 DEFAULT_MANAGED_RUNTIME_LOCK = ROOT / "requirements-python-runtime-lock.txt"
-DEFAULT_RUNTIME_BUNDLE_CONTRACT = ROOT / "config" / "python-runtime-bundle-lock.json"
 DEFAULT_EMBED_MANIFEST = ROOT / "vendor" / "python-embed" / "python-embed-manifest.json"
 DEFAULT_WHEELHOUSE_MANIFEST = (
     ROOT / "vendor" / "python-runtime-wheels" / "wheelhouse-manifest.json"
@@ -24,8 +23,16 @@ DEFAULT_WHEELHOUSE_MANIFEST = (
 DEFAULT_OUTPUT_PATH = ROOT / "dist" / "sidecar-sbom.json"
 _PINNED_REQUIREMENT_RE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[A-Za-z0-9_.!+*-]+)"
+    r"(?:\s*;\s*(?P<marker>[^\\]+?))?\s*(?:\\)?$"
 )
 SHA256_HEX_LENGTH = 64
+
+
+def python_runtime_bundle_contract(sys_platform: str = sys.platform) -> Path:
+    filename = "python-runtime-bundle-lock.linux-x64.json"
+    if not sys_platform.startswith("linux"):
+        filename = "python-runtime-bundle-lock.json"
+    return ROOT / "config" / filename
 
 
 def _normalize_purl_name(name: str) -> str:
@@ -56,6 +63,7 @@ def parse_locked_components(
             continue
         name = match.group("name")
         version = match.group("version")
+        marker = match.group("marker")
         purl_name = _normalize_purl_name(name)
         component: dict[str, object] = {
             "type": "library",
@@ -63,8 +71,13 @@ def parse_locked_components(
             "version": version,
             "purl": f"pkg:pypi/{purl_name}@{version}",
         }
-        if scope:
-            component["properties"] = _dependency_scope_property(scope)
+        properties = _dependency_scope_property(scope) if scope else []
+        if marker:
+            properties.append(
+                {"name": "jenny:environment-marker", "value": marker.strip()}
+            )
+        if properties:
+            component["properties"] = properties
         components.append(component)
     return sorted(components, key=lambda component: str(component["name"]).lower())
 
@@ -121,7 +134,11 @@ def _release_lock_specs(
     return specs
 
 
-def _provenance_properties(lock_specs: list[tuple[Path, str]]) -> list[dict[str, str]]:
+def _provenance_properties(
+    lock_specs: list[tuple[Path, str]],
+    *,
+    runtime_bundle_contract: Path | None,
+) -> list[dict[str, str]]:
     properties: list[dict[str, str]] = []
     for path, scope in lock_specs:
         if path.is_file():
@@ -131,13 +148,16 @@ def _provenance_properties(lock_specs: list[tuple[Path, str]]) -> list[dict[str,
                     "value": _sha256_file(path),
                 }
             )
-    for path, name in (
-        (DEFAULT_RUNTIME_BUNDLE_CONTRACT, "runtime-bundle-contract"),
-        (DEFAULT_EMBED_MANIFEST, "python-embed-manifest"),
-        (DEFAULT_WHEELHOUSE_MANIFEST, "python-wheelhouse-manifest"),
-    ):
-        if path.is_file():
-            properties.append({"name": f"jenny:sha256:{name}", "value": _sha256_file(path)})
+    if runtime_bundle_contract is not None:
+        for path, name in (
+            (runtime_bundle_contract, "runtime-bundle-contract"),
+            (DEFAULT_EMBED_MANIFEST, "python-embed-manifest"),
+            (DEFAULT_WHEELHOUSE_MANIFEST, "python-wheelhouse-manifest"),
+        ):
+            if path.is_file():
+                properties.append(
+                    {"name": f"jenny:sha256:{name}", "value": _sha256_file(path)}
+                )
     return properties
 
 
@@ -155,12 +175,14 @@ def build_sbom(
     lock_path: Path = DEFAULT_REQUIREMENTS_LOCK,
     package_version: str | None = None,
     include_managed_runtime: bool | None = None,
+    sys_platform: str = sys.platform,
 ) -> dict[str, object]:
     include_managed = (
-        sys.platform.startswith("win")
+        sys_platform.startswith(("win", "linux"))
         if include_managed_runtime is None
         else include_managed_runtime
     )
+    runtime_bundle_contract = python_runtime_bundle_contract(sys_platform)
     lock_specs = _release_lock_specs(
         lock_path,
         include_managed_runtime=include_managed,
@@ -169,7 +191,7 @@ def build_sbom(
     for current_lock, scope in lock_specs:
         components.extend(parse_locked_components(current_lock, scope=scope))
     if include_managed and lock_path.resolve() == DEFAULT_REQUIREMENTS_LOCK.resolve():
-        managed_python = _managed_python_component(DEFAULT_RUNTIME_BUNDLE_CONTRACT)
+        managed_python = _managed_python_component(runtime_bundle_contract)
         if managed_python is not None:
             components.append(managed_python)
     components.sort(
@@ -193,7 +215,10 @@ def build_sbom(
                 "name": "jenny-sidecar",
                 "version": version,
             },
-            "properties": _provenance_properties(lock_specs),
+            "properties": _provenance_properties(
+                lock_specs,
+                runtime_bundle_contract=(runtime_bundle_contract if include_managed else None),
+            ),
         },
         "components": components,
     }

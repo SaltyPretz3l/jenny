@@ -1,12 +1,18 @@
 appId: com.jenny.shell
 productName: Jenny
-# Make the PyInstaller sidecar executable on macOS after packing (a copied
-# --onefile binary can lose its +x bit). No-op on Windows.
+# Make the PyInstaller sidecar executable on macOS and Linux after packing (a
+# copied --onefile binary can lose its +x bit). No-op on Windows.
 afterPack: build/afterPack.js
 publish:
   - provider: github
     owner: SaltyPretz3l
     repo: jenny
+# AppImage toolset 1.0.3 uses the static runtime, which probes unprivileged
+# user namespaces and disables Chromium's sandbox only when they are restricted.
+# Never add a sandbox-disabling executable argument; the .deb keeps the Chromium
+# sandbox enabled on Ubuntu 24.04.
+toolsets:
+  appimage: "1.0.3"
 win:
   icon: build/icon.ico
   # Version-free artifact name so the permanent GitHub URL
@@ -103,6 +109,56 @@ mac:
       to: native
       filter:
         - "**/*"
+    - from: plugins
+      to: plugins
+      filter:
+        - "*.jenny-plugin"
+# Built only in the release workflow's Linux job inside an ubuntu:22.04
+# container, establishing a glibc 2.35 floor.
+linux:
+  icon: build/icon.png
+  # Version-free for releases/latest/download URLs, yielding
+  # Jenny-x86_64.AppImage and Jenny-amd64.deb.
+  artifactName: "Jenny-${arch}.${ext}"
+  executableName: jenny
+  synopsis: Local-first desktop AI companion
+  description: Jenny is a local-first desktop AI companion for chat, coding, and data visualization.
+  category: Development
+  # fpm refuses to build the .deb without a Maintainer; package.json's author carries no
+  # email, so the identity already on every public commit is used here.
+  maintainer: "Gosh <goshcomplexmusic@gmail.com>"
+  syncDesktopName: true
+  desktop:
+    entry:
+      Name: Jenny
+      Keywords: "AI;assistant;chat;coding;"
+      StartupWMClass: jenny
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  extraResources:
+    - from: build/sidecar
+      to: sidecar
+      filter:
+        - "**/*"
+    - from: vendor/python-embed
+      to: python-embed
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
+    - from: vendor/python-runtime-wheels
+      to: python-runtime-wheels
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
+    # Packaged Linux builds read the window icon from resources; the executable
+    # carries none.
+    - from: build/icon.png
+      to: icon.png
     - from: plugins
       to: plugins
       filter:

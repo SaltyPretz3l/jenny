@@ -62,7 +62,7 @@
     var view = {
       phase: 'checking',
       ollama: { installed: false, running: false, version: '' },
-      installPlan: { available: false, url: '', sizeBytes: 0, sha256: '', manualFallbackUrl: '' },
+      installPlan: { available: false, url: '', sizeBytes: 0, sha256: '', manualFallbackUrl: '', format: '', installDir: '' },
       trayStatus: null,
       optInInstall: false,
       progressPercent: 0,
@@ -123,11 +123,18 @@
       }
       if (view.phase === 'missingInstallable') {
         var size = view.installPlan.sizeBytes ? ' (' + escapeHtml(formatBytesGb(view.installPlan.sizeBytes)) + ')' : '';
+        // Linux ships a tar.zst release archive unpacked into the user's data dir; Windows runs a signed installer.
+        var archive = view.installPlan.format === 'tar.zst';
         return '<div class="setup-hw-ollama setup-hw-ollama--missing">'
           + '<p>Ollama isn’t installed yet — it runs the model on your machine.</p>'
           + installOptInLabel('Download &amp; install Ollama', size)
-          + '<p class="setup-hw-provenance">Official installer from <code>' + escapeHtml(view.installPlan.url) + '</code>'
-          + (view.installPlan.sha256 ? '<br/>SHA-256 verified before running.' : '') + '</p></div>';
+          + '<p class="setup-hw-provenance">' + (archive ? 'Official release archive from ' : 'Official installer from ')
+          + '<code>' + escapeHtml(view.installPlan.url) + '</code>'
+          + (archive && view.installPlan.installDir
+            ? '<br/>Unpacked into <code>' + escapeHtml(view.installPlan.installDir) + '</code> — no root access needed.'
+            : '')
+          + (view.installPlan.sha256 ? '<br/>SHA-256 verified before ' + (archive ? 'unpacking.' : 'running.') : '')
+          + '</p></div>';
       }
       var manualUrl = view.installPlan.manualFallbackUrl || 'https://ollama.com/download';
       return '<div class="setup-hw-ollama setup-hw-ollama--manual">'
@@ -367,6 +374,8 @@
         view.cancelFailed = true;
         view.cancelFailureText = result && result.code === 'termination_failed'
           ? 'Cancel failed — Jenny could not confirm that the owned process stopped. Retry cancellation or wait for it to finish.'
+          : result && result.code === 'already_published'
+            ? 'Too late to cancel — Ollama is already unpacked. Jenny is restarting it and verifying the version.'
           : result && result.code === 'bridge_unavailable'
             ? 'Cancel failed — the setup bridge is unavailable.'
             : 'Cancel failed — the request did not complete. Try again, or wait for the operation to finish.';

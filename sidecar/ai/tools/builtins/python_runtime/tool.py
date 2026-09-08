@@ -54,10 +54,10 @@ def python_execute_tool(
             message="tool argument 'code' contains invalid Unicode text that cannot be encoded as UTF-8",
             retryable=False,
         ) from error
-    if sys.platform != "win32":
+    if sys.platform not in ("win32", "linux"):
         raise ToolExecutionFailure(
             code=CMP_TOOL_PYTHON_NOT_AVAILABLE,
-            message="python runtime is only available on Windows in this build",
+            message="python runtime is only available on Windows and Linux in this build",
             retryable=False,
         )
 

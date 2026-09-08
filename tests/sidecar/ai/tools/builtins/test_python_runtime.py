@@ -1002,15 +1002,15 @@ def test_format_python_output_bounds_table_count_and_html(tmp_path: Path) -> Non
     assert payload["truncated"] is True
 
 
-def test_python_execute_tool_fails_closed_on_non_windows(
+def test_python_execute_tool_fails_closed_on_unsupported_platforms(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(tool_module.sys, "platform", "linux")
+    monkeypatch.setattr(tool_module.sys, "platform", "darwin")  # Linux is supported since batch C
 
     with pytest.raises(ToolExecutionFailure) as caught:
         tool_module.python_execute_tool({"code": "print(1)"}, WorkspaceGuard(str(tmp_path)))
 
-    assert caught.value.code == CMP_TOOL_PYTHON_NOT_AVAILABLE
+    assert caught.value.code == CMP_TOOL_PYTHON_NOT_AVAILABLE and "Linux" in caught.value.message
 
 
 def test_python_execute_tool_rejects_blank_code(

@@ -15,6 +15,7 @@ from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessService,
     OwnedProcessShutdownError,
 )
+from sidecar.runtime import external_child_env
 
 
 @pytest.mark.parametrize("failing_stream", ["stdout", "stderr"])
@@ -60,6 +61,48 @@ def test_pipe_read_error_marks_output_incomplete_and_reports_type(
 
     assert result.drain_incomplete is True
     assert diagnostic_data[-1]["read_error_types"] == {failing_stream: "OSError"}
+
+
+def test_posix_spawn_restores_frozen_library_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class _Process:
+        pid = 42_000
+        stdin = None
+        stdout = None
+        stderr = None
+
+    def _popen(*_args: object, **kwargs: object) -> _Process:
+        captured_kwargs.update(kwargs)
+        return _Process()
+
+    service = OwnedProcessService()
+    with monkeypatch.context() as spawn_patch:
+        spawn_patch.setattr(owned_process_module, "os", SimpleNamespace(name="posix"))
+        spawn_patch.setattr(
+            external_child_env,
+            "os",
+            SimpleNamespace(name="posix", environ={}),
+        )
+        spawn_patch.setattr(external_child_env, "sys", SimpleNamespace(frozen=True))
+        spawn_patch.setattr(owned_process_module.subprocess, "Popen", _popen)
+        service.spawn(
+            ["fake"],
+            cwd=tmp_path,
+            env={
+                "KEEP": "yes",
+                "LD_LIBRARY_PATH": "/tmp/_MEI",
+                "LD_LIBRARY_PATH_ORIG": "/opt/lib",
+            },
+        )
+
+    assert captured_kwargs["env"] == {
+        "KEEP": "yes",
+        "LD_LIBRARY_PATH": "/opt/lib",
+    }
 
 
 def test_posix_spawn_shutdown_race_terminates_unregistered_process_group(

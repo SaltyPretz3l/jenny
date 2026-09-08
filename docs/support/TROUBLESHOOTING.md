@@ -46,7 +46,66 @@ build.
 **Jenny.app** → **Open** → **Open**. If neither option appears, clear the
 quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
 The macOS build is untested by the maintainer, auto-update is disabled
-there, and the sandboxed Python tool is Windows-only.
+there, and the sandboxed Python tool is not available on macOS.
+
+### Linux: Jenny says the Chromium sandbox is off
+
+**Symptom.** Jenny shows a one-time warning that the Chromium sandbox is
+off, and the **Chromium sandbox** row under **Settings → Diagnostics**
+reports it as off.
+
+**Common cause.** The AppImage is running on a system that restricts
+unprivileged user namespaces, such as Ubuntu 24.04 by default. Its launcher
+adds `--no-sandbox` only on those systems so Jenny can start. The warning is
+dismissable; the Diagnostics row continues to show the current state.
+
+**Recovery.** Install the `.deb` for a sandboxed install, or keep using the
+AppImage after reading the warning. Allowing unprivileged user namespaces
+system-wide is a system-security decision, not a Jenny setting.
+
+### Linux: saved API keys or named profiles are unavailable
+
+**Symptom.** Jenny says protected credential storage is unavailable, or a
+named profile or integration that needs a saved secret cannot be used.
+
+**Common cause.** Electron cannot reach an unlocked Secret Service keyring.
+Jenny treats its unprotected `basic_text` backend as unavailable and never
+falls back to plaintext credential storage. Local chat continues with the
+automatic local profile.
+
+**Recovery.** Install and unlock a Secret Service provider such as
+gnome-keyring or KWallet, restart Jenny, then sign in or save the secret
+again.
+
+### Linux: the app or its backend does not start
+
+**Symptom.** The AppImage does not open, the packaged backend fails during
+startup, or the `.deb` reports missing dependencies.
+
+**Common cause.** The AppImage is not executable, `/tmp` is mounted with
+`noexec` so the bundled backend cannot run after extraction, or a `.deb`
+dependency was left unresolved. The static AppImage runtime does not need
+libfuse2.
+
+**Recovery.** For the AppImage, run `chmod +x Jenny-x86_64.AppImage`, then
+start it again. If `/tmp` is `noexec`, create an executable temporary
+directory such as `~/.cache/jenny-tmp`, set `TMPDIR` to it before launching
+Jenny, and retry. Check backend logs under `~/.companion/logs`. For `.deb`
+dependency errors, run `sudo apt --fix-broken install`.
+
+### Linux: how do I uninstall?
+
+**Symptom.** You want to remove the Linux app without accidentally deleting
+your chats or local runtime data.
+
+**Common cause.** The removal command depends on whether you installed the
+`.deb` or downloaded the AppImage.
+
+**Recovery.** Run `sudo apt remove jenny` for the `.deb`, or delete the
+AppImage file. Jenny keeps `~/.config/jenny`, `~/.companion`, and
+`~/.local/share/jenny/ollama` unless you choose otherwise in the in-app
+assistant. See [Uninstall and Data Recovery](../operations/UNINSTALL_AND_DATA_RECOVERY.md)
+for the data choices.
 
 ### Crash on startup
 
@@ -274,18 +333,18 @@ life. Lockdown is deliberate and permanent for that session.
 
 ### `python_execute` is unavailable
 
-**Symptom.** "python runtime is only available on Windows in this build,"
+**Symptom.** "python runtime is only available on Windows and Linux in this build,"
 or the tool fails while bootstrapping its runtime.
 
-**Common cause.** The sandboxed Python runtime is Windows-only in 1.0. On
-Windows, a bootstrap failure is usually the runtime's first-run pip install
-failing offline, a wheelhouse integrity check failing, or a stale lock from
-an interrupted first run.
+**Common cause.** On Windows or Linux, the first-run bootstrap can fail while
+installing from the offline wheelhouse, while checking bundle integrity, or
+because an interrupted first run left a stale lock. On Linux, the managed
+runtime lives under `~/.config/jenny/python-runtime`.
 
-**Recovery.** On Windows, retry once; the bootstrap is bounded and reports
-a specific reason on repeat failures. Make sure the capability is on under
-**Settings → Tools → Optional capabilities**. On macOS and Linux use the
-shell tools instead.
+**Recovery.** On Windows or Linux, retry once; the bootstrap is bounded and
+reports a specific reason on repeat failures. Make sure the capability is on
+under **Settings → Tools → Optional capabilities**. On macOS, use the shell
+tools instead.
 
 ### Chat stream stuck / spinner won't go away
 

@@ -248,11 +248,11 @@ that reports the same readiness/status semantics. Shell config may keep
 display-safe metadata such as consent, "configured", source labels,
 fingerprints, or timestamps, but not the secret value.
 
-**Portability note.** Windows remains the active packaged-release target;
-macOS/Linux source runs must surface platform keyring limitations through
+**Portability note.** Windows remains the primary packaged-release target;
+Linux ships experimental AppImage and `.deb` packages, and macOS remains
+best-effort. Keyring limitations on Linux and macOS surface through
 status/recovery metadata and the automatic local profile, never through a
-plaintext credential fallback. Linux packaging remains a separate release
-decision.
+plaintext credential fallback.
 
 ## Diagnostics schema version
 

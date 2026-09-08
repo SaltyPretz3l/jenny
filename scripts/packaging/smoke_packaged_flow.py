@@ -88,6 +88,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Allow packaged sidecar manifest git_commit to differ from the current checkout.",
     )
+    parser.add_argument(
+        "--existing-artifacts",
+        action="store_true",
+        help=(
+            "Skip the build and validate dist/<platform>-unpacked "
+            "from an earlier electron-builder run."
+        ),
+    )
+    parser.add_argument(
+        "--composition",
+        choices=("dev", "release"),
+        default="dev",
+        help=(
+            "dev builds and validates the plugin hosts too; "
+            "release matches the release workflow (sidecar only)."
+        ),
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -733,13 +750,21 @@ def _build_packaged_directory(
     timeout_seconds: int,
     env: dict[str, str],
     deadline: float | None = None,
+    build_hosts: bool = True,
 ) -> None:
     workflow_deadline = deadline or (time.monotonic() + timeout_seconds)
-    commands = (
+    commands = [
         [NPM_COMMAND, "run", "build:preload"],
         [sys.executable, "scripts/packaging/build_sidecar_artifact.py"],
-        [sys.executable, "scripts/packaging/build_restricted_host_artifact.py"],
-        [sys.executable, "scripts/packaging/build_full_host_supervisor_artifact.py"],
+    ]
+    if build_hosts:
+        commands.extend(
+            (
+                [sys.executable, "scripts/packaging/build_restricted_host_artifact.py"],
+                [sys.executable, "scripts/packaging/build_full_host_supervisor_artifact.py"],
+            )
+        )
+    commands.append(
         [
             NPM_COMMAND,
             "exec",
@@ -750,7 +775,7 @@ def _build_packaged_directory(
             "electron-builder.yml",
             "--publish",
             "never",
-        ],
+        ]
     )
     for command in commands:
         _run_command(
@@ -764,12 +789,39 @@ def _build_packaged_directory(
         )
 
 
+def _validate_packaged_hosts(
+    resources_dir: Path,
+    *,
+    log_path: Path,
+    allow_stale_source: bool,
+    validate_hosts: bool,
+) -> tuple[tuple[Path, Path], tuple[Path, Path]] | None:
+    if not validate_hosts:
+        return None
+    restricted_host_path, restricted_host_manifest = _validate_packaged_restricted_host(
+        resources_dir,
+        log_path=log_path,
+        allow_stale_source=allow_stale_source,
+    )
+    full_host_path, full_host_manifest = _validate_packaged_full_host_supervisor(
+        resources_dir,
+        log_path=log_path,
+        allow_stale_source=allow_stale_source,
+    )
+    return (
+        (restricted_host_path, restricted_host_manifest),
+        (full_host_path, full_host_manifest),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     log_path = Path(args.log_path).resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
-        "Packaging smoke log\n",
+        "Packaging smoke log\n"
+        f"existing_artifacts={str(args.existing_artifacts).lower()}\n"
+        f"composition={args.composition}\n",
         encoding="utf-8",
     )
 
@@ -784,12 +836,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         smoke_env["SOURCE_DATE_EPOCH"] = args.source_date_epoch
 
     try:
-        _build_packaged_directory(
-            log_path=log_path,
-            timeout_seconds=args.step_timeout_seconds,
-            env=smoke_env,
-            deadline=workflow_deadline,
-        )
+        validate_hosts = args.composition == "dev"
+        if not args.existing_artifacts:
+            _build_packaged_directory(
+                log_path=log_path,
+                timeout_seconds=args.step_timeout_seconds,
+                env=smoke_env,
+                deadline=workflow_deadline,
+                build_hosts=validate_hosts,
+            )
         resources_dir = _resolve_resources_dir()
         artifact_path, manifest_path = _wait_for_packaged_artifact_validation(
             resources_dir,
@@ -803,12 +858,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
             ),
         )
-        restricted_host_path, restricted_host_manifest = _validate_packaged_restricted_host(
-            resources_dir,
-            log_path=log_path,
-            allow_stale_source=args.allow_stale_source,
-        )
-
         version_result = _run_command(
             [str(artifact_path), "--version"],
             log_path=log_path,
@@ -817,10 +866,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 step_cap=60,
             ),
         )
-        full_host_path, full_host_manifest = _validate_packaged_full_host_supervisor(
+        host_paths = _validate_packaged_hosts(
             resources_dir,
             log_path=log_path,
             allow_stale_source=args.allow_stale_source,
+            validate_hosts=validate_hosts,
         )
         version_output = f"{version_result.stdout}\n{version_result.stderr}"
         if API_VERSION not in version_output:
@@ -875,10 +925,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  - resources_dir: {_display_path(resources_dir)}")
     print(f"  - artifact: {_display_path(artifact_path)}")
     print(f"  - manifest: {_display_path(manifest_path)}")
-    print(f"  - restricted host: {_display_path(restricted_host_path)}")
-    print(f"  - restricted host manifest: {_display_path(restricted_host_manifest)}")
-    print(f"  - full-host supervisor: {_display_path(full_host_path)}")
-    print(f"  - full-host supervisor manifest: {_display_path(full_host_manifest)}")
+    if host_paths is not None:
+        (restricted_host_path, restricted_host_manifest), (
+            full_host_path,
+            full_host_manifest,
+        ) = host_paths
+        print(f"  - restricted host: {_display_path(restricted_host_path)}")
+        print(f"  - restricted host manifest: {_display_path(restricted_host_manifest)}")
+        print(f"  - full-host supervisor: {_display_path(full_host_path)}")
+        print(f"  - full-host supervisor manifest: {_display_path(full_host_manifest)}")
     print(f"  - app: {_display_path(packaged_app_path)}")
     print(f"  - log: {_display_path(log_path)}")
     return 0

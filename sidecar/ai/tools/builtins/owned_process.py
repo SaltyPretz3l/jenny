@@ -27,6 +27,7 @@ from sidecar.ai.tools.builtins.owned_process_windows import (
     windows_process_is_alive,
 )
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.external_child_env import external_child_environment
 
 DEFAULT_MAX_ACTIVE_PROCESSES = 4
 DEFAULT_MAX_QUEUED_PROCESSES = 8
@@ -255,8 +256,8 @@ class OwnedProcessService:
                     else list(normalized_argv)
                 ),
                 cwd=None if job_object is not None else str(cwd),
-                env=None if job_object is not None else (
-                    dict(env) if env is not None else None
+                env=(
+                    None if job_object is not None else external_child_environment(env)
                 ),
                 stdin=(
                     subprocess.PIPE if job_object is not None else subprocess.DEVNULL

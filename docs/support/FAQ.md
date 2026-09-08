@@ -28,7 +28,10 @@ Jenny never checks for updates on its own. Open **Settings → About &
 Updates → Check for Updates**. If a newer release exists it is downloaded,
 verified, and installed when you press **Restart and Install**. On macOS
 auto-update is disabled (it needs a signed build); download the new dmg from
-the [releases page](https://github.com/SaltyPretz3l/jenny/releases).
+the [releases page](https://github.com/SaltyPretz3l/jenny/releases). AppImage
+builds replace the AppImage in place, so keep the file in a folder you can
+write to. The `.deb` build shows a prompt to download the latest package
+instead of updating itself.
 
 ### Can I run Jenny on macOS or Linux?
 
@@ -36,17 +39,28 @@ Windows is the supported platform. Each release also publishes a
 **best-effort macOS build** (`Jenny-arm64.dmg`, Apple Silicon): unsigned,
 built on CI, and never run by the maintainer. Gatekeeper blocks the first
 launch; approve it under **System Settings → Privacy & Security → Open
-Anyway** (or right-click the app → **Open** on older macOS). The sandboxed
-Python tool (`python_execute`) is Windows-only. Linux is source-only: clone
-the repo and run the setup script per the README.
+Anyway** (or right-click the app → **Open** on older macOS).
+
+Experimental x64 Linux packages (`Jenny-x86_64.AppImage` and
+`Jenny-amd64.deb`) start with the next 1.0.x release; 1.0.0 has no Linux
+package. They target Ubuntu 22.04+, Debian 12+, and compatible
+distributions with glibc 2.35 or newer. The packages are built on CI and
+have been verified by the maintainer under WSLg only, not on a bare-metal
+desktop, so reports are welcome. The sandboxed Python tool (`python_execute`)
+works on Windows and Linux but is not available on macOS. One-click Ollama
+install works on Windows and Linux. Source runs still work on all three
+platforms.
 
 ### How do I uninstall Jenny without losing my chats?
 
 Open **Settings → Data & Privacy** and choose **Uninstall Jenny**, then
 **Remove app only**. Jenny drains the running app and keeps the profile for
 automatic reuse after reinstall. The silent Windows uninstall and dragging
-the macOS app to Trash also preserve data. Source installs use
-`npm run uninstall` from the project folder.
+the macOS app to Trash also preserve data. On Linux, run
+`sudo apt remove jenny` for the `.deb` or delete the AppImage file; Jenny
+keeps `~/.config/jenny`, `~/.companion`, and
+`~/.local/share/jenny/ollama`. Source installs use `npm run uninstall` from
+the project folder.
 
 For an independent copy, choose **Keep a recoverable archive** instead.
 Jenny does not remove live data unless it can read back and verify the

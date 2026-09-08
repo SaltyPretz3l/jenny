@@ -158,7 +158,14 @@ test('probeCapabilities fails closed when the help command throws', () => {
   assert.match(result.reason, /^probe_failed:/);
 });
 
-test('probeCapabilities reports live draft-mtp support and version provenance', () => {
+test('probeCapabilities reports live draft-mtp support and version provenance', (t) => {
+  const credentialKey = 'JENNY_CAPABILITY_TEST_API_KEY';
+  const originalCredential = process.env[credentialKey];
+  process.env[credentialKey] = 'must-not-reach-llama-server';
+  t.after(() => {
+    if (originalCredential === undefined) delete process.env[credentialKey];
+    else process.env[credentialKey] = originalCredential;
+  });
   const execCalls = [];
   const spawnCalls = [];
   const result = probeCapabilities({
@@ -183,12 +190,14 @@ test('probeCapabilities reports live draft-mtp support and version provenance', 
   assert.equal(result.commit, 'bcdcc1044');
   assert.deepEqual(execCalls.map((call) => call.args), [['--help']]);
   assert.deepEqual(spawnCalls.map((call) => call.args), [['--version']]);
-  assert.deepEqual(execCalls[0].options, {
+  const { env, ...execOptions } = execCalls[0].options;
+  assert.deepEqual(execOptions, {
     timeout: 10_000,
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
     encoding: 'utf8',
   });
+  assert.equal(env[credentialKey], undefined);
 });
 
 test('probeCapabilities keeps the probe ok when the version command throws', () => {

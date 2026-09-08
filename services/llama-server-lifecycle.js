@@ -4,6 +4,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const { pipeChildLogs } = require('./backend/child-process-logging');
+const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { forceKillProcessTreeSync, verifyProcessExitedSync } = require('./backend/sidecar-shutdown');
 const { isProcessAlive, wait } = require('./backend/process-utils');
 const { requestWithTimeout } = require('./http-fetch-util');
@@ -410,9 +411,8 @@ async function startLlamaServer({
     fsImpl.writeFileSync(apiKeyPath, `${apiKey}\n`, { mode: 0o600 });
     child = spawnImpl(resolvedBinary, args, {
       cwd: path.dirname(resolvedBinary),
-      detached: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: sanitizeSpawnEnv(process.env),
     });
   } catch (error) {
     removeApiKeyFile();

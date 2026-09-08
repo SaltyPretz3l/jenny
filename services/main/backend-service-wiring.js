@@ -9,6 +9,7 @@ const { createTrackerForService } = require('../workspace-active-use-tracker');
 const { resolvePackagedSidecarLaunchAsync } = require('../backend/packaged-sidecar-launch');
 const { CalendarService } = require('../calendar-service');
 const { createBackgroundJobTracker } = require('./background-job-tracker');
+const { resolveChromiumSandboxStatus } = require('./chromium-sandbox-status');
 const { createChatStreamBridge } = require('../chat-stream-bridge');
 const { CompanionService } = require('../companion-service');
 const { HomeAssistantService } = require('../home-assistant-service');
@@ -99,8 +100,25 @@ function createBackendServiceWithDeps({
       return packagedSidecarLaunch;
     }
     : null;
+  const chromiumSandbox = resolveChromiumSandboxStatus({
+    platform: processRef.platform || process.platform,
+    isPackaged: app.isPackaged === true,
+    hasSwitch: typeof app.commandLine?.hasSwitch === 'function'
+      ? (name) => app.commandLine.hasSwitch(name)
+      : null,
+    env: processRef.env,
+    execPath: processRef.execPath || process.execPath,
+  });
+  if (chromiumSandbox.packaged && chromiumSandbox.sandboxed === false) {
+    log('WARN', 'chromium.sandbox_disabled', {
+      reason: chromiumSandbox.reason,
+      package_kind: chromiumSandbox.package_kind,
+      platform: chromiumSandbox.platform,
+    });
+  }
   const backendService = new BackendService({
     appVersion: app.getVersion(),
+    chromiumSandbox,
     userDataPath: app.getPath('userData'),
     repoRoot: usePackagedSidecarRuntime ? undefined : (configuredRepoRoot || undefined),
     pythonExecutable: usePackagedSidecarRuntime ? undefined : (String(processRef.env.JENNY_BACKEND_PYTHON || '').trim() || undefined),

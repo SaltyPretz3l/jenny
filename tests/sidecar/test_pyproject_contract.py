@@ -20,12 +20,12 @@ def _requirement_name(requirement: str) -> str:
     return re.split(r"[<>=!~;\[]", requirement, maxsplit=1)[0].strip()
 
 
-def _load_packaging_module(script_name: str) -> ModuleType:
-    script_path = ROOT / "scripts" / "packaging" / script_name
-    module_name = f"test_loader_contract_{script_name}"
+def _load_script_module(relative_path: str) -> ModuleType:
+    script_path = ROOT / relative_path
+    module_name = f"test_loader_contract_{re.sub(r'[^A-Za-z0-9_]', '_', relative_path)}"
     spec = importlib.util.spec_from_file_location(module_name, script_path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"unable to load packaging script module: {script_name}")
+        raise RuntimeError(f"unable to load script module: {relative_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -87,17 +87,38 @@ def test_requirements_lock_pins_base_and_packaging_dependencies() -> None:
     for name in required_names:
         assert re.search(rf"^{re.escape(name)}==", lock_text, re.IGNORECASE | re.MULTILINE), name
 
+    for name in ("pywin32-ctypes", "pefile"):
+        assert re.search(
+            rf"^{name}==[^;\\]+; sys_platform == 'win32' \\$", lock_text,
+            re.MULTILINE,
+        )
+    assert re.search(
+        r"^macholib==[^;\\]+; sys_platform == 'darwin' \\$", lock_text,
+        re.MULTILINE,
+    )
+    for excluded_name in ("pip", "setuptools", "wheel"):
+        assert re.search(
+            rf"^{excluded_name}==",
+            lock_text,
+            re.IGNORECASE | re.MULTILINE,
+        ) is None
+
 
 def test_requirements_lock_uses_hash_pinned_install_contract() -> None:
+    checker = _load_script_module("scripts/checks/check_python_runtime_bundle.py")
     lock_lines = (ROOT / "requirements-lock.txt").read_text(encoding="utf-8").splitlines()
-    requirement_lines = [
-        index for index, line in enumerate(lock_lines) if re.match(r"^[A-Za-z0-9_.-]+==", line)
-    ]
 
-    assert requirement_lines
-    for index in requirement_lines:
-        assert lock_lines[index].endswith("\\")
-        assert re.match(r"\s+--hash=sha256:[a-f0-9]{64}$", lock_lines[index + 1])
+    pins, errors = checker._parse_hashed_lock(  # noqa: SLF001
+        ROOT / "requirements-lock.txt"
+    )
+
+    assert pins
+    assert errors == []
+    assert all(
+        line.rstrip().endswith("\\")
+        for line in lock_lines
+        if checker.LOCK_PIN_RE.fullmatch(line.strip())
+    )
 
 
 def test_build_backend_uses_separate_exact_hash_locked_toolchain() -> None:
@@ -149,9 +170,13 @@ def test_ruff_per_file_ignores_reference_real_paths() -> None:
 
 
 def test_emit_sbom_script_writes_cyclonedx_component_inventory(tmp_path: Path) -> None:
-    module = _load_packaging_module("emit_sbom.py")
+    module = _load_script_module("scripts/packaging/emit_sbom.py")
     lock_path = tmp_path / "requirements-lock.txt"
-    lock_path.write_text("httpx==0.28.1\nPyYAML==6.0.3\n", encoding="utf-8")
+    lock_path.write_text(
+        "httpx==0.28.1\n"
+        "PyYAML==6.0.3 ; sys_platform == 'win32' \\\n",
+        encoding="utf-8",
+    )
     output_path = tmp_path / "sidecar-sbom.json"
 
     module.emit_sbom(lock_path=lock_path, output_path=output_path)
@@ -160,10 +185,17 @@ def test_emit_sbom_script_writes_cyclonedx_component_inventory(tmp_path: Path) -
     assert sbom["bomFormat"] == "CycloneDX"
     assert sbom["specVersion"] == "1.5"
     assert [component["name"] for component in sbom["components"]] == ["httpx", "PyYAML"]
+    assert sbom["components"][0]["properties"] == [
+        {"name": "jenny:dependency-scope", "value": "sidecar-runtime"}
+    ]
+    assert sbom["components"][1]["properties"] == [
+        {"name": "jenny:dependency-scope", "value": "sidecar-runtime"},
+        {"name": "jenny:environment-marker", "value": "sys_platform == 'win32'"}
+    ]
 
 
 def test_release_sbom_includes_build_tools_managed_runtime_and_cpython() -> None:
-    module = _load_packaging_module("emit_sbom.py")
+    module = _load_script_module("scripts/packaging/emit_sbom.py")
 
     sbom = module.build_sbom(include_managed_runtime=True)
 

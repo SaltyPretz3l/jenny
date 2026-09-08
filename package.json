@@ -13,6 +13,7 @@
     "url": "https://github.com/SaltyPretz3l/jenny/issues"
   },
   "homepage": "https://github.com/SaltyPretz3l/jenny",
+  "desktopName": "jenny",
   "main": "main.js",
   "scripts": {
     "audit": "npm audit --omit=dev",
@@ -52,6 +53,7 @@
     "plugin:validate": "node scripts/plugins/validate-plugin.mjs",
     "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host && npm run build:full-host-supervisor && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",
     "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",
+    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",
     "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish always",
     "release:smoke": "python scripts/packaging/smoke_packaged_flow.py",
     "sbom:sidecar": "python scripts/packaging/emit_sbom.py",

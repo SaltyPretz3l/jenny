@@ -24,6 +24,10 @@
  * preserved.  Callers can ``options.allow`` extra regex patterns for
  * engine-specific vars (``OLLAMA_*``, ``VLLM_*``), or
  * ``options.extraDeny`` to tighten the deny list further.
+ * When the source declares ``APPDIR``, a final AppImage post-pass
+ * removes paths inside that bundle from ``LD_LIBRARY_PATH``, ``PATH``,
+ * and ``XDG_DATA_DIRS`` so native children use system libraries and
+ * executables rather than Electron's bundled compatibility shims.
  *
  * Non-goals
  * ---------
@@ -36,6 +40,8 @@
  */
 
 'use strict';
+
+const path = require('path');
 
 const CREDENTIAL_KEY_RE = /(^|_)(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE[_-]?KEY|AUTH[_-]?TOKEN|ACCESS[_-]?KEY|SESSION[_-]?KEY|BEARER)(_|$)/i;
 const CREDENTIAL_PREFIX_RE = /^(ANTHROPIC|OPENAI|GITHUB|GH|AWS|AZURE|GCP|GOOGLE|HUGGINGFACE|HF_TOKEN|CLAUDE|GEMINI|COHERE|MISTRAL)_/i;
@@ -82,6 +88,11 @@ const ALWAYS_KEEP = new Set([
 ]);
 
 const ALWAYS_KEEP_PREFIX_RE = /^(LC_|PROGRAMFILES|PROGRAMDATA|PUBLIC|COMMONPROGRAMFILES)/i;
+
+function normalizeEntry(entry) {
+  const normalized = path.posix.normalize(entry);
+  return normalized === '/' ? '/' : normalized.replace(/\/+$/, '');
+}
 
 /**
  * Copy ``env`` into a fresh object, dropping any key whose name looks
@@ -148,6 +159,28 @@ function sanitizeSpawnEnv(env, options = {}) {
     }
 
     out[key] = value;
+  }
+
+  if (typeof source.APPDIR === 'string' && source.APPDIR) {
+    const appDir = normalizeEntry(source.APPDIR);
+    if (!appDir) return out;
+    const appDirPrefix = `${appDir}/`;
+    for (const key of ['LD_LIBRARY_PATH', 'PATH', 'XDG_DATA_DIRS']) {
+      if (!Object.prototype.hasOwnProperty.call(out, key)) {
+        continue;
+      }
+      const keptEntries = out[key]
+        .split(':')
+        .filter((entry) => {
+          const normalizedEntry = normalizeEntry(entry);
+          return normalizedEntry !== appDir && !normalizedEntry.startsWith(appDirPrefix);
+        });
+      if (keptEntries.length === 0) {
+        delete out[key];
+      } else {
+        out[key] = keptEntries.join(':');
+      }
+    }
   }
   return out;
 }

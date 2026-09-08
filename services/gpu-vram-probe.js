@@ -14,6 +14,7 @@
 // the renderer formats both identically.
 
 const { execFile: nodeExecFile } = require('child_process');
+const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const {
   createUnavailableGpuMemorySample,
   normalizeGpuMemorySample,
@@ -96,6 +97,7 @@ async function probeNvidiaSmiVram({ execFile = nodeExecFile, timeoutMs = DEFAULT
   const { error, stdout } = await runExecFile(execFile, NVIDIA_SMI_QUERY_ARGS, {
     timeout: timeoutMs,
     windowsHide: true,
+    env: sanitizeSpawnEnv(process.env),
   });
 
   const parsed = error ? null : parseNvidiaMemoryCsv(stdout);

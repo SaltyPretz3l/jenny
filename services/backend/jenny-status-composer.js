@@ -383,6 +383,7 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null) {
     model_loaded: source.model_loaded === true,
     reasoning_effort_support: normalizeString(source.reasoning_effort_support || 'unknown') || 'unknown',
     local_runtime: cloneJsonSafe(source.local_runtime, null),
+    chromium_sandbox: cloneJsonSafe(service?.options?.chromiumSandbox, null),
     llama_server: buildLlamaServerFacet(service, redactor),
     tools_status: cloneJsonSafe(source.tools_status, {}),
     lifecycle: buildRuntimeLifecycleFacet(service, backendStatus, source, redactor),

@@ -33,7 +33,6 @@ _SIDECAR_PACKAGE_DIR = next(
 # Development-tree default; packaged builds supply the wheelhouse through config.
 DEFAULT_RUNTIME_WHEELHOUSE = _SIDECAR_PACKAGE_DIR.parent / "vendor" / "python-runtime-wheels"
 WHEELHOUSE_MANIFEST_FILENAME = "wheelhouse-manifest.json"
-EMBED_MANIFEST_FILENAME = "python-embed-manifest.json"
 RUNTIME_PACKAGES = (
     "pandas==3.0.1",
     "numpy==2.4.3",
@@ -88,6 +87,13 @@ from sidecar.ai.tools.builtins.python_runtime.bootstrap_lock import (  # noqa: E
     _should_recover_bootstrap_lock,
     _unlink_lock_best_effort,
     _write_bootstrap_lock,
+)
+from sidecar.ai.tools.builtins.python_runtime.bundled_runtime import (  # noqa: E402, F401
+    EMBED_MANIFEST_FILENAME,
+    _copy_embeddable_runtime,
+    _is_bundled_embeddable_interpreter,
+    bundled_runtime_root,
+    copy_bundled_runtime,
 )
 from sidecar.ai.tools.builtins.python_runtime.errors import (  # noqa: E402
     PythonRuntimeError,
@@ -444,6 +450,7 @@ def _runtime_requirements_fingerprint(config: Any | None) -> str:
 
 
 def _runtime_requirements_fingerprint_for_wheelhouse(wheelhouse: Path | None) -> str:
+    """Release bundles bind the contract digest so interpreter updates rebuild."""
     base_fingerprint = _requirements_fingerprint()
     if wheelhouse is None:
         return base_fingerprint
@@ -464,7 +471,18 @@ def _runtime_requirements_fingerprint_for_wheelhouse(wheelhouse: Path | None) ->
         raise PythonRuntimeWheelhouseIntegrityError(
             "Python runtime wheelhouse has an invalid runtime lock fingerprint"
         )
-    return hashlib.sha256(f"{base_fingerprint}\n{normalized}".encode("utf-8")).hexdigest()
+    contract_digest = payload.get("contract_sha256")
+    if not isinstance(contract_digest, str):
+        return hashlib.sha256(f"{base_fingerprint}\n{normalized}".encode("utf-8")).hexdigest()
+    normalized_contract = contract_digest.lower()
+    if len(normalized_contract) != SHA256_HEX_LENGTH or any(
+        character not in "0123456789abcdef" for character in normalized_contract
+    ):
+        raise PythonRuntimeWheelhouseIntegrityError(
+            "Python runtime wheelhouse has an invalid bundle contract fingerprint"
+        )
+    fingerprint = f"{base_fingerprint}\n{normalized}\n{normalized_contract}"
+    return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 
 def _wheelhouse_manifest_path(wheelhouse: Path) -> Path:
@@ -581,6 +599,7 @@ def _install_from_wheelhouse(venv_python: Path, wheelhouse: Path) -> None:
                 failed_phase="install_finished",
                 remediation=remediation,
             )
+    # Only the Windows layout has a beside-interpreter manifest; PBS already ships pip.
     if (venv_python.parent / EMBED_MANIFEST_FILENAME).is_file():
         _ensure_offline_pip(venv_python, wheelhouse)
     bootstrap_subprocess.run(
@@ -602,32 +621,6 @@ def _install_from_wheelhouse(venv_python: Path, wheelhouse: Path) -> None:
     )
 
 
-def _is_bundled_embeddable_interpreter(candidate: Path) -> bool:
-    if candidate.name.lower() != "python.exe":
-        return False
-    return (candidate.parent / EMBED_MANIFEST_FILENAME).is_file() and any(
-        candidate.parent.glob("python*._pth")
-    )
-
-
-def _copy_embeddable_runtime(base_interpreter: Path, staging_dir: Path) -> Path:
-    source_dir = base_interpreter.parent.resolve()
-    destination = staging_dir.resolve()
-    try:
-        destination.relative_to(source_dir)
-    except ValueError:
-        pass
-    else:
-        raise PythonRuntimeError("Managed Python runtime destination overlaps its bundled source")
-    shutil.copytree(source_dir, staging_dir)
-    staging_python = staging_dir / base_interpreter.name
-    if not staging_python.is_file():
-        raise PythonRuntimeError(
-            f"Bundled Python copy did not create an executable at {staging_python}"
-        )
-    return staging_python
-
-
 def _create_runtime_venv(
     config: Any,
     staging_dir: Path,
@@ -647,15 +640,16 @@ def _create_runtime_venv(
                 ),
             )
         _raise_if_bootstrap_deadline_elapsed(deadline_monotonic)
-        uses_embeddable = _is_bundled_embeddable_interpreter(base_interpreter)
-        venv_data = {"creation_path": "bundled_embeddable" if uses_embeddable else "venv"}
+        runtime_bundle = bundled_runtime_root(base_interpreter)
+        venv_data = {"creation_path": runtime_bundle[1] if runtime_bundle else "venv"}
         staging_dir.parent.mkdir(parents=True, exist_ok=True)
         with telemetry.phase("venv_created", data=venv_data):
-            if uses_embeddable:
-                # The official Windows embeddable distribution intentionally omits
-                # venv/ensurepip. Copy it into the user-owned runtime root and
-                # bootstrap pip from the already verified offline wheel instead.
-                staging_python = _copy_embeddable_runtime(base_interpreter, staging_dir)
+            if runtime_bundle:
+                # Windows embeddable omits venv/ensurepip; PBS must survive changing
+                # AppImage mount paths. Copy either bundle into the user-owned root.
+                staging_python = copy_bundled_runtime(
+                    base_interpreter, runtime_bundle[0], staging_dir
+                )
             else:
                 bootstrap_subprocess.run(
                     [str(base_interpreter), "-m", "venv", str(staging_dir)],

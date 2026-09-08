@@ -607,6 +607,20 @@
     ];
   }
 
+  // Electron's own runtime facet (jenny_status.runtime.chromium_sandbox) says
+  // whether the Chromium OS sandbox is on. Absent facet -> no row.
+  function chromiumSandboxRow(status) {
+    var facet = status && status.runtime ? status.runtime.chromium_sandbox : null;
+    if (!facet || typeof facet !== 'object') return null;
+    if (facet.sandboxed === true) return ['Chromium sandbox', 'On', 'ok'];
+    if (facet.sandboxed !== false) {
+      return ['Chromium sandbox', 'Unknown · Electron did not report its command line', 'warn'];
+    }
+    return ['Chromium sandbox', facet.package_kind === 'appimage'
+      ? 'Off · this system restricts unprivileged user namespaces; install the .deb for full sandboxing'
+      : 'Off · launched with --no-sandbox', 'warn'];
+  }
+
   // The host is aria-live; a stamp that changes on every refresh would force the
   // whole list to be re-announced even when nothing else moved, so it stays out
   // of the accessibility tree. Run status already goes through the announcer.
@@ -628,7 +642,8 @@
         + escapeHtml(error || 'No runtime inventory has been collected yet.') + '</p></div>');
       return;
     }
-    var platform = [schedulerRow(state.schedulerDiagnostics)].concat(pluginRows(state));
+    var sandbox = chromiumSandboxRow(state.diagnosticsStatus);
+    var platform = [schedulerRow(state.schedulerDiagnostics)].concat(pluginRows(state), sandbox ? [sandbox] : []);
     var rows = boundedFacetItems(snapshot).map(function (item) { return inventoryRow(item, false); }).join('')
       + platform.map(function (item, index) { return inventoryRow(item, index === 0); }).join('');
     paintMarkup(host, '<dl class="diagnostics-inventory-list">' + rows + '</dl>' + inventoryStampMarkup(state));

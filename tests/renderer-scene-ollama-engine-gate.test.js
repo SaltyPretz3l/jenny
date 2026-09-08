@@ -97,6 +97,52 @@ test('install supplies a requestId, adopts the bridge id, filters foreign progre
   assert.deepEqual(cancelArgs, { requestId: 'bridge-install-id' });
 });
 
+test('Linux archive plans describe the release archive, install directory and verification step', async (t) => {
+  const h = mountGate(t, {
+    setupService: {
+      getOllamaInstallPlan: async () => ({
+        available: true,
+        url: 'https://example.test/ollama-linux-amd64.tar.zst',
+        sizeBytes: 1433825108,
+        sha256: 'abc123',
+        format: 'tar.zst',
+        installDir: '/home/tester/.local/share/jenny/ollama',
+        manualFallbackUrl: 'https://ollama.com/download/linux',
+      }),
+    },
+  });
+  await settle();
+
+  const provenance = h.rootEl.querySelector('.setup-hw-provenance');
+  assert.match(provenance.textContent, /Official release archive from https:\/\/example\.test\/ollama-linux-amd64\.tar\.zst/);
+  assert.match(provenance.textContent, /Unpacked into \/home\/tester\/\.local\/share\/jenny\/ollama — no root access needed\./);
+  assert.match(provenance.textContent, /SHA-256 verified before unpacking\./);
+  assert.doesNotMatch(provenance.textContent, /installer|before running/);
+  assert.match(h.rootEl.textContent, /Download & install Ollama/);
+});
+
+test('Windows installer plans keep the installer wording', async (t) => {
+  const h = mountGate(t, {
+    setupService: {
+      getOllamaInstallPlan: async () => ({
+        available: true,
+        url: 'https://example.test/OllamaSetup.exe',
+        sizeBytes: 900 * 1024 * 1024,
+        sha256: 'abc123',
+        format: 'exe',
+        installDir: '',
+        manualFallbackUrl: 'https://ollama.com/download/windows',
+      }),
+    },
+  });
+  await settle();
+
+  const provenance = h.rootEl.querySelector('.setup-hw-provenance');
+  assert.match(provenance.textContent, /Official installer from https:\/\/example\.test\/OllamaSetup\.exe/);
+  assert.match(provenance.textContent, /SHA-256 verified before running\./);
+  assert.doesNotMatch(provenance.textContent, /Unpacked into|archive/);
+});
+
 test('install completion re-detects running Ollama without attempting a model pull', async (t) => {
   let detectCalls = 0;
   let progress = null;
@@ -164,6 +210,30 @@ test('structured cancel failure remains visibly in progress with the honest term
   assert.match(h.rootEl.textContent, /Cancel failed.*could not confirm that the owned process stopped/i);
   assert.ok(h.rootEl.querySelector('.setup-hw-progress'));
   assert.match(h.rootEl.querySelector('[data-step-modal-action="cancel"]').textContent, /Retry cancel/i);
+});
+
+test('a cancel refused after publish explains that Ollama is already unpacked', async (t) => {
+  const h = mountGate(t, {
+    setupService: {
+      getOllamaInstallPlan: async () => ({
+        available: true,
+        url: 'https://example.test/ollama-linux-amd64.tar.zst',
+        sha256: 'abc',
+        format: 'tar.zst',
+        installDir: '/home/user/.local/share/jenny/ollama',
+      }),
+      installOllama: () => new Promise(() => {}),
+      cancelOllamaInstall: async () => ({ cancelled: false, code: 'already_published' }),
+    },
+  });
+  await settle();
+  optInAndInstall(h);
+  await settle();
+
+  h.rootEl.querySelector('[data-step-modal-action="cancel"]').click();
+  await settle();
+  assert.match(h.rootEl.textContent, /Too late to cancel.*already unpacked/i);
+  assert.ok(h.rootEl.querySelector('.setup-hw-progress'));
 });
 
 test('structured cancel success re-detects the current stopped state', async (t) => {

@@ -135,14 +135,38 @@ evidence bundle so they are preserved with the candidate.
   staging root and bootstraps pip only from the verified bundled wheel.
 - macOS packages continue to include their native sidecar artifact but do not
   include the Windows-only CPython bundle.
-- Regenerate the sidecar artifact lock only from a clean Python 3.11 virtual environment after
-  dependency updates:
-  Regenerate it only from a clean Python 3.11 virtual environment after
-  dependency updates:
-  - `python -m pip install --require-hashes --only-binary=:all: -r requirements-build-lock.txt`
-  - `python -m pip install -e ".[packaging]"`
-  - `python -m pip install pip-tools`
-  - `python -m pip-compile --generate-hashes --extra packaging --output-file requirements-lock.txt pyproject.toml`
+
+Linux bundle: `config/python-runtime-bundle-lock.linux-x64.json` pins the
+python-build-standalone `20260901` release artifact
+`cpython-3.13.15+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz`
+(SHA-256 `8a689a077337bea6d1c4bc0b7df1d52fcaa28f5f67e50df8bf417c1e3f9d8874`,
+34.8 MB) for glibc >= 2.17. Build it with
+`python scripts/build-python-runtime-bundle.py --contract config/python-runtime-bundle-lock.linux-x64.json`;
+the checker selects this contract by default on Linux. Both bundles use the one
+universal `requirements-python-runtime-lock.txt`, whose markers are evaluated
+for the contract platform (`tzdata` is Windows-only). At first use, the bundle
+is copied into the runtime root Electron configures — `<userData>/python-runtime`,
+i.e. `~/.config/jenny/python-runtime` on Linux (`~/.companion/python-runtime`
+only when the sidecar runs without Electron) — because AppImage mount paths
+change on every launch. It adds about 94 MB
+extracted (1,385 files) to the Linux packages after the contract `exclude` list
+drops the `python`/`python3` alias copies of the 31 MB statically linked
+interpreter, the unversioned `libpython3.13.so` alias, `include/`, and `share/`.
+Without those exclusions, materializing symlinks as copies would make the
+extracted tree about 194 MB.
+
+- Regenerate the sidecar artifact lock with uv 0.11.19 from the repository root:
+  `uv pip compile --universal --python-version 3.11 --generate-hashes --extra packaging --no-emit-package setuptools -o requirements-lock.txt pyproject.toml`.
+  The lock is universal for win_amd64, macOS arm64, and manylinux, with
+  `sys_platform` markers on platform-only wheels and every wheel/sdist hash.
+  `setuptools` is intentionally not emitted because the hashed build lock installs
+  it first. uv reuses the pins and the hash lists of an existing output file, so to
+  refresh hashes without upgrading, delete the file and pin the current versions
+  through a constraints file (`-c`); to upgrade, delete the file and recompile.
+  Restore the commented header block above uv's own header by hand after
+  regenerating, then prove the result with hash-verified downloads
+  (`pip download --require-hashes --only-binary=:all: --no-deps --platform <tag> ...`)
+  for the manylinux x86_64 and macOS arm64 wheel tags before committing.
 - `scripts/packaging/build_sidecar_artifact.py` always writes outputs to:
   - artifact: `build/sidecar/sidecar(.exe)`
   - manifest: `build/sidecar/manifest.json`
@@ -152,10 +176,9 @@ evidence bundle so they are preserved with the candidate.
   such as `torch`, `transformers`, and `faster_whisper` unless a future packaging
   plan explicitly bundles those features. This keeps CI packaging smoke focused on
   the local-first sidecar runtime instead of sweeping installed development extras.
-- The optional `spreadsheet` extra pins `openpyxl==3.1.5` plus
-  `defusedxml==0.7.1` for the default-off `spreadsheet_inspect` tool. It is
-  intentionally outside `requirements-lock.txt` until a release-size review
-  promotes spreadsheet inspection into the packaged sidecar artifact profile.
+- `openpyxl==3.1.5` and `defusedxml==0.7.1` (the default-off `spreadsheet_inspect`
+  tool) are base dependencies, so they are part of `requirements-lock.txt` and of the
+  packaged sidecar; the `spreadsheet` extra only restates them for standalone installs.
 - Packaging command timeouts terminate their child process trees so interrupted
   smoke runs do not leave PyInstaller, electron-builder, or packaged-app children
   running in the workspace.
@@ -312,12 +335,51 @@ automatically (no workflow edit needed):
   (read by `UpdateService`); the `-mac.zip` + `latest-mac.yml` are already
   published so no rebuild plumbing is needed.
 
-### Ollama on macOS
+### Linux packages (experimental)
 
-The in-app SHA-pinned auto-installer is Windows-only
+The `release.yml` `build-linux` job builds x64 Linux packages inside
+`container: ubuntu:22.04`. This sets the application glibc floor at 2.35.
+Ubuntu 22.04 and 24.04 are the tested targets; Debian 12+ and Fedora 36+ are
+compatibility candidates. The published artifacts are
+`Jenny-x86_64.AppImage`, `Jenny-amd64.deb`, and `latest-linux.yml`. To build
+locally, run `npm run pack:linux` on a Linux host.
+
+The AppImage uses the static `toolsets.appimage` 1.0.3 runtime and does not
+require libfuse2. Its AppRun adds `--no-sandbox` only when unprivileged user
+namespaces are restricted, and Jenny shows a one-time notice plus the
+**Settings → Diagnostics** Chromium sandbox row. Never bake `--no-sandbox`
+into Jenny's launcher. The `.deb` uses electron-builder's default dependencies
+and installs an AppArmor `userns` profile on Ubuntu 24 and newer so Chromium's
+sandbox stays on.
+
+Before publishing, the release leg smokes `dist/linux-unpacked` as an
+unprivileged user, then packages with `--prepackaged`. The private
+`ci-linux-package.yml` pull-request gate follows the same sequence. AppImage
+updates use unsigned SHA-512 verification over HTTPS, matching Windows, and
+replace the writable AppImage in place. Automatic updates are off for `.deb`
+installs; Settings shows a hint to download the latest package.
+
+Managed `llama-server` on Linux is bring-your-own binary. Set
+`JENNY_LLAMA_SERVER_BINARY` to the executable; a Vulkan build is recommended
+for NVIDIA and AMD GPUs.
+
+### Ollama on macOS and Linux
+
+The in-app SHA-pinned auto-installer runs on Windows and Linux x64
 (`config/ollama-install-manifest.json`). On macOS the setup script offers
 `brew install ollama`; the in-app wizard shows a manual
 [ollama.com/download/mac](https://ollama.com/download/mac) link and re-scans.
+
+On Linux x64, the in-app installer downloads the release
+`ollama-linux-amd64.tar.zst` pinned in
+`config/ollama-install-manifest.json` (`platforms.linux.x64`: version, size,
+and SHA-256 copied from the release `sha256sum.txt`). Jenny verifies the
+archive, extracts it into `$XDG_DATA_HOME/jenny/ollama` (default
+`~/.local/share/jenny/ollama`), probes `bin/ollama --version`, publishes it by
+rename, and starts `ollama serve` through Jenny's process manager. This needs
+no root access, systemd unit, or PATH edit. A system Ollama already on PATH is
+detected and used instead. To update the pin, copy the new release's digest
+from its `sha256sum.txt` and bump `version`, `sizeBytes`, and `url`.
 
 ## Release Provenance and Evidence
 

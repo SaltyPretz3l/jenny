@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   normalizeDetectPayload,
+  normalizeInstallPlan,
 } = require('../renderer/services/renderer-setup-service');
 
 test('normalizeDetectPayload preserves supported Ollama version-policy fields', () => {
@@ -69,4 +70,29 @@ test('normalizeDetectPayload rejects truthy non-boolean version-policy flags', (
   assert.equal(result.upgradeRequired, false);
   assert.equal(result.versionStatus, '42');
   assert.equal(result.minimumVersion, '0.11.0');
+});
+
+test('normalizeInstallPlan carries the Linux archive format and install directory to the scene', () => {
+  const plan = normalizeInstallPlan({
+    available: true,
+    url: 'https://example.invalid/ollama-linux-amd64.tar.zst',
+    version: '0.33.3',
+    sizeBytes: 5,
+    sha256: 'ab',
+    license: 'MIT',
+    manualFallbackUrl: 'https://ollama.com/download/linux',
+    format: 'tar.zst',
+    installDir: '/home/user/.local/share/jenny/ollama',
+  });
+  assert.equal(plan.format, 'tar.zst');
+  assert.equal(plan.installDir, '/home/user/.local/share/jenny/ollama');
+  assert.equal(plan.available, true);
+
+  const windows = normalizeInstallPlan({ available: true, format: 'exe' });
+  assert.equal(windows.format, 'exe');
+  assert.equal(windows.installDir, '');
+
+  const empty = normalizeInstallPlan(null);
+  assert.equal(empty.format, '');
+  assert.equal(empty.installDir, '');
 });

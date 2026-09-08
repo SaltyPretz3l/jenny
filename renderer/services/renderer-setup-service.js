@@ -192,6 +192,8 @@
       sha256: String(source.sha256 || ''),
       license: String(source.license || ''),
       manualFallbackUrl: String(source.manualFallbackUrl || source.manual_fallback_url || ''),
+      format: String(source.format || ''),
+      installDir: String(source.installDir || source.install_dir || ''),
     };
   }
 

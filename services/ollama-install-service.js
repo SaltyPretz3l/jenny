@@ -16,6 +16,9 @@
  *  - The download is SHA256-verified against the manifest and FAILS CLOSED
  *    (deletes the temp file, never runs the installer) on mismatch.
  *  - Any failure surfaces a manualFallbackUrl (ollama.com/download).
+ *  - Linux archives are extracted into a staging dir beside $XDG_DATA_HOME/jenny/ollama,
+ *    published by rename only after bin/ollama --version reports the pinned version, and
+ *    started by the process manager; uninstall never removes that directory.
  *
  * Does NOT touch OLLAMA_* runtime env (anti-thrash settings are owned by
  * ollama-process-manager / ollama-env). The OS installer sets none of those.
@@ -30,8 +33,10 @@ const os = require('os');
 
 const { normalizeString } = require('./backend/path-utils');
 const { killProcessTree } = require('./backend/process-utils');
+const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { SETUP_ERROR_CODES } = require('./backend/error-codes');
-const { ollamaInstallDirs } = require('./ollama-runtime-paths');
+const { extractTarZst } = require('./ollama-linux-archive');
+const { ollamaInstallDirs, ollamaUserInstallRoot } = require('./ollama-runtime-paths');
 const { createRequestId, normalizeRequestId } = require('./setup-service-helpers');
 
 const INSTALLER_SILENT_ARGS = Object.freeze(['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART']);
@@ -48,6 +53,7 @@ function defaultOllamaFallbackUrl(platform) {
 const RESPONSE_START_TIMEOUT_MS = 30_000;
 const DOWNLOAD_INACTIVITY_MS = 60_000;
 const INSTALLER_TIMEOUT_MS = 10 * 60 * 1000;
+const BINARY_PROBE_TIMEOUT_MS = 30_000;
 const POST_INSTALL_READINESS_TIMEOUT_MS = 30_000;
 const TERMINATION_TIMEOUT_MS = 5_000;
 const PROGRESS_INTERVAL_MS = 250;
@@ -80,18 +86,23 @@ class OllamaInstallService extends EventEmitter {
     fetchImpl = globalThis.fetch,
     spawnImpl = defaultSpawn,
     fsImpl = fs,
+    extractImpl = extractTarZst,
+    archiveMaxEntries = 20000,
+    archiveMaxBytes = 16 * (1024 ** 3),
     cryptoImpl = crypto,
     tmpDirProvider = () => os.tmpdir(),
     detectImpl = null,
     restartImpl = null,
     delayImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     platform = process.platform,
+    arch = process.arch,
     env = process.env,
     requestIdProvider = createRequestId,
     killProcessTreeImpl = killProcessTree,
     responseStartTimeoutMs = RESPONSE_START_TIMEOUT_MS,
     downloadInactivityMs = DOWNLOAD_INACTIVITY_MS,
     installerTimeoutMs = INSTALLER_TIMEOUT_MS,
+    binaryProbeTimeoutMs = BINARY_PROBE_TIMEOUT_MS,
     postInstallReadinessTimeoutMs = POST_INSTALL_READINESS_TIMEOUT_MS,
     terminationTimeoutMs = TERMINATION_TIMEOUT_MS,
     logger = () => {},
@@ -101,12 +112,16 @@ class OllamaInstallService extends EventEmitter {
     this.fetchImpl = typeof fetchImpl === 'function' ? fetchImpl : null;
     this.spawnImpl = typeof spawnImpl === 'function' ? spawnImpl : defaultSpawn;
     this.fsImpl = fsImpl || fs;
+    this.extractImpl = typeof extractImpl === 'function' ? extractImpl : extractTarZst;
+    this.archiveMaxEntries = archiveMaxEntries;
+    this.archiveMaxBytes = archiveMaxBytes;
     this.cryptoImpl = cryptoImpl || crypto;
     this.tmpDirProvider = typeof tmpDirProvider === 'function' ? tmpDirProvider : () => os.tmpdir();
     this.detectImpl = typeof detectImpl === 'function' ? detectImpl : null;
     this.restartImpl = typeof restartImpl === 'function' ? restartImpl : null;
     this.delayImpl = typeof delayImpl === 'function' ? delayImpl : (ms) => new Promise((r) => setTimeout(r, ms));
     this.platform = normalizeString(platform) || process.platform;
+    this.arch = normalizeString(arch) || process.arch;
     this.defaultFallbackUrl = defaultOllamaFallbackUrl(this.platform);
     this.env = env && typeof env === 'object' ? env : process.env;
     this.requestIdProvider = typeof requestIdProvider === 'function' ? requestIdProvider : createRequestId;
@@ -115,6 +130,7 @@ class OllamaInstallService extends EventEmitter {
     this.responseStartTimeoutMs = Math.max(1, Number(responseStartTimeoutMs) || RESPONSE_START_TIMEOUT_MS);
     this.downloadInactivityMs = Math.max(1, Number(downloadInactivityMs) || DOWNLOAD_INACTIVITY_MS);
     this.installerTimeoutMs = Math.max(1, Number(installerTimeoutMs) || INSTALLER_TIMEOUT_MS);
+    this.binaryProbeTimeoutMs = Math.max(1, Number(binaryProbeTimeoutMs) || BINARY_PROBE_TIMEOUT_MS);
     this.postInstallReadinessTimeoutMs = Math.max(
       1,
       Number(postInstallReadinessTimeoutMs) || POST_INSTALL_READINESS_TIMEOUT_MS
@@ -132,21 +148,37 @@ class OllamaInstallService extends EventEmitter {
     }
   }
 
+  _manifestEntry() {
+    if (this.platform === 'win32') {
+      return { entry: this.manifest || {}, format: 'exe' };
+    }
+    if (this.platform !== 'linux') {
+      return null;
+    }
+    const entry = this.manifest.platforms?.linux?.[this.arch];
+    return entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? { entry, format: normalizeString(entry.format) }
+      : null;
+  }
+
   getInstallPlan() {
     const m = this.manifest || {};
-    const url = normalizeString(m.url);
-    const version = normalizeString(m.version);
+    const selected = this._manifestEntry();
+    const entry = selected?.entry || {};
+    const format = selected?.format || '';
+    const url = normalizeString(entry.url);
+    const version = normalizeString(entry.version);
     const minimumVersion = normalizeString(m.minimumSupportedVersion) || version;
-    const sha256 = normalizeString(m.sha256);
-    const manualFallbackUrl = this.platform === 'win32'
-      ? (normalizeString(m.manualFallbackUrl) || this.defaultFallbackUrl)
-      : this.defaultFallbackUrl;
-    const parsedSize = Number(m.sizeBytes);
+    const sha256 = normalizeString(entry.sha256);
+    const manualFallbackUrl = normalizeString(entry.manualFallbackUrl) || this.defaultFallbackUrl;
+    const parsedSize = Number(entry.sizeBytes);
     const sizeBytes = Number.isSafeInteger(parsedSize) && parsedSize > 0 ? parsedSize : 0;
-    const available = this.platform === 'win32'
+    const expectedFormat = this.platform === 'win32' ? 'exe' : 'tar.zst';
+    const available = Boolean(selected)
       && Boolean(version && sizeBytes)
       && isHttpsUrl(url)
-      && /^[a-f0-9]{64}$/i.test(sha256);
+      && /^[a-f0-9]{64}$/i.test(sha256)
+      && format === expectedFormat;
     return {
       available,
       url,
@@ -154,8 +186,12 @@ class OllamaInstallService extends EventEmitter {
       minimumVersion,
       sizeBytes,
       sha256,
-      license: normalizeString(m.license),
+      license: normalizeString(entry.license) || normalizeString(m.license),
       manualFallbackUrl,
+      platform: this.platform,
+      arch: this.arch,
+      format,
+      installDir: this.platform === 'linux' ? ollamaUserInstallRoot(this.env) : '',
     };
   }
 
@@ -213,6 +249,14 @@ class OllamaInstallService extends EventEmitter {
 
   _safeCleanup(entry) {
     try {
+      if (entry?.stagingDir && typeof this.fsImpl.rmSync === 'function') {
+        this.fsImpl.rmSync(entry.stagingDir, { recursive: true, force: true });
+        entry.stagingDir = null;
+      }
+    } catch (_error) {
+      // best-effort cleanup
+    }
+    try {
       if (entry?.tempDir && typeof this.fsImpl.rmSync === 'function') {
         this.fsImpl.rmSync(entry.tempDir, { recursive: true, force: true });
       } else if (entry?.destPath && typeof this.fsImpl.unlinkSync === 'function') {
@@ -228,7 +272,10 @@ class OllamaInstallService extends EventEmitter {
       throw installError('temp_create_failed', 'A secure temporary directory could not be created.');
     }
     const tempDir = this.fsImpl.mkdtempSync(path.join(this.tmpDirProvider(), 'jenny-ollama-'));
-    return { tempDir, destPath: path.join(tempDir, 'OllamaSetup.exe') };
+    const filename = this._manifestEntry()?.format === 'tar.zst'
+      ? 'ollama-linux-amd64.tar.zst'
+      : 'OllamaSetup.exe';
+    return { tempDir, destPath: path.join(tempDir, filename) };
   }
 
   _isCompatibleDetection(detected) {
@@ -442,6 +489,134 @@ class OllamaInstallService extends EventEmitter {
     });
   }
 
+  _probeArchiveBinary(binary, version, entry) {
+    return new Promise((resolve, reject) => {
+      let child;
+      try {
+        child = this.spawnImpl(binary, ['--version'], {
+          env: sanitizeSpawnEnv(this.env),
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        reject(installError('binary_probe_failed', String(error?.message || error)));
+        return;
+      }
+      entry.child = child;
+      let settled = false;
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      const append = (current, chunk) => Buffer.concat([current, Buffer.from(chunk).subarray(0, 4096 - current.length)]);
+      child?.stdout?.on?.('data', (chunk) => { stdout = append(stdout, chunk); });
+      child?.stderr?.on?.('data', (chunk) => { stderr = append(stderr, chunk); });
+      const clearOwnedChild = () => {
+        if (entry.child === child) entry.child = null;
+      };
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearOwnedChild();
+        callback(value);
+      };
+      const timeout = setTimeout(() => {
+        void this._terminateEntry(entry).then((confirmed) => {
+          entry.terminationConfirmed = confirmed;
+          finish(reject, installError('binary_probe_failed', 'The staged Ollama binary probe timed out.'));
+        });
+      }, this.binaryProbeTimeoutMs);
+      timeout.unref?.();
+      child?.once?.('error', (error) => {
+        finish(reject, installError('binary_probe_failed', String(error?.message || error)));
+      });
+      // 'close' (not 'exit') so the version line has flushed through stdio before it is read.
+      child?.once?.('close', (code) => {
+        const output = `${stdout.toString('utf8')}\n${stderr.toString('utf8')}`;
+        const escapedVersion = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const versionPattern = new RegExp(`(?:^|[^0-9A-Za-z])${escapedVersion}(?=$|[^0-9A-Za-z])`);
+        if (versionPattern.test(output)) {
+          finish(resolve);
+          return;
+        }
+        finish(reject, installError(
+          'binary_probe_failed',
+          `Staged Ollama probe exited with code ${code}: ${boundedError(output) || 'no version output'}`
+        ));
+      });
+      if (!child || typeof child.once !== 'function') {
+        finish(reject, installError('binary_probe_failed', 'The staged Ollama binary probe could not start.'));
+      }
+    });
+  }
+
+  async _installArchive(entry, plan) {
+    const installDir = normalizeString(plan?.installDir);
+    if (!installDir) {
+      throw installError('install_dir_unavailable', 'The Linux Ollama install directory is unavailable.');
+    }
+    const parent = path.dirname(installDir);
+    try {
+      this.fsImpl.mkdirSync(parent, { recursive: true });
+      entry.stagingDir = this.fsImpl.mkdtempSync(path.join(parent, '.ollama.staging-'));
+    } catch (error) {
+      throw installError('staging_failed', String(error?.message || error));
+    }
+    entry.lastEmitAt = 0;
+    this._emit(entry, 'installing');
+    try {
+      await this.extractImpl({
+        archivePath: entry.destPath,
+        destinationDir: entry.stagingDir,
+        fsImpl: this.fsImpl,
+        maxEntries: this.archiveMaxEntries,
+        maxBytes: this.archiveMaxBytes,
+        onProgress: ({ compressedBytes } = {}) => {
+          if (plan.sizeBytes > 0 && Number.isFinite(compressedBytes)) {
+            entry.percent = Math.min(100, Math.round((compressedBytes / plan.sizeBytes) * 100));
+          }
+          this._emit(entry, 'installing');
+        },
+        isCancelled: () => entry.cancelled === true,
+      });
+    } catch (error) {
+      if (entry.cancelled || error?.code === 'cancelled') {
+        throw installError('cancelled', 'Install cancelled.');
+      }
+      const detail = error?.code
+        ? `${error.code}${error.entry === undefined ? '' : `: ${error.entry}`}`
+        : String(error?.message || error);
+      throw installError('extract_failed', detail);
+    }
+    if (entry.cancelled) throw installError('cancelled', 'Install cancelled.');
+    const binary = path.join(entry.stagingDir, 'bin', 'ollama');
+    let binaryExists;
+    try {
+      binaryExists = this.fsImpl.existsSync(binary);
+    } catch (error) {
+      throw installError('binary_probe_failed', String(error?.message || error));
+    }
+    if (!binaryExists) {
+      throw installError('binary_probe_failed', 'The staged Ollama binary is missing.');
+    }
+    await this._probeArchiveBinary(binary, plan.version, entry);
+    if (entry.cancelled) throw installError('cancelled', 'Install cancelled.');
+    const previous = `${installDir}.previous-${Date.now()}`;
+    try {
+      if (this.fsImpl.existsSync(installDir)) this.fsImpl.renameSync(installDir, previous);
+      this.fsImpl.renameSync(entry.stagingDir, installDir);
+    } catch (error) {
+      try {
+        if (this.fsImpl.existsSync(previous)) this.fsImpl.renameSync(previous, installDir);
+      } catch (_rollbackError) { /* best effort */ }
+      throw installError('publish_failed', String(error?.message || error));
+    }
+    entry.stagingDir = null;
+    entry.published = true;
+    try {
+      if (this.fsImpl.existsSync(previous)) this.fsImpl.rmSync(previous, { recursive: true, force: true });
+    } catch (_error) { /* best effort */ }
+  }
+
   async _reprobe(entry) {
     if (!this.detectImpl) {
       return false;
@@ -497,6 +672,7 @@ class OllamaInstallService extends EventEmitter {
       cancelled: false,
       finished: false,
       child: null,
+      stagingDir: null,
       abortController: null,
       terminationPromise: null,
       terminationConfirmed: false,
@@ -581,6 +757,7 @@ class OllamaInstallService extends EventEmitter {
     }
 
     // Verify SHA256 — FAIL CLOSED on mismatch (never run an unverified installer).
+    if (plan.format === 'tar.zst') entry.lastEmitAt = 0;
     this._emit(entry, 'verifying');
     if (String(digest).toLowerCase() !== String(plan.sha256).toLowerCase()) {
       this._safeCleanup(entry);
@@ -592,13 +769,31 @@ class OllamaInstallService extends EventEmitter {
       });
     }
 
-    // Install (silent, per-user; no admin for Ollama's Inno Setup installer).
-    this._emit(entry, 'installing');
+    // Install the verified platform artifact.
     let exitCode;
     try {
-      exitCode = await this._runInstaller(entry.destPath, entry);
+      if (plan.format === 'tar.zst') {
+        await this._installArchive(entry, plan);
+        exitCode = 0;
+      } else {
+        // Silent, per-user; no admin for Ollama's Inno Setup installer.
+        this._emit(entry, 'installing');
+        exitCode = await this._runInstaller(entry.destPath, entry);
+      }
     } catch (error) {
       this._safeCleanup(entry);
+      if (plan.format === 'tar.zst') {
+        if (entry.cancelled || error?.code === 'cancelled') {
+          entry.terminationConfirmed = true;
+          return this._finish(entry, { status: 'cancelled', code: 'cancelled', summary: 'Install cancelled.' });
+        }
+        return this._finish(entry, {
+          status: 'failed',
+          code: error?.code || 'extract_failed',
+          summary: 'The Ollama archive could not be installed.',
+          error: String(error?.message || error),
+        });
+      }
       if (entry.cancelled || (error && error.code === 'cancelled')) {
         if (entry.terminationPromise) {
           entry.terminationConfirmed = await entry.terminationPromise;
@@ -630,6 +825,10 @@ class OllamaInstallService extends EventEmitter {
     this._safeCleanup(entry);
 
     if (entry.cancelled) {
+      if (plan.format === 'tar.zst') {
+        entry.terminationConfirmed = true;
+        return this._finish(entry, { status: 'cancelled', code: 'cancelled', summary: 'Install cancelled.' });
+      }
       if (entry.terminationPromise) {
         entry.terminationConfirmed = await entry.terminationPromise;
       }
@@ -670,7 +869,8 @@ class OllamaInstallService extends EventEmitter {
       // best-effort PATH prepend; never block the install on it
     }
 
-    if (upgradeRequired && this.restartImpl) {
+    if ((upgradeRequired || plan.format === 'tar.zst') && this.restartImpl) {
+      if (plan.format === 'tar.zst') entry.lastEmitAt = 0;
       this._emit(entry, 'restarting');
       try {
         const restart = await this.restartImpl();
@@ -710,6 +910,15 @@ class OllamaInstallService extends EventEmitter {
       return {
         cancelled: false, termination_confirmed: false, request_id: requestedId,
         status: 'not_found', code: 'not_found', error_code: '',
+      };
+    }
+    if (entry.published) {
+      // The archive is already rename-published; a cancel now would only mislabel a
+      // finished install. Let the restart and re-probe report the real outcome.
+      this._log('INFO', 'ollama_install.cancel_after_publish', { requestId: entry.requestId });
+      return {
+        cancelled: false, termination_confirmed: true, request_id: entry.requestId,
+        status: entry.status, code: 'already_published', error_code: '',
       };
     }
     entry.cancelled = true;

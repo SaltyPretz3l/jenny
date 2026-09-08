@@ -42,7 +42,7 @@ const {
   handleCometOverlayToggle,
   normalizeCometOverlayPresencePayload,
 } = require('./services/main/comet-overlay-controller');
-const { createMainWindowWithDeps } = require('./services/main/main-window-composition');
+const { createMainWindowWithDeps, resolveWindowIconPath } = require('./services/main/main-window-composition');
 const { createRuntimeServicesWithDeps } = require('./services/main/runtime-service-composition');
 const { createRuntimeShutdownController } = require('./services/main/runtime-shutdown');
 const { scheduleStartupRetentionTasks } = require('./services/main/startup-retention-tasks');
@@ -212,12 +212,9 @@ function emitMainWindowStateChanged() {
 const createWindow = () => createMainWindowWithDeps({
   BrowserWindow,
   rootDir: __dirname,
-  // A packaged executable carries its icon in the exe resources; an unpackaged
-  // dev run has none, so point BrowserWindow at the build artwork explicitly.
-  windowIconPath: app.isPackaged
-    ? null
-    : require('path').join(__dirname, 'build',
-      process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+  windowIconPath: resolveWindowIconPath({
+    isPackaged: app.isPackaged, platform: process.platform, rootDir: __dirname, resourcesPath: process.resourcesPath,
+  }),
   ipcMainRef: ipcMain,
   shell,
   windowStateService,

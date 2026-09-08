@@ -517,3 +517,73 @@ test('health pill Restart action calls llamaServer.restart once and refreshes', 
   assert.ok(fetches > fetchesAfterRefresh, 'status is re-polled after the restart settles');
   controller.dispose();
 });
+
+function sandboxSnapshot(facet) {
+  return makeSnapshot({
+    runtime: {
+      lifecycle: { available: true, state: 'ready', phase: 'ready' },
+      provider_capability_profiles: [readyProfile()],
+      chromium_sandbox: {
+        platform: 'linux', packaged: true, sandboxed: false, reason: 'no_sandbox_switch', package_kind: 'appimage', ...facet,
+      },
+    },
+  });
+}
+
+function fakeStorage() {
+  const store = new Map();
+  return { getItem: (key) => (store.has(key) ? store.get(key) : null), setItem: (key, value) => store.set(key, value), store };
+}
+
+test('health pill raises the no-sandbox notice once per profile and persists dismissal', async (t) => {
+  const dom = new JSDOM('<!doctype html><body><div id="slot"></div></body>');
+  const { window } = dom;
+  const storage = fakeStorage();
+  const toasts = [];
+  window.jennyShell = { diagnostics: { getJennyStatus: async () => sandboxSnapshot() } };
+  const deps = {
+    window, document: window.document, slot: window.document.getElementById('slot'), deriveRuntimeHealthState,
+    storage, showToastMessage: (message, options) => { toasts.push({ message, options }); return 'toast-1'; },
+  };
+  const controller = createHealthPillController(deps);
+  t.after(() => controller.dispose());
+
+  await controller.refresh({ silent: true });
+  await controller.refresh({ silent: true });
+  assert.equal(toasts.length, 1, 'one notice per controller even across refreshes');
+  assert.equal(toasts[0].options.tone, 'warning');
+  assert.equal(toasts[0].options.sticky, true);
+  assert.match(toasts[0].message, /\.deb package/);
+  assert.equal(toasts[0].options.actions[0].label, 'Do not show again');
+
+  toasts[0].options.actions[0].onClick();
+  assert.equal(storage.store.get('jenny.chromiumSandboxNotice.dismissed'), '1');
+  const second = createHealthPillController(deps);
+  t.after(() => second.dispose());
+  await second.refresh({ silent: true });
+  assert.equal(toasts.length, 1, 'a dismissed notice stays dismissed for a new controller');
+});
+
+test('health pill stays quiet when the sandbox is on, the facet is absent, or the app is not packaged', async (t) => {
+  const dom = new JSDOM('<!doctype html><body><div id="slot"></div></body>');
+  const { window } = dom;
+  const toasts = [];
+  let snapshot = sandboxSnapshot({ sandboxed: true, reason: '' });
+  window.jennyShell = { diagnostics: { getJennyStatus: async () => snapshot } };
+  const controller = createHealthPillController({
+    window, document: window.document, slot: window.document.getElementById('slot'), deriveRuntimeHealthState,
+    storage: fakeStorage(), showToastMessage: (message, options) => { toasts.push({ message, options }); return 'toast'; },
+  });
+  t.after(() => controller.dispose());
+  await controller.refresh({ silent: true });
+  snapshot = makeSnapshot();
+  await controller.refresh({ silent: true });
+  snapshot = sandboxSnapshot({ packaged: false, package_kind: 'development' });
+  await controller.refresh({ silent: true });
+  assert.equal(toasts.length, 0);
+  snapshot = sandboxSnapshot({ package_kind: 'system' });
+  await controller.refresh({ silent: true });
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].message, /--no-sandbox/);
+  assert.doesNotMatch(toasts[0].message, /\.deb/);
+});

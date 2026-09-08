@@ -1,6 +1,8 @@
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 
+const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
+
 const capabilityCache = new Map();
 
 function parseSpecTypeValues(helpText) {
@@ -110,6 +112,7 @@ function probeCapabilities(options = {}) {
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
     encoding: 'utf8',
+    env: sanitizeSpawnEnv(process.env),
   };
   let helpText;
   try {

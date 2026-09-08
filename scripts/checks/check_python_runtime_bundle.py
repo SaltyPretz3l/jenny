@@ -8,14 +8,28 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
+
+try:
+    from packaging.markers import Marker as _PackagingMarker
+except ImportError:
+    _PackagingMarker = None  # type: ignore[assignment, misc]
+
+Marker: Any = _PackagingMarker
 
 ROOT = Path(__file__).resolve().parents[2]
 HEX_DIGITS = frozenset("0123456789abcdef")
-PIN_RE = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\s\\]+)")
+PIN_RE = re.compile(r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\s\\*]+)")
+LOCK_PIN_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\s;\\*]+)"
+    r"(?:\s*;\s*(?P<marker>[^\\]+?))?\s*(?:\\)?$"
+)
+LOCK_HASH_RE = re.compile(r"^--hash=sha256:[0-9a-fA-F]{64}(?:\s+\\)?$")
+LOCK_INSTALL_MODE_OPTION_RE = re.compile(r"^--(?:only|no)-binary=\S+$")
 EXPECTED_BUILD_TOOLS = {
     "packaging": "25.0",
     "pip": "26.2",
@@ -38,6 +52,9 @@ class BundleContext:
     common_manifest_fields: dict[str, object]
     embed_manifest_name: str
     wheelhouse_manifest_name: str
+    distribution: str
+    sys_platform: str
+    platform_tags: tuple[str, ...]
 
 
 def _sha256_file(path: Path) -> str:
@@ -102,32 +119,132 @@ def _tree_files(directory: Path, manifest_name: str) -> tuple[dict[str, Path], l
     return files, errors
 
 
-def _parse_hashed_lock(path: Path) -> tuple[dict[str, str], list[str]]:
+def _record_lock_pin(
+    match: re.Match[str],
+    pins: dict[str, str],
+    errors: list[str],
+    markers: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    name = match.group("name").lower().replace("_", "-")
+    version = match.group("version")
+    if name in pins:
+        errors.append(f"requirements lock contains duplicate pin: {name}")
+    pins[name] = version
+    marker = match.groupdict().get("marker")
+    if markers is not None and marker:
+        markers[name] = marker.strip()
+    return name, version
+
+
+def _consume_lock_hash_record(
+    lines: list[str], index: int, name: str, version: str, errors: list[str]
+) -> int:
+    hash_line_count = 0
+    needs_hash = True
+    while needs_hash and index < len(lines):
+        continuation_line = lines[index].rstrip()
+        continuation = continuation_line.strip()
+        if not continuation or continuation.startswith("#"):
+            index += 1
+            continue
+        if LOCK_HASH_RE.fullmatch(continuation) is None:
+            errors.append(
+                "requirements lock has an unexpected line inside the record for "
+                f"{name}=={version}: {continuation_line}"
+            )
+            break
+        hash_line_count += 1
+        needs_hash = continuation_line.endswith("\\")
+        index += 1
+    if hash_line_count == 0:
+        errors.append(f"requirements lock pin has no SHA-256 hash: {name}=={version}")
+    elif needs_hash and index >= len(lines):
+        errors.append(f"requirements lock pin has an invalid SHA-256 hash: {name}=={version}")
+    return index
+
+
+def _parse_hashed_lock(
+    path: Path, *, markers: dict[str, str] | None = None
+) -> tuple[dict[str, str], list[str]]:
     errors: list[str] = []
     pins: dict[str, str] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as error:
         return {}, [f"requirements lock is missing or unreadable: {path} ({error})"]
-    for index, raw_line in enumerate(lines):
-        match = PIN_RE.match(raw_line.strip())
-        if match is None:
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
             continue
-        name = match.group("name").lower().replace("_", "-")
-        version = match.group("version")
-        if name in pins:
-            errors.append(f"requirements lock contains duplicate pin: {name}")
-        pins[name] = version
-        if not raw_line.strip().endswith("\\") or index + 1 >= len(lines):
+
+        match = LOCK_PIN_RE.fullmatch(stripped)
+        if match is None:
+            if LOCK_INSTALL_MODE_OPTION_RE.fullmatch(stripped):
+                index += 1
+                continue
+            pin_match = PIN_RE.match(stripped)
+            if pin_match is not None:
+                _record_lock_pin(pin_match, pins, errors)
+            errors.append(f"requirements lock has an unparseable line: {line}")
+            index += 1
+            continue
+
+        name, version = _record_lock_pin(match, pins, errors, markers)
+        index += 1
+        if not line.endswith("\\"):
             errors.append(f"requirements lock pin has no SHA-256 hash: {name}=={version}")
             continue
-        hash_line = lines[index + 1].strip()
-        prefix = "--hash=sha256:"
-        if not hash_line.startswith(prefix) or not _is_sha256(hash_line[len(prefix) :]):
-            errors.append(f"requirements lock pin has an invalid SHA-256 hash: {name}=={version}")
+        index = _consume_lock_hash_record(lines, index, name, version, errors)
     if not pins:
         errors.append(f"requirements lock contains no exact pins: {path}")
     return pins, errors
+
+
+def _runtime_pins_for_target(
+    runtime_lock: Path,
+    target: str,
+    python_version: str | None = None,
+    architecture: str | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    markers: dict[str, str] = {}
+    pins, errors = _parse_hashed_lock(runtime_lock, markers=markers)
+    if markers and Marker is None:
+        return {}, [*errors, "packaging is required to evaluate lock markers"]
+    systems = {"win32": "Windows", "linux": "Linux", "darwin": "Darwin"}
+    machines = {
+        "x64": {"linux": "x86_64", "win32": "AMD64", "darwin": "x86_64"},
+        "arm64": {"linux": "aarch64", "win32": "ARM64", "darwin": "arm64"},
+    }
+    if architecture is not None and architecture not in machines:
+        errors.append(f"unsupported bundle architecture for marker evaluation: {architecture}")
+        return {}, errors
+    environment = {
+        "implementation_name": "cpython",
+        "sys_platform": target,
+        "platform_system": systems[target],
+        "os_name": "nt" if target == "win32" else "posix",
+    }
+    if python_version:
+        # python_* markers describe the bundled interpreter, not the host running this check.
+        environment["implementation_version"] = python_version
+        environment["python_full_version"] = python_version
+        environment["python_version"] = ".".join(python_version.split(".")[:2])
+    if architecture is not None:
+        environment["platform_machine"] = machines[architecture][target]
+    expected: dict[str, str] = {}
+    for name, version in pins.items():
+        marker = markers.get(name)
+        try:
+            keep = marker is None or Marker(marker).evaluate(environment)
+        except ValueError as error:
+            errors.append(f"requirements lock marker is invalid for {name}=={version}: {error}")
+            continue
+        if keep:
+            expected[name] = version
+    return expected, errors
 
 
 def _wheel_pin(filename: str) -> tuple[str, str, tuple[str, str, str]] | None:
@@ -279,9 +396,15 @@ def _validate_sidecar_lock(root: Path) -> list[str]:
     return errors
 
 
-def _load_context(root: Path) -> tuple[BundleContext | None, list[str]]:
+def default_contract_path(root: Path, *, os_name: str, sys_platform: str) -> Path | None:
+    if os_name == "nt":
+        return root / "config" / "python-runtime-bundle-lock.json"
+    linux_contract = root / "config" / "python-runtime-bundle-lock.linux-x64.json"
+    return linux_contract if sys_platform.startswith("linux") else None
+
+
+def _load_context(root: Path, contract_path: Path) -> tuple[BundleContext | None, list[str]]:  # noqa: C901, PLR0912
     errors: list[str] = []
-    contract_path = root / "config" / "python-runtime-bundle-lock.json"
     try:
         contract = _load_json_object(contract_path)
     except (OSError, json.JSONDecodeError, ValueError) as error:
@@ -293,9 +416,35 @@ def _load_context(root: Path) -> tuple[BundleContext | None, list[str]]:
         return None, [*errors, "python runtime bundle contract python field must be an object"]
     if not _is_sha256(python.get("embed_sha256")):
         errors.append("python runtime bundle contract has an invalid CPython SHA-256")
+    distribution = python.get("distribution", "cpython-embeddable")
+    distributions = {"cpython-embeddable", "python-build-standalone"}
+    valid_distribution = isinstance(distribution, str) and distribution in distributions
+    if not valid_distribution:
+        errors.append("python runtime bundle contract has an unsupported distribution")
+    target = python.get("sys_platform")
+    platform = python.get("platform")
+    if target is None and isinstance(platform, str):
+        target = {"win_amd64": "win32", "win32": "win32", "win_arm64": "win32"}.get(platform)
+        if target is None and platform.startswith(("manylinux", "linux")):
+            target = "linux"
+        if target is None and platform.startswith("macosx"):
+            target = "darwin"
+    valid_target = isinstance(target, str) and target in {"win32", "linux", "darwin"}
+    if not valid_target:
+        errors.append("python runtime bundle contract has an unsupported target platform")
+    raw_platform_tags = python.get("platform_tags", [python.get("platform")])
+    valid_tags = (
+        isinstance(raw_platform_tags, list)
+        and all(isinstance(tag, str) and tag for tag in raw_platform_tags)
+        and platform in raw_platform_tags
+    )
+    if not valid_tags:
+        errors.append("python runtime bundle contract has invalid platform tags")
     build_lock, runtime_lock, lock_errors = _validate_build_contract(root, contract)
     errors.extend(lock_errors)
     if build_lock is None or runtime_lock is None:
+        return None, errors
+    if not valid_distribution or not valid_target or not valid_tags:
         return None, errors
     common = {
         "contract_sha256": _sha256_file(contract_path),
@@ -305,6 +454,9 @@ def _load_context(root: Path) -> tuple[BundleContext | None, list[str]]:
         "platform": python.get("platform"),
         "abi": python.get("abi"),
     }
+    for field in ("sys_platform", "platform_tags"):
+        if field in python:
+            common[field] = python[field]
     return (
         BundleContext(
             root=root,
@@ -315,6 +467,9 @@ def _load_context(root: Path) -> tuple[BundleContext | None, list[str]]:
             common_manifest_fields=common,
             embed_manifest_name=str(contract.get("embed_manifest") or ""),
             wheelhouse_manifest_name=str(contract.get("wheelhouse_manifest") or ""),
+            distribution=distribution,
+            sys_platform=cast(str, target),
+            platform_tags=tuple(raw_platform_tags),
         ),
         errors,
     )
@@ -322,11 +477,13 @@ def _load_context(root: Path) -> tuple[BundleContext | None, list[str]]:
 
 def _validate_embed_bundle(context: BundleContext, embed: Path) -> list[str]:
     python = context.python
-    required_files = [
-        str(python.get("executable") or ""),
-        str(python.get("stdlib_archive") or ""),
-        str(python.get("path_file") or ""),
-    ]
+    is_embeddable = context.distribution == "cpython-embeddable"
+    required_fields = (
+        ("executable", "stdlib_archive", "path_file")
+        if is_embeddable
+        else ("executable", "stdlib_marker")
+    )
+    required_files = [str(python.get(field) or "") for field in required_fields]
     manifest, _entries, errors = _validate_manifest_tree(
         directory=embed,
         manifest_name=context.embed_manifest_name,
@@ -335,8 +492,8 @@ def _validate_embed_bundle(context: BundleContext, embed: Path) -> list[str]:
     )
     if manifest is None:
         return errors
-    if manifest.get("distribution") != "cpython-embeddable":
-        errors.append("python embed manifest distribution is not cpython-embeddable")
+    if manifest.get("distribution") != context.distribution:
+        errors.append(f"python embed manifest distribution is not {context.distribution}")
     if manifest.get("source_url") != python.get("embed_url"):
         errors.append("python embed manifest source URL drifted")
     if manifest.get("source_sha256") != python.get("embed_sha256"):
@@ -345,9 +502,7 @@ def _validate_embed_bundle(context: BundleContext, embed: Path) -> list[str]:
 
 
 def _validate_wheel_entries(
-    entries: dict[str, str],
-    runtime_lock: Path,
-    python: dict[str, Any],
+    entries: dict[str, str], runtime_lock: Path, context: BundleContext
 ) -> list[str]:
     errors: list[str] = []
     wheel_pins: dict[str, str] = {}
@@ -362,17 +517,25 @@ def _validate_wheel_entries(
         wheel_pins[name] = version
         is_pure = abi_tag == "none" and platform_tag == "any"
         is_target = (
-            python_tag == python.get("abi")
-            and abi_tag == python.get("abi")
-            and platform_tag == python.get("platform")
+            python_tag == context.python.get("abi")
+            and abi_tag == context.python.get("abi")
+            and bool(set(platform_tag.split(".")) & set(context.platform_tags))
         )
         if not is_pure and not is_target:
             errors.append(f"python runtime wheel targets the wrong platform: {filename}")
-    runtime_pins, lock_errors = _parse_hashed_lock(runtime_lock)
+    bundled_version = context.python.get("version")
+    architecture = context.python.get("architecture")
+    runtime_pins, lock_errors = _runtime_pins_for_target(
+        runtime_lock,
+        context.sys_platform,
+        bundled_version if isinstance(bundled_version, str) else None,
+        architecture=architecture if isinstance(architecture, str) else None,
+    )
     errors.extend(lock_errors)
     if wheel_pins != runtime_pins:
         errors.append(
-            "python runtime wheelhouse does not exactly match its hashed lock "
+            "python runtime wheelhouse does not exactly match its hashed lock for "
+            f"target platform {context.sys_platform} "
             f"(expected={runtime_pins}, actual={wheel_pins})"
         )
     return errors
@@ -393,7 +556,7 @@ def _validate_wheelhouse_bundle(context: BundleContext, wheelhouse: Path) -> lis
         errors.append("python runtime wheelhouse top-level package pins drifted")
     if manifest.get("bootstrap_packages") != context.contract.get("bootstrap_packages"):
         errors.append("python runtime wheelhouse bootstrap pins drifted")
-    errors.extend(_validate_wheel_entries(entries, context.runtime_lock, context.python))
+    errors.extend(_validate_wheel_entries(entries, context.runtime_lock, context))
     return errors
 
 
@@ -437,18 +600,21 @@ def _probe_python(context: BundleContext, embed: Path) -> list[str]:
 def validate_python_runtime_bundle(
     root: Path = ROOT,
     *,
+    contract_path: Path | None = None,
     embed_dir: Path | None = None,
     wheelhouse_dir: Path | None = None,
     probe_python: bool = True,
 ) -> list[str]:
-    context, errors = _load_context(root)
+    selected_contract = contract_path or root / "config" / "python-runtime-bundle-lock.json"
+    context, errors = _load_context(root, selected_contract)
     if context is None:
         return errors
     embed = embed_dir or root / "vendor" / "python-embed"
     wheelhouse = wheelhouse_dir or root / "vendor" / "python-runtime-wheels"
     errors.extend(_validate_embed_bundle(context, embed))
     errors.extend(_validate_wheelhouse_bundle(context, wheelhouse))
-    errors.extend(_validate_path_file(context, embed))
+    if context.distribution == "cpython-embeddable":
+        errors.extend(_validate_path_file(context, embed))
     if probe_python and not errors:
         errors.extend(_probe_python(context, embed))
     return errors
@@ -456,6 +622,7 @@ def validate_python_runtime_bundle(
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--contract", type=Path, help="Bundle contract to validate.")
     parser.add_argument(
         "--no-probe",
         action="store_true",
@@ -466,15 +633,22 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
-    if os.name != "nt":
-        print("PASS: Windows managed Python runtime bundle is not required on this host")
+    contract_path = args.contract or default_contract_path(
+        ROOT, os_name=os.name, sys_platform=sys.platform
+    )
+    if contract_path is None:
+        print("PASS: managed Python runtime bundle is not required on this host")
         return 0
-    violations = validate_python_runtime_bundle(ROOT, probe_python=not args.no_probe)
+    violations = validate_python_runtime_bundle(
+        ROOT, contract_path=contract_path, probe_python=not args.no_probe
+    )
     if violations:
         print("FAIL: managed Python runtime bundle is not package-ready")
         for violation in violations:
             print(f"  - {violation}")
-        print("  - rebuild with: python scripts/build-python-runtime-bundle.py")
+        relative_contract = Path(os.path.relpath(contract_path, ROOT)).as_posix()
+        command = "python scripts/build-python-runtime-bundle.py --contract"
+        print(f"  - rebuild with: {command} {relative_contract}")
         return 1
     print("PASS: managed Python runtime bundle is package-ready")
     return 0

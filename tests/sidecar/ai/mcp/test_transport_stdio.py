@@ -688,6 +688,30 @@ def test_process_containment_builds_minimal_posix_env_and_limits(
     assert callable(kwargs["preexec_fn"])
 
 
+def test_process_containment_minimal_env_passes_posix_user_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_values = {
+        "HOME": "/home/ada",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "LD_LIBRARY_PATH": "/tmp/_MEI",
+    }
+    monkeypatch.setattr(
+        process_containment,
+        "read_environment_value",
+        lambda key, default="": env_values.get(key, default),
+    )
+
+    env = process_containment._minimal_env(  # noqa: SLF001
+        MCPServerConfig(name="docs", transport="stdio", command="docs-mcp"),
+        command_path=None,
+    )
+
+    assert env["HOME"] == "/home/ada"
+    assert env["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert "LD_LIBRARY_PATH" not in env
+
+
 def test_process_containment_resolves_bare_command_without_inheriting_full_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

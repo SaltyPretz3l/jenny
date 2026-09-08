@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "python": {
+    "version": "3.13.15",
+    "implementation": "cpython",
+    "architecture": "x64",
+    "platform": "manylinux_2_28_x86_64",
+    "platform_tags": [
+      "manylinux_2_28_x86_64",
+      "manylinux_2_27_x86_64",
+      "manylinux_2_24_x86_64",
+      "manylinux_2_17_x86_64",
+      "manylinux2014_x86_64",
+      "manylinux_2_5_x86_64",
+      "manylinux1_x86_64"
+    ],
+    "sys_platform": "linux",
+    "abi": "cp313",
+    "distribution": "python-build-standalone",
+    "archive_format": "tar.gz",
+    "strip_prefix": "python",
+    "embed_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.13.15+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "embed_sha256": "8a689a077337bea6d1c4bc0b7df1d52fcaa28f5f67e50df8bf417c1e3f9d8874",
+    "max_archive_bytes": 50331648,
+    "max_extracted_bytes": 268435456,
+    "max_members": 12000,
+    "executable": "bin/python3.13",
+    "stdlib_marker": "lib/python3.13/os.py",
+    "exclude": [
+      "bin/python",
+      "bin/python3",
+      "lib/libpython3.13.so",
+      "include",
+      "share"
+    ]
+  },
+  "runtime_packages": [
+    "pandas==3.0.1",
+    "numpy==2.4.3",
+    "matplotlib==3.10.8",
+    "seaborn==0.13.2",
+    "scipy==1.17.1",
+    "tabulate==0.10.0"
+  ],
+  "bootstrap_packages": [
+    "pip==26.2"
+  ],
+  "build_lock": "requirements-build-lock.txt",
+  "runtime_lock": "requirements-python-runtime-lock.txt",
+  "embed_manifest": "python-embed-manifest.json",
+  "wheelhouse_manifest": "wheelhouse-manifest.json"
+}

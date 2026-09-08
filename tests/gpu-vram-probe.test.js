@@ -49,7 +49,14 @@ test('clamps used down to total when nvidia-smi over-reports', async () => {
   assert.equal(sample.totalMb, 8192);
 });
 
-test('invokes nvidia-smi with the memory query args', async () => {
+test('invokes nvidia-smi with the memory query args', async (t) => {
+  const credentialKey = 'JENNY_GPU_TEST_API_KEY';
+  const originalCredential = process.env[credentialKey];
+  process.env[credentialKey] = 'must-not-reach-nvidia-smi';
+  t.after(() => {
+    if (originalCredential === undefined) delete process.env[credentialKey];
+    else process.env[credentialKey] = originalCredential;
+  });
   const { execFile, calls } = fakeExecFile({ stdout: '1, 2\n' });
   await probeNvidiaSmiVram({ execFile });
 
@@ -61,6 +68,7 @@ test('invokes nvidia-smi with the memory query args', async () => {
   ]);
   assert.equal(typeof calls[0].options.timeout, 'number');
   assert.ok(calls[0].options.timeout > 0);
+  assert.equal(calls[0].options.env[credentialKey], undefined);
 });
 
 test('returns unavailable on a non-zero exit', async () => {

@@ -59,9 +59,11 @@ test('feature settings payload exposes declarative tool config fields', () => {
   });
   assert.deepEqual(payload.availability.tools.pythonRuntime, {
     managedSidecarRequired: true,
-    windowsOnly: true,
+    platforms: ['win32', 'linux'],
     enabled: true,
   });
+  assert.equal(payload.availability.runtime.platform, 'win32');
+  assert.equal(payload.availability.runtime.windowsOnly, true);
   assert.deepEqual(payload.availability.tools.worktree, {
     managedSidecarRequired: false,
     electronOnly: true,
@@ -83,6 +85,41 @@ test('feature settings payload exposes declarative tool config fields', () => {
     workspaceRootRequired: true,
     enabled: false,
   });
+});
+
+function buildPlatformAvailability(platform) {
+  return buildFeatureStatePayload({
+    shellConfigService: {
+      getState: () => ({ tools: {}, featureOverrides: {} }),
+      getWorkspaceRootStatus: () => ({ state: 'missing' }),
+    },
+    env: {},
+    platform,
+  }).availability;
+}
+
+test('python runtime is available on Linux', () => {
+  const availability = buildPlatformAvailability('linux');
+
+  assert.deepEqual(availability.tools.pythonRuntime, {
+    managedSidecarRequired: true,
+    platforms: ['win32', 'linux'],
+    enabled: true,
+  });
+  assert.equal(availability.runtime.platform, 'linux');
+  assert.equal(availability.runtime.windowsOnly, false);
+});
+
+test('python runtime is unavailable on macOS', () => {
+  const availability = buildPlatformAvailability('darwin');
+
+  assert.deepEqual(availability.tools.pythonRuntime, {
+    managedSidecarRequired: true,
+    platforms: ['win32', 'linux'],
+    enabled: false,
+  });
+  assert.equal(availability.runtime.platform, 'darwin');
+  assert.equal(availability.runtime.windowsOnly, false);
 });
 
 test('feature settings payload includes the webSearch provider slice', () => {

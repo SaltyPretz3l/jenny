@@ -34,7 +34,7 @@ body:
     id: os
     attributes:
       label: Operating system
-      placeholder: e.g. Windows 11 24H2 / macOS 15.3
+      placeholder: e.g. Windows 11 24H2 / macOS 15.3 / Ubuntu 24.04 (AppImage or .deb)
     validations:
       required: true
   - type: input
@@ -46,7 +46,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Paste or attach any relevant dump from `<userData>/diagnostics/` (Windows `%APPDATA%\jenny\diagnostics`). Remove anything private first.
+      description: Paste or attach any relevant dump from `<userData>/diagnostics/` (Windows `%APPDATA%\jenny\diagnostics`, Linux `~/.config/jenny/diagnostics`). Remove anything private first.
   - type: checkboxes
     id: ack
     attributes:

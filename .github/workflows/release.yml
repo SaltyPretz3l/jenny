@@ -1,6 +1,6 @@
 name: Release
 
-# Builds and publishes the Windows and macOS installers for a tagged release.
+# Builds and publishes the Windows, macOS, and Linux installers for a tagged release.
 # Each runner builds its OWN sidecar (PyInstaller is platform-specific) and runs
 # electron-builder for its OS, publishing to the GitHub Release for the tag.
 #
@@ -12,6 +12,8 @@ name: Release
 # is disabled so the Windows installer still ships even if the mac leg has trouble,
 # and the leg is marked experimental (continue-on-error) so it cannot mark the run
 # failed while Windows shipped.
+# The unsigned Linux leg is also experimental and smokes its unpacked app before
+# electron-builder creates and publishes packages from that verified directory.
 #
 # The `prepare` job creates the draft release for the tag exactly once BEFORE the
 # build matrix. electron-builder's GitHub publisher creates a draft when it finds
@@ -85,8 +87,8 @@ jobs:
             eb_flag: "--mac"
             experimental: true
     runs-on: ${{ matrix.os }}
-    # Unsigned, never run on real hardware, and its hash lock carries only win_amd64
-    # wheels today: the mac leg must not fail the Release run the Windows leg passed.
+    # Unsigned and never run on real hardware: the experimental mac leg must not
+    # fail the Release run the Windows leg passed.
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Checkout
@@ -156,4 +158,182 @@ jobs:
         with:
           name: jenny-installer-${{ matrix.os }}
           path: dist/**
+          if-no-files-found: ignore
+
+  # Mirrored step for step by the private .github/workflows/ci-linux-package.yml
+  # (publish disabled); keep the two in lockstep.
+  build-linux:
+    name: Build & publish Linux packages (experimental)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ubuntu:22.04
+      # seccomp=unconfined lets Chromium's namespace sandbox clone(); private gate run
+      # 34158332977 proved it suffices without --cap-add SYS_ADMIN.
+      options: --security-opt seccomp=unconfined --shm-size=1g
+    continue-on-error: true
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # Install git before checkout, the libraries Chromium's sandboxed smoke needs, and
+      # libsqlite3-0: the sidecar imports sqlite3 and PyInstaller bundles the shared library
+      # only when it is present at build time (the ubuntu:22.04 base image lacks it).
+      - name: Install Linux build and runtime dependencies
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates curl git build-essential xz-utils zstd binutils file sudo \
+            libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils \
+            libatspi2.0-0 libuuid1 libsecret-1-0 libasound2 libgbm1 libdrm2 \
+            libxkbcommon0 libatk-bridge2.0-0 libcups2 libsqlite3-0 xvfb dbus dbus-x11
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Trust the host-owned checkout for both root build steps and the unprivileged smoke user.
+      - name: Configure checkout as a safe Git directory
+        shell: bash
+        run: git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # actions/setup-python inside the container reuses the host runner's pre-cached
+      # CPython (built for the 24.04 image; its pip wrapper is missing there), so the
+      # container jobs take Python from uv: a hash-verified python-build-standalone build
+      # that runs on glibc 2.35, seeded with pip into .venv and put first on PATH so the
+      # later `python -m pip` / packaging steps stay identical to the other legs.
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.19"
+          enable-cache: false
+
+      - name: Setup Python 3.11 (uv-managed)
+        shell: bash
+        run: |
+          uv venv --seed --python 3.11.15 .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python --version
+          .venv/bin/python -m pip --version
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      # Build the gitignored preload explicitly before either electron-builder invocation.
+      - name: Build sandboxed preload bundle
+        run: npm run build:preload
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build-lock.txt
+          python -m pip install --require-hashes -r requirements-lock.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
+
+      # The bundle is copied into the user's runtime root at first use.
+      # The checker's bin/python3.13 probe is the glibc proof for the bundled interpreter.
+      - name: Build offline managed-Python runtime (Linux)
+        run: python scripts/build-python-runtime-bundle.py --contract config/python-runtime-bundle-lock.linux-x64.json
+
+      - name: Verify offline managed-Python runtime (Linux)
+        run: python scripts/checks/check_python_runtime_bundle.py
+
+      # Build the glibc-bound sidecar inside Ubuntu 22.04 to set the Linux compatibility floor.
+      - name: Build sidecar artifact (Linux)
+        run: python scripts/packaging/build_sidecar_artifact.py
+
+      - name: Emit sidecar SBOM
+        run: python scripts/packaging/emit_sbom.py
+
+      # Create the unpacked app first so it can be verified before any package is published.
+      - name: Build unpacked Linux app
+        run: npm exec -- electron-builder --linux --dir --config electron-builder.yml --publish never
+
+      # Reject binaries that require a glibc version newer than the Ubuntu 22.04 floor.
+      - name: Verify glibc 2.35 compatibility floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          binaries=(
+            dist/linux-unpacked/jenny
+            dist/linux-unpacked/resources/sidecar/sidecar
+          )
+          for bundled in dist/linux-unpacked/chrome-sandbox dist/linux-unpacked/chrome_crashpad_handler dist/linux-unpacked/*.so*; do
+            if [ -f "$bundled" ]; then binaries+=("$bundled"); fi
+          done
+          native_modules=0
+          if [ -d dist/linux-unpacked/resources/app.asar.unpacked ]; then
+            while IFS= read -r -d '' native_module; do
+              binaries+=("$native_module")
+              native_modules=$((native_modules + 1))
+            done < <(find dist/linux-unpacked/resources/app.asar.unpacked -type f -name '*.node' -print0)
+          fi
+          if [ "$native_modules" -eq 0 ]; then
+            echo "::error::No native Node modules found under app.asar.unpacked (node-pty prebuild missing?)"
+            exit 1
+          fi
+
+          failed=0
+          for binary in "${binaries[@]}"; do
+            # stderr dropped: Electron's libvulkan.so.1 references split-DWARF .dwo files
+            # objdump cannot load, and those warnings drowned the step log.
+            if ! symbols="$(objdump -T "$binary" 2>/dev/null)"; then
+              echo "::error::Unable to inspect dynamic symbols for $binary"
+              failed=1
+              continue
+            fi
+            max_glibc="$(
+              printf '%s\n' "$symbols" |
+                grep -Eo 'GLIBC_[0-9]+(\.[0-9]+)+' |
+                sort -uV |
+                tail -1 || true
+            )"
+            newest="$(printf '%s\n' GLIBC_2.35 "$max_glibc" | sort -V | tail -1)"
+            if [ -n "$max_glibc" ] && [ "$newest" != GLIBC_2.35 ]; then
+              echo "::error::$binary references $max_glibc, newer than GLIBC_2.35"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      # Run Electron as an unprivileged user while preserving the root-owned SUID sandbox helper.
+      - name: Smoke packaged Linux app
+        shell: bash
+        run: |
+          useradd --create-home smoke
+          # The smoke writes only its request file beside the app and its log under artifacts/;
+          # the rest of the checkout stays root-owned for the root-run packaging step after it.
+          install -d -o smoke -g smoke artifacts/logs
+          chown -R smoke:smoke dist/linux-unpacked artifacts
+          chown root:root dist/linux-unpacked/chrome-sandbox
+          chmod 4755 dist/linux-unpacked/chrome-sandbox
+          sudo -u smoke -H env PATH="$PATH" HOME=/home/smoke \
+            xvfb-run -a dbus-run-session -- "$(command -v python)" \
+            scripts/packaging/smoke_packaged_flow.py \
+            --existing-artifacts --composition release
+
+      # Publish only from the unpacked directory that passed the glibc and packaged-app smokes.
+      - name: Build & publish Linux packages
+        run: npm exec -- electron-builder --linux --prepackaged dist/linux-unpacked --config electron-builder.yml --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux installer artifacts and smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jenny-installer-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.blockmap
+            dist/latest-linux.yml
+            artifacts/logs/packaging-smoke-phase4.log
           if-no-files-found: ignore

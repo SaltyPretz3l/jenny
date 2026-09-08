@@ -67,6 +67,16 @@ function resolvePythonRuntimeBundleRoot(service) {
   return developmentRepoRoot ? path.resolve(developmentRepoRoot, 'vendor') : null;
 }
 
+function bundledPythonRelativePath(platform) {
+  // Linux mirrors python.executable in config/python-runtime-bundle-lock.linux-x64.json;
+  // Windows mirrors the same field in config/python-runtime-bundle-lock.json; tests enforce lockstep.
+  const paths = {
+    win32: ['python-embed', 'python.exe'],
+    linux: ['python-embed', 'bin', 'python3.13'],
+  };
+  return paths[platform] || null;
+}
+
 function readConfigState(service, resolve, fallback = false) {
   if (service.configService && typeof service.configService.getState === 'function') {
     const state = service.configService.getState() || {};
@@ -584,6 +594,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     ))
     : null;
   const pythonRuntimeBundleRoot = resolvePythonRuntimeBundleRoot(service);
+  const rel = bundledPythonRelativePath(process.platform);
   const streamInactivity = getConfiguredStreamInactivity(service, configuredModel, engineType);
   const tokenBudgetTuning = getConfiguredTokenBudgetTuning(service);
   const cloudLoopProfile = getConfiguredCloudLoopProfile(service);
@@ -628,8 +639,8 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_python_runtime_max_memory_mb: getConfiguredToolsPythonRuntimeMaxMemoryMb(service),
     tools_python_runtime_interpreter: null,
     tools_python_runtime_root: path.join(service.options.userDataPath, 'python-runtime'),
-    tools_python_runtime_bundled_python: pythonRuntimeBundleRoot
-      ? path.join(pythonRuntimeBundleRoot, 'python-embed', 'python.exe')
+    tools_python_runtime_bundled_python: pythonRuntimeBundleRoot && rel
+      ? path.join(pythonRuntimeBundleRoot, ...rel)
       : null,
     // The composition layer selects <repo>/vendor for managed development and
     // process.resourcesPath for a packaged sidecar. Electron also defines
@@ -829,6 +840,7 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
 }
 
 module.exports = {
+  bundledPythonRelativePath,
   getConfiguredToolsImageReadEnabled,
   getConfiguredToolsMermaidEnabled,
   getConfiguredToolsPythonRuntimeEnabled,

@@ -75,6 +75,10 @@
     return s.slice(s.lastIndexOf('/') + 1) || s;
   }
 
+  function isWindowsPlatform(platform) {
+    return /^(win|windows)/i.test(String(platform || ''));
+  }
+
   function createMapActivityPresenter(deps) {
     const d = deps || {};
     const bus = d.bus || null;
@@ -85,6 +89,9 @@
     const timers = d.timers || globalRef;
     const onTurnActiveChange = typeof d.onTurnActiveChange === 'function' ? d.onTurnActiveChange : () => {};
     const onRowClick = typeof d.onRowClick === 'function' ? d.onRowClick : () => {};
+    const platform = String(d.platform
+      || (typeof navigator !== 'undefined' ? navigator.platform : '')
+      || (typeof process !== 'undefined' ? process.platform : ''));
 
     let disposed = false;
     let visible = true;
@@ -141,16 +148,18 @@
       }
     }
 
-    // rel -> node id: exact, then case-insensitive (Windows tool inputs may
-    // case-mismatch the scan). Index rebuilt per paint — O(nodes), and
-    // paints are per-tool-event (low frequency), never per-frame.
+    // rel -> node id: exact, then Windows-only case-insensitive fallback for
+    // tool inputs that case-mismatch the scan. Index rebuilt per paint —
+    // O(nodes), and paints are per-tool-event (low frequency), never per-frame.
     function buildResolver() {
       const ids = view && typeof view.getAllNodeIds === 'function' ? view.getAllNodeIds() : new Set();
-      const lower = new Map();
-      for (const id of ids) lower.set(String(id).toLowerCase(), id);
+      const lower = isWindowsPlatform(platform) ? new Map() : null;
+      if (lower) {
+        for (const id of ids) lower.set(String(id).toLowerCase(), id);
+      }
       return (rel) => {
         if (ids.has(rel)) return rel;
-        return lower.get(String(rel).toLowerCase()) || null;
+        return lower ? lower.get(String(rel).toLowerCase()) || null : null;
       };
     }
 

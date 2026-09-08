@@ -6,6 +6,7 @@ const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
 holdEventLoopUntilTestsFinish(test);
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+const path = require('node:path');
 
 const { OllamaInstallService } = require('../services/ollama-install-service');
 
@@ -22,6 +23,19 @@ function manifest(overrides = {}) {
     sha256: GOOD_SHA,
     license: 'MIT',
     manualFallbackUrl: 'https://ollama.com/download/windows',
+    platforms: {
+      linux: {
+        x64: {
+          url: 'https://example.test/ollama-linux-amd64.tar.zst',
+          version: '1.2.4',
+          sizeBytes: BYTES.length,
+          sha256: GOOD_SHA,
+          format: 'tar.zst',
+          installRoot: 'xdg-data',
+          manualFallbackUrl: 'https://ollama.com/download/linux',
+        },
+      },
+    },
     ...overrides,
   };
 }
@@ -103,6 +117,7 @@ function makeService(opts = {}) {
     restartImpl: opts.restartImpl,
     delayImpl: async () => {},
     platform: opts.platform || 'win32',
+    arch: opts.arch || 'x64',
     env: opts.env,
     requestIdProvider: () => 'rid',
     logger: () => {},
@@ -124,6 +139,8 @@ test('getInstallPlan exposes provenance and is available only when fully pinned 
   assert.equal(plan.sha256, GOOD_SHA);
   assert.equal(plan.sizeBytes, BYTES.length);
   assert.equal(plan.minimumVersion, '1.2.3');
+  assert.equal(plan.format, 'exe');
+  assert.equal(plan.installDir, '');
 
   const { svc: unpinned } = makeService({ manifest: manifest({ sha256: '' }) });
   assert.equal(unpinned.getInstallPlan().available, false);
@@ -132,8 +149,66 @@ test('getInstallPlan exposes provenance and is available only when fully pinned 
   assert.equal(makeService({ manifest: manifest({ sizeBytes: Number.POSITIVE_INFINITY }) }).svc
     .getInstallPlan().available, false);
 
-  const { svc: notWin } = makeService({ platform: 'linux' });
-  assert.equal(notWin.getInstallPlan().available, false);
+  const { svc: notWin } = makeService({
+    platform: 'linux',
+    arch: 'arm64',
+    env: { XDG_DATA_HOME: '/xdg' },
+  });
+  const unavailablePlan = notWin.getInstallPlan();
+  assert.equal(unavailablePlan.available, false);
+  assert.equal(unavailablePlan.format, '');
+});
+
+test('getInstallPlan selects the pinned linux x64 archive and XDG install directory', () => {
+  const { svc } = makeService({
+    platform: 'linux',
+    arch: 'x64',
+    env: { XDG_DATA_HOME: '/xdg' },
+  });
+
+  assert.deepEqual(svc.getInstallPlan(), {
+    available: true,
+    url: 'https://example.test/ollama-linux-amd64.tar.zst',
+    version: '1.2.4',
+    minimumVersion: '1.2.3',
+    sizeBytes: BYTES.length,
+    sha256: GOOD_SHA,
+    license: 'MIT',
+    manualFallbackUrl: 'https://ollama.com/download/linux',
+    platform: 'linux',
+    arch: 'x64',
+    format: 'tar.zst',
+    installDir: '/xdg/jenny/ollama',
+  });
+});
+
+test('_createTempTarget uses the platform archive filename', () => {
+  const fsImpl = { mkdtempSync: () => 'C:/temp/jenny-ollama-target' };
+  const linux = makeService({
+    platform: 'linux',
+    arch: 'x64',
+    env: { XDG_DATA_HOME: '/xdg' },
+    fsImpl,
+  }).svc._createTempTarget();
+  const windows = makeService({ platform: 'win32', arch: 'x64', fsImpl }).svc._createTempTarget();
+
+  assert.equal(path.basename(linux.destPath), 'ollama-linux-amd64.tar.zst');
+  assert.equal(path.basename(windows.destPath), 'OllamaSetup.exe');
+});
+
+test('getInstallPlan rejects a linux entry with the wrong archive format', () => {
+  const invalidManifest = manifest();
+  invalidManifest.platforms.linux.x64.format = 'exe';
+  const { svc } = makeService({
+    platform: 'linux',
+    arch: 'x64',
+    env: { XDG_DATA_HOME: '/xdg' },
+    manifest: invalidManifest,
+  });
+
+  const plan = svc.getInstallPlan();
+  assert.equal(plan.available, false);
+  assert.equal(plan.format, 'exe');
 });
 
 test('manualFallbackUrl is platform-resolved; the manifest Windows URL never leaks off win32', () => {
@@ -143,7 +218,7 @@ test('manualFallbackUrl is platform-resolved; the manifest Windows URL never lea
   const { svc: mac } = makeService({ platform: 'darwin' });
   assert.equal(mac.getInstallPlan().manualFallbackUrl, 'https://ollama.com/download/mac');
 
-  const { svc: linux } = makeService({ platform: 'linux' });
+  const { svc: linux } = makeService({ platform: 'linux', env: { XDG_DATA_HOME: '/xdg' } });
   assert.equal(linux.getInstallPlan().manualFallbackUrl, 'https://ollama.com/download/linux');
 
   const { svc: other } = makeService({ platform: 'freebsd' });

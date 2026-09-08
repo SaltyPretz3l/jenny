@@ -19,6 +19,9 @@ from sidecar.ai.tools.builtins.python_runtime import (
     interpreter,
     tool,
 )
+from sidecar.ai.tools.builtins.python_runtime.errors import (
+    PythonRuntimeWheelhouseIntegrityError,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
@@ -46,6 +49,41 @@ def test_default_wheelhouse_without_manifest_is_treated_as_absent(
     monkeypatch.setattr(interpreter, "DEFAULT_RUNTIME_WHEELHOUSE", wheelhouse)
 
     assert interpreter._runtime_wheelhouse({}) is None  # noqa: SLF001
+
+
+def test_runtime_fingerprint_binds_the_bundle_contract(tmp_path: Path) -> None:
+    def fingerprint(name: str, **extra: str) -> str:
+        wheelhouse = tmp_path / name
+        wheelhouse.mkdir()
+        (wheelhouse / interpreter.WHEELHOUSE_MANIFEST_FILENAME).write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "algorithm": "sha256",
+                    "files": {},
+                    "runtime_lock_sha256": "a" * 64,
+                    **extra,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return interpreter._runtime_requirements_fingerprint_for_wheelhouse(  # noqa: SLF001
+            wheelhouse
+        )
+
+    contract_b = fingerprint("contract-b", contract_sha256="b" * 64)
+    contract_c = fingerprint("contract-c", contract_sha256="c" * 64)
+    no_contract = fingerprint("no-contract")
+
+    assert contract_b != contract_c
+    assert contract_b != no_contract
+    assert contract_c != no_contract
+    expected_legacy = hashlib.sha256(
+        f"{interpreter._requirements_fingerprint()}\n{'a' * 64}".encode("utf-8")  # noqa: SLF001
+    ).hexdigest()
+    assert no_contract == expected_legacy
+    with pytest.raises(PythonRuntimeWheelhouseIntegrityError):
+        fingerprint("invalid-contract", contract_sha256="zz")
 
 
 def test_discover_base_interpreter_prefers_sys_executable_over_path(

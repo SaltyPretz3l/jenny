@@ -38,9 +38,17 @@ _ENV_PASSTHROUGH_KEYS = (
     "USERPROFILE",
     "HOMEDRIVE",
     "HOMEPATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
     "LANG",
     "LC_ALL",
 )
+# LD_LIBRARY_PATH stays excluded so MCP children cannot inherit frozen libraries.
 _POSIX_DEFAULT_PATH_SEGMENTS = ("/usr/local/bin", "/usr/bin", "/bin")
 _BUILTIN_MCP_OPTIONAL_PATH_COMMANDS = ("git",)
 _WINDOWS_GIT_RELATIVE_DIRS = (

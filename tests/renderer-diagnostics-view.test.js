@@ -927,3 +927,50 @@ test('a deep link for an unknown stream leaves Activity usable', async (t) => {
   assert.equal(doc.getElementById('logDetailPanel').hidden, true, 'no inspector for a missing entry');
   assert.ok(doc.querySelector('[data-entry-id="unrelated"]'), 'the list still renders normally');
 });
+
+test('runtime inventory reports the Chromium sandbox from jenny_status', async (t) => {
+  const inventoryFor = async (chromiumSandbox) => {
+    const app = await loadRendererApp({
+      shell: {
+        diagnostics: {
+          logs: { getSnapshot: async () => ({ active_run: { run_id: 'run' }, entries: [], sources: OBSERVED_SOURCES, integrity: { complete: true, partial_reasons: [] } }) },
+          getJennyStatus: async () => ({ schema_version: 3, backend: { phase: 'ready' }, runtime: { chromium_sandbox: chromiumSandbox } }),
+        },
+        harness: {
+          inspect: async () => ({
+            runtime: { active_engine: 'ollama', active_model: 'gemma3:latest', active_mode: 'chat' },
+            tools: { items: [], counts: { total: 0, enabled: 0, disabled: 0 } },
+            memories: { approved: [], pending: [], counts: { approved: 0, pending: 0 }, status: { available: true } },
+            skills: { scopes: [], items: [] },
+            workspace: { root: 'C:/dev/jenny', exists: true, blockers: [], workspace_blocked_tools: [] },
+            shell: { tools_preferences: {}, companion: {}, proactive: {}, offline: {} },
+          }),
+        },
+      },
+    });
+    t.after(async () => app.dispose());
+    app.window.document.getElementById('logsTopRailTab').click();
+    await waitForUi(app.window, 60);
+    return app.window.document.getElementById('diagnosticsRuntimeInventory');
+  };
+
+  const off = await inventoryFor({ platform: 'linux', packaged: true, sandboxed: false, reason: 'no_sandbox_switch', package_kind: 'appimage' });
+  const offRow = inventoryRow(off, 'Chromium sandbox');
+  assert.ok(offRow, 'an unsandboxed packaged app gets a row');
+  assert.equal(offRow.getAttribute('data-tone'), 'warn');
+  assert.match(offRow.querySelector('dd').getAttribute('title'), /install the \.deb/);
+  assert.ok(inventoryRow(off, 'Scheduler'), 'existing platform rows stay');
+
+  const on = await inventoryFor({ platform: 'linux', packaged: true, sandboxed: true, reason: '', package_kind: 'system' });
+  const onRow = inventoryRow(on, 'Chromium sandbox');
+  assert.equal(onRow.getAttribute('data-tone'), 'ok');
+  assert.equal(onRow.querySelector('dd').textContent, 'On');
+
+  const unknown = await inventoryFor({ platform: 'linux', packaged: true, sandboxed: null, reason: 'inspection_unavailable', package_kind: 'system' });
+  const unknownRow = inventoryRow(unknown, 'Chromium sandbox');
+  assert.equal(unknownRow.getAttribute('data-tone'), 'warn', 'no evidence is not reported as On');
+  assert.match(unknownRow.querySelector('dd').getAttribute('title'), /^Unknown/);
+
+  const absent = await inventoryFor(undefined);
+  assert.equal(inventoryRow(absent, 'Chromium sandbox'), null, 'no facet, no row');
+});

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   createMainWindowWithDeps,
   createMainWindowStartupLifecycle,
+  resolveWindowIconPath,
 } = require('../services/main/main-window-composition');
 
 // A BrowserWindow-like fake that records every interaction the composition
@@ -131,6 +132,27 @@ test('re-exports createMainWindowStartupLifecycle from the startup-lifecycle mod
     createMainWindowStartupLifecycle,
     require('../services/main-window-startup-lifecycle').createMainWindowStartupLifecycle,
   );
+});
+
+test('resolves development and packaged window icons by platform', () => {
+  const rootDir = path.join(process.cwd(), 'fixture-root');
+  const resourcesPath = path.join(process.cwd(), 'fixture-resources');
+
+  assert.equal(
+    resolveWindowIconPath({ isPackaged: false, platform: 'win32', rootDir, resourcesPath }),
+    path.join(rootDir, 'build', 'icon.ico'),
+  );
+  assert.equal(
+    resolveWindowIconPath({ isPackaged: false, platform: 'linux', rootDir, resourcesPath }),
+    path.join(rootDir, 'build', 'icon.png'),
+  );
+  assert.equal(
+    resolveWindowIconPath({ isPackaged: true, platform: 'linux', rootDir, resourcesPath }),
+    path.join(resourcesPath, 'icon.png'),
+  );
+  assert.equal(resolveWindowIconPath({ isPackaged: true, platform: 'win32', rootDir, resourcesPath }), null);
+  assert.equal(resolveWindowIconPath({ isPackaged: true, platform: 'darwin', rootDir, resourcesPath }), null);
+  assert.equal(resolveWindowIconPath({ isPackaged: true, platform: 'linux', rootDir }), null);
 });
 
 test('constructs exactly one BrowserWindow with the hardened option shape', () => {

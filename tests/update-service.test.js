@@ -163,15 +163,56 @@ test('UpdateService enables auto-update on a signed macOS build', () => {
   assert.equal(service.getState().autoUpdateAllowed, true);
 });
 
-test('UpdateService keeps auto-update disabled on other platforms (e.g. Linux)', () => {
+test('UpdateService disables auto-update for Linux packages without APPIMAGE', () => {
   const service = new UpdateService({
     app: makeApp({ isPackaged: true }),
     autoUpdater: new FakeAutoUpdater(),
     storePath: path.join(makeTempDir(), 'updates.json'),
     platform: 'linux',
+    env: {},
   });
   assert.equal(service.getState().status, 'disabled');
-  assert.match(service.getState().reason, /Windows and macOS/i);
+  assert.match(service.getState().reason, /download the latest/i);
+});
+
+test('UpdateService enables auto-update for a Linux AppImage', () => {
+  const service = new UpdateService({
+    app: makeApp({ isPackaged: true }),
+    autoUpdater: new FakeAutoUpdater(),
+    storePath: path.join(makeTempDir(), 'updates.json'),
+    platform: 'linux',
+    env: {
+      APPIMAGE: '/home/u/Jenny-x86_64.AppImage',
+      APPDIR: '/tmp/.mount_Jenny',
+    },
+    execPath: '/tmp/.mount_Jenny/usr/bin/jenny',
+  });
+  assert.equal(service.getState().status, 'idle');
+  assert.equal(service.getState().reason, '');
+  assert.equal(service.getState().autoUpdateAllowed, true);
+});
+
+test('UpdateService ignores inherited AppImage variables on Linux', () => {
+  const service = new UpdateService({
+    app: makeApp({ isPackaged: true }),
+    autoUpdater: new FakeAutoUpdater(),
+    storePath: path.join(makeTempDir(), 'updates.json'),
+    platform: 'linux',
+    env: { APPIMAGE: '/tools/Other.AppImage', APPDIR: '/tmp/.mount_Other' },
+    execPath: '/opt/Jenny/jenny',
+  });
+  assert.equal(service.getState().status, 'disabled');
+  assert.match(service.getState().reason, /unavailable for this Linux package/i);
+});
+
+test('UpdateService keeps auto-update disabled on unknown platforms', () => {
+  const service = new UpdateService({
+    app: makeApp({ isPackaged: true }),
+    autoUpdater: new FakeAutoUpdater(),
+    storePath: path.join(makeTempDir(), 'updates.json'),
+    platform: 'freebsd',
+  });
+  assert.equal(service.getState().status, 'disabled');
 });
 
 test('UpdateService exposes available, download, install, and changed states', async () => {

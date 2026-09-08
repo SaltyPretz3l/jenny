@@ -22,7 +22,10 @@ SEMVER_RE = re.compile(
 RELEASE_WORKFLOWS = (
     Path(".github") / "workflows" / "release.yml",
     Path(".github") / "workflows" / "release-attestation.yml",
+    Path(".github") / "workflows" / "ci-linux-package.yml",
 )
+# Source-repo-only lanes; the public source export ships release.yml alone.
+PRIVATE_RELEASE_WORKFLOWS = frozenset({"release-attestation.yml", "ci-linux-package.yml"})
 # Any one of these in an earlier ``run:`` step satisfies the preload
 # requirement: the dedicated builder, or a pack/release npm script that
 # already embeds it.
@@ -61,6 +64,12 @@ REQUIRED_SCRIPTS = {
         "npm run build:sidecar && npm run build:restricted-host:release && "
         "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
         "npm exec -- electron-builder "
+        "--config electron-builder.yml --publish never"
+    ),
+    "pack:linux": (
+        "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run build:sidecar && npm run sbom:sidecar && "
+        "npm exec -- electron-builder --linux "
         "--config electron-builder.yml --publish never"
     ),
     "release:windows": (
@@ -245,11 +254,12 @@ def _validate_release_workflows(root: Path) -> list[str]:
     required = RELEASE_WORKFLOWS
     if _is_distribution_package(root):
         # The public source export deliberately ships only release.yml; the
-        # attestation workflow is a source-repo lane (and depends on source-repo
-        # state). release.yml itself stays fully validated in the distribution.
+        # attestation and private Linux-package workflows are source-repo lanes
+        # (and depend on source-repo state). release.yml itself stays fully
+        # validated in the distribution.
         required = tuple(
             relative for relative in RELEASE_WORKFLOWS
-            if relative.name != "release-attestation.yml"
+            if relative.name not in PRIVATE_RELEASE_WORKFLOWS
         )
     for relative in required:
         path = root / relative

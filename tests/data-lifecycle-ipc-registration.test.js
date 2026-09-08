@@ -181,6 +181,37 @@ test('Settings delegates installed Windows removal to the official system uninst
   assert.match(result.instructions, /Select Jenny in Installed apps/);
 });
 
+test('Settings provides package-appropriate removal instructions for packaged Linux', async () => {
+  const appImage = await launchOfficialRemovalEntry({
+    platform: 'linux',
+    isPackaged: true,
+    env: {
+      APPIMAGE: '/home/u/Jenny-x86_64.AppImage',
+      APPDIR: '/tmp/.mount_Jenny',
+    },
+    execPath: '/tmp/.mount_Jenny/usr/bin/jenny',
+  });
+  assert.equal(appImage.status, 'manual_file_removal_required');
+  assert.match(appImage.instructions, /\/home\/u\/Jenny-x86_64\.AppImage/);
+
+  const deb = await launchOfficialRemovalEntry({ platform: 'linux', isPackaged: true, env: {} });
+  assert.equal(deb.status, 'package_manager_required');
+  assert.match(deb.instructions, /apt remove jenny/);
+
+  const clone = await launchOfficialRemovalEntry({ platform: 'linux', isPackaged: false, env: {} });
+  assert.equal(clone.status, 'clone_command_required');
+});
+
+test('Settings ignores inherited AppImage variables for packaged Linux removal', async () => {
+  const result = await launchOfficialRemovalEntry({
+    platform: 'linux',
+    isPackaged: true,
+    env: { APPIMAGE: '/tools/Other.AppImage', APPDIR: '/tmp/.mount_Other' },
+    execPath: '/opt/Jenny/jenny',
+  });
+  assert.equal(result.status, 'package_manager_required');
+});
+
 test('Settings provides fixed helper instructions for packaged macOS and clones', async () => {
   const packaged = await launchOfficialRemovalEntry({ platform: 'darwin', isPackaged: true });
   assert.equal(packaged.status, 'manual_helper_required');

@@ -5,6 +5,14 @@ const { attachMainWindowNavigationGuards } = require('../main-window-navigation-
 const { createMainWindowStartupLifecycle } = require('../main-window-startup-lifecycle');
 const { attachSpellcheckMenuBridge } = require('./spellcheck-menu-bridge');
 
+function resolveWindowIconPath({ isPackaged, platform, rootDir, resourcesPath }) {
+  // Windows/mac executables carry their icon; the Linux ELF does not, so
+  // packaging copies build/icon.png into resources.
+  if (!isPackaged) return path.join(rootDir, 'build', platform === 'win32' ? 'icon.ico' : 'icon.png');
+  if (platform === 'linux' && resourcesPath) return path.join(resourcesPath, 'icon.png');
+  return null;
+}
+
 function createMainWindowWithDeps({
   BrowserWindow,
   rootDir,
@@ -195,4 +203,5 @@ function createMainWindowWithDeps({
 module.exports = {
   createMainWindowStartupLifecycle,
   createMainWindowWithDeps,
+  resolveWindowIconPath,
 };

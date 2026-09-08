@@ -27,6 +27,7 @@ const {
 const {
   resolveOllamaOutputLevel,
 } = require('./ollama-stderr-level');
+const { ollamaBinaryPath } = require('../ollama-runtime-paths');
 const {
   TRAY_CONFLICT_REMEDIATION,
   buildTrayConflictWarnDetails,
@@ -89,6 +90,7 @@ class OllamaProcessManager {
     getProcessCommandLineSyncImpl,
     stateStore,
     platform,
+    env = process.env,
     host = OLLAMA_HOST,
     port = OLLAMA_PORT,
     healthTimeoutMs = HEALTH_TIMEOUT_MS,
@@ -147,6 +149,7 @@ class OllamaProcessManager {
     this._trayConflict = null;
     this._expectedExitPids = new Set();
     this._platform = platform || process.platform;
+    this._env = env;
     this._host = String(host || OLLAMA_HOST).trim() || OLLAMA_HOST;
     this._port = Number(port) || OLLAMA_PORT;
     this._healthTimeoutMs = Number(healthTimeoutMs) || HEALTH_TIMEOUT_MS;
@@ -579,6 +582,10 @@ class OllamaProcessManager {
   async stop(options = {}) {
     // A deliberate stop supersedes any pending post-exit crash probe.
     this._clearPostExitProbe();
+    // Every restart goes through stop(); forget the memoized command so the next
+    // start() re-probes and picks up a binary installed meanwhile (the managed
+    // Linux install lands at a new path instead of replacing the old one).
+    this._resolveCommandPromise = null;
     const scope = options && options.scope === 'any_local' ? 'any_local' : 'app_owned';
     const ownedState = this._readOwnedState();
     const ownedPid = this._getOwnedPid(ownedState);
@@ -669,6 +676,14 @@ class OllamaProcessManager {
   _resolveCommand() {
     if (!this._resolveCommandPromise) {
       this._resolveCommandPromise = new Promise((resolve) => {
+        // Jenny's managed user-space binary wins on non-Windows platforms.
+        // This survives restart without PATH edits and avoids an older system Ollama.
+        // Windows keeps its existing where-first discovery ordering.
+        const managedCommand = this._platform === 'win32' ? '' : ollamaBinaryPath(this._platform, this._env);
+        if (managedCommand) {
+          resolve(managedCommand);
+          return;
+        }
         const { execFile } = require('child_process');
         const cmd = this._platform === 'win32' ? 'where' : 'which';
         execFile(cmd, ['ollama'], { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (error, stdout) => {

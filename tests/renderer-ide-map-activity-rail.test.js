@@ -52,7 +52,8 @@ function setup(t, opts) {
   const previousWindow = globalThis.window;
   globalThis.window = dom.window;
   const viewportEl = dom.window.document.getElementById('vp');
-  const bus = createMapActivityBus({ getRootPath: () => ROOT, now: () => 1000 });
+  const platform = opts && opts.platform;
+  const bus = createMapActivityBus({ getRootPath: () => ROOT, now: () => 1000, platform });
   const view = makeStubView((opts && opts.ids) || ['renderer/App.js', 'services/x.js']);
   const timers = makeFakeTimers();
   const revealed = [];
@@ -63,6 +64,7 @@ function setup(t, opts) {
     view,
     viewportEl,
     timers,
+    platform,
     onTurnActiveChange: (active) => turnStates.push(active),
     onRowClick: (id) => revealed.push(id),
   });
@@ -83,7 +85,7 @@ function use(bus, over) {
 }
 
 test('resolution: exact, case-insensitive, and bucket-prefix fallback', (t) => {
-  const { bus, view, viewportEl } = setup(t);
+  const { bus, view, viewportEl } = setup(t, { platform: 'win32' });
   use(bus, { callId: 'c1', input: { path: 'renderer/App.js' } });          // exact
   use(bus, { callId: 'c2', input: { path: 'SERVICES/X.JS' } });            // case-mismatch
   use(bus, { callId: 'c3', toolName: 'write_file', input: { path: 'dist/bundle.js' } }); // bucketed
@@ -91,6 +93,16 @@ test('resolution: exact, case-insensitive, and bucket-prefix fallback', (t) => {
   assert.deepEqual([...last.heat.keys()].sort(), ['renderer/App.js', 'services/x.js']);
   const chip = viewportEl.querySelector('[data-map-bucket="dist"]');
   assert.ok(chip.classList.contains('is-heat'), 'gitignored write heats the bucket chip');
+});
+
+test('resolution: Linux node matching is case-sensitive', (t) => {
+  const { presenter } = setup(t, { ids: ['README.md'], platform: 'linux' });
+  assert.equal(presenter._internals.buildResolver()('readme.md'), null);
+});
+
+test('resolution: Windows node matching remains case-insensitive', (t) => {
+  const { presenter } = setup(t, { ids: ['README.md'], platform: 'win32' });
+  assert.equal(presenter._internals.buildResolver()('readme.md'), 'README.md');
 });
 
 test('trail forwards resolved steps renumbered; rail renders rows newest-first with reveal clicks', (t) => {

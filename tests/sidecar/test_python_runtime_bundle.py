@@ -12,8 +12,7 @@ from types import ModuleType
 
 import pytest
 
-from sidecar.ai.tools.builtins.python_runtime import interpreter
-from sidecar.ai.tools.builtins.python_runtime import pip_bootstrap
+from sidecar.ai.tools.builtins.python_runtime import interpreter, pip_bootstrap
 
 ROOT = Path(__file__).resolve().parents[2]
 WHEEL_FILENAMES = (
@@ -47,6 +46,17 @@ def _load_script(relative_path: str, module_suffix: str) -> ModuleType:
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _parse_lock_fixture(
+    tmp_path: Path,
+    contents: str,
+    module_suffix: str,
+) -> tuple[dict[str, str], list[str]]:
+    checker = _load_script("scripts/checks/check_python_runtime_bundle.py", module_suffix)
+    lock_path = tmp_path / "requirements-lock.txt"
+    lock_path.write_text(contents, encoding="utf-8")
+    return checker._parse_hashed_lock(lock_path)  # noqa: SLF001
 
 
 def _sha256(path: Path) -> str:
@@ -148,6 +158,167 @@ def test_bundle_contract_pins_cpython_and_build_backend() -> None:
     assert "pip==26.2" in build_lock
     assert "setuptools==83.0.0" in build_lock
     assert "wheel==0.47.0" in build_lock
+
+
+def test_parse_hashed_lock_accepts_multi_hash_marker_record(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "Example_Name==1.2.3 ; sys_platform == 'darwin' \\\n"
+        f"    --hash=sha256:{'a' * 64} \\\n"
+        f"    --hash=sha256:{'b' * 64}\n"
+        "    # via example-parent\n",
+        "checker_hash_multi",
+    )
+
+    assert pins == {"example-name": "1.2.3"}
+    assert errors == []
+
+
+def test_parse_hashed_lock_rejects_malformed_second_hash(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3 \\\n"
+        f"    --hash=sha256:{'a' * 64} \\\n"
+        "    --hash=sha256:not-a-valid-digest\n",
+        "checker_hash_second",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert any(
+        "unexpected line inside the record for example==1.2.3" in error
+        and "--hash=sha256:not-a-valid-digest" in error
+        for error in errors
+    )
+    assert any(
+        "unparseable line" in error and "--hash=sha256:not-a-valid-digest" in error
+        for error in errors
+    )
+
+
+def test_parse_hashed_lock_rejects_pin_without_hashes(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3\n    # via example-parent\n",
+        "checker_hash_missing",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert errors == ["requirements lock pin has no SHA-256 hash: example==1.2.3"]
+
+
+def test_parse_hashed_lock_rejects_hash_after_pin_without_continuation(
+    tmp_path: Path,
+) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3\n" f"    --hash=sha256:{'a' * 64}\n",
+        "checker_hash_without_pin_continuation",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert "requirements lock pin has no SHA-256 hash: example==1.2.3" in errors
+    assert any("unparseable line" in error and "--hash=sha256:" in error for error in errors)
+
+
+def test_parse_hashed_lock_rejects_option_inside_record(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3 \\\n"
+        "    --index-url https://evil.example\n"
+        f"    --hash=sha256:{'a' * 64}\n",
+        "checker_option_inside_record",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert any(
+        "unexpected line inside the record for example==1.2.3" in error
+        and "--index-url https://evil.example" in error
+        for error in errors
+    )
+
+
+def test_parse_hashed_lock_rejects_orphan_second_hash(tmp_path: Path) -> None:
+    orphan_hash = f"--hash=sha256:{'b' * 64}"
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3 \\\n"
+        f"    --hash=sha256:{'a' * 64}\n"
+        f"    {orphan_hash}\n",
+        "checker_orphan_second_hash",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert any("unparseable line" in error and orphan_hash in error for error in errors)
+
+
+def test_parse_hashed_lock_records_unparseable_same_line_hash_pin(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        f"setuptools==83.0.0 --hash=sha256:{'a' * 64}\n",
+        "checker_same_line_hash_pin",
+    )
+
+    assert pins["setuptools"] == "83.0.0"
+    assert "requirements lock has an unparseable line: setuptools==83.0.0 --hash=" in (
+        "\n".join(errors)
+    )
+
+
+def test_parse_hashed_lock_accepts_uppercase_hash(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "example==1.2.3 \\\n" f"    --hash=sha256:{'A' * 64}\n",
+        "checker_uppercase_hash",
+    )
+
+    assert pins == {"example": "1.2.3"}
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "lock_name",
+    [
+        "requirements-lock.txt",
+        "requirements-build-lock.txt",
+        "requirements-python-runtime-lock.txt",
+    ],
+)
+def test_parse_hashed_lock_accepts_repository_locks(lock_name: str) -> None:
+    checker = _load_script(
+        "scripts/checks/check_python_runtime_bundle.py",
+        f"checker_repository_{lock_name}",
+    )
+
+    pins, errors = checker._parse_hashed_lock(ROOT / lock_name)  # noqa: SLF001
+
+    assert pins
+    assert errors == []
+
+
+def test_parse_hashed_lock_rejects_duplicate_pin(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "Example_Name==1.2.3 \\\n"
+        f"    --hash=sha256:{'a' * 64}\n"
+        "example-name==2.0.0 \\\n"
+        f"    --hash=sha256:{'b' * 64}\n",
+        "checker_hash_duplicate",
+    )
+
+    assert pins == {"example-name": "2.0.0"}
+    assert errors == ["requirements lock contains duplicate pin: example-name"]
+
+
+def test_parse_hashed_lock_accepts_legacy_one_hash_format(tmp_path: Path) -> None:
+    pins, errors = _parse_lock_fixture(
+        tmp_path,
+        "legacy_package==4.5.6 \\\n"
+        f"    --hash=sha256:{'c' * 64}\n",
+        "checker_hash_legacy",
+    )
+
+    assert pins == {"legacy-package": "4.5.6"}
+    assert errors == []
 
 
 def test_bundle_checker_accepts_exact_manifest_and_lock_fixture(tmp_path: Path) -> None:

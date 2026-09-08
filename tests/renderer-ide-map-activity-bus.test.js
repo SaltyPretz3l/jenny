@@ -62,12 +62,33 @@ test('normalizeRelPath: table-driven identity contract', () => {
     ['   ', { kind: 'rejected' }],
   ];
   for (const [raw, expected] of cases) {
-    assert.deepEqual(normalizeRelPath(ROOT, raw), expected, `raw: ${JSON.stringify(raw)}`);
+    assert.deepEqual(normalizeRelPath(ROOT, raw, 'win32'), expected, `raw: ${JSON.stringify(raw)}`);
   }
 });
 
 test('normalizeRelPath: absolute path with no root is outside', () => {
   assert.deepEqual(normalizeRelPath('', 'G:/x/y.js'), { kind: 'outside' });
+});
+
+test('normalizeRelPath: Linux absolute path matching is case-sensitive', () => {
+  assert.deepEqual(
+    normalizeRelPath('/home/u/work', '/home/u/Work/src/a.js', 'linux'),
+    { kind: 'outside' }
+  );
+});
+
+test('normalizeRelPath: Windows absolute path matching remains case-insensitive', () => {
+  assert.deepEqual(
+    normalizeRelPath('C:\\Users\\u\\work', 'c:\\users\\u\\WORK\\src\\a.js', 'win32'),
+    { kind: 'inside', rel: 'src/a.js' }
+  );
+});
+
+test('normalizeRelPath: Linux exact-case absolute path is inside', () => {
+  assert.deepEqual(
+    normalizeRelPath('/home/u/work', '/home/u/work/src/a.js', 'linux'),
+    { kind: 'inside', rel: 'src/a.js' }
+  );
 });
 
 // ── per-tool extraction ────────────────────────────────────────────────────

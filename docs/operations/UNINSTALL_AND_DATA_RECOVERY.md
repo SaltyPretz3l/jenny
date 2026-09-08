@@ -20,6 +20,12 @@ also removes only the app. Clone dependency cleanup and clone deletion are
 separate prompts; deleting a clone additionally requires a clean Git worktree
 and the exact directory name.
 
+For Linux packages, run `sudo apt remove jenny` for the `.deb` or delete the
+AppImage file. The in-app assistant under **Settings → Data & Privacy** offers
+the same data choices as on Windows. The profile at `~/.config/jenny`, runtime
+data under `~/.companion`, and Jenny-installed Ollama under
+`~/.local/share/jenny/ollama` stay unless you remove them.
+
 ## Entry points
 
 - Settings -> Data & Privacy: create or restore archives and
@@ -113,8 +119,10 @@ profile children and unknown `.companion` children are retained and reported;
 owns the deletion.
 
 Archives are never cleanup targets. Shared Ollama models, package-manager data,
-global Node/Python installations, external knowledge folders, and project files
-outside an explicitly selected workspace `.jenny` folder are never removed.
+global Node/Python installations, external knowledge folders, project files
+outside an explicitly selected workspace `.jenny` folder, and the Linux
+user-space Ollama install directory `~/.local/share/jenny/ollama` are never
+removed; delete that directory by hand to uninstall Ollama.
 
 ## Failure recovery
 

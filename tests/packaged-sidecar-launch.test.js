@@ -76,11 +76,12 @@ function buildFakeFs({ existsMap = {}, readMap = {} } = {}) {
 function buildManifestJson({
   artifact_name = 'sidecar-binary',
   api_version = API_VERSION,
+  build_platform = process.platform,
   // Default to EMPTY_SHA256 so a fake readSync returning 0 bytes passes hash check
   sha256 = EMPTY_SHA256,
   generated_at_utc = '2026-01-01T00:00:00Z',
 } = {}) {
-  return JSON.stringify({ artifact_name, api_version, sha256, generated_at_utc });
+  return JSON.stringify({ artifact_name, api_version, build_platform, sha256, generated_at_utc });
 }
 
 /**
@@ -358,6 +359,7 @@ test('resolvePackagedSidecarLaunch: fails when manifest sha256 is invalid (lines
       [manifestPath]: JSON.stringify({
         artifact_name: 'sidecar-binary',
         api_version: API_VERSION,
+        build_platform: process.platform,
         sha256: 'not-a-valid-sha256-value',
       }),
     },
@@ -371,6 +373,66 @@ test('resolvePackagedSidecarLaunch: fails when manifest sha256 is invalid (lines
 
   assert.equal(result.ok, false);
   assert.match(result.failureReason, /sha256 is invalid/i);
+});
+
+test('resolvePackagedSidecarLaunch: fails when manifest build_platform mismatches platform', () => {
+  const resourcesPath = '/app/resources';
+  const { fs: fakeFs, manifestPath, sidecarDir } = buildValidFs({ resourcesPath });
+  fakeFs.readFileSync = () => buildManifestJson({ build_platform: 'linux' });
+
+  const result = resolvePackagedSidecarLaunch({
+    resourcesPath,
+    fsImpl: fakeFs,
+    spawnSyncImpl: buildFakeSpawnSync(),
+    platform: 'win32',
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.failureReason, /build_platform mismatch/);
+  assert.equal(
+    result.failureReason,
+    'Packaged sidecar manifest build_platform mismatch: linux != win32.'
+  );
+  assert.equal(result.manifestPath, manifestPath);
+  assert.equal(result.sidecarDir, sidecarDir);
+});
+
+test('resolvePackagedSidecarLaunch: accepts a manifest matching the requested platform', () => {
+  const resourcesPath = '/app/resources';
+  const { fs: fakeFs } = buildValidFs({ resourcesPath });
+
+  const result = resolvePackagedSidecarLaunch({
+    resourcesPath,
+    fsImpl: fakeFs,
+    spawnSyncImpl: buildFakeSpawnSync(),
+    platform: process.platform,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.launchSource, 'packaged-binary');
+});
+
+test('resolvePackagedSidecarLaunch: fails when manifest build_platform is missing', () => {
+  const resourcesPath = '/app/resources';
+  const { fs: fakeFs, manifestPath } = buildValidFs({ resourcesPath });
+  fakeFs.readFileSync = () => JSON.stringify({
+    artifact_name: 'sidecar-binary',
+    api_version: API_VERSION,
+    sha256: EMPTY_SHA256,
+    generated_at_utc: '2026-01-01T00:00:00Z',
+  });
+
+  const result = resolvePackagedSidecarLaunch({
+    resourcesPath,
+    fsImpl: fakeFs,
+    spawnSyncImpl: buildFakeSpawnSync(),
+    platform: 'win32',
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.failureReason, /build_platform mismatch/i);
+  assert.match(result.failureReason, /missing/);
+  assert.equal(result.manifestPath, manifestPath);
 });
 
 test('resolvePackagedSidecarLaunch: fails when artifact_name escapes sidecar dir (lines 187-195)', () => {
@@ -477,7 +539,14 @@ test('resolvePackagedSidecarLaunch: fails when artifact sha256 does not match ma
   assert.equal(result.artifactPath, artifactPath);
 });
 
-test('resolvePackagedSidecarLaunch: records exact spawn args for version probe', () => {
+test('resolvePackagedSidecarLaunch: records exact spawn args for version probe', (t) => {
+  const credentialKey = 'JENNY_PACKAGED_SYNC_TEST_API_KEY';
+  const originalCredential = process.env[credentialKey];
+  process.env[credentialKey] = 'must-not-reach-packaged-sidecar';
+  t.after(() => {
+    if (originalCredential === undefined) delete process.env[credentialKey];
+    else process.env[credentialKey] = originalCredential;
+  });
   const resourcesPath = '/app/resources';
   const { fs: fakeFs, artifactPath } = buildValidFs({ resourcesPath });
   const fakeSpawnSync = buildFakeSpawnSync({ status: 0, stdout: `${API_VERSION}\n` });
@@ -497,6 +566,7 @@ test('resolvePackagedSidecarLaunch: records exact spawn args for version probe',
   assert.deepEqual(fakeSpawnSync.calls[0].args, ['--version']);
   assert.equal(fakeSpawnSync.calls[0].opts.windowsHide, true);
   assert.equal(fakeSpawnSync.calls[0].opts.encoding, 'utf8');
+  assert.equal(fakeSpawnSync.calls[0].opts.env[credentialKey], undefined);
 });
 
 test('resolvePackagedSidecarLaunch: skips version probe when probeVersion=false', () => {
@@ -683,7 +753,14 @@ test('resolvePackagedSidecarLaunchAsync: fails when async version probe has erro
   assert.match(result.failureReason, /--version probe failed/i);
 });
 
-test('resolvePackagedSidecarLaunchAsync: records exact spawn args for version probe', async () => {
+test('resolvePackagedSidecarLaunchAsync: records exact spawn args for version probe', async (t) => {
+  const credentialKey = 'JENNY_PACKAGED_ASYNC_TEST_API_KEY';
+  const originalCredential = process.env[credentialKey];
+  process.env[credentialKey] = 'must-not-reach-packaged-sidecar';
+  t.after(() => {
+    if (originalCredential === undefined) delete process.env[credentialKey];
+    else process.env[credentialKey] = originalCredential;
+  });
   const resourcesPath = '/app/resources';
   const { fs: fakeFs, artifactPath } = buildValidFs({ resourcesPath });
   const fakeSpawn = buildFakeSpawn({ status: 0, stdoutData: `${API_VERSION}\n` });
@@ -700,6 +777,7 @@ test('resolvePackagedSidecarLaunchAsync: records exact spawn args for version pr
   assert.equal(fakeSpawn.calls[0].cmd, artifactPath);
   assert.deepEqual(fakeSpawn.calls[0].args, ['--version']);
   assert.equal(fakeSpawn.calls[0].opts.windowsHide, true);
+  assert.equal(fakeSpawn.calls[0].opts.env[credentialKey], undefined);
 });
 
 test('resolvePackagedSidecarLaunchAsync: skips version probe when probeVersion=false', async () => {

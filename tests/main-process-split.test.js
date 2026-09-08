@@ -32,8 +32,8 @@ test('main process root delegates coupled Electron wiring to services/main owner
   // the new count -- do not raise it, and do not cram statements onto one line
   // to squeeze under it (which is how the windowIconPath wiring first landed).
   assert.ok(
-    mainLineCount <= 729,
-    `main.js should be under the lowered post-feature-settings-facade-extraction ceiling, got ${mainLineCount}`
+    mainLineCount <= 726,
+    `main.js should be under the lowered post-window-icon-resolver-extraction ceiling, got ${mainLineCount}`
   );
 
   for (const modulePath of MAIN_OWNER_MODULES) {
@@ -50,8 +50,8 @@ test('main process root delegates coupled Electron wiring to services/main owner
   assert.match(mainSource, /require\('\.\/services\/main\/main-window-composition'\)/);
   assert.match(
     mainSource,
-    /windowIconPath:\s*app\.isPackaged[\s\S]*?require\('path'\)\.join\(__dirname,\s*'build',[\s\S]*?'icon\.ico'[\s\S]*?'icon\.png'/,
-    'development window wiring should supply Jenny icons while packaged executables use their embedded icon'
+    /windowIconPath:\s*resolveWindowIconPath\(\{[\s\S]*?isPackaged:\s*app\.isPackaged[\s\S]*?resourcesPath:\s*process\.resourcesPath/,
+    'window icon resolution is delegated to main-window-composition (dev build artwork, packaged Linux resources/icon.png, embedded icon elsewhere)'
   );
   assert.match(mainSource, /require\('\.\/services\/main\/runtime-shutdown'\)/);
   assert.match(mainSource, /require\('\.\/services\/main\/startup-retention-tasks'\)/);

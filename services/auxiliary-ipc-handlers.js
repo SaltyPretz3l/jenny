@@ -406,7 +406,7 @@ function registerAuxiliaryIpcHandlers({
     'setup.getOllamaInstallPlan': () =>
       ollamaInstallService
         ? ollamaInstallService.getInstallPlan()
-        : { available: false, url: '', version: '', sizeBytes: 0, sha256: '', license: '', manualFallbackUrl: defaultOllamaFallbackUrl(process.platform) },
+        : { available: false, url: '', version: '', sizeBytes: 0, sha256: '', license: '', format: '', installDir: '', manualFallbackUrl: defaultOllamaFallbackUrl(process.platform) },
     'setup.installOllama': (_, payload) =>
       ollamaInstallService
         ? ollamaInstallService.installOllama(payload)

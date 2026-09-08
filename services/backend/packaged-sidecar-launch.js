@@ -4,6 +4,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const { API_VERSION } = require('./sidecar-client');
+const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
 
 const MANIFEST_NAME = 'manifest.json';
 const DEFAULT_VERSION_TIMEOUT_MS = 45000;
@@ -89,7 +90,10 @@ function spawnVersionProbeAsync(command, {
       finish({ error: new Error(`Packaged sidecar --version probe timed out after ${versionTimeoutMs}ms.`) });
     }, versionTimeoutMs);
     try {
-      child = spawnImpl(command, ['--version'], { windowsHide: true });
+      child = spawnImpl(command, ['--version'], {
+        windowsHide: true,
+        env: sanitizeSpawnEnv(process.env),
+      });
     } catch (error) {
       finish({ error });
       return;
@@ -108,6 +112,7 @@ function validatePackagedManifest({
   resourcesPath,
   fsImpl = fs,
   apiVersion = API_VERSION,
+  platform = process.platform,
 }) {
   const normalizedResourcesPath = String(resourcesPath || '').trim();
   if (!normalizedResourcesPath) {
@@ -168,6 +173,17 @@ function validatePackagedManifest({
       ok: false,
       spec: buildFailureSpec(
         `Packaged sidecar manifest api_version mismatch: ${manifestApiVersion || 'missing'} != ${apiVersion}.`,
+        { manifestPath, sidecarDir }
+      ),
+    };
+  }
+
+  const manifestBuildPlatform = normalizeFilename(manifest.build_platform);
+  if (manifestBuildPlatform !== platform) {
+    return {
+      ok: false,
+      spec: buildFailureSpec(
+        `Packaged sidecar manifest build_platform mismatch: ${manifestBuildPlatform || 'missing'} != ${platform}.`,
         { manifestPath, sidecarDir }
       ),
     };
@@ -275,10 +291,11 @@ function resolvePackagedSidecarLaunch({
   fsImpl = fs,
   spawnSyncImpl = spawnSync,
   apiVersion = API_VERSION,
+  platform = process.platform,
   versionTimeoutMs = DEFAULT_VERSION_TIMEOUT_MS,
   probeVersion = true,
 } = {}) {
-  const validation = validatePackagedManifest({ resourcesPath, fsImpl, apiVersion });
+  const validation = validatePackagedManifest({ resourcesPath, fsImpl, apiVersion, platform });
   if (!validation.ok) {
     return validation.spec;
   }
@@ -306,6 +323,7 @@ function resolvePackagedSidecarLaunch({
       windowsHide: true,
       encoding: 'utf8',
       timeout: versionTimeoutMs,
+      env: sanitizeSpawnEnv(process.env),
     });
     const probeFailure = evaluateVersionProbeResult(probeResult, context, context.apiVersion);
     if (probeFailure) {
@@ -323,10 +341,11 @@ async function resolvePackagedSidecarLaunchAsync({
   fsImpl = fs,
   spawnImpl = spawn,
   apiVersion = API_VERSION,
+  platform = process.platform,
   versionTimeoutMs = DEFAULT_VERSION_TIMEOUT_MS,
   probeVersion = true,
 } = {}) {
-  const validation = validatePackagedManifest({ resourcesPath, fsImpl, apiVersion });
+  const validation = validatePackagedManifest({ resourcesPath, fsImpl, apiVersion, platform });
   if (!validation.ok) {
     return validation.spec;
   }

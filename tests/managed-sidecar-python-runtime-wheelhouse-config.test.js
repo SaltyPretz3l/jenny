@@ -9,12 +9,27 @@ const assert = require('node:assert/strict');
 
 const { BackendService } = require('../services/backend/backend-service');
 const { DEFAULT_MANAGED_SHELL_MODEL } = require('../services/backend/backend-config');
+const { bundledPythonRelativePath } = require('../services/backend/managed-sidecar-config');
 const { buildManagedSidecarConfig } = require('../services/backend/managed-sidecar-lifecycle');
 const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
 const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
 
+const ROOT = path.resolve(__dirname, '..');
+
 test.afterEach(async () => {
   await cleanupTrackedResources();
+});
+
+test('bundled Python paths stay in lockstep with the platform contracts', () => {
+  const win = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'config', 'python-runtime-bundle-lock.json'), 'utf8'
+  ));
+  const linux = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'config', 'python-runtime-bundle-lock.linux-x64.json'), 'utf8'
+  ));
+
+  assert.equal(bundledPythonRelativePath('win32').slice(1).join('/'), win.python.executable);
+  assert.equal(bundledPythonRelativePath('linux').slice(1).join('/'), linux.python.executable);
 });
 
 function buildTestService(suffix, options = {}) {
@@ -30,6 +45,17 @@ function buildTestService(suffix, options = {}) {
   });
 }
 
+function expectedBundledPython(bundleRoot) {
+  const relativePath = bundledPythonRelativePath(process.platform);
+  return relativePath ? path.join(bundleRoot, ...relativePath) : null;
+}
+
+test('bundled Python relative paths are platform-specific', () => {
+  assert.deepEqual(bundledPythonRelativePath('win32'), ['python-embed', 'python.exe']);
+  assert.deepEqual(bundledPythonRelativePath('linux'), ['python-embed', 'bin', 'python3.13']);
+  assert.equal(bundledPythonRelativePath('darwin'), null);
+});
+
 test('python runtime bundle paths resolve from the development repo root', () => {
   const repoRoot = path.join(os.tmpdir(), 'jenny-shell-fake-repo');
   const config = buildManagedSidecarConfig(buildTestService('development', { repoRoot }));
@@ -40,7 +66,7 @@ test('python runtime bundle paths resolve from the development repo root', () =>
   );
   assert.equal(
     config.tools_python_runtime_bundled_python,
-    path.join(repoRoot, 'vendor', 'python-embed', 'python.exe'),
+    expectedBundledPython(path.join(repoRoot, 'vendor')),
   );
 });
 
@@ -65,7 +91,7 @@ test('Electron development ignores its unrelated resourcesPath', () => {
   );
   assert.equal(
     config.tools_python_runtime_bundled_python,
-    path.join(repoRoot, 'vendor', 'python-embed', 'python.exe'),
+    expectedBundledPython(path.join(repoRoot, 'vendor')),
   );
 });
 
@@ -81,6 +107,6 @@ test('python runtime bundle paths resolve from the packaged resources root', () 
   );
   assert.equal(
     config.tools_python_runtime_bundled_python,
-    path.join(resourcesRoot, 'python-embed', 'python.exe'),
+    expectedBundledPython(resourcesRoot),
   );
 });

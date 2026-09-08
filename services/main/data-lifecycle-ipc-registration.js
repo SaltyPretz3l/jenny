@@ -7,6 +7,7 @@ const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { DataLifecycleService, REMOVAL_CHOICES } = require('../data-lifecycle/data-lifecycle-service');
 const { describeRestoreCandidate } = require('../data-lifecycle/restore-service');
 const { cleanupJennyData } = require('../data-lifecycle/cleanup-service');
+const { appImagePath, resolveLinuxPackageKind } = require('../linux-package-kind');
 const {
   dataLifecycleFailure,
   dataLifecycleResult,
@@ -87,7 +88,13 @@ function createRemovalPreparation({
   };
 }
 
-async function launchOfficialRemovalEntry({ platform, isPackaged, shellLike } = {}) {
+async function launchOfficialRemovalEntry({
+  platform,
+  isPackaged,
+  shellLike,
+  env = process.env,
+  execPath = process.execPath,
+} = {}) {
   if (platform === 'win32' && isPackaged) {
     await shellLike.openExternal('ms-settings:appsfeatures');
     return dataLifecycleResult('system_uninstaller_opened', {
@@ -97,6 +104,17 @@ async function launchOfficialRemovalEntry({ platform, isPackaged, shellLike } = 
   if (platform === 'darwin' && isPackaged) {
     return dataLifecycleResult('manual_helper_required', {
       instructions: 'Run Uninstall Jenny.command from the Jenny installer disk image.',
+    });
+  }
+  if (platform === 'linux' && isPackaged) {
+    const packageOptions = { platform, env, execPath };
+    if (resolveLinuxPackageKind(packageOptions) === 'appimage') {
+      return dataLifecycleResult('manual_file_removal_required', {
+        instructions: `Delete the Jenny AppImage file (${appImagePath(packageOptions)}) to remove the app. Your data in ~/.config/jenny and ~/.companion stays until you delete it.`,
+      });
+    }
+    return dataLifecycleResult('package_manager_required', {
+      instructions: 'Remove the package with your package manager, for example: sudo apt remove jenny. Your data in ~/.config/jenny and ~/.companion stays until you delete it.',
     });
   }
   return dataLifecycleResult('clone_command_required', {
@@ -223,6 +241,8 @@ function registerDataLifecycleRuntime(ipcMainLike, {
       platform: process.platform,
       isPackaged: app.isPackaged,
       shellLike: shell,
+      env: process.env,
+      execPath: process.execPath,
     }),
   });
   return { ...registration, service };
