@@ -13,6 +13,11 @@ const {
 } = require('../../server/config');
 const { hostedSidecarEnvironment } = require('../../services/host/sidecar-environment');
 
+test.beforeEach((t) => {
+  // CI checks out under the real home; isolate the home-containment fixture too.
+  t.mock.method(os, 'homedir', () => path.join(process.cwd(), 'tmp-host-config-home'));
+});
+
 function createFixture() {
   const root = fs.mkdtempSync(path.join(process.cwd(), 'tmp-host-config-'));
   const configPath = path.join(root, 'host.json');
@@ -158,8 +163,10 @@ test('rejects workspace overlap with profile, secrets, or the home directory', (
   assert.throws(() => loadHostConfig(fixture.configPath), (error) => error.reason === 'workspace_root_profile_overlap');
   fixture.write({ workspace_root: fixture.source.secrets_dir });
   assert.throws(() => loadHostConfig(fixture.configPath), (error) => error.reason === 'workspace_root_profile_overlap');
-  fixture.write({ workspace_root: os.homedir() });
-  assert.throws(() => loadHostConfig(fixture.configPath), (error) => error.reason === 'workspace_root_home_overlap');
+  for (const workspaceRoot of [os.homedir(), path.join(os.homedir(), 'project'), path.dirname(os.homedir())]) {
+    fixture.write({ workspace_root: workspaceRoot });
+    assert.throws(() => loadHostConfig(fixture.configPath), (error) => error.reason === 'workspace_root_home_overlap');
+  }
 }));
 
 test('permits native loopback binds and rejects non-listener addresses', () => withFixture(({ configPath, write }) => {

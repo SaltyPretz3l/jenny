@@ -177,14 +177,18 @@ test('failed browser promotion restores the previous build and removes staging',
 
 test('guided Docker setup ships its launchers and reuses the canonical runtime', () => {
   const easy = fs.readFileSync(path.join(ROOT, 'compose.host.easy.yml'), 'utf8');
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/packaging/dist_manifest.json'), 'utf8'));
+  // The public export omits its private generation manifest; verify actual files
+  // in both trees and additionally check export selection in the source tree.
+  const manifest = require('../../package.json').distribution === true
+    ? null
+    : JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/packaging/dist_manifest.json'), 'utf8'));
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/hosted.yml'), 'utf8');
   assert.match(easy, /file: compose.host.yml/);
   assert.match(easy, /jenny_config:\/etc\/jenny:ro/);
   assert.match(easy, /jenny_secrets:\/run\/jenny-secrets:ro/);
   assert.doesNotMatch(easy, /privileged:\s*true|docker\.sock|user:\s*["']?0/);
   for (const filename of ['docker-setup.sh', 'docker-setup.ps1', 'compose.host.easy.yml']) {
-    assert.ok(manifest.include_paths.includes(filename));
+    if (manifest) assert.ok(manifest.include_paths.includes(filename));
     assert.ok(fs.statSync(path.join(ROOT, filename)).isFile());
   }
   assert.match(workflow, /smoke-host-setup\.js jenny-host:ci/);

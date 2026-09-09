@@ -246,8 +246,10 @@ removes only the app and preserves data. The macOS DMG ships
 `Uninstall Jenny.command`; dragging the app to Trash also preserves data. See
 [Uninstall and Data Recovery](operations/UNINSTALL_AND_DATA_RECOVERY.md).
 
-Installers are built and published by CI (`.github/workflows/release.yml`) on a
-version tag.
+Public version tags start CI (`.github/workflows/release.yml`), which builds and
+verifies installers from that exact commit and uploads them to an unpublished
+draft. The maintainer publishes after every upload job and qualification check
+finishes.
 
 #### One-time prerequisites
 
@@ -256,7 +258,7 @@ version tag.
    at build time, and the Windows build uses `build/icon.ico`. Both files ship in
    the repo, so no manual icon generation is required.
 2. **(Optional) Code-signing secrets** — see "Signing" below. Without them,
-   builds publish **unsigned** (shippable today, with OS warnings).
+   builds are **unsigned** (shippable today, with OS warnings).
 
 #### Cutting a release
 
@@ -277,10 +279,10 @@ CI then, per OS runner:
    bundled preload, runtime provenance, and framed initialize through
    `scripts/packaging/verify_macos_release.py` before upload.
 5. On public-repository tag pushes only, uploads the verified platform assets
-   into the single prepared release. A manual workflow dispatch creates no
+   into the single prepared draft release. A manual workflow dispatch creates no
    draft and publishes nothing; it retains downloadable CI artifacts.
 
-Successful tagged builds publish to the GitHub Release for the tag (artifact names are
+Successful tagged builds upload to the draft for the tag (artifact names are
 deliberately version-free so `releases/latest/download/...` URLs are
 permanent):
 
@@ -289,8 +291,8 @@ permanent):
 - **macOS:** `Jenny-arm64.dmg` + `Jenny-arm64.zip` + `latest-mac.yml`
   (the `.zip` is required for electron-updater on macOS).
 
-Both OSes publish to the same Release; electron-updater picks the right
-manifest per platform.
+After publication, electron-updater uses the matching platform manifest from
+that release. A tag or an unpublished draft does not change the latest download.
 
 > The macOS app **must** build on a macOS runner — electron-builder cannot
 > produce or sign a `.app` from Windows, and the PyInstaller sidecar is

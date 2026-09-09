@@ -98,6 +98,11 @@ function powershellExecutable() {
   if (process.platform === 'win32') {
     return path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   }
+  // Resolve before tests remove PATH to simulate a missing Docker installation.
+  for (const directory of (process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.join(directory, 'pwsh');
+    if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
+  }
   return 'pwsh';
 }
 

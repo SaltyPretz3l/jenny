@@ -88,8 +88,10 @@ function removeTempUserDataPath(userDataPath) {
   fs.rmSync(userDataPath, { recursive: true, force: true });
 }
 
-test('hosted composition uses external endpoint policy across lifecycle and chat preflight', async () => {
+test('hosted composition uses external endpoint policy across lifecycle and chat preflight', async (t) => {
   const userDataPath = makeTempUserDataPath();
+  // Keep the fixture home separate even when CI checks out inside the real home.
+  t.mock.method(os, 'homedir', () => path.join(userDataPath, 'home'));
   const sidecarManager = new SidecarHarness();
   const ollamaManager = new EngineManagerHarness('ollama');
   const vllmManager = new EngineManagerHarness('vllm');
