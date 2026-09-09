@@ -16,9 +16,11 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_APPROVAL_WINDOW_DROPPED,
     CMP_TOOL_COERCED_ARGS_REJECTED,
     CMP_TOOL_DISABLED,
+    CMP_TOOL_PAUSED_UNATTENDED,
     CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
+    CMP_TOOL_POLICY_DENIED,
 )
-from sidecar.ai.routing import loop_event_emit
+from sidecar.ai.routing import loop_event_emit, route_policy_runtime
 from sidecar.ai.routing import router as _router
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
@@ -28,6 +30,7 @@ from sidecar.ai.tools.policy import tool_policy_call_key
 from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.runtime import tool_execution_support as _tool_support
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.turn_state import current_live_run_mode_state
 
 logger = logging.getLogger(__name__)
 TOOL_NOT_EXPOSED_REASON = _tool_assembly.TOOL_NOT_EXPOSED_REASON
@@ -62,6 +65,24 @@ def _is_deferred_tool_call(
     if not callable(checker):
         return False
     return bool(checker(call, tool_resolution_context))
+
+
+def should_pause_for_live_prompt(
+    kernel: Any,
+    call: Any,
+    *,
+    approvals_pre_granted: bool,
+    scan_approval_mode: str | None,
+) -> bool:
+    if scan_approval_mode != "auto_run" or approvals_pre_granted:
+        return False
+    live_run_mode = current_live_run_mode_state()
+    if live_run_mode is None or live_run_mode.snapshot()[0] != "prompt":
+        return False
+    if call.tool_id == TOOL_SEARCH_TOOL_NAME:
+        return False
+    descriptor = kernel._mcp_client.tool_descriptor(call.tool_id)
+    return descriptor is not None and effective_side_effecting(descriptor, call.arguments) is True
 
 
 # Placeholder markers invented by ``schema_examples.schema_placeholder_value``
@@ -407,6 +428,8 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
     tool_contract: Any | None = None,
     trusted_plan_artifact_write_call_ids: frozenset[str] = frozenset(),
     audit_metadata_by_call: dict[str, dict[str, object]] | None = None,
+    approvals_pre_granted: bool = False,
+    scan_approval_mode: str | None = None,
 ) -> None:
     """Execute calls once, in model order, preserving every completed outcome."""
     for call, outcome_index in indexed_calls:
@@ -421,19 +444,55 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
             streamed_event_types.add("tool.executing")
 
         try:
+            if should_pause_for_live_prompt(
+                kernel,
+                call,
+                approvals_pre_granted=approvals_pre_granted,
+                scan_approval_mode=scan_approval_mode,
+            ):
+                message = (
+                    f"Tool '{call.tool_id}' was not executed: auto run was paused because "
+                    "the user stepped away. Re-issue the call; it will ask for approval."
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    component="ai.router",
+                    event="ai.router.tool_dispatch_paused_unattended",
+                    message=message,
+                    data={"tool": call.tool_id, "code": CMP_TOOL_PAUSED_UNATTENDED},
+                    request_id=request_id,
+                    session_id=session_id,
+                )
+                raise _tool_contracts.ToolExecutionFailure(
+                    code=CMP_TOOL_PAUSED_UNATTENDED,
+                    message=message,
+                    retryable=True,
+                )
             if call.tool_id == TOOL_SEARCH_TOOL_NAME:
-                tool_result = kernel._execute_tool_search(
-                    call,
-                    resolution_context=tool_resolution_context,
-                    runtime=runtime,
-                )
-                tool_payload_ref[:] = kernel._build_tool_payload(
-                    tool_resolution_context,
-                    tool_preferences=tool_preferences,
-                    request_context=request_context,
-                )
-                if runtime.remaining_tool_calls == 0:
-                    tool_payload_ref.clear()
+                if route_policy_runtime.hosted_tool_search_denied(getattr(kernel, "_config", None)):
+                    tool_result = _blocked_outcome(
+                        call,
+                        output=(
+                            "Tool 'tool_search' is unavailable in the hosted "
+                            "execution policy."
+                        ),
+                        error_code=CMP_TOOL_POLICY_DENIED,
+                        metadata={"host_policy_denied": True},
+                    )
+                else:
+                    tool_result = kernel._execute_tool_search(
+                        call,
+                        resolution_context=tool_resolution_context,
+                        runtime=runtime,
+                    )
+                    tool_payload_ref[:] = kernel._build_tool_payload(
+                        tool_resolution_context,
+                        tool_preferences=tool_preferences,
+                        request_context=request_context,
+                    )
+                    if runtime.remaining_tool_calls == 0:
+                        tool_payload_ref.clear()
             else:
                 trusted_execution_kwargs = {}
                 if (

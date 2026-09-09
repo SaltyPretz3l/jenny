@@ -11,10 +11,11 @@
   root.rendererSurfaceEffectPreview = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var HOST_CLASS = 'surface-effect-preview';
   var EMPTY_CLASS = 'surface-effect-preview-empty';
-  var EMPTY_LABEL = 'No background effect';
+  var EMPTY_LABEL = jt('settings.appearance.noBackgroundEffect', 'No background effect');
 
   // Deliberately mirrors the effectId -> factory maps in renderer/app.js and
   // renderer-surface-gallery-utils.js: each surface re-reads the globals it

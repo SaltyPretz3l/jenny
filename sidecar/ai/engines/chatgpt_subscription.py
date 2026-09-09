@@ -73,8 +73,9 @@ _DEFAULT_REASONING_REQUEST_KEY = "__default__"
 # Catalog provenance. The first-party Codex release rust-v0.146.0 (peeled commit
 # e363b08c9175ac1cbe5893615dd2cb9ddf95043b), codex-rs/models-manager/models.json,
 # captured 2026-07-31, lists 272k for all three 5.6 models. The Codex app model
-# cache captured 2026-08-12 lists GPT-5.3-Codex-Spark at 128k. These files are
-# COMPARISON EVIDENCE for first-party Codex clients, NOT a contract for the private
+# cache captured 2026-08-12 lists GPT-5.3-Codex-Spark at 128k; Astra's entry
+# captured 2026-09-07 lists 272k. These files are COMPARISON EVIDENCE for
+# first-party Codex clients, NOT a contract for the private
 # chatgpt.com/backend-api/codex endpoint -- we have no owner traffic against it.
 # These values are therefore a conservative floor: every consumer treats the window
 # as a ceiling, so a value that is too low only compacts earlier, while one that is
@@ -84,6 +85,7 @@ _DEFAULT_CHATGPT_CONTEXT_LENGTH = 272_000
 
 CHATGPT_MODEL_CONTEXT_LENGTHS: dict[str, int] = {
     "gpt-5.6-sol": 272_000,
+    "gpt-6-astra": 272_000,
     "gpt-5.6-terra": 272_000,
     "gpt-5.6-luna": 272_000,
     "gpt-5.3-codex-spark": 128_000,
@@ -93,10 +95,14 @@ CHATGPT_MODEL_CONTEXT_LENGTHS: dict[str, int] = {
     "gpt-5.2": 272_000,
 }
 
-# First-party Codex model-catalog evidence captured through 2026-08-12. ``ultra``
+# First-party Codex model-catalog evidence captured through 2026-09-07. ``ultra``
 # is omitted because Codex defines it as reasoning plus automatic delegation and
 # Jenny's sub-agent architecture is explicitly not part of this implementation.
 CHATGPT_MODEL_REASONING_PROFILES: dict[str, dict[str, Any]] = {
+    "gpt-6-astra": {
+        "default_reasoning_effort": "medium",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    },
     "gpt-5.6-sol": {
         "default_reasoning_effort": "low",
         "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],

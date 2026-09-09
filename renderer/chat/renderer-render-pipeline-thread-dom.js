@@ -10,13 +10,14 @@
   }
 root.rendererRenderPipelineThreadDomUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const timelineOrientationUtils = (typeof globalThis !== 'undefined' && globalThis.rendererChatTimelineOrientationUtils)
     || (typeof require === 'function' ? require('./renderer-chat-timeline-orientation-utils') : null)
     || {};
   const buildTimeDividerMarkup = typeof timelineOrientationUtils.buildTimeDividerMarkup === 'function'
     ? timelineOrientationUtils.buildTimeDividerMarkup
     : function fallbackBuildTimeDividerMarkup() { return ''; };
-
   function createThreadDomPipeline(deps) {
     const {
       state = {},
@@ -41,7 +42,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         return '';
       }
       const childCount = Array.isArray(node.children) ? node.children.length : 0;
-      const summaryLabel = `${expanded ? 'Collapse' : 'Expand'} ${childCount} nested item${childCount === 1 ? '' : 's'}`;
+      const summaryLabel = expanded ? jtn('chat.thread.collapseNestedItems', childCount, { count: childCount }, 'Collapse {count} nested item', 'Collapse {count} nested items') : jtn('chat.thread.expandNestedItems', childCount, { count: childCount }, 'Expand {count} nested item', 'Expand {count} nested items');
       return `
         <button
           class="chat-thread-toggle"

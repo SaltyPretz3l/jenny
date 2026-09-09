@@ -7,7 +7,7 @@
   root.rendererStreamActivityRow = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   /* While the model generates tool-call arguments (a Write/Edit's whole file
      content), the provider buffers the call server-side and the stream goes
      silent — no delta, no tool event, nothing to render. This module fills
@@ -29,11 +29,11 @@
   // Honest, action-flavored copy: never names a tool or file before
   // tool.executing arrives (the engine genuinely does not know yet).
   const ACTIVITY_COPY = [
-    'Putting changes together…',
-    'Working something up…',
-    'Getting things in order…',
+    jt('chat.streamActivity.puttingChangesTogether', 'Putting changes together…'),
+    jt('chat.streamActivity.workingSomethingUp', 'Working something up…'),
+    jt('chat.streamActivity.gettingThingsInOrder', 'Getting things in order…'),
   ];
-  const ACTIVITY_COPY_LONG = 'Still at it…';
+  const ACTIVITY_COPY_LONG = jt('chat.streamActivity.stillAtIt', 'Still at it…');
 
   // Events that prove first visible progress this turn; silence only counts
   // after one of these (the initial thinking indicator owns turn start).

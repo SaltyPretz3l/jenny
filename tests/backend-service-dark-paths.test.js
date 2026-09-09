@@ -651,7 +651,9 @@ test('dispose swallows errors from ollamaManager._forceKillAnyRemainingLocalOlla
   service.ollamaManager = {
     _platform: 'win32',
     _log: () => {},
-    _isProcessAlive: () => false,
+    _isProcessAlive: () => true,
+    _getOwnedPid: () => 1234,
+    _ownedPidIdentityStatus: () => 'confirmed',
     _forceKillAnyRemainingLocalOllamaSync: () => {
       killAttempted = true;
       throw new Error('kill failed — sample error');
@@ -686,18 +688,17 @@ test('dispose skips the ollama force-kill sweep when mightHaveLocalOllamaResidue
   assert.equal(service._disposed, true, '_disposed must be true after dispose');
 });
 
-test('dispose runs the ollama force-kill sweep when residue is possible (spawn latch)', () => {
+test('dispose does not widen a spawn latch into an unowned process sweep', () => {
   const { service } = createMinimalService();
   let killAttempted = false;
   service.ollamaManager._forceKillAnyRemainingLocalOllamaSync = () => {
     killAttempted = true;
   };
 
-  // The latch stays true even after stop() clears _ownedProcess -- pin the
-  // latch directly: once a spawn happened this run, dispose must sweep.
+  // A historical spawn is insufficient authority to kill a current process.
   service.ollamaManager._everOwnedProcess = true;
   assert.equal(service.ollamaManager.mightHaveLocalOllamaResidue(), true,
     'the spawn latch must force residue=true even with _ownedProcess false');
   service.dispose();
-  assert.equal(killAttempted, true, 'dispose must sweep when a spawn happened this run');
+  assert.equal(killAttempted, false, 'dispose requires a current identity-confirmed owned PID');
 });

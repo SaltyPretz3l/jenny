@@ -115,7 +115,7 @@ test('no gradients, elevation shadows, or side accent bars survive on Home', () 
     const css = readRepoFile(relativePath);
     assert.equal(css.includes('linear-gradient'), false, `${relativePath} still has a gradient`);
     assert.equal(css.includes('var(--shadow-'), false, `${relativePath} still has an elevation shadow`);
-    assert.doesNotMatch(css, /border-left:\s*3px/, `${relativePath} still has a side accent bar`);
+    assert.doesNotMatch(css, /border-inline-start:\s*3px/, `${relativePath} still has a side accent bar`);
     assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, `${relativePath} has a raw hex color`);
     assert.doesNotMatch(css, /\brgba?\(/i, `${relativePath} has a raw rgb color`);
     // The support accent is retired from ambient chrome across Home.
@@ -175,7 +175,7 @@ test('the hero ask block is width-capped, right-aligned, and draws ONE rule', ()
   assert.match(stripRule, /flex-wrap:\s*wrap;/);
 
   const askRule = heroCss.match(/\n\.home-info-strip__ask \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(askRule, /margin-left:\s*auto;/, 'the block sits at the right of the hero band');
+  assert.match(askRule, /margin-inline-start:\s*auto;/, 'the block sits at the inline end of the hero band');
   assert.match(askRule, /max-width:\s*clamp\(380px, 32vw, 520px\);/, 'compact, not a band');
   assert.match(askRule, /position:\s*relative;/);
   assert.match(askRule, /display:\s*flex;/, 'the ask region is the cluster\'s one flex line');
@@ -207,7 +207,7 @@ test('the hero ask block is width-capped, right-aligned, and draws ONE rule', ()
 
   // F7: the chip lane is gone with the chip. Nothing reserves a quarter of the
   // typing width any more, and the tokens that declared it are deleted.
-  assert.doesNotMatch(controlRule, /padding-right:/, 'no reserved lane');
+  assert.doesNotMatch(controlRule, /padding-inline-end:/, 'no reserved lane');
   assert.equal(heroCss.includes('--home-ask-chip-max'), false, 'the chip lane token is gone');
   assert.equal(heroCss.includes('--home-ask-chip-inset'), false);
 
@@ -332,7 +332,7 @@ test('the model trigger is plain text on the meta row and the panel is the one b
 
   const panelRule = heroCss.match(/\n\.home-ask__panel \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(panelRule, /top:\s*calc\(100% \+ var\(--space-3\)\);/, 'it hangs below the trigger');
-  assert.match(panelRule, /left:\s*0;/, 'left-aligned to a trigger that now sits at the block\'s left');
+  assert.match(panelRule, /inset-inline-start:\s*0;/, 'inline-start-aligned to its trigger');
   // The trigger anchors it at the LEFT edge now, so the narrow-shell override
   // that once pulled it back on-screen is deliberately still absent.
   const narrowBlock = heroCss.match(/@media \(max-width: 720px\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -466,7 +466,7 @@ test('the ask panel flattens its fields and draws no internal dividers', () => {
   assert.ok(fieldRule, 'the panel scopes its own select-control look');
   assert.match(fieldRule, /border:\s*1px solid transparent;/, 'no field box inside the boxed panel');
   assert.match(fieldRule, /background:\s*transparent;/);
-  assert.match(fieldRule, /text-align:\s*right;/, 'the value reads against its left label');
+  assert.match(fieldRule, /text-align:\s*end;/, 'the value reads against its inline-start label');
 
   const labelRule = heroCss
     .match(/\n\.home-ask__panel \.inv-select-field-label \{[\s\S]*?\n\}/)?.[0] || '';

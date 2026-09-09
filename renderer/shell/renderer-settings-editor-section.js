@@ -17,6 +17,7 @@
   root.rendererSettingsEditorSection = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Fallback defaults for the fields that need one when the slice is absent.
   // The toggles (wordWrap/minimap/lineNumbers) derive their default inline, so
@@ -42,11 +43,11 @@
   // Column-ruler presets. The slice stores an int array; the select round-trips
   // it through a comma-joined string value so a stored [80,120] selects "80,120".
   const RULER_OPTIONS = [
-    { value: '', label: 'Off' },
-    { value: '80', label: '80 columns' },
-    { value: '100', label: '100 columns' },
-    { value: '120', label: '120 columns' },
-    { value: '80,120', label: '80 and 120' },
+    { value: '', label: jt('common.off', 'Off') },
+    { value: '80', label: jt('settings.editor.rulers80', '80 columns') },
+    { value: '100', label: jt('settings.editor.rulers100', '100 columns') },
+    { value: '120', label: jt('settings.editor.rulers120', '120 columns') },
+    { value: '80,120', label: jt('settings.editor.rulers80And120', '80 and 120') },
   ];
   // Editor prefs whose value is a plain boolean written straight to the slice
   // (no enum/string coercion, no keyed side effect) — collapsed into one apply
@@ -203,14 +204,14 @@
   // models whose catalog advertises the FIM/insert capability are selectable.
   function inlineModelOptions() {
     const fim = installedModels.filter((m) => m && m.fim).map((m) => m.id);
-    const options = [{ value: '', label: 'Off (no model)' }];
+    const options = [{ value: '', label: jt('settings.editor.offNoModel', 'Off (no model)') }];
     fim.forEach((tag) => options.push({ value: tag, label: tag }));
     return options;
   }
 
   function fontSizeOptions(current) {
     const sizes = FONT_SIZES.includes(current) ? FONT_SIZES.slice() : [...FONT_SIZES, current].sort((a, b) => a - b);
-    return sizes.map((n) => ({ value: String(n), label: `${n}px` }));
+    return sizes.map((n) => ({ value: String(n), label: jt('settings.editor.fontSizeOption', '{size}px', { size: n }) }));
   }
 
   // Builds the controls' markup from inventory primitives and injects it into
@@ -226,50 +227,50 @@
     const primary = [
       selectField({
         id: 'editorFontSizeSelect',
-        label: 'Font size',
+        label: jt('settings.editor.fontSizeLabel', 'Font size'),
         value: String(prefs.fontSize),
         options: fontSizeOptions(prefs.fontSize),
-        ariaLabel: 'Editor font size',
+        ariaLabel: jt('settings.editor.fontSizeAriaLabel', 'Editor font size'),
         dataset: { 'editor-pref': 'fontSize' },
       }),
       selectField({
         id: 'editorTabSizeSelect',
-        label: 'Default tab size',
+        label: jt('settings.editor.defaultTabSizeLabel', 'Default tab size'),
         value: String(prefs.tabSize),
-        options: tabSizes().map((n) => ({ value: String(n), label: `${n} spaces` })),
-        ariaLabel: 'Editor tab size',
+        options: tabSizes().map((n) => ({ value: String(n), label: jt('settings.editor.tabSizeOption', '{count} spaces', { count: n }) })),
+        ariaLabel: jt('settings.editor.tabSizeAriaLabel', 'Editor tab size'),
         dataset: { 'editor-pref': 'tabSize' },
       }),
-      toggleSwitch({ id: 'editorWordWrapToggle', label: 'Word wrap', checked: prefs.wordWrap === 'on' }),
-      toggleSwitch({ id: 'editorMinimapToggle', label: 'Minimap', checked: prefs.minimap !== false }),
-      toggleSwitch({ id: 'editorLineNumbersToggle', label: 'Line numbers', checked: prefs.lineNumbers !== 'off' }),
+      toggleSwitch({ id: 'editorWordWrapToggle', label: jt('settings.editor.wordWrapLabel', 'Word wrap'), checked: prefs.wordWrap === 'on' }),
+      toggleSwitch({ id: 'editorMinimapToggle', label: jt('settings.editor.minimapLabel', 'Minimap'), checked: prefs.minimap !== false }),
+      toggleSwitch({ id: 'editorLineNumbersToggle', label: jt('settings.editor.lineNumbersLabel', 'Line numbers'), checked: prefs.lineNumbers !== 'off' }),
       toggleSwitch({
         id: 'editorAutoSaveToggle',
-        label: 'Auto-save files',
+        label: jt('settings.editor.autoSaveLabel', 'Auto-save files'),
         checked: prefs.autoSaveEnabled === true,
       }),
     ];
     const advanced = [
       selectField({
         id: 'editorRenderWhitespaceSelect',
-        label: 'Render whitespace',
+        label: jt('settings.editor.renderWhitespaceLabel', 'Render whitespace'),
         value: prefs.renderWhitespace,
         options: whitespaceValues().map((v) => ({ value: v, label: titleCase(v) })),
-        ariaLabel: 'Render whitespace',
+        ariaLabel: jt('settings.editor.renderWhitespaceLabel', 'Render whitespace'),
         dataset: { 'editor-pref': 'renderWhitespace' },
       }),
       selectField({
         id: 'editorRulersSelect',
-        label: 'Column rulers',
+        label: jt('settings.editor.columnRulersLabel', 'Column rulers'),
         value: rulersToString(prefs.rulers),
         options: RULER_OPTIONS,
-        ariaLabel: 'Editor column rulers',
+        ariaLabel: jt('settings.editor.columnRulersAriaLabel', 'Editor column rulers'),
         dataset: { 'editor-pref': 'rulers' },
       }),
       // Save-time hygiene (all default-off; applied on Ctrl+S and auto-save).
-      toggleSwitch({ id: 'editorFormatOnSaveToggle', label: 'Format on save', checked: prefs.formatOnSave === true }),
-      toggleSwitch({ id: 'editorTrimTrailingWhitespaceToggle', label: 'Trim trailing whitespace on save', checked: prefs.trimTrailingWhitespace === true }),
-      toggleSwitch({ id: 'editorInsertFinalNewlineToggle', label: 'Insert final newline on save', checked: prefs.insertFinalNewline === true }),
+      toggleSwitch({ id: 'editorFormatOnSaveToggle', label: jt('settings.editor.formatOnSaveLabel', 'Format on save'), checked: prefs.formatOnSave === true }),
+      toggleSwitch({ id: 'editorTrimTrailingWhitespaceToggle', label: jt('settings.editor.trimTrailingWhitespaceLabel', 'Trim trailing whitespace on save'), checked: prefs.trimTrailingWhitespace === true }),
+      toggleSwitch({ id: 'editorInsertFinalNewlineToggle', label: jt('settings.editor.insertFinalNewlineLabel', 'Insert final newline on save'), checked: prefs.insertFinalNewline === true }),
     ];
     const parts = primary.concat([
       '<details class="settings-group settings-group--wide settings-editor-advanced">'
@@ -285,34 +286,33 @@
       const fimTags = new Set(installedModels.filter((m) => m?.fim === true).map((m) => m.id));
       const currentAvailable = !prefs.inlineSuggestModel || fimTags.has(prefs.inlineSuggestModel);
       parts.push(
-        toggleSwitch({ id: 'editorInlineSuggestToggle', label: 'Inline suggestions', checked: prefs.inlineSuggestEnabled !== false }),
+        toggleSwitch({ id: 'editorInlineSuggestToggle', label: jt('settings.editor.inlineSuggestionsLabel', 'Inline suggestions'), checked: prefs.inlineSuggestEnabled !== false }),
         selectField({
           id: 'editorInlineSuggestModelSelect',
-          label: 'Completion model',
+          label: jt('settings.editor.completionModelLabel', 'Completion model'),
           value: currentAvailable ? prefs.inlineSuggestModel : '',
           options: inlineModelOptions(),
-          ariaLabel: 'Inline completion model',
+          ariaLabel: jt('settings.editor.inlineCompletionModelAriaLabel', 'Inline completion model'),
           dataset: { 'editor-pref': 'inlineSuggestModel' },
         }),
         typeof actionButton === 'function'
           ? actionButton({
             id: 'openEditorModelLibrary',
-            label: currentAvailable ? 'Open Model Library' : 'Install or choose a completion model',
+            label: currentAvailable ? jt('settings.editor.openModelLibrary', 'Open Model Library') : jt('settings.editor.installOrChooseCompletionModel', 'Install or choose a completion model'),
             variant: 'secondary',
             size: 'sm',
-            ariaLabel: 'Open Model Library',
-            title: 'Manage model installation and lifecycle in Model Library',
+            ariaLabel: jt('settings.editor.openModelLibrary', 'Open Model Library'),
+            title: jt('settings.editor.manageModelLibraryTitle', 'Manage model installation and lifecycle in Model Library'),
           })
           : ''
       );
     }
     container.innerHTML = parts.join('');
-    if (badge) { badge.textContent = 'Workspace'; }
+    if (badge) { badge.textContent = jt('settings.editor.workspaceBadge', 'Workspace'); }
     if (status) {
-      const autoSaveNote = autoSaveVisible === true
-        ? ' Auto-save writes the active file about a second after you stop typing; a file changed on disk is never silently overwritten.'
-        : '';
-      const base = `Editor preferences apply to the Workspace IDE and persist across restarts.${autoSaveNote}`;
+      const base = autoSaveVisible === true
+        ? jt('settings.editor.preferencesStatusAutoSave', 'Editor preferences apply to the Workspace IDE and persist across restarts. Auto-save writes the active file about a second after you stop typing; a file changed on disk is never silently overwritten.')
+        : jt('settings.editor.preferencesStatus', 'Editor preferences apply to the Workspace IDE and persist across restarts.');
       if (inlineSuggestVisible !== true) {
         status.textContent = base;
       } else if (inlineModelStatus && inlineModelStatus.message) {
@@ -320,11 +320,11 @@
         // model is visibly confirmed (loading → ready / still warming).
         status.textContent = `${base} ${inlineModelStatus.message}`;
       } else {
-        const unavailable = prefs.inlineSuggestModel
-          && !installedModels.some((m) => m?.fim === true && m.id === prefs.inlineSuggestModel)
-          ? ` The saved completion model "${prefs.inlineSuggestModel}" is unavailable or not insert-capable; choose one in Model Library.`
-          : '';
-        status.textContent = `${base} Completion models are limited to installed fill-in-the-middle/insert-capable models; compute placement is automatic.${unavailable} Recommended: ${RECOMMENDED_INLINE_MODEL} (use the -base variant).`;
+        const unavailable = prefs.inlineSuggestModel && !installedModels.some((m) => m?.fim === true && m.id === prefs.inlineSuggestModel);
+        const statusParams = { base, model: prefs.inlineSuggestModel, recommendedModel: RECOMMENDED_INLINE_MODEL };
+        status.textContent = unavailable
+          ? jt('settings.editor.completionStatusUnavailable', '{base} Completion models are limited to installed fill-in-the-middle/insert-capable models; compute placement is automatic. The saved completion model "{model}" is unavailable or not insert-capable; choose one in Model Library. Recommended: {recommendedModel} (use the -base variant).', statusParams)
+          : jt('settings.editor.completionStatus', '{base} Completion models are limited to installed fill-in-the-middle/insert-capable models; compute placement is automatic. Recommended: {recommendedModel} (use the -base variant).', statusParams);
       }
     }
   }
@@ -394,20 +394,20 @@
 
     function describeWarmResult(tag, result) {
       if (result && result.ok === true) {
-        return `Completion model "${tag}" is loaded and ready.`;
+        return jt('settings.editor.completionModelReady', 'Completion model "{tag}" is loaded and ready.', { tag });
       }
       const reason = String((result && result.reason) || '');
       // Inline completion uses its own FIM model; current transient warm failures
       // are chat_stream_active and sidecar_*.
       if (reason === 'chat_stream_active') {
-        return `"${tag}" will load once the current chat reply finishes.`;
+        return jt('settings.editor.completionModelWaitForReply', '"{tag}" will load once the current chat reply finishes.', { tag });
       }
       if (reason === 'sidecar_unavailable' || reason === 'sidecar_not_ready') {
-        return `Backend isn't ready yet — "${tag}" will load when you start typing in a file.`;
+        return jt('settings.editor.completionModelBackendNotReady', 'Backend isn\'t ready yet — "{tag}" will load when you start typing in a file.', { tag });
       }
       // generate_failed / timeout / unknown: the request already kicked the
       // (cold) load on the daemon, so report progress rather than failure.
-      return `"${tag}" selected — the first completion may take a few seconds while the model loads. Start typing in a file to use it.`;
+      return jt('settings.editor.completionModelSelectedLoading', '"{tag}" selected — the first completion may take a few seconds while the model loads. Start typing in a file to use it.', { tag });
     }
 
     // Warm the freshly-selected completion model so the first real keystroke
@@ -423,14 +423,14 @@
       const api = (typeof window !== 'undefined' && window.jennyShell && window.jennyShell.inline) || null;
       if (!api || typeof api.complete !== 'function') {
         if (!signal?.aborted) {
-          setInlineModelStatus(`Selected "${tag}". Open the Workspace IDE and start typing in a file to use it.`);
+          setInlineModelStatus(jt('settings.editor.completionModelSelected', 'Selected "{tag}". Open the Workspace IDE and start typing in a file to use it.', { tag }));
         }
         return;
       }
       const myToken = warmToken + 1;
       warmToken = myToken;
       if (signal?.aborted) return;
-      setInlineModelStatus(`Loading completion model "${tag}"…`);
+      setInlineModelStatus(jt('settings.editor.loadingCompletionModel', 'Loading completion model "{tag}"…', { tag }));
       const probe = () => Promise.resolve(
         api.complete({ prefix: '\n', suffix: '', model: tag, maxTokens: 1 })
       ).catch(function ignore() { return null; });
@@ -470,8 +470,8 @@
         ide[pref] = normalized;
       } catch (error) {
         if (signal?.aborted) return;
-        showError('That editor preference could not be saved. Your previous setting is still active.', {
-          title: 'Editor Setting Not Saved',
+        showError(jt('settings.editor.settingNotSaved', 'That editor preference could not be saved. Your previous setting is still active.'), {
+          title: jt('settings.editor.settingNotSavedTitle', 'Editor Setting Not Saved'),
           dedupeKey: `settings:editor:${pref}`,
         });
         log('WARN', 'settings.editor_preference_failed', {

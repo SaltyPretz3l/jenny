@@ -6,6 +6,7 @@
   }
   root.rendererSettingsSectionBinders = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSettingsSectionBinders(deps) {
     const state = deps.state;
     const callbacks = deps.callbacks || {};
@@ -92,13 +93,30 @@
           return;
         }
         handleOfflineModeChange(detail.checked === true).catch((error) => {
-          showSessionActionError(error, 'Offline Update Failed');
+          showSessionActionError(error, jt('settings.offline.updateFailed', 'Offline Update Failed'));
         });
       });
       registerSectionListener(offlineDom.offlineModelActions, 'click', (event) => {
         if (!event.target?.closest?.('[data-action="openOfflineModelLibrary"]')) return;
         openSettingsSection('models', { source: 'offline_model_remediation' });
       });
+      return finalizeSectionBindings();
+    }
+
+    let remoteSection = null;
+    function bindRemote(_registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      remoteSection = remoteSection || windowRef.rendererSettingsRemoteSection?.createRemoteSettingsSection?.({
+        dom: { section: windowRef.document?.querySelector?.('[data-settings-section="remote"]') },
+        shell: windowRef.jennyShell,
+        callbacks: {
+          appendClientLog: typeof callbacks.appendClientLog === 'function'
+            ? callbacks.appendClientLog : function noopAppendClientLog() {},
+          getCurrentSessionId: () => state.currentSessionId,
+        },
+      });
+      context.addCleanup?.(() => remoteSection?.dispose?.());
+      context.markSectionBound?.();
       return finalizeSectionBindings();
     }
 
@@ -148,14 +166,14 @@
         if (!target?.closest) return;
         if (target.closest('[data-action="personality-save"]')) {
           handlePersonalitySave().catch((error) => {
-            state.personality.actionStatus = `Save failed: ${toErrorMessage(error, 'unknown error')}`;
+            state.personality.actionStatus = jt('settings.personality.saveFailed', 'Save failed: {error}', { error: toErrorMessage(error, 'unknown error') });
             renderPersonalityEditor();
           });
           return;
         }
         if (target.closest('[data-action="personality-open-folder"]')) {
           handlePersonalityOpenFolder().catch((error) => {
-            state.personality.actionStatus = `Open folder failed: ${toErrorMessage(error, 'unknown error')}`;
+            state.personality.actionStatus = jt('settings.personality.openFolderFailed', 'Open folder failed: {error}', { error: toErrorMessage(error, 'unknown error') });
             renderPersonalityEditor();
           });
           return;
@@ -164,22 +182,21 @@
         if (!confirmDialog?.confirm) {
           // Never destroy both files without a confirm: say so instead of
           // silently doing nothing when the dialog could not be built.
-          state.personality.actionStatus = 'Clear is unavailable.';
+          state.personality.actionStatus = jt('settings.personality.clearUnavailable', 'Clear is unavailable.');
           renderPersonalityEditor();
           return;
         }
         Promise.resolve(confirmDialog.confirm({
-          title: 'Clear personality?',
-          message: 'The note and About you go back to empty. '
-            + 'Long-term notes and approved memories are not affected.',
-          confirmLabel: 'Clear',
-          cancelLabel: 'Cancel',
+          title: jt('settings.shell.clearPersonalityTitle', 'Clear personality?'),
+          message: jt('settings.shell.clearPersonalityMessage', 'The note and About you go back to empty. Long-term notes and approved memories are not affected.'),
+          confirmLabel: jt('common.clear', 'Clear'),
+          cancelLabel: jt('common.cancel', 'Cancel'),
           variant: 'danger',
         })).then((confirmed) => {
           if (!confirmed) return undefined;
           return handlePersonalityReset();
         }).catch((error) => {
-          state.personality.actionStatus = `Clear failed: ${toErrorMessage(error, 'unknown error')}`;
+          state.personality.actionStatus = jt('settings.personality.clearFailed', 'Clear failed: {error}', { error: toErrorMessage(error, 'unknown error') });
           renderPersonalityEditor();
         });
       });
@@ -196,7 +213,7 @@
         // alone lets a second Ctrl+S start a concurrent write.
         if (state.personality?.saving === true || state.personality?.dirty !== true) return;
         handlePersonalitySave().catch((error) => {
-          state.personality.actionStatus = `Save failed: ${toErrorMessage(error, 'unknown error')}`;
+          state.personality.actionStatus = jt('settings.personality.saveFailed', 'Save failed: {error}', { error: toErrorMessage(error, 'unknown error') });
           renderPersonalityEditor();
         });
       });
@@ -216,15 +233,15 @@
         }
         if (!target.closest('[data-action="memory-notes-clear"]')) return;
         if (!confirmDialog?.confirm) {
-          state.memoryContextFiles.actionStatus = 'Clear is unavailable.';
+          state.memoryContextFiles.actionStatus = jt('settings.memories.clearUnavailable', 'Clear is unavailable.');
           renderMemoryContextFiles();
           return;
         }
         Promise.resolve(confirmDialog.confirm({
-          title: 'Clear long-term notes?',
-          message: 'The notes go back to empty. Approved memories are not affected.',
-          confirmLabel: 'Clear',
-          cancelLabel: 'Cancel',
+          title: jt('settings.shell.clearLongTermNotesTitle', 'Clear long-term notes?'),
+          message: jt('settings.shell.clearLongTermNotesMessage', 'The notes go back to empty. Approved memories are not affected.'),
+          confirmLabel: jt('common.clear', 'Clear'),
+          cancelLabel: jt('common.cancel', 'Cancel'),
           variant: 'danger',
         })).then((confirmed) => (confirmed ? resetMemoryContextFile() : undefined)).catch(() => {});
       });
@@ -236,6 +253,7 @@
       skills: bindSkills,
       advanced: bindAdvanced,
       offline: bindOffline,
+      remote: bindRemote,
       personality: bindPersonality,
       memories: bindMemories,
     });

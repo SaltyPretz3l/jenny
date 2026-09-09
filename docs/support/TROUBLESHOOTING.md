@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-09
 status: active
 ---
 
@@ -19,6 +19,35 @@ Two places to look before filing anything:
 - **`<userData>/diagnostics/`** (Windows: `%APPDATA%\jenny\diagnostics\`).
   Any turn that ends abnormally writes a dated JSON dump there. Process logs
   are next to it under `logs/`.
+
+## New in the 1.1 source preview
+
+These entries describe integrated source. Check the release notes for the
+version and assets actually installed.
+
+### Some labels remain in English, or the layout has not mirrored
+
+Choose Settings > Appearance > Language and restart Jenny. Missing translated
+copy falls back to English; newer updater messages may still use that fallback.
+Report the selected language and screen. The 24-hour preference is separate and
+refreshes displayed times without changing the interface language.
+
+### Preview capture succeeded but there is no saved screenshot or visual review
+
+A vision-capable active local model is required to interpret pixels. Jenny
+does not switch models automatically. Screenshot storage permits four captures
+per session and 32 per workspace, at most 2 MiB each. At capacity, a new image
+can still reach the model while saving is refused. Remove an unwanted saved
+capture to free a slot. Delivery alone does not prove the model reviewed it.
+
+### A sandbox command succeeded but its file is missing
+
+Commands run in a disposable copy. Command-created and edited files are discarded
+when the job ends; use reviewed typed file tools for persistent changes.
+For Docker readiness, cancellation or cleanup problems, use the
+[desktop sandbox guide](../operations/DESKTOP_COMMAND_SANDBOX.md) or
+[hosted execution guide](../operations/HOSTED_EXECUTION.md) for your mode.
+Do not remove journals or volumes to force uncertain work to replay.
 
 ## Install and launch
 
@@ -45,8 +74,9 @@ build.
 **Open Anyway** next to the blocked-app notice. On older macOS, right-click
 **Jenny.app** → **Open** → **Open**. If neither option appears, clear the
 quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
-The macOS build is untested by the maintainer, auto-update is disabled
-there, and the sandboxed Python tool is not available on macOS.
+The published 1.0.0 release has no Mac installer; use this guidance only for
+an actual experimental build whose provenance you have verified. Mac installation
+remains manual and the managed Python tool is unavailable on macOS.
 
 ### Linux: Jenny says the Chromium sandbox is off
 

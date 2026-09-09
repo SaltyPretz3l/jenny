@@ -7,6 +7,7 @@
   root.modelLibraryFit = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function nonNegativeNumber(value) {
     var number = Number(value);
@@ -43,11 +44,11 @@
     var need = gbLabel(vramRequiredMb);
     var budget = gbLabel(budgetMb);
     if (state === 'fits') {
-      return need && budget ? need + ' of ' + budget + ' VRAM' : 'Fits accelerator memory';
+      return need && budget ? need + ' of ' + budget + ' VRAM' : jt('models.library.fit.fitsAcceleratorMemory', 'Fits accelerator memory');
     }
-    if (state === 'cpu') return 'Runs on CPU';
-    if (state === 'over') return need ? 'Needs ' + need + ' VRAM' : 'Over memory budget';
-    return 'Hardware not detected';
+    if (state === 'cpu') return jt('models.library.fit.runsOnCpu', 'Runs on CPU');
+    if (state === 'over') return need ? 'Needs ' + need + ' VRAM' : jt('models.library.fit.overMemoryBudget', 'Over memory budget');
+    return jt('models.library.fit.hardwareNotDetected', 'Hardware not detected');
   }
 
   function fitRatioFor(vramRequiredMb, budgetMb, state) {

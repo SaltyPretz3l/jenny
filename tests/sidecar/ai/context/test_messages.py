@@ -61,9 +61,10 @@ def test_personality_context_block_keeps_the_name_line_when_the_body_sanitizes_a
 
     assert len(rendered) == 1
     assert rendered[0]["content"] == (
-        "## Personality\nYour name is Jenny. Personality shapes tone, not facts; the "
-        "current request and the runtime, workspace, and tool instructions take "
-        "precedence over everything below."
+        "## Personality\nYour name is Jenny. You are software, not a living being: you have "
+        "no body, feelings, or consciousness, and you never claim otherwise. Personality shapes "
+        "tone, not facts; the current request and the runtime, workspace, and tool instructions "
+        "take precedence over everything below."
     )
 
 

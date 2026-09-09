@@ -8,11 +8,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory((control) => require('./renderer-tool-detail-body').toggleDetailClamp(control));
     return;
   }
-  root.rendererComponentPreservationRegistry = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererComponentPreservationRegistry = factory((control) => root.rendererToolDetailBody?.toggleDetailClamp(control));
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (toggleDetailClamp) {
   'use strict';
 
   const DEFAULT_CAPTURE_CAP = 64;
@@ -157,13 +157,33 @@
           // the user's, whose toggle the renderer already honours.
           if (expanded && node.getAttribute('data-tool-details-materialized') === 'false') return;
           node.setAttribute('data-expanded', expanded ? 'true' : 'false');
-          for (const toggle of queryAllSafe(node, '[aria-expanded]')) {
+          for (const toggle of queryAllSafe(node, '[aria-expanded]:not(.tool-call-row-body *)')) {
             toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
           }
           for (const body of queryAllSafe(node, '.tool-call-row-body')) {
             if (expanded) body.removeAttribute('inert');
             else body.setAttribute('inert', '');
           }
+        },
+      },
+      {
+        name: 'tool-detail-clamp',
+        selector: '[data-tool-detail-section]',
+        preserveIdentity: false,
+        source(node) {
+          const copyId = node.querySelector?.('[data-tool-detail-toggle]')?.getAttribute('data-copy-id');
+          return copyId ? `${readIdentity(node)}\x1f${copyId}` : '';
+        },
+        capture(node) {
+          return node.querySelector?.('[data-detail-clamped]')?.getAttribute('data-detail-clamped') === 'false';
+        },
+        restore(node, expanded) {
+          const control = node.querySelector?.('[data-tool-detail-toggle]');
+          const target = node.querySelector?.('[data-detail-clamped]');
+          if (!control || !target) return;
+          const current = target.getAttribute('data-detail-clamped') === 'false';
+          control.setAttribute('aria-expanded', current ? 'true' : 'false');
+          if (current !== expanded) toggleDetailClamp(control);
         },
       },
     ];

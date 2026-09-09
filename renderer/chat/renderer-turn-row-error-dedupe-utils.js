@@ -13,6 +13,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function normalizeIdFallback(value) {
     return String(value == null ? '' : value).trim();
   }
@@ -58,7 +59,7 @@
       || (resultPayload && (resultPayload.result_summary || resultPayload.summary))
       || ''
     );
-    const message = rawMessage || (toolName ? `Tool "${toolName}" failed` : 'Tool failed');
+    const message = rawMessage || (toolName ? jt('chat.toolCall.namedToolFailed', 'Tool "{tool}" failed', { tool: toolName }) : jt('chat.toolCall.toolFailed', 'Tool failed'));
     return { code, message };
   }
 

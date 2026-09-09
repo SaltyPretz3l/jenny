@@ -6,6 +6,7 @@
   }
   root.rendererIdeTreeKeyboard = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -240,7 +241,7 @@
             const targetRow = rows.find((candidate) => candidate.dataset.ideTreePath === targets[0]);
             if (targetRow) onBeginRename(targets[0], targetRow.dataset.ideTreeKind);
           } else if (targets.length > 1) {
-            onNotify('Rename one item at a time.');
+      onNotify(jt('ide.tree.renameOneAtATime', 'Rename one item at a time.'));
           }
           break;
         }

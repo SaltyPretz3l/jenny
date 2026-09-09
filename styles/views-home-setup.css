@@ -215,7 +215,7 @@
 
 .setup-hw-report-val {
   color: var(--text-primary);
-  text-align: right;
+  text-align: end;
 }
 
 .setup-hw-pick {
@@ -378,7 +378,7 @@
   margin: var(--space-2) 0 0;
   font-size: 12px;
   color: var(--text-secondary);
-  text-align: right;
+  text-align: end;
 }
 
 /* Setup checklist hub: hierarchy comes from type and thin rules, not cards. */

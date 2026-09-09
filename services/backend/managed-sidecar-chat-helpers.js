@@ -348,7 +348,15 @@ function summarizePromptMessages(messages) {
   };
 }
 
+function prepareResumedHistory(service, resumePayload) {
+  const messages = resumePayload.resumeMessage
+    ? resumePayload.messages.concat(resumePayload.resumeMessage) : resumePayload.messages;
+  return service.options?.hostMode === 'server'
+    ? service.options.historyAttachmentHydrator(messages) : messages;
+}
+
 module.exports = {
+  prepareResumedHistory,
   CLOUD_ENGINE_TYPES,
   buildAutomaticCompactionSendContext,
   buildImageAttachmentSendParams,

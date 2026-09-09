@@ -13,9 +13,11 @@ from sidecar.ai.personality import (
     DEFAULT_PERSONALITY_BASE_PROMPT,
     PERSONALITY_HEADING,
     PERSONALITY_PRECEDENCE_TEMPLATE,
+    UI_LANGUAGE_INSTRUCTION_TEMPLATE,
     build_personality_system_message,
     is_personality_overlay_system_message,
     normalize_assistant_name,
+    ui_language_instruction,
 )
 
 # The Electron-side compile for the owner's post-migration workspace, exactly as
@@ -113,11 +115,48 @@ def test_personality_message_is_heading_plus_name_line_when_workspace_is_empty()
 
     assert message == (
         "## Personality\n"
-        "Your name is Jenny. Personality shapes tone, not facts; the current request and "
-        "the runtime, workspace, and tool instructions take precedence over everything below."
+        "Your name is Jenny. You are software, not a living being: you have no body, feelings, "
+        "or consciousness, and you never claim otherwise. Personality shapes tone, not facts; "
+        "the current request and the runtime, workspace, and tool instructions take precedence "
+        "over everything below."
     )
     assert message == f"{PERSONALITY_HEADING}\n{PERSONALITY_PRECEDENCE_TEMPLATE.format(name='Jenny')}"
     assert is_personality_overlay_system_message(message)
+
+
+def test_ui_language_instruction_uses_display_name_and_defaults_to_empty() -> None:
+    assert "Spanish" in ui_language_instruction("es")
+    for value in ("en", "", None, "xx"):
+        assert ui_language_instruction(value) == ""
+
+
+def test_personality_message_appends_ui_language_instruction_after_header() -> None:
+    instruction = UI_LANGUAGE_INSTRUCTION_TEMPLATE.format(language="Japanese")
+
+    assert build_personality_system_message("Ada", "", ui_language="ja") == (
+        f"{PERSONALITY_HEADING}\n"
+        f"{PERSONALITY_PRECEDENCE_TEMPLATE.format(name='Ada')}\n"
+        f"{instruction}"
+    )
+    assert is_personality_overlay_system_message(
+        build_personality_system_message("Ada", "", ui_language="ja")
+    )
+
+
+def test_personality_message_places_content_after_ui_language_instruction() -> None:
+    instruction = UI_LANGUAGE_INSTRUCTION_TEMPLATE.format(language="Japanese")
+    message = build_personality_system_message(
+        "Ada",
+        SAMPLE_COMPILED_SECTIONS,
+        ui_language="ja",
+    )
+
+    assert message == (
+        f"{PERSONALITY_HEADING}\n"
+        f"{PERSONALITY_PRECEDENCE_TEMPLATE.format(name='Ada')}\n"
+        f"{instruction}\n\n"
+        f"{SAMPLE_COMPILED_SECTIONS}"
+    )
 
 
 def test_personality_message_appends_electron_sections_after_a_blank_line() -> None:

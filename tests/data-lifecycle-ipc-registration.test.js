@@ -253,3 +253,42 @@ test('runtime registration tolerates older or fake Electron app objects without 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runtime removal deletes the remote control record through the reachable secure store', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-data-ipc-remote-cleanup-'));
+  let remoteDeletes = 0;
+  try {
+    const registration = registerDataLifecycleRuntime({ handle() {} }, {
+      app: {
+        getPath: (name) => path.join(root, name),
+        getVersion: () => '1.0.0',
+        isPackaged: false,
+      },
+      backendService: {
+        secureStore: { deleteRemoteControlRecord: async () => { remoteDeletes += 1; } },
+        sessionStore: { listSessions: () => [], flushAsync: async () => {} },
+        stop: async () => {},
+      },
+      attachmentStore: null,
+      shellConfigService: { getState: () => ({}) },
+      dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+      getMainWindow: () => null,
+      sendBridgeEvent: () => {},
+      log: () => {},
+    });
+    const result = await registration.service.prepareRemoval({
+      choice: 'permanent',
+      confirmation: 'REMOVE JENNY',
+    });
+    assert.equal(remoteDeletes, 1);
+    assert.deepEqual(result.cleanupResults.find((item) => item.kind === 'remote_control'), {
+      kind: 'remote_control',
+      name: 'remote control pairing record',
+      status: 'removed',
+      reason: '',
+    });
+    registration.dispose();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

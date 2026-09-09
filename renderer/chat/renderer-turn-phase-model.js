@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (timelineV2Presentation) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const presentationUtils = timelineV2Presentation && typeof timelineV2Presentation === 'object'
     ? timelineV2Presentation
     : {};
@@ -57,7 +58,7 @@
     : (() => null);
   const resolveTerminalPresentation = typeof presentationUtils.resolveTerminalPresentation === 'function'
     ? presentationUtils.resolveTerminalPresentation
-    : () => ({ status: 'errored', summary: 'The turn needs recovery.' });
+    : () => ({ status: 'errored', summary: jt('chat.turnPhase.needsRecovery', 'The turn needs recovery.') });
   const compactText = typeof presentationUtils.compactText === 'function'
     ? presentationUtils.compactText
     : function fallbackCompactText(value, maxLength = 160) {
@@ -179,7 +180,7 @@
     const payload = readPayload(row);
     const callId = normalizeString(row?.tool_call_id || payload.tool_call_id || payload.call_id || payload.callId);
     const toolName = normalizeString(payload.tool_name || payload.toolName || row?.tool_name);
-    const prompt = compactText(payload.prompt || payload.summary || 'Waiting for approval');
+    const prompt = compactText(payload.prompt || payload.summary || jt('chat.turnPhase.waitingForApproval', 'Waiting for approval'));
     return {
       callId,
       toolName,
@@ -296,7 +297,7 @@
       if (!errorRow) {
         return { kind: '', summary: '' };
       }
-      return { kind: resolveTerminalPresentationIfTerminal('error').status, summary: compactText(readPayload(errorRow).stream_error || readPayload(errorRow).summary || 'The turn needs recovery.') };
+      return { kind: resolveTerminalPresentationIfTerminal('error').status, summary: compactText(readPayload(errorRow).stream_error || readPayload(errorRow).summary || jt('chat.turnPhase.needsRecovery', 'The turn needs recovery.')) };
     }
     return {
       kind: terminalPresentation.status,

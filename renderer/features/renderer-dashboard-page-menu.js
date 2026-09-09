@@ -18,8 +18,9 @@
   }
   root.rendererDashboardPageMenu = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
-
   const TRIGGER_DOM_ID = 'homePageMenuTrigger';
   const POPOVER_DOM_ID = 'homePageMenuPopover';
 
@@ -67,17 +68,17 @@
       return actionButton({
         plain: true,
         className: 'home-page-menu__item',
-        trustedHtml: itemContent(ICON_FOCUS, 'Focus mode', focusOn),
+        trustedHtml: itemContent(ICON_FOCUS, escapeHtml(jt('dashboard.widgets.pageMenu.focusMode', 'Focus mode')), focusOn),
         ariaPressed: focusOn,
-        title: 'Dim everything except the widget under your pointer (Ctrl+Shift+F)',
+        title: jt('dashboard.widgets.pageMenu.focusModeTitle', 'Dim everything except the widget under your pointer (Ctrl+Shift+F)'),
         dataset: { 'dashboard-focus-toggle': '1' },
       })
         + actionButton({
           plain: true,
           className: 'home-page-menu__item',
-          trustedHtml: itemContent(ICON_EDIT, 'Edit layout', editOn),
+          trustedHtml: itemContent(ICON_EDIT, escapeHtml(jt('dashboard.widgets.pageMenu.editLayout', 'Edit layout')), editOn),
           ariaPressed: editOn,
-          title: editOn ? 'Finish editing the widget layout' : 'Rearrange or hide Home widgets',
+          title: editOn ? jt('dashboard.widgets.pageMenu.finishEditing', 'Finish editing the widget layout') : jt('dashboard.widgets.pageMenu.editLayoutTitle', 'Rearrange or hide Home widgets'),
           dataset: { 'dashboard-edit-toggle': '1' },
         });
     }
@@ -133,16 +134,16 @@
         domId: TRIGGER_DOM_ID,
         className: 'home-page-menu__trigger',
         trustedHtml: `<span class="home-info-strip__action-icon" aria-hidden="true">${ICON_DOTS}</span>`,
-        ariaLabel: 'Page options',
+        ariaLabel: jt('dashboard.widgets.pageMenu.pageOptions', 'Page options'),
         ariaHaspopup: 'dialog',
         ariaExpanded: false,
         ariaControls: POPOVER_DOM_ID,
-        title: 'Focus mode and layout editing',
+        title: jt('dashboard.widgets.pageMenu.title', 'Focus mode and layout editing'),
       })
         + popover({
           id: 'home-page-menu',
           domId: POPOVER_DOM_ID,
-          ariaLabel: 'Page options',
+          ariaLabel: jt('dashboard.widgets.pageMenu.pageOptions', 'Page options'),
           className: 'home-page-menu__popover',
         });
       askRegionEl.append(host);

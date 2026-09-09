@@ -8,6 +8,7 @@
   }
   root.reasoningRowV2Utils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const REASONING_STATUS_VALUES = Object.freeze([
     'streaming',
     'complete',
@@ -135,7 +136,7 @@
   const LIVE_WINDOW_CHARS = 32 * 1024;
   const LIVE_WINDOW_ELIDED_FINGERPRINT = 'elided';
   const LIVE_WINDOW_NOTE_FINGERPRINT = 'elided-note';
-  const LIVE_WINDOW_NOTE_HTML = '<p class="reasoning-row-meta reasoning-live-window-note">Earlier thinking will show when this step completes.</p>';
+  const LIVE_WINDOW_NOTE_HTML = '<p class="reasoning-row-meta reasoning-live-window-note">' + String(jt('chat.reasoningRow.earlierThinkingAfterCompletion', 'Earlier thinking will show when this step completes.')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</p>';
 
   function resolveLiveWindowStart(units, previousStart, options) {
     const list = Array.isArray(units) ? units : [];

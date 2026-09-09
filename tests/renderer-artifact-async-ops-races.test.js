@@ -210,6 +210,57 @@ test('save: a late completion after selection moved to a different artifact does
   assert.equal(h.state.artifacts.dirtyContent, 'disk-B', 'A\'s late save completion must not overwrite B\'s dirty content');
 });
 
+test('save preserves edits made after submission and isolates overlapping target saves', async (t) => {
+  const h = makeHarness(t);
+  const a = generatedArtifactFixture('artifact-a', 'session-1');
+  const b = generatedArtifactFixture('artifact-b', 'session-1');
+  h.registerArtifact(a); h.registerArtifact(b); h.select(a);
+  Object.assign(h.state.artifacts, { loadedArtifactId: a.id, loadedArtifactContent: 'disk-A', dirtyContent: 'submitted-A' });
+  const first = deferred();
+  h.saveImpl.fn = () => first.promise;
+  const savingA = h.controller.saveSelectedArtifact();
+  h.state.artifacts.dirtyContent = 'newer-A';
+  first.resolve({});
+  await savingA;
+  assert.equal(h.state.artifacts.loadedArtifactContent, 'submitted-A');
+  assert.equal(h.state.artifacts.dirtyContent, 'newer-A');
+
+  const second = deferred(); const third = deferred();
+  h.saveImpl.fn = (_session, id) => id === a.id ? second.promise : third.promise;
+  const anotherA = h.controller.saveSelectedArtifact();
+  h.select(b);
+  Object.assign(h.state.artifacts, { loadedArtifactId: b.id, loadedArtifactContent: 'disk-B', dirtyContent: 'submitted-B' });
+  const savingB = h.controller.saveSelectedArtifact();
+  second.resolve({}); await anotherA;
+  assert.equal(h.state.artifacts.savePending, true, 'A cannot clear B pending');
+  third.resolve({}); await savingB;
+  assert.equal(h.state.artifacts.savePending, false);
+});
+
+test('failed preload settles instead of retrying during the next render', async (t) => {
+  const h = makeHarness(t);
+  const a = generatedArtifactFixture('artifact-a', 'session-1');
+  h.registerArtifact(a); h.select(a);
+  let reads = 0;
+  h.readImpl.fn = async () => { reads += 1; throw new Error('read denied'); };
+  await h.controller.loadGeneratedArtifactContent(a);
+  h.controller.preloadSelectedArtifact(a);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 1);
+  assert.equal(h.state.artifacts.loadState, 'error');
+});
+
+test('source is unavailable before loading and noneditable payloads are not empty successful documents', async (t) => {
+  const h = makeHarness(t);
+  const a = generatedArtifactFixture('artifact-a', 'session-1', { previewText: 'truncated preview' });
+  h.registerArtifact(a); h.select(a);
+  assert.equal(h.controller.getSelectedArtifactSource(), null);
+  h.readImpl.fn = async () => ({ artifact: { editable: false, status: 'available' }, content: '' });
+  await h.controller.loadGeneratedArtifactContent(a);
+  assert.equal(h.state.artifacts.loadState, 'unavailable');
+  assert.equal(h.controller.getSelectedArtifactSource(), null);
+});
+
 test('load failure while installing a restored draft keeps the draft recoverable for retry', async (t) => {
   const dom = new JSDOM('<body></body>');
   const previousWindow = globalThis.window;

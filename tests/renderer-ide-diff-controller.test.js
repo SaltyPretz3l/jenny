@@ -879,7 +879,12 @@ test('openChangeDiff read failure returns read_failed after its own toast (no ca
 
 test('openChangeDiff maps unsafe, missing, and ordinary read failures to distinct safe copy', async () => {
   const cases = [
+    ['CMP-WORKSPACEFS-0002', /workspace-relative path/i],
     ['CMP-WORKSPACEFS-0003', /outside the originating workspace/i],
+    ['CMP-WORKSPACEFS-0008', /root is changing/i],
+    ['CMP-WORKSPACEFS-0009', /root changed during the file read/i],
+    ['workspace_file_operation_stale', /root changed during the file read/i],
+    ['CMP-WORKSPACEFS-0011', /too large to open/i],
     ['CMP-WORKSPACEFS-0004', /no longer available/i],
     ['CMP-WORKSPACEFS-0022', /could not safely read/i],
   ];
@@ -907,7 +912,7 @@ test('openChangeDiff maps unsafe, missing, and ordinary read failures to distinc
     assert.match(messages.at(-1), expected);
     assert.doesNotMatch(messages.at(-1), /G:\/secret|src\/app\.js/);
   }
-  assert.equal(new Set(messages).size, 3);
+  assert.equal(new Set(messages).size, cases.length - 1);
 });
 
 test('openChangeDiff opens a legacy unstamped-workspace change through the snapshot store', async () => {

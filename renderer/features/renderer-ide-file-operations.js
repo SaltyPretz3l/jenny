@@ -12,6 +12,7 @@
   root.rendererIdeFileOperations = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const MAX_PREVIEW_PATH_REVISIONS = 512;
@@ -103,7 +104,7 @@
     }
 
     function validateReadResult(result, requestedPath, { allowPreview = false } = {}) {
-      if (!result || result.ok !== true) throw operationError(result, 'Could not read the workspace file.');
+      if (!result || result.ok !== true) throw operationError(result, jt('ide.fileOps.readFailed', 'Could not read the workspace file.'));
       const canonicalPath = normalizePath(result.path);
       const canonicalKey = String(result.pathKey || '');
       const requestedKey = String(result.requestedPathKey || '');
@@ -121,14 +122,14 @@
         || (!allowPreview && result.editable !== true)) {
         throw operationError({
           code: 'workspace_file_result_invalid',
-          message: 'The workspace returned an invalid or stale file response.',
+          message: jt('ide.fileOps.invalidFileResponse', 'The workspace returned an invalid or stale file response.'),
         });
       }
       return { ...result, path: canonicalPath, pathKey: canonicalKey };
     }
 
     function validateWriteResult(result, snapshot) {
-      if (!result || result.ok !== true) throw operationError(result, 'Could not save the workspace file.');
+      if (!result || result.ok !== true) throw operationError(result, jt('ide.fileOps.saveFailed', 'Could not save the workspace file.'));
       if (normalizePath(result.path) !== snapshot.path
         || String(result.pathKey || '') !== snapshot.pathKey
         || result.rootId !== snapshot.rootId
@@ -137,7 +138,7 @@
         || !result.fileVersion) {
         throw operationError({
           code: 'workspace_file_result_invalid',
-          message: 'The workspace returned an invalid or stale save response.',
+          message: jt('ide.fileOps.invalidSaveResponse', 'The workspace returned an invalid or stale save response.'),
         });
       }
       return result;
@@ -157,7 +158,7 @@
     }
 
     function validateImageResult(result, requestedPath) {
-      if (!result || result.ok !== true) throw operationError(result, 'Could not read the workspace image.');
+      if (!result || result.ok !== true) throw operationError(result, jt('ide.fileOps.imageReadFailed', 'Could not read the workspace image.'));
       const canonicalPath = normalizePath(result.path);
       const canonicalKey = String(result.pathKey || '');
       const requestedKey = String(result.requestedPathKey || '');
@@ -186,7 +187,7 @@
         || result.truncated !== false) {
         throw operationError({
           code: 'workspace_file_result_invalid',
-          message: 'The workspace returned an invalid or stale image response.',
+          message: jt('ide.fileOps.invalidImageResponse', 'The workspace returned an invalid or stale image response.'),
         });
       }
       return { ...result, path: canonicalPath, pathKey: canonicalKey };
@@ -198,11 +199,11 @@
       const operationEpoch = controllerEpoch;
       const execute = queueTail.then(async () => {
         if (disposed || operationEpoch !== controllerEpoch) {
-          throw operationError({ code: 'workspace_file_operation_stale', message: 'The file operation is no longer current.' });
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.operationNoLongerCurrent', 'The file operation is no longer current.') });
         }
         const result = await run({ operationId, controllerEpoch: operationEpoch });
         if (disposed || operationEpoch !== controllerEpoch) {
-          throw operationError({ code: 'workspace_file_operation_stale', message: 'The file operation is no longer current.' });
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.operationNoLongerCurrent', 'The file operation is no longer current.') });
         }
         return result;
       });
@@ -239,7 +240,7 @@
         if (typeof api?.readText !== 'function') {
           throw operationError({
             code: 'versioned_file_bridge_unavailable',
-            message: 'Versioned workspace file access is unavailable.',
+            message: jt('ide.fileOps.versionedFileAccessUnavailable', 'Versioned workspace file access is unavailable.'),
           });
         }
         const result = await api.readText({ path: intent.path, intent: preview ? 'preview' : 'edit' });
@@ -258,7 +259,7 @@
         if (typeof api?.readImage !== 'function') {
           throw operationError({
             code: 'versioned_file_bridge_unavailable',
-            message: 'Versioned workspace image access is unavailable.',
+            message: jt('ide.fileOps.versionedImageAccessUnavailable', 'Versioned workspace image access is unavailable.'),
           });
         }
         const result = await api.readImage({ path: intent.path });
@@ -338,7 +339,7 @@
         if (typeof api?.readText !== 'function') {
           throw operationError({
             code: 'versioned_file_bridge_unavailable',
-            message: 'Versioned workspace preview access is unavailable.',
+            message: jt('ide.fileOps.versionedPreviewAccessUnavailable', 'Versioned workspace preview access is unavailable.'),
           });
         }
         const result = await api.readText({ path: intent.path, intent: 'preview', maxBytes });
@@ -425,17 +426,17 @@
 
     async function write(snapshot) {
       if (!sameDocument(snapshot)) {
-        throw operationError({ code: 'workspace_file_operation_stale', message: 'The editor document changed before it could be saved.' });
+        throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.documentChangedBeforeSave', 'The editor document changed before it could be saved.') });
       }
       return runQueued(async () => {
         if (!sameDocument(snapshot)) {
-          throw operationError({ code: 'workspace_file_operation_stale', message: 'The editor document changed before it could be saved.' });
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.documentChangedBeforeSave', 'The editor document changed before it could be saved.') });
         }
         const api = getWorkspaceFsApi();
         if (typeof api?.writeText !== 'function') {
           throw operationError({
             code: 'versioned_file_bridge_unavailable',
-            message: 'Versioned workspace file access is unavailable.',
+            message: jt('ide.fileOps.versionedFileAccessUnavailable', 'Versioned workspace file access is unavailable.'),
           });
         }
         const result = await api.writeText({
@@ -465,10 +466,10 @@
       const requestedPath = normalizePath(path);
       return runQueued(async ({ operationId, controllerEpoch: operationEpoch }) => {
         const api = getWorkspaceFsApi();
-        if (typeof api?.readText !== 'function') throw operationError(null, 'Versioned workspace file access is unavailable.');
+      if (typeof api?.readText !== 'function') throw operationError(null, jt('ide.fileOps.versionedFileAccessUnavailable', 'Versioned workspace file access is unavailable.'));
         const result = validateReadResult(await api.readText({ path: requestedPath, intent: 'edit' }), requestedPath);
         if (!currentContextMatches(result.rootId, result.generation)) {
-          throw operationError({ code: 'workspace_file_operation_stale', message: 'The workspace root changed during the file read.' });
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.rootChangedDuringRead', 'The workspace root changed during the file read.') });
         }
         return Object.freeze({
           ...result,
@@ -482,14 +483,14 @@
 
     async function writeMutation(snapshot, content) {
       if (!snapshot || snapshot.controllerEpoch !== controllerEpoch || typeof content !== 'string') {
-        throw operationError({ code: 'workspace_file_operation_stale', message: 'The file mutation is no longer current.' });
+        throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.mutationNoLongerCurrent', 'The file mutation is no longer current.') });
       }
       return runQueued(async () => {
         if (snapshot.controllerEpoch !== controllerEpoch) {
-          throw operationError({ code: 'workspace_file_operation_stale', message: 'The file mutation is no longer current.' });
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.mutationNoLongerCurrent', 'The file mutation is no longer current.') });
         }
         const api = getWorkspaceFsApi();
-        if (typeof api?.writeText !== 'function') throw operationError(null, 'Versioned workspace file access is unavailable.');
+      if (typeof api?.writeText !== 'function') throw operationError(null, jt('ide.fileOps.versionedFileAccessUnavailable', 'Versioned workspace file access is unavailable.'));
         const result = await api.writeText({
           path: snapshot.path,
           content,
@@ -518,7 +519,7 @@
       return runQueued(async () => {
         if (!reloadIsCurrent(snapshot, reloadOptions)) return { stale: true, payload: null };
         const api = getWorkspaceFsApi();
-        if (typeof api?.readText !== 'function') throw operationError(null, 'Versioned workspace file access is unavailable.');
+      if (typeof api?.readText !== 'function') throw operationError(null, jt('ide.fileOps.versionedFileAccessUnavailable', 'Versioned workspace file access is unavailable.'));
         const result = await api.readText({ path: snapshot.path, intent: 'edit' });
         const payload = validateReadResult(result, snapshot.path);
         if (!reloadIsCurrent(snapshot, reloadOptions)
@@ -538,7 +539,7 @@
         }
         const api = getWorkspaceFsApi();
         if (typeof api?.readImage !== 'function') {
-          throw operationError(null, 'Versioned workspace image access is unavailable.');
+      throw operationError(null, jt('ide.fileOps.versionedImageAccessUnavailable', 'Versioned workspace image access is unavailable.'));
         }
         const result = await api.readImage({ path: snapshot.path });
         const payload = validateImageResult(result, snapshot.path);

@@ -39,6 +39,54 @@ function makeHarness({ sendResults, maxAutoRetries } = {}) {
   return { outbox, dispatch, scheduled, cleared, logs, sendCalls, sendOptions };
 }
 
+test('editing during capture waits for context and drains once into the original session', async () => {
+  const { outbox, dispatch, sendCalls, sendOptions } = makeHarness();
+  const entry = outbox.enqueue('s1', { prompt: 'Original' });
+  let finish;
+  const capture = outbox.settleContextCapture(entry, new Promise((resolve) => { finish = resolve; }));
+  outbox.edit(entry, 'Edited');
+  const drain = dispatch('s1');
+  const duplicate = dispatch('s1');
+  await Promise.resolve();
+  assert.deepEqual(sendCalls, []);
+  finish({ mentionContentsSnapshot: [{ path: 'example.js', content: 'context' }] });
+  await capture;
+  await Promise.all([drain, duplicate]);
+  assert.deepEqual(sendCalls, ['Edited']);
+  assert.equal(sendOptions[0].sessionIdOverride, 's1');
+  assert.equal(outbox.peek('s1'), null);
+  outbox.dispose();
+  dispatch.dispose();
+});
+
+test('cancel during capture prevents a waiting drain from sending', async () => {
+  const { outbox, dispatch, sendCalls } = makeHarness();
+  const entry = outbox.enqueue('s1', { prompt: 'Cancel me' });
+  const capture = outbox.settleContextCapture(entry, new Promise(() => {}));
+  const drain = dispatch('s1');
+  assert.equal(outbox.remove(entry), true);
+  await capture;
+  await drain;
+  assert.deepEqual(sendCalls, []);
+  outbox.dispose();
+  dispatch.dispose();
+});
+
+test('empty edit during capture stays in review after capture completion', async () => {
+  const { outbox, dispatch, sendCalls } = makeHarness();
+  const entry = outbox.enqueue('s1', { prompt: 'Original' });
+  let finish;
+  const capture = outbox.settleContextCapture(entry, new Promise((resolve) => { finish = resolve; }));
+  outbox.edit(entry, '');
+  finish({});
+  await capture;
+  assert.equal(outbox.peek('s1').status, 'needs_review');
+  await dispatch('s1');
+  assert.deepEqual(sendCalls, []);
+  outbox.dispose();
+  dispatch.dispose();
+});
+
 test('a failed head auto-retries on a scheduled backoff and drains the queue behind it', async () => {
   const { outbox, dispatch, scheduled, sendCalls } = makeHarness({
     sendResults: [false, true, true],

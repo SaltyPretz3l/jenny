@@ -32,6 +32,7 @@ test('settings section registry preserves stable ordering and defaults', () => {
     'offline',
     'usage',
     'plugins',
+    'remote',
     'account',
     'dataPrivacy',
     'aboutUpdates',
@@ -49,6 +50,7 @@ test('settings section registry classifies lazy and advanced sections', () => {
     'memories',
     'offline',
     'usage',
+    'remote',
     'advanced',
   ]);
   assert.deepEqual(getSettingsSections().filter((section) => section.advanced).map((section) => section.id), ['advanced']);
@@ -86,7 +88,7 @@ test('settings section registry exposes the Developer group as a disclosure', ()
   // keyboard boundary (LAST_NONADVANCED_SECTION) from this order at module
   // load and cannot see that `plugins` is hidden while its flag is off.
   assert.deepEqual(groups.find((group) => group.id === 'app').sections.map((s) => s.id),
-    ['editor', 'home', 'offline', 'usage', 'plugins', 'account', 'dataPrivacy', 'aboutUpdates']);
+    ['editor', 'home', 'offline', 'usage', 'plugins', 'remote', 'account', 'dataPrivacy', 'aboutUpdates']);
   const memories = getSettingsSectionDefinition('memories');
   assert.equal(memories.label, 'Memory');
   assert.equal(memories.lazy, true);

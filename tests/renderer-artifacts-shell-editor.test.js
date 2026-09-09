@@ -182,6 +182,7 @@ test('artifact cache resets across auth logout/login so stale missing-image stat
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
     shell: {
       chat: {
+        persistAcceptedUserTurn: true,
         async startStream(payload, { state }) {
           const sessionId = 'session-artifacts-reset';
           state.sessions = [{

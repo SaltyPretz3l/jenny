@@ -12,7 +12,7 @@
   root.rendererSetupSceneEndpoint = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -28,9 +28,9 @@
   var spinner = resolveDependency
     ? resolveDependency('inventorySpinner', '../../inventory/spinner') : null;
   var ENGINE_OPTIONS = [
-    { value: 'ollama', label: 'Ollama (http://127.0.0.1:11434)' },
-    { value: 'vllm', label: 'vLLM (http://127.0.0.1:8000/v1)' },
-    { value: 'openai-compatible', label: 'OpenAI-compatible local server' },
+    { value: 'ollama', label: jt('setup.endpoint.ollamaOption', 'Ollama (http://127.0.0.1:11434)') },
+    { value: 'vllm', label: jt('setup.endpoint.vllmOption', 'vLLM (http://127.0.0.1:8000/v1)') },
+    { value: 'openai-compatible', label: jt('setup.endpoint.openAiCompatibleOption', 'OpenAI-compatible local server') },
   ];
 
   var ENGINE_DEFAULT_URLS = {
@@ -43,43 +43,43 @@
     var disabled = viewState.validating === true;
     var engineHtml = selectField ? selectField({
       id: 'setup-endpoint-engine',
-      label: 'Engine type',
+      label: jt('setup.endpoint.engineTypeLabel', 'Engine type'),
       value: viewState.engineType,
       options: ENGINE_OPTIONS,
       disabled: disabled,
-      hint: 'Local-only options. Public/cloud URLs are rejected by setup validation.',
+      hint: jt('setup.endpoint.localOnlyHint', 'Local-only options. Public/cloud URLs are rejected by setup validation.'),
     }) : '';
     var urlHtml = urlField ? urlField({
       id: 'setup-endpoint-url',
-      label: 'API URL',
+      label: jt('setup.endpoint.apiUrlLabel', 'API URL'),
       value: viewState.apiUrl,
       placeholder: ENGINE_DEFAULT_URLS[viewState.engineType] || ENGINE_DEFAULT_URLS.ollama,
       disabled: disabled,
-      hint: 'Use a localhost or private-network URL. http(s):// only.',
+      hint: jt('setup.endpoint.apiUrlHint', 'Use a localhost or private-network URL. http(s):// only.'),
     }) : '';
     var actionsHtml = '';
     if (actionButton) {
       actionsHtml = actionButton({
             id: 'validate',
-            label: viewState.validating ? 'Validating…' : 'Validate',
+            label: viewState.validating ? jt('setup.endpoint.validating', 'Validating…') : jt('setup.endpoint.validate', 'Validate'),
             variant: 'primary',
             disabled: disabled || !viewState.apiUrl,
           })
           + actionButton({
             id: 'save',
-            label: 'Save endpoint',
+            label: jt('setup.endpoint.saveEndpoint', 'Save endpoint'),
             variant: 'secondary',
             disabled: !viewState.lastResultOk,
           });
     }
     var resultHtml = '';
     if (viewState.validating && spinner) {
-      resultHtml = '<div class="setup-scene-result">' + spinner({ label: 'Checking endpoint…' }) + '</div>';
+      resultHtml = '<div class="setup-scene-result">' + spinner({ label: jt('setup.endpoint.checkingEndpoint', 'Checking endpoint…') }) + '</div>';
     } else if (viewState.lastResult && badge) {
       var tone = viewState.lastResultOk ? 'success' : 'danger';
       var label = viewState.lastResultOk
-        ? 'Endpoint reachable'
-        : (viewState.lastResult.code || 'Endpoint check failed');
+        ? jt('setup.endpoint.reachable', 'Endpoint reachable')
+        : (viewState.lastResult.code || jt('setup.endpoint.checkFailed', 'Endpoint check failed'));
       resultHtml = '<div class="setup-scene-result">'
         + badge({ tone: tone, text: label, size: 'sm' })
         + '<p class="setup-scene-note">' + escapeHtml(viewState.lastResult.message || '') + '</p>'
@@ -124,7 +124,7 @@
         ? {
             ok: true,
             code: 'detected',
-            message: 'A local endpoint was already detected through Jenny readiness.',
+            message: jt('setup.endpoint.detectedMessage', 'A local endpoint was already detected through Jenny readiness.'),
           }
         : null,
       lastResultOk: detectedEndpoint,
@@ -142,13 +142,13 @@
       if (!rootEl) return;
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Validate your endpoint',
+        title: sceneUtils.STEPS.endpoint.title,
         eyebrow: sceneUtils.setupStepEyebrow('endpoint'),
-        summary: 'Reach a local-only Ollama, vLLM, or OpenAI-compatible server.',
+        summary: jt("sceneEndpoint.connectToOllamaVllmOrAnOpenaiCompatibleServer", "Connect to Ollama, vLLM, or an OpenAI-compatible server on this computer or your private network. No Ollama installation or model download is required for an existing server."),
         bodyHtml: buildBodyHtml(viewState),
         actions: [
-          { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-          { id: 'skip', label: 'Skip for now', variant: 'ghost' },
+          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+          { id: 'skip', label: jt('setup.endpoint.skipForNow', 'Skip for now'), variant: 'ghost' },
         ],
       }) : '';
       rootEl.innerHTML = html;
@@ -195,7 +195,7 @@
     async function handleValidate() {
       readInputs();
       if (!viewState.apiUrl) {
-        showShellErrorToast('Enter a URL first.', { title: 'Setup Step' });
+        showShellErrorToast(jt('setup.endpoint.enterUrlFirst', 'Enter a URL first.'), { title: jt('setup.endpoint.stepTitle', 'Setup Step') });
         return;
       }
       viewState.validating = true;
@@ -246,13 +246,13 @@
         if (!viewState.lastResultOk) {
           render();
           showShellErrorToast(
-            (viewState.lastResult && viewState.lastResult.message) || 'Could not save endpoint.',
-            { title: 'Setup Step Failed' }
+            (viewState.lastResult && viewState.lastResult.message) || jt('setup.endpoint.saveFailed', 'Could not save endpoint.'),
+            { title: jt('setup.endpoint.failureTitle', 'Setup Step Failed') }
           );
           return;
         }
         if (saved.snapshot) applySnapshot(saved.snapshot);
-        showToastMessage('Endpoint saved.');
+        showToastMessage(jt('setup.endpoint.saved', 'Endpoint saved.'));
         closeModal();
       } catch (error) {
         if (disposed || operationGeneration !== generation) return;
@@ -261,7 +261,7 @@
         appendClientLog('WARN', 'setup.endpoint_save_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        showShellErrorToast('Could not save endpoint.', { title: 'Setup Step Failed' });
+        showShellErrorToast(jt('setup.endpoint.saveFailed', 'Could not save endpoint.'), { title: jt('setup.endpoint.failureTitle', 'Setup Step Failed') });
       }
     }
 

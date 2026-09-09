@@ -32,6 +32,7 @@
   asyncFence,
   enterKeydownUtils
 ) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const motionHeightUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionHeightUtils)
     || (typeof require === 'function' ? require('../shared/motion-height-utils') : null) || {};
   // IME composition guard for Enter-to-send; the single definition lives in
@@ -68,7 +69,6 @@
 
     const {
       homeNavButton,
-      promptGrid,
       chatInput,
       newChatButton,
       stopStreamButton,
@@ -102,7 +102,6 @@
       getRendererElapsedMs,
       loadSessions,
       refreshSnapshots,
-      refreshSuggestions,
       refreshApprovedMemories,
       resetArtifactsState,
       resetMemorySuggestionState,
@@ -599,7 +598,7 @@
       state.memoryManager.loading = false;
       state.memoryManager.loaded = false;
       state.memoryManager.unavailable = false;
-      state.memoryManager.status = 'Sign in to load approved memories.';
+      state.memoryManager.status = jt('chat.events.signInToLoadMemories', 'Sign in to load approved memories.');
       state.memoryManager.filter = 'all';
       state.memoryManager.searchQuery = '';
       state.memoryManager.draftsById.clear();
@@ -733,14 +732,10 @@
               if (shouldStopAuthenticatedTransition(transitionToken)) return;
               appendClientLog('WARN', 'chat.refresh_memories_failed', { message: String(err?.message || err) });
               /* EH-W10: deduped warning toast when intake routing is on. */
-              reportError?.({ message: 'Approved memories could not be refreshed.', options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
+              reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
             }
             if (shouldStopAuthenticatedTransition(transitionToken)) return;
           }
-          refreshSuggestions().catch((err) => {
-            appendClientLog('WARN', 'chat.refresh_suggestions_failed', { message: String(err?.message || err) });
-            reportError?.({ message: 'Suggestions could not be refreshed.', options: { source: TOAST_SOURCE.chatStream, dedupeKey: 'settings-refresh:suggestions' } }, { origin: 'settings-refresh' });
-          });
         }
         if (!isCurrentTransition(transitionToken)) return;
         renderAll();
@@ -765,7 +760,7 @@
           } catch (err) {
             if (shouldStopAuthenticatedTransition(transitionToken)) return;
             appendClientLog('WARN', 'chat.auth_refresh_memories_failed', { message: String(err?.message || err) });
-            reportError?.({ message: 'Approved memories could not be refreshed.', options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
+            reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
           }
           if (shouldStopAuthenticatedTransition(transitionToken)) return;
         } else {
@@ -777,22 +772,6 @@
 
       registerListener(homeNavButton, 'click', () => {
         setActiveView('home');
-      }, listenerOptions);
-
-      registerListener(promptGrid, 'click', (event) => {
-        const tipChip = event.target.closest('[data-tip-settings]');
-        if (tipChip) {
-          openSettingsSection(String(tipChip.dataset.tipSettings || 'home').trim() || 'home');
-          return;
-        }
-        const chip = event.target.closest('[data-prompt]');
-        if (!chip) {
-          return;
-        }
-        chatInput.value = chip.dataset.prompt;
-        syncComposerInputHeight();
-        syncComposerVisualState();
-        chatInput.focus();
       }, listenerOptions);
 
       windowControlsUtils?.bindWindowControlEvents?.({
@@ -807,19 +786,19 @@
 
       registerListener(newChatButton, 'click', () => {
         handleCreateSession().catch((error) => {
-          showSessionActionError(error, 'Create Session Failed');
+          showSessionActionError(error, jt('chat.events.createSessionFailedTitle', 'Create Session Failed'));
         });
       }, listenerOptions);
 
       registerListener(sendButton, 'click', () => {
         handleSend().catch((error) => {
-          showComposerActionError(error, 'Send Failed');
+          showComposerActionError(error, jt('chat.events.sendFailedTitle', 'Send Failed'));
         });
       }, listenerOptions);
 
       registerListener(stopStreamButton, 'click', () => {
         handleStopActiveStream().catch((error) => {
-          showComposerActionError(error, 'Stop Failed');
+          showComposerActionError(error, jt('chat.events.stopFailedTitle', 'Stop Failed'));
         });
       }, listenerOptions);
 
@@ -842,7 +821,7 @@
           event.preventDefault();
           if (sendButton?.disabled === true) return;
           handleSend().catch((error) => {
-            showComposerActionError(error, 'Send Failed');
+            showComposerActionError(error, jt('chat.events.sendFailedTitle', 'Send Failed'));
           });
         }
       }, listenerOptions);
@@ -877,8 +856,8 @@
         const btn = event.target.closest('[data-command-name]');
         if (!btn) return;
         if (btn.getAttribute('aria-disabled') === 'true' || btn.dataset.commandAvailable === 'false') {
-          showToastMessage(btn.dataset.commandReason || 'That command is unavailable.', {
-            title: 'Command unavailable',
+          showToastMessage(btn.dataset.commandReason || jt('chat.events.commandUnavailable', 'That command is unavailable.'), {
+            title: jt('chat.events.commandUnavailableTitle', 'Command unavailable'),
             tone: 'warning',
           });
           return;

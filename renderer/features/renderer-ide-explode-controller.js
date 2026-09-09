@@ -20,6 +20,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function resolveModule(globalName, requirePath) {
@@ -274,11 +275,11 @@
     }
 
     function reasonDetail(reason) {
-      if (reason === 'unsupported-language') return 'The exploded view supports TypeScript and JavaScript files.';
-      if (reason === 'no-worker') return 'The editor’s language service isn’t available yet — try again.';
-      if (reason === 'large-file') return 'This file is too large to analyze for the exploded view.';
-      if (reason === 'parse-failed') return 'The language service couldn’t analyze this file’s syntax.';
-      if (reason === 'internal-error') return 'Something went wrong building the graph — try again.';
+      if (reason === 'unsupported-language') return jt('ide.explode.unsupportedLanguage', 'The exploded view supports TypeScript and JavaScript files.');
+      if (reason === 'no-worker') return jt('ide.explode.languageServiceUnavailable', 'The editor’s language service isn’t available yet — try again.');
+      if (reason === 'large-file') return jt('ide.explode.fileTooLarge', 'This file is too large to analyze for the exploded view.');
+      if (reason === 'parse-failed') return jt('ide.explode.syntaxAnalysisFailed', 'The language service couldn’t analyze this file’s syntax.');
+      if (reason === 'internal-error') return jt('ide.explode.buildFailed', 'Something went wrong building the graph — try again.');
       return '';
     }
 
@@ -288,7 +289,7 @@
       const model = typeof editorHost.getModel === 'function' ? editorHost.getModel(path) : null;
       const monacoApi = typeof editorHost.getMonaco === 'function' ? editorHost.getMonaco() : null;
       if (typeof buildFn !== 'function' || !model || !monacoApi) {
-        if (states) states.showError('The exploded view needs the Monaco editor.');
+        if (states) states.showError(jt('ide.explode.monacoRequired', 'The exploded view needs the Monaco editor.'));
         return;
       }
       const cacheKey = `${path}@${altVersionOf(path)}`;

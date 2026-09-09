@@ -26,7 +26,8 @@
   root.inventorySelectionActionBar = factory(root, root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var escapeHtml = stringUtils && stringUtils.escapeHtml;
   var sanitizeToken = stringUtils && stringUtils.sanitizeToken;
   if (typeof escapeHtml !== 'function' || typeof sanitizeToken !== 'function') {
@@ -35,7 +36,7 @@
 
   function buildBarHtml(ids) {
     return ''
-      + '<div class="selection-action-bar" role="toolbar" aria-label="Selection actions">'
+      + '<div class="selection-action-bar" role="toolbar" aria-label="' + escapeHtml(jt('inventory.selectionActionBar.label', 'Selection actions')) + '">'
       +   '<output'
       +     ' class="selection-action-bar-count"'
       +     ' id="' + escapeHtml(ids.count) + '"'
@@ -46,16 +47,16 @@
       +     ' type="button"'
       +     ' class="selection-action-bar-button selection-action-bar-copy-md"'
       +     ' data-selection-action="copy-md"'
-      +     ' aria-label="Copy selected messages as Markdown"'
-      +     ' title="Copy as Markdown"'
-      +   '>Copy as Markdown</button>'
+      +     ' aria-label="' + escapeHtml(jt('inventory.selectionActionBar.copyMarkdownLabel', 'Copy selected messages as Markdown')) + '"'
+      +     ' title="' + escapeHtml(jt('inventory.selectionActionBar.copyAsMarkdown', 'Copy as Markdown')) + '"'
+      +   '>' + escapeHtml(jt('inventory.selectionActionBar.copyAsMarkdown', 'Copy as Markdown')) + '</button>'
       +   '<button'
       +     ' type="button"'
       +     ' class="selection-action-bar-button selection-action-bar-copy-plain"'
       +     ' data-selection-action="copy-plain"'
-      +     ' aria-label="Copy selected messages as plain text"'
-      +     ' title="Copy as plain text"'
-      +   '>Copy as text</button>'
+      +     ' aria-label="' + escapeHtml(jt('inventory.selectionActionBar.copyPlainLabel', 'Copy selected messages as plain text')) + '"'
+      +     ' title="' + escapeHtml(jt('inventory.selectionActionBar.copyAsPlainText', 'Copy as plain text')) + '"'
+      +   '>' + escapeHtml(jt('inventory.selectionActionBar.copyAsText', 'Copy as text')) + '</button>'
       +   '<div class="selection-action-bar-export-wrap">'
       +     '<button'
       +       ' type="button"'
@@ -64,7 +65,7 @@
       +       ' aria-haspopup="menu"'
       +       ' aria-expanded="false"'
       +       ' aria-controls="' + escapeHtml(ids.menu) + '"'
-      +       ' aria-label="Export selected messages"'
+      +       ' aria-label="' + escapeHtml(jt('inventory.selectionActionBar.exportLabel', 'Export selected messages')) + '"'
       +       ' title="Export…"'
       +     '>Export ▾</button>'
       +     '<ul'
@@ -87,7 +88,7 @@
       +           ' role="menuitem"'
       +           ' class="selection-action-bar-export-item"'
       +           ' data-selection-action="export:plain"'
-      +         '>Plain text (.txt)</button>'
+      +         '>' + escapeHtml(jt('inventory.selectionActionBar.plainTextFormat', 'Plain text (.txt)')) + '</button>'
       +       '</li>'
       +       '<li role="none">'
       +         '<button'
@@ -95,7 +96,7 @@
       +           ' role="menuitem"'
       +           ' class="selection-action-bar-export-item"'
       +           ' data-selection-action="export:json"'
-      +         '>Turn-event JSON (.json)</button>'
+      +         '>' + escapeHtml(jt('inventory.selectionActionBar.turnEventJsonFormat', 'Turn-event JSON (.json)')) + '</button>'
       +       '</li>'
       +       '<li role="none">'
       +         '<button'
@@ -103,7 +104,7 @@
       +           ' role="menuitem"'
       +           ' class="selection-action-bar-export-item"'
       +           ' data-selection-action="export:session-json"'
-      +         '>Session JSON portable (.json)</button>'
+      +         '>' + escapeHtml(jt('inventory.selectionActionBar.sessionJsonFormat', 'Session JSON portable (.json)')) + '</button>'
       +       '</li>'
       +     '</ul>'
       +   '</div>'
@@ -111,14 +112,14 @@
       +     ' type="button"'
       +     ' class="selection-action-bar-button selection-action-bar-delete"'
       +     ' data-selection-action="delete-from-here"'
-      +     ' aria-label="Delete selected messages and everything after"'
-      +     ' title="Delete from first selected onward"'
-      +   '>Delete from here…</button>'
+      +     ' aria-label="' + escapeHtml(jt('inventory.selectionActionBar.deleteLabel', 'Delete selected messages and everything after')) + '"'
+      +     ' title="' + escapeHtml(jt('inventory.selectionActionBar.deleteTitle', 'Delete from first selected onward')) + '"'
+      +   '>' + escapeHtml(jt('inventory.selectionActionBar.deleteFromHere', 'Delete from here…')) + '</button>'
       +   '<button'
       +     ' type="button"'
       +     ' class="selection-action-bar-button selection-action-bar-cancel"'
       +     ' data-selection-action="cancel"'
-      +     ' aria-label="Cancel selection"'
+      +     ' aria-label="' + escapeHtml(jt('inventory.selectionActionBar.cancelSelection', 'Cancel selection')) + '"'
       +     ' title="Cancel (Esc)"'
       +   '>Cancel</button>'
       + '</div>';
@@ -245,7 +246,7 @@
       ensureBuilt();
       if (!countEl) return;
       var count = Math.max(0, Number(n) || 0);
-      var text = count === 1 ? '1 selected' : count + ' selected';
+      var text = jtn('inventory.selectionBar.selectedCount', count, { count: count }, '1 selected', '{count} selected');
       if (countEl.textContent !== text) countEl.textContent = text;
     }
 

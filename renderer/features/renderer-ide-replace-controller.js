@@ -20,6 +20,8 @@
   }
   root.rendererIdeReplaceController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -268,14 +270,14 @@
       } catch (_error) {
         s.results = [];
         s.busy = false;
-        s.error = 'Invalid regular expression';
+        s.error = jt('ide.replace.invalidRegularExpression', 'Invalid regular expression');
         renderSearchPanel();
         return { results: [], fileCount: 0, limitHit: false };
       }
 
       const api = getWorkspaceFsApi();
       if (!api?.listAllFiles || (!getFileOperations() && !api?.readFile)) {
-        s.error = 'Workspace search is unavailable in this shell mode.';
+        s.error = jt('ide.replace.searchUnavailable', 'Workspace search is unavailable in this shell mode.');
         renderSearchPanel();
         return { results: [], fileCount: 0, limitHit: false };
       }
@@ -348,8 +350,8 @@
               ? 'regex_timeout'
               : 'regex_unavailable';
             s.error = partialReason === 'regex_timeout'
-              ? 'Regular expression timed out; partial results shown.'
-              : 'Regex evaluation is unavailable.';
+              ? jt('ide.replace.regexTimedOutPartial', 'Regular expression timed out; partial results shown.')
+              : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
             limitHit = true;
             appendClientLog('WARN', 'ide.replace_regex_evaluation_failed', {
               reason: String(error?.code || 'REGEX_EVALUATION_FAILED').slice(0, 64),
@@ -382,7 +384,7 @@
       } catch (err) {
         if (seq !== findSeq) return { results: [], fileCount: 0, limitHit: false };
         s.results = [];
-        s.error = 'Search failed.';
+        s.error = jt('ide.replace.searchFailed', 'Search failed.');
         appendClientLog('WARN', 'ide.replace_find_failed', {
           message: String(err?.message || err || ''),
         });
@@ -476,7 +478,7 @@
       if (!operations) {
         if (!noBridgeToastShown) {
           noBridgeToastShown = true;
-          callbacks.showShellErrorToast?.('Workspace file access is unavailable; the file was not saved.', { title: 'Save Failed', dedupeKey: 'ide:replace:no-bridge' });
+          callbacks.showShellErrorToast?.(jt('ide.replace.saveUnavailable', 'Workspace file access is unavailable; the file was not saved.'), { title: jt('ide.replace.saveFailedTitle', 'Save Failed'), dedupeKey: 'ide:replace:no-bridge' });
         }
         appendClientLog('WARN', 'ide.replace_write_failed', { path, reason: 'no_bridge' });
         return { ok: false, conflict: false };
@@ -548,16 +550,16 @@
 
     function buildSummaryString({ filesChanged = 0, occurrences = 0, conflicts = 0, failures = [], limitHit = false } = {}) {
       let text = occurrences
-        ? `Replaced ${occurrences} occurrence${occurrences === 1 ? '' : 's'} in ${filesChanged} file${filesChanged === 1 ? '' : 's'}`
-        : 'No occurrences replaced.';
+        ? (filesChanged === 1 ? jtn('ide.replace.replacedOccurrencesOneFile', occurrences, { occurrences, filesChanged }, 'Replaced {occurrences} occurrence in {filesChanged} file', 'Replaced {occurrences} occurrences in {filesChanged} file') : jtn('ide.replace.replacedOccurrencesFiles', occurrences, { occurrences, filesChanged }, 'Replaced {occurrences} occurrence in {filesChanged} files', 'Replaced {occurrences} occurrences in {filesChanged} files'))
+        : jt('ide.replace.noOccurrencesReplaced', 'No occurrences replaced.');
       if (conflicts) {
-        text += '; ' + conflicts + ' skipped (changed on disk)';
+        text += jt('ide.replace.skippedChangedOnDisk', '; {count} skipped (changed on disk)', { count: conflicts });
       }
       if (failures.length) {
         text += '; ' + failures.length + ' skipped (unavailable)';
       }
       if (limitHit) {
-        text += '; results were capped — re-run to cover all files';
+        text += jt('ide.replace.resultsCapped', '; results were capped — re-run to cover all files');
       }
       return text;
     }
@@ -672,8 +674,8 @@
       }
       const resolved = resolveOpts(opts);
       if (resolved.query === '') {
-        getReplaceState().replaceError = 'Enter a search term';
-        return { error: 'Enter a search term' };
+        getReplaceState().replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
+        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
       }
       const epoch = beginApply();
       try {
@@ -682,7 +684,7 @@
         try {
           f = await readFileForReplace(path);
         } catch (err) {
-          s.replaceSummary = 'Replace failed; file unavailable.';
+          s.replaceSummary = jt('ide.replace.fileUnavailable', 'Replace failed; file unavailable.');
           appendClientLog('WARN', 'ide.replace_read_failed', {
             path,
             message: String(err?.message || err || ''),
@@ -711,8 +713,8 @@
             if (error?.code === 'REGEX_CANCELLED') return { cancelled: true };
             const reason = error?.code === 'REGEX_TIMEOUT' ? 'regex_timeout' : 'regex_unavailable';
             s.replaceError = reason === 'regex_timeout'
-              ? 'Regular expression timed out.'
-              : 'Regex evaluation is unavailable.';
+              ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
+              : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
             return { error: reason };
           }
         } else {
@@ -729,15 +731,15 @@
         if (disposed || epoch !== applyEpoch) return { cancelled: true };
         const { newRaw, ok } = transformed || { newRaw: f.raw, ok: false };
         if (!ok) {
-          s.replaceSummary = 'Match position changed; not replaced.';
+          s.replaceSummary = jt('ide.replace.matchPositionChanged', 'Match position changed; not replaced.');
           return { occurrences: 0 };
         }
         const w = await writeReplacedFile(path, newRaw, f);
         if (disposed || epoch !== applyEpoch) return { cancelled: true };
         if (!w.ok) {
           s.replaceSummary = w.conflict
-            ? 'Not replaced; file changed on disk.'
-            : 'Replace failed.';
+            ? jt('ide.replace.fileChangedOnDisk', 'Not replaced; file changed on disk.')
+            : jt('ide.replace.replaceFailed', 'Replace failed.');
           return { error: w.conflict ? 'conflict' : 'write_failed', conflict: !!w.conflict };
         }
         if (f.open) {
@@ -763,8 +765,8 @@
       }
       const resolved = resolveOpts(opts);
       if (resolved.query === '') {
-        getReplaceState().replaceError = 'Enter a search term';
-        return { error: 'Enter a search term' };
+        getReplaceState().replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
+        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
       }
       const epoch = beginApply();
       try {
@@ -772,7 +774,7 @@
         const res = await replaceWholeFile(path, resolved, epoch);
         if (res.outcome === 'cancelled') return { cancelled: true };
         if (res.outcome === 'read_failed') {
-          s.replaceSummary = 'Replace failed; file unavailable.';
+          s.replaceSummary = jt('ide.replace.fileUnavailable', 'Replace failed; file unavailable.');
           appendClientLog('WARN', 'ide.replace_read_failed', {
             path,
             message: String(res.error?.message || res.error || ''),
@@ -781,20 +783,20 @@
         }
         if (res.outcome === 'regex_timeout' || res.outcome === 'regex_unavailable') {
           s.replaceError = res.outcome === 'regex_timeout'
-            ? 'Regular expression timed out.'
-            : 'Regex evaluation is unavailable.';
-          s.replaceSummary = 'No files were changed.';
+            ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
+            : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
+          s.replaceSummary = jt('ide.replace.noFilesChanged', 'No files were changed.');
           appendClientLog('WARN', 'ide.replace_regex_evaluation_failed', { reason: res.outcome });
           return { error: res.outcome };
         }
         if (res.outcome === 'none') {
-          s.replaceSummary = 'No occurrences replaced.';
+          s.replaceSummary = jt('ide.replace.noOccurrencesReplaced', 'No occurrences replaced.');
           return { occurrences: 0 };
         }
         if (res.outcome === 'conflict' || res.outcome === 'write_failed') {
           s.replaceSummary = res.outcome === 'conflict'
-            ? 'Not replaced; file changed on disk.'
-            : 'Replace failed.';
+            ? jt('ide.replace.fileChangedOnDisk', 'Not replaced; file changed on disk.')
+            : jt('ide.replace.replaceFailed', 'Replace failed.');
           return { error: res.outcome, conflict: res.outcome === 'conflict' };
         }
         recordUndo([res.record]);
@@ -817,8 +819,8 @@
       const resolved = resolveOpts(opts);
       const s = getReplaceState();
       if (resolved.query === '') {
-        s.replaceError = 'Enter a search term';
-        return { error: 'Enter a search term' };
+        s.replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
+        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
       }
       const epoch = beginApply();
       let journalToken = null;
@@ -877,11 +879,11 @@
         }
         if (regexFailure) {
           s.replaceError = regexFailure === 'regex_timeout'
-            ? 'Regular expression timed out.'
-            : 'Regex evaluation is unavailable.';
+            ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
+            : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
           s.replaceSummary = records.length
-            ? `Replace stopped after ${filesChanged} file(s); completed changes can be undone.`
-            : 'No files were changed.';
+            ? jtn('ide.replace.stoppedAfterFileCount', filesChanged, { count: filesChanged }, 'Replace stopped after {count} file; completed changes can be undone.', 'Replace stopped after {count} files; completed changes can be undone.')
+            : jt('ide.replace.noFilesChanged', 'No files were changed.');
           appendClientLog('WARN', 'ide.replace_regex_evaluation_failed', {
             reason: regexFailure,
             files_changed: filesChanged,
@@ -917,7 +919,7 @@
     async function undoLastReplace() {
       const s = getReplaceState();
       if (!s.lastReplace?.records?.length) {
-        s.replaceSummary = 'Nothing to undo.';
+        s.replaceSummary = jt('ide.replace.nothingToUndo', 'Nothing to undo.');
         renderSearchPanel();
         return { note: 'nothing' };
       }
@@ -974,8 +976,8 @@
         }
         s.lastReplace = null;
         s.canUndo = false;
-        s.replaceSummary = 'Undid replace in ' + restored + ' file(s)'
-          + (conflicts ? '; ' + conflicts + ' skipped (changed since)' : '');
+        s.replaceSummary = jt('ide.replace.undoFiles', 'Undid replace in {count} file(s)', { count: restored })
+          + (conflicts ? jt('ide.replace.skippedChangedSince', '; {count} skipped (changed since)', { count: conflicts }) : '');
         requestFindRefresh();
         return { restored, conflicts, failures };
       } finally {

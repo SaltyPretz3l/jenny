@@ -1,6 +1,9 @@
 (function initializeUninstallAssistant(root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+  var PERMANENT_CONFIRMATION_MATCHERS = Object.freeze(['REMOVE JENNY']);
   var api = root.jennyUninstall;
   var host = root.document && root.document.getElementById('dataLifecycleAssistant');
   var actionButton = root.inventoryActionButton;
@@ -49,9 +52,9 @@
     var settings = options || {};
     return '<main class="data-lifecycle-shell" aria-labelledby="dataLifecycleTitle">'
       + '<header class="data-lifecycle-header">'
-      + '<span class="data-lifecycle-eyebrow">DATA &amp; REMOVAL</span>'
-      + '<h1 id="dataLifecycleTitle" tabindex="-1">' + escapeHtml(settings.title || 'Before Jenny leaves this device') + '</h1>'
-      + '<p>' + escapeHtml(settings.subtitle || 'Choose what should happen to your Jenny data.') + '</p>'
+      + '<span class="data-lifecycle-eyebrow">' + escapeHtml(jt('uninstall.shell.eyebrow', 'DATA & REMOVAL')) + '</span>'
+      + '<h1 id="dataLifecycleTitle" tabindex="-1">' + escapeHtml(settings.title || jt('uninstall.shell.title', 'Before Jenny leaves this device')) + '</h1>'
+      + '<p>' + escapeHtml(settings.subtitle || jt('uninstall.shell.subtitle', 'Choose what should happen to your Jenny data.')) + '</p>'
       + '</header>'
       + '<div class="data-lifecycle-scroll">' + content + '</div>'
       + '<footer class="data-lifecycle-footer">' + footer + '</footer>'
@@ -61,12 +64,14 @@
   function summaryMarkup() {
     var o = state.overview;
     var items = [
-      ['Chats', utils.formatCount(o.chats, 'chat', 'chats')],
-      ['Attachments', utils.formatCount(o.attachments, 'attachment', 'attachments')],
-      ['Preferences & memory', 'Included · ' + utils.formatCount(o.memory, 'memory store', 'memory stores')],
-      ['Current workspace', o.workspaceAvailable ? utils.formatCount(o.workspace, 'Jenny item', 'Jenny items') : 'Not selected'],
+      [jt('uninstall.summary.chats', 'Chats'), jtn('uninstall.summary.chatCount', o.chats, { count: Math.max(0, Math.floor(Number(o.chats) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} chat', '{count} chats')],
+      [jt('uninstall.summary.attachments', 'Attachments'), jtn('uninstall.summary.attachmentCount', o.attachments, { count: Math.max(0, Math.floor(Number(o.attachments) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} attachment', '{count} attachments')],
+      [jt('uninstall.summary.preferencesMemory', 'Preferences & memory'), jtn('uninstall.summary.memoryCount', o.memory, { count: Math.max(0, Math.floor(Number(o.memory) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, 'Included · {count} memory store', 'Included · {count} memory stores')],
+      [jt('uninstall.summary.currentWorkspace', 'Current workspace'), o.workspaceAvailable
+        ? jtn('uninstall.summary.workspaceItemCount', o.workspace, { count: Math.max(0, Math.floor(Number(o.workspace) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} Jenny item', '{count} Jenny items')
+        : jt('uninstall.summary.notSelected', 'Not selected')],
     ];
-    return '<section class="data-lifecycle-summary" aria-label="Jenny data summary">'
+    return '<section class="data-lifecycle-summary" aria-label="' + escapeHtml(jt('uninstall.summary.ariaLabel', 'Jenny data summary')) + '">'
       + items.map(function (item) {
         return '<div class="data-lifecycle-summary-item"><span>' + escapeHtml(item[0]) + '</span><strong>' + escapeHtml(item[1]) + '</strong></div>';
       }).join('')
@@ -76,119 +81,122 @@
   function renderLanding() {
     var safeLane = '<section class="data-lifecycle-lane data-lifecycle-lane--safe">'
       + '<div class="data-lifecycle-lane-copy"><span class="data-lifecycle-glyph" aria-hidden="true">&#10003;</span><div>'
-      + '<h2>Keep a recoverable archive</h2><p>Encrypt and verify a portable copy before Jenny data is removed.</p>'
-      + '<dl><div><dt>Protection</dt><dd>Encrypted by default</dd></div><div><dt>Destination</dt><dd>' + escapeHtml(state.destinationRoot) + '</dd></div></dl>'
+      + '<h2>' + escapeHtml(jt('uninstall.landing.archiveTitle', 'Keep a recoverable archive')) + '</h2><p>' + escapeHtml(jt('uninstall.landing.archiveCopy', 'Encrypt and verify a portable copy before Jenny data is removed.')) + '</p>'
+      + '<dl><div><dt>' + escapeHtml(jt('uninstall.landing.protection', 'Protection')) + '</dt><dd>' + escapeHtml(jt('uninstall.landing.encryptedDefault', 'Encrypted by default')) + '</dd></div><div><dt>' + escapeHtml(jt('uninstall.landing.destination', 'Destination')) + '</dt><dd>' + escapeHtml(state.destinationRoot) + '</dd></div></dl>'
       + '</div></div>'
       + '<div class="data-lifecycle-lane-actions">'
-      + button('review-archive', 'Archive & remove', 'primary', { size: 'lg' })
-      + button('app-only', 'Remove app only and leave Jenny data in place', 'ghost', { className: 'data-lifecycle-quiet-action' })
+      + button('review-archive', jt('uninstall.landing.archiveRemove', 'Archive & remove'), 'primary', { size: 'lg' })
+      + button('app-only', jt('uninstall.landing.appOnly', 'Remove app only and leave Jenny data in place'), 'ghost', { className: 'data-lifecycle-quiet-action' })
       + '</div></section>';
     var dangerLane = '<section class="data-lifecycle-lane data-lifecycle-lane--danger">'
       + '<div class="data-lifecycle-lane-copy"><span class="data-lifecycle-glyph" aria-hidden="true">!</span><div>'
-      + '<h2>Permanently remove everything</h2><p>Delete known Jenny-owned profile data. Shared models and ordinary project files stay.</p>'
+      + '<h2>' + escapeHtml(jt('uninstall.landing.permanentTitle', 'Permanently remove everything')) + '</h2><p>' + escapeHtml(jt('uninstall.landing.permanentCopy', 'Delete known Jenny-owned profile data. Shared models and ordinary project files stay.')) + '</p>'
       + '</div></div>'
-      + button('review-permanent', 'Review permanent removal', 'danger')
+      + button('review-permanent', jt('uninstall.landing.reviewPermanent', 'Review permanent removal'), 'danger')
       + '</section>';
-    host.innerHTML = shell(summaryMarkup() + safeLane + dangerLane, button('cancel', 'Cancel', 'secondary'));
+    host.innerHTML = shell(summaryMarkup() + safeLane + dangerLane, button('cancel', jt('uninstall.actions.cancel', 'Cancel'), 'secondary'));
   }
 
   function categoriesMarkup() {
     var workspaceText = state.overview.workspaceAvailable
-      ? 'Current workspace .jenny data (' + state.overview.workspaceName + ')'
-      : 'No current workspace selected';
-    return '<section class="data-lifecycle-review-card"><h2>Archive contents</h2><ul class="data-lifecycle-check-list">'
-      + '<li><span aria-hidden="true">&#10003;</span>Chats and managed attachments</li>'
-      + '<li><span aria-hidden="true">&#10003;</span>Safe preferences, personality, and memory</li>'
-      + '<li><span aria-hidden="true">&#10003;</span>Local calendar and reminders</li>'
+      ? jt('uninstall.archive.currentWorkspaceData', 'Current workspace .jenny data ({workspace})', { workspace: state.overview.workspaceName })
+      : jt('uninstall.archive.noWorkspaceSelected', 'No current workspace selected');
+    return '<section class="data-lifecycle-review-card"><h2>' + escapeHtml(jt('uninstall.archive.contentsTitle', 'Archive contents')) + '</h2><ul class="data-lifecycle-check-list">'
+      + '<li><span aria-hidden="true">&#10003;</span>' + escapeHtml(jt('uninstall.archive.chatsAttachments', 'Chats and managed attachments')) + '</li>'
+      + '<li><span aria-hidden="true">&#10003;</span>' + escapeHtml(jt('uninstall.archive.preferencesMemory', 'Safe preferences, personality, and memory')) + '</li>'
+      + '<li><span aria-hidden="true">&#10003;</span>' + escapeHtml(jt('uninstall.archive.calendarReminders', 'Local calendar and reminders')) + '</li>'
       + '<li><span aria-hidden="true">' + (state.includeWorkspace ? '&#10003;' : '&#8212;') + '</span>' + escapeHtml(workspaceText) + '</li>'
       + '</ul></section>';
   }
 
   function renderArchiveReview() {
-    var protection = '<section class="data-lifecycle-review-card"><h2>Protection</h2>'
-      + '<div class="data-lifecycle-choice-row" role="radiogroup" aria-label="Archive protection">'
-      + button('encrypted', 'Encrypted', state.encrypted ? 'primary' : 'secondary', { ariaPressed: state.encrypted })
-      + button('plain', 'Plain files', !state.encrypted ? 'primary' : 'secondary', { ariaPressed: !state.encrypted })
+    var protection = '<section class="data-lifecycle-review-card"><h2>' + escapeHtml(jt('uninstall.archive.protectionTitle', 'Protection')) + '</h2>'
+      + '<div class="data-lifecycle-choice-row" role="radiogroup" aria-label="' + escapeHtml(jt('uninstall.archive.protectionAriaLabel', 'Archive protection')) + '">'
+      + button('encrypted', jt('uninstall.archive.encrypted', 'Encrypted'), state.encrypted ? 'primary' : 'secondary', { ariaPressed: state.encrypted })
+      + button('plain', jt('uninstall.archive.plainFiles', 'Plain files'), !state.encrypted ? 'primary' : 'secondary', { ariaPressed: !state.encrypted })
       + '</div>'
       + (state.encrypted
         ? '<div class="data-lifecycle-fields">'
-          + textField({ id: 'archivePassphrase', type: 'password', label: 'Passphrase', maxLength: 1024, hint: '12–1024 characters; entered exactly as typed.' })
-          + textField({ id: 'archivePassphraseConfirmation', type: 'password', label: 'Confirm passphrase', maxLength: 1024 })
+          + textField({ id: 'archivePassphrase', type: 'password', label: jt('uninstall.archive.passphrase', 'Passphrase'), maxLength: 1024, hint: jt('uninstall.archive.passphraseHint', '12–1024 characters; entered exactly as typed.') })
+          + textField({ id: 'archivePassphraseConfirmation', type: 'password', label: jt('uninstall.archive.confirmPassphrase', 'Confirm passphrase'), maxLength: 1024 })
           + '</div>'
-        : '<p class="data-lifecycle-warning"><span aria-hidden="true">!</span> Plain archives can be read by anyone who can open the folder.</p>')
+        : '<p class="data-lifecycle-warning"><span aria-hidden="true">!</span> ' + escapeHtml(jt('uninstall.archive.plainWarning', 'Plain archives can be read by anyone who can open the folder.')) + '</p>')
       + '</section>';
-    var destination = '<section class="data-lifecycle-review-card"><h2>Destination</h2><div class="data-lifecycle-destination">'
+    var destination = '<section class="data-lifecycle-review-card"><h2>' + escapeHtml(jt('uninstall.archive.destinationTitle', 'Destination')) + '</h2><div class="data-lifecycle-destination">'
       + '<span>' + escapeHtml(state.destinationRoot) + '</span>'
-      + button('change-destination', 'Change', 'secondary', { size: 'sm' })
+      + button('change-destination', jt('uninstall.actions.change', 'Change'), 'secondary', { size: 'sm' })
       + '</div></section>';
     var workspace = state.overview.workspaceAvailable
       ? '<section class="data-lifecycle-review-card">'
-        + toggle.toggleSwitch({ id: 'include-workspace', label: 'Include current workspace data', description: 'Artifacts, backups, tool results, and compatible .jenny metadata.', checked: state.includeWorkspace })
-        + toggle.toggleSwitch({ id: 'remove-workspace-after-archive', label: 'Remove archived .jenny workspace data after verification', description: 'Off by default. Ordinary workspace files always remain.', checked: state.removeWorkspaceData })
+        + toggle.toggleSwitch({ id: 'include-workspace', label: jt('uninstall.archive.includeWorkspace', 'Include current workspace data'), description: jt('uninstall.archive.includeWorkspaceDescription', 'Artifacts, backups, tool results, and compatible .jenny metadata.'), checked: state.includeWorkspace })
+        + toggle.toggleSwitch({ id: 'remove-workspace-after-archive', label: jt('uninstall.archive.removeWorkspaceAfter', 'Remove archived .jenny workspace data after verification'), description: jt('uninstall.archive.removeWorkspaceAfterDescription', 'Off by default. Ordinary workspace files always remain.'), checked: state.removeWorkspaceData })
         + (state.workspaceReview
-          ? '<p class="data-lifecycle-warning">Approved ' + escapeHtml(state.workspaceReview.workspace.name + ' (' + state.workspaceReview.workspace.id + ')')
-            + ': ' + escapeHtml(utils.formatCount(state.workspaceReview.itemCount, 'item', 'items')) + ', '
-            + escapeHtml(utils.formatBytes(state.workspaceReview.totalBytes)) + ', scope: ' + escapeHtml(state.workspaceReview.scope) + '.</p>'
-          : (state.includeWorkspace ? '<p class="data-lifecycle-warning">Workspace data must be reviewed before removal can begin.</p>' : ''))
+          ? '<p class="data-lifecycle-warning">' + escapeHtml(jt('uninstall.archive.workspaceApproved', 'Approved {workspace}: {count}, {bytes}, scope: {scope}.', {
+            workspace: state.workspaceReview.workspace.name + ' (' + state.workspaceReview.workspace.id + ')',
+            count: jtn('uninstall.archive.itemCount', state.workspaceReview.itemCount, { count: Math.max(0, Math.floor(Number(state.workspaceReview.itemCount) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} item', '{count} items'),
+            bytes: utils.formatBytes(state.workspaceReview.totalBytes),
+            scope: state.workspaceReview.scope,
+          })) + '</p>'
+          : (state.includeWorkspace ? '<p class="data-lifecycle-warning">' + escapeHtml(jt('uninstall.archive.reviewRequired', 'Workspace data must be reviewed before removal can begin.')) + '</p>' : ''))
         + '</section>'
       : '';
     host.innerHTML = shell(categoriesMarkup() + destination + protection + workspace,
-      button('back', 'Back', 'secondary') + button('archive-remove', state.includeWorkspace && !state.workspaceReview ? 'Review workspace scope' : 'Create archive & remove', 'primary', { size: 'lg' }),
-      { title: 'Review your recoverable archive', subtitle: 'Jenny will verify every item before authorizing removal.' });
+      button('back', jt('uninstall.actions.back', 'Back'), 'secondary') + button('archive-remove', state.includeWorkspace && !state.workspaceReview ? jt('uninstall.archive.reviewWorkspaceScope', 'Review workspace scope') : jt('uninstall.archive.createAndRemove', 'Create archive & remove'), 'primary', { size: 'lg' }),
+      { title: jt('uninstall.archive.reviewTitle', 'Review your recoverable archive'), subtitle: jt('uninstall.archive.reviewSubtitle', 'Jenny will verify every item before authorizing removal.') });
     toggle.initToggleHandlers(host);
   }
 
   function renderPermanentReview() {
     var workspace = state.overview.workspaceAvailable
       ? '<div class="data-lifecycle-review-card">'
-        + toggle.toggleSwitch({ id: 'remove-workspace', label: 'Also remove this workspace’s .jenny data', description: 'Ordinary workspace files remain untouched.', checked: state.removeWorkspaceData })
+        + toggle.toggleSwitch({ id: 'remove-workspace', label: jt('uninstall.permanent.removeWorkspace', 'Also remove this workspace’s .jenny data'), description: jt('uninstall.permanent.removeWorkspaceDescription', 'Ordinary workspace files remain untouched.'), checked: state.removeWorkspaceData })
         + '</div>'
       : '';
-    var content = '<section class="data-lifecycle-review-card data-lifecycle-review-card--danger"><h2>Selected ownership boundaries</h2>'
-      + '<ul class="data-lifecycle-check-list"><li><span aria-hidden="true">!</span>Jenny profile, chats, attachments, preferences, and memory</li>'
-      + '<li><span aria-hidden="true">&#8212;</span>Ollama models, shared caches, and external knowledge stay</li>'
-      + '<li><span aria-hidden="true">&#8212;</span>Ordinary project files stay</li></ul></section>'
+    var content = '<section class="data-lifecycle-review-card data-lifecycle-review-card--danger"><h2>' + escapeHtml(jt('uninstall.permanent.boundariesTitle', 'Selected ownership boundaries')) + '</h2>'
+      + '<ul class="data-lifecycle-check-list"><li><span aria-hidden="true">!</span>' + escapeHtml(jt('uninstall.permanent.profileItems', 'Jenny profile, chats, attachments, preferences, and memory')) + '</li>'
+      + '<li><span aria-hidden="true">&#8212;</span>' + escapeHtml(jt('uninstall.permanent.retainedExternalItems', 'Ollama models, shared caches, and external knowledge stay')) + '</li>'
+      + '<li><span aria-hidden="true">&#8212;</span>' + escapeHtml(jt('uninstall.permanent.projectFilesStay', 'Ordinary project files stay')) + '</li></ul></section>'
       + workspace
       + '<section class="data-lifecycle-review-card">'
-      + textField({ id: 'permanentConfirmation', label: 'Type REMOVE JENNY to continue', maxLength: 64, placeholder: 'REMOVE JENNY' })
+      + textField({ id: 'permanentConfirmation', label: jt('uninstall.permanent.confirmationInstruction', 'Type {phrase} to continue', { phrase: PERMANENT_CONFIRMATION_MATCHERS[0] }), maxLength: 64, placeholder: PERMANENT_CONFIRMATION_MATCHERS[0] })
       + '</section>';
     host.innerHTML = shell(content,
-      button('back', 'Back', 'secondary') + button('permanent-remove', 'Permanently remove Jenny data', 'danger', { size: 'lg' }),
-      { title: 'Review permanent removal', subtitle: 'This cannot be undone. No shared model or ordinary project file is selected.' });
+      button('back', jt('uninstall.actions.back', 'Back'), 'secondary') + button('permanent-remove', jt('uninstall.permanent.removeButton', 'Permanently remove Jenny data'), 'danger', { size: 'lg' }),
+      { title: jt('uninstall.permanent.reviewTitle', 'Review permanent removal'), subtitle: jt('uninstall.permanent.reviewSubtitle', 'This cannot be undone. No shared model or ordinary project file is selected.') });
     toggle.initToggleHandlers(host);
   }
 
   function renderProgress() {
-    var progress = state.progress || { percent: 0, completedBytes: 0, totalBytes: 0, label: 'Preparing…' };
+    var progress = state.progress || { percent: 0, completedBytes: 0, totalBytes: 0, label: jt('uninstall.progress.preparing', 'Preparing…') };
     var display = progress.totalBytes > 0
-      ? utils.formatBytes(progress.completedBytes) + ' of ' + utils.formatBytes(progress.totalBytes)
+      ? jt('uninstall.progress.byteCount', '{completed} of {total}', { completed: utils.formatBytes(progress.completedBytes), total: utils.formatBytes(progress.totalBytes) })
       : '';
     var content = '<section class="data-lifecycle-progress" aria-live="polite">'
       + '<span class="data-lifecycle-progress-glyph" aria-hidden="true">&#9676;</span>'
-      + '<h2>' + escapeHtml(progress.label || 'Working…') + '</h2>'
-      + '<p>Your data remains in place until Jenny reaches the verified handoff.</p>'
-      + progressBar({ value: progress.percent, max: 100, label: progress.label || 'Removal progress', displayText: display })
+      + '<h2>' + escapeHtml(progress.label || jt('uninstall.progress.working', 'Working…')) + '</h2>'
+      + '<p>' + escapeHtml(jt('uninstall.progress.dataRemains', 'Your data remains in place until Jenny reaches the verified handoff.')) + '</p>'
+      + progressBar({ value: progress.percent, max: 100, label: progress.label || jt('uninstall.progress.ariaLabel', 'Removal progress'), displayText: display })
       + '</section>';
     var footer = state.commitStarted
-      ? button('noop', 'Finishing safely…', 'secondary', { disabled: true })
+      ? button('noop', jt('uninstall.progress.finishing', 'Finishing safely…'), 'secondary', { disabled: true })
       : state.cancelRequested
-      ? button('noop', 'Cancel requested…', 'secondary', { disabled: true })
-      : button('cancel-operation', 'Cancel', 'secondary');
-    host.innerHTML = shell(content, footer, { title: 'Preparing your Jenny data', subtitle: 'Keep this window open until the receipt appears.' });
+      ? button('noop', jt('uninstall.progress.cancelRequested', 'Cancel requested…'), 'secondary', { disabled: true })
+      : button('cancel-operation', jt('uninstall.actions.cancel', 'Cancel'), 'secondary');
+    host.innerHTML = shell(content, footer, { title: jt('uninstall.progress.title', 'Preparing your Jenny data'), subtitle: jt('uninstall.progress.subtitle', 'Keep this window open until the receipt appears.') });
   }
 
   function renderError() {
     var incomplete = state.errorReason === 'incomplete_cleanup';
     var reason = state.errorReason === 'operation_cancelled'
-      ? 'The operation was canceled. No Jenny data was removed.'
+      ? jt('uninstall.error.canceled', 'The operation was canceled. No Jenny data was removed.')
       : incomplete
-        ? 'Some selected items could not be removed. The receipt below lists the bounded cleanup results.'
-        : 'Jenny could not complete that operation. Your live data was not removed.';
+        ? jt('uninstall.error.incomplete', 'Some selected items could not be removed. The receipt below lists the bounded cleanup results.')
+        : jt('uninstall.error.failed', 'Jenny could not complete that operation. Your live data was not removed.');
     var actions = incomplete
-      ? button('cancel', 'Close receipt', 'secondary')
+      ? button('cancel', jt('uninstall.error.closeReceipt', 'Close receipt'), 'secondary')
       : state.removalMode === 'archive_and_remove'
-      ? button('retry-archive', 'Retry', 'primary') + button('change-destination', 'Change destination', 'secondary') + button('app-only', 'Remove app only', 'ghost')
-      : button('back', 'Return to choices', 'secondary');
+      ? button('retry-archive', jt('uninstall.actions.retry', 'Retry'), 'primary') + button('change-destination', jt('uninstall.error.changeDestination', 'Change destination'), 'secondary') + button('app-only', jt('uninstall.error.appOnly', 'Remove app only'), 'ghost')
+      : button('back', jt('uninstall.error.returnToChoices', 'Return to choices'), 'secondary');
     var cleanup = state.cleanupResults.length
       ? '<ul class="data-lifecycle-check-list">' + state.cleanupResults.map(function (item) {
           var label = item.kind + (item.name ? ' (' + item.name + ')' : '');
@@ -196,19 +204,19 @@
             + escapeHtml(label + ': ' + item.status + (item.reason ? ' (' + item.reason + ')' : '')) + '</li>';
         }).join('') + '</ul>'
       : '';
-    host.innerHTML = shell('<section class="data-lifecycle-result data-lifecycle-result--error"><span aria-hidden="true">!</span><h2>Removal stopped safely</h2><p>'
+    host.innerHTML = shell('<section class="data-lifecycle-result data-lifecycle-result--error"><span aria-hidden="true">!</span><h2>' + escapeHtml(jt('uninstall.error.stoppedTitle', 'Removal stopped safely')) + '</h2><p>'
       + escapeHtml(reason) + '</p>' + cleanup + '<code>' + escapeHtml(state.errorReason || 'operation_failed') + '</code></section>', actions,
-    { title: incomplete ? 'Cleanup is incomplete' : 'Nothing was deleted', subtitle: incomplete ? 'Jenny will not report this removal as complete.' : 'Resolve the issue or choose app-only removal.' });
+    { title: incomplete ? jt('uninstall.error.incompleteTitle', 'Cleanup is incomplete') : jt('uninstall.error.nothingDeletedTitle', 'Nothing was deleted'), subtitle: incomplete ? jt('uninstall.error.incompleteSubtitle', 'Jenny will not report this removal as complete.') : jt('uninstall.error.resolveSubtitle', 'Resolve the issue or choose app-only removal.') });
   }
 
   function renderReceipt() {
     var archived = state.removalMode === 'archive_and_remove';
     var permanent = state.removalMode === 'permanent';
-    var content = '<section class="data-lifecycle-result data-lifecycle-result--success"><span aria-hidden="true">&#10003;</span><h2>Ready to remove Jenny</h2>'
-      + '<p>' + (archived ? 'Your archive was created and verified.' : permanent ? 'Permanent cleanup was authorized.' : 'Your Jenny data will remain available for a future reinstall.') + '</p>'
-      + (state.archivePath ? '<dl><dt>Archive</dt><dd>' + escapeHtml(state.archivePath) + '</dd></dl>' : '')
-      + '<ul class="data-lifecycle-check-list"><li><span aria-hidden="true">&#10003;</span>Application removal may continue</li>'
-      + '<li><span aria-hidden="true">&#8212;</span>Shared models and ordinary project files retained</li>'
+    var content = '<section class="data-lifecycle-result data-lifecycle-result--success"><span aria-hidden="true">&#10003;</span><h2>' + escapeHtml(jt('uninstall.receipt.readyTitle', 'Ready to remove Jenny')) + '</h2>'
+      + '<p>' + escapeHtml(archived ? jt('uninstall.receipt.archiveVerified', 'Your archive was created and verified.') : permanent ? jt('uninstall.receipt.permanentAuthorized', 'Permanent cleanup was authorized.') : jt('uninstall.receipt.dataRetained', 'Your Jenny data will remain available for a future reinstall.')) + '</p>'
+      + (state.archivePath ? '<dl><dt>' + escapeHtml(jt('uninstall.receipt.archiveLabel', 'Archive')) + '</dt><dd>' + escapeHtml(state.archivePath) + '</dd></dl>' : '')
+      + '<ul class="data-lifecycle-check-list"><li><span aria-hidden="true">&#10003;</span>' + escapeHtml(jt('uninstall.receipt.removalMayContinue', 'Application removal may continue')) + '</li>'
+      + '<li><span aria-hidden="true">&#8212;</span>' + escapeHtml(jt('uninstall.receipt.retainedItems', 'Shared models and ordinary project files retained')) + '</li>'
       + state.cleanupResults.map(function (item) {
         var label = item.kind + (item.name ? ' (' + item.name + ')' : '');
         return '<li><span aria-hidden="true">' + (item.status === 'removed' ? '&#10003;' : '&#8212;') + '</span>'
@@ -217,8 +225,8 @@
       + state.warnings.map(function (warning) {
         return '<li><span aria-hidden="true">!</span>' + escapeHtml(warning) + '</li>';
       }).join('') + '</ul></section>';
-    host.innerHTML = shell(content, button('finish', 'Finish removal', permanent ? 'danger' : 'primary', { size: 'lg' }),
-      { title: 'Removal receipt', subtitle: 'Review the outcome before closing Jenny.' });
+    host.innerHTML = shell(content, button('finish', jt('uninstall.receipt.finish', 'Finish removal'), permanent ? 'danger' : 'primary', { size: 'lg' }),
+      { title: jt('uninstall.receipt.title', 'Removal receipt'), subtitle: jt('uninstall.receipt.subtitle', 'Review the outcome before closing Jenny.') });
   }
 
   function render() {
@@ -228,7 +236,7 @@
     else if (state.view === 'progress') renderProgress();
     else if (state.view === 'error') renderError();
     else if (state.view === 'receipt') renderReceipt();
-    else host.innerHTML = shell('<div class="data-lifecycle-loading" role="status">Loading your Jenny data…</div>', '');
+    else host.innerHTML = shell('<div class="data-lifecycle-loading" role="status">' + escapeHtml(jt('uninstall.loading.status', 'Loading your Jenny data…')) + '</div>', '');
     if (state.view !== focusedView) {
       focusedView = state.view;
       var title = host.querySelector('#dataLifecycleTitle');
@@ -354,7 +362,7 @@
       target.disabled = true;
       var completion = await api.complete(state.removalMode);
       if (!completion || !completion.ok) {
-        state.warnings = state.warnings.concat(['Removal handoff did not complete. Review the receipt and try Finish removal again.']).slice(-20);
+        state.warnings = state.warnings.concat([jt('uninstall.receipt.handoffFailed', 'Removal handoff did not complete. Review the receipt and try Finish removal again.')]).slice(-20);
         state.view = 'receipt';
         render();
       }

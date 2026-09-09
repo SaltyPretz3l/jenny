@@ -33,6 +33,7 @@
   root.rendererIdePreviewStage = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -58,7 +59,7 @@
   const HTML_EXTENSIONS = new Set(['html', 'htm']);
   // Derived from the Sets above so the unsupported-state copy can't drift
   // from what kindOf() actually accepts.
-  const SUPPORTED_LABEL = `Markdown (${[...MARKDOWN_EXTENSIONS].map((ext) => `.${ext}`).join(', ')}) and self-contained HTML (${[...HTML_EXTENSIONS].map((ext) => `.${ext}`).join(', ')})`;
+  const SUPPORTED_LABEL = jt('ide.previewStage.supportedFormats', 'Markdown ({markdownExtensions}) and self-contained HTML ({htmlExtensions})', { markdownExtensions: [...MARKDOWN_EXTENSIONS].map((ext) => `.${ext}`).join(', '), htmlExtensions: [...HTML_EXTENSIONS].map((ext) => `.${ext}`).join(', ') });
   const MAX_PREVIEW_BYTES = 1_500_000;
   const previewUtf8Encoder = new globalRef.TextEncoder();
   const MARKDOWN_DEBOUNCE_MS = 200;
@@ -66,7 +67,7 @@
   // they debounce longer than markdown to leave it an uninterrupted window.
   const HTML_DEBOUNCE_MS = 600;
 
-  const SELF_CONTAINED_NOTE = 'Self-contained preview — external stylesheets, scripts, images, and network requests are not loaded.';
+  const SELF_CONTAINED_NOTE = jt('ide.previewStage.selfContainedNote', 'Self-contained preview — external stylesheets, scripts, images, and network requests are not loaded.');
 
   function createIdePreviewStage(deps) {
     const d = deps || {};
@@ -162,9 +163,9 @@
         : '';
       const title = path
         ? `<span class="ide-preview-stage-name" title="${escapeHtml(path)}">${name}</span>`
-        : '<span class="ide-preview-stage-name ide-preview-stage-name--empty">Preview</span>';
+        : '<span class="ide-preview-stage-name ide-preview-stage-name--empty">' + escapeHtml(jt('ide.previewStage.title', 'Preview')) + '</span>';
       const chip = kind
-        ? `<span class="ide-preview-stage-kind">${escapeHtml(kind === 'html' ? 'Sandboxed HTML' : 'Markdown')}</span>`
+        ? `<span class="ide-preview-stage-kind">${escapeHtml(kind === 'html' ? jt('ide.previewStage.sandboxedHtml', 'Sandboxed HTML') : 'Markdown')}</span>`
         : '';
       const noteHtml = note
         ? `<span class="ide-preview-stage-note" data-preview-note>${escapeHtml(note)}</span>`
@@ -273,13 +274,13 @@
       pendingRequestSignature = requestSignature;
       if (!path) {
         completeRequest(requestSignature);
-        renderState('', 'empty', 'Select a Markdown, Mermaid, or HTML file to preview — right-click a file and choose "Open Preview", or open one in the editor.');
+        renderState('', 'empty', jt('ide.previewStage.selectFile', 'Select a Markdown, Mermaid, or HTML file to preview — right-click a file and choose "Open Preview", or open one in the editor.'));
         return;
       }
       const kind = kindOf(path);
       if (!kind) {
         completeRequest(requestSignature);
-        renderState(path, 'unsupported', `“${path}” can’t be previewed — supported: ${SUPPORTED_LABEL}.`);
+        renderState(path, 'unsupported', jt('ide.previewStage.unsupported', '“{path}” can’t be previewed — supported: {supported}.', { path, supported: SUPPORTED_LABEL }));
         return;
       }
       const source = await readSource(path);
@@ -293,13 +294,13 @@
       }
       if (!source.ok) {
         completeRequest(requestSignature);
-        renderState(path, 'missing', `“${path}” could not be read — it may have been deleted, renamed, or the workspace is unavailable.`);
+        renderState(path, 'missing', jt('ide.previewStage.readFailed', '“{path}” could not be read — it may have been deleted, renamed, or the workspace is unavailable.', { path }));
         return;
       }
       const text = source.text;
       if (previewUtf8Encoder.encode(text).length > MAX_PREVIEW_BYTES) {
         completeRequest(requestSignature);
-        renderState(path, 'too-large', `“${path}” is too large to preview safely.`);
+        renderState(path, 'too-large', jt('ide.previewStage.tooLarge', '“{path}” is too large to preview safely.', { path }));
         return;
       }
       // The main-process decoder (services/versioned-workspace-file-encoding.js)
@@ -315,7 +316,7 @@
           kind,
           reason: source.editable === false ? 'non_utf8' : 'null_byte',
         });
-        renderState(path, 'binary', `“${path}” looks like a binary or non-UTF-8 file and can’t be previewed.`);
+        renderState(path, 'binary', jt('ide.previewStage.binary', '“{path}” looks like a binary or non-UTF-8 file and can’t be previewed.', { path }));
         return;
       }
       completeRequest(requestSignature, source.signature || requestSignature);
@@ -337,7 +338,7 @@
       bodyEl.innerHTML = '<div class="ide-preview-frame-host" data-preview-frame-host></div>';
       const frameHost = bodyEl.firstElementChild;
       if (!frameUtils || typeof frameUtils.createHtmlArtifactFrame !== 'function') {
-        renderState(path, 'unavailable', 'The sandboxed HTML preview frame is unavailable in this build.');
+        renderState(path, 'unavailable', jt('ide.previewStage.frameUnavailable', 'The sandboxed HTML preview frame is unavailable in this build.'));
         return;
       }
       frameHandle = frameUtils.createHtmlArtifactFrame(frameHost, text, {
@@ -354,7 +355,7 @@
           const detail = typeof payload?.error === 'string' && payload.error.trim()
             ? ` (${payload.error.trim().slice(0, 200)})`
             : '';
-          renderState(path, 'frame-failed', `The preview for “${path}” stopped responding or failed to render${detail}. Its scripts may be busy, or the document may rely on external resources that sandboxed previews never load.`);
+          renderState(path, 'frame-failed', jt('ide.previewStage.frameFailed', 'The preview for “{path}” stopped responding or failed to render{detail}. Its scripts may be busy, or the document may rely on external resources that sandboxed previews never load.', { path, detail }));
         },
       });
     }

@@ -19,6 +19,7 @@
   root.rendererIdeEditorPrefs = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function noop() {}
 
@@ -106,7 +107,7 @@
         : undefined;
       editorHost?.addEditorAction?.({
         id: 'jenny.toggle-word-wrap',
-        label: 'Toggle Word Wrap',
+        label: jt('ide.editorPrefs.toggleWordWrap', 'Toggle Word Wrap'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 3,
         keybindings: keybinding,

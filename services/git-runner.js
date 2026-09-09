@@ -38,6 +38,7 @@ const { execFile, spawn } = require('child_process');
 
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { killProcessTree } = require('./backend/process-utils');
+const { t } = require('./i18n-main');
 const { normalizeString } = require('./shared/normalize');
 
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -101,7 +102,7 @@ function runGit(cwd, args, {
       reason: 'aborted',
       stdout: '',
       stderr: '',
-      message: 'Git command aborted.',
+      message: t('main.git.commandAborted', 'Git command aborted.'),
     });
   }
   const options = {
@@ -289,7 +290,7 @@ function runGitStreamed(cwd, args, {
 } = {}) {
   if (signal?.aborted) {
     return Promise.resolve({
-      success: false, reason: 'aborted', stdout: '', stderr: '', message: 'Git command aborted.',
+        success: false, reason: 'aborted', stdout: '', stderr: '', message: t('main.git.commandAborted', 'Git command aborted.'),
       truncated: false, droppedBytes: 0,
     });
   }

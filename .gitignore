@@ -139,3 +139,6 @@ tests/.run-node-tests-safe-history.json
 
 # Disposable isolated Electron outputs used by Stage 8 packaged acceptance.
 /dist-stage8-smoke*/
+# Private hosted deployment inputs; never source or image build inputs.
+/config/host.json
+/secrets/

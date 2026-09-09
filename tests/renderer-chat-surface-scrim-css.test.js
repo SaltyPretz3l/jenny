@@ -39,7 +39,7 @@ test('threaded and new-session chat share the masked center-lane scrim', () => {
   assert.doesNotMatch(sharedRule, /var\(--surface-body-background\)/);
   assert.match(
     emptySizingRule,
-    /top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?left:\s*max\([\s\S]*?width:\s*calc\(var\(--_thread-col-content\)\s*\+\s*var\(--chat-sprite-rail-offset\)\);/
+    /top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?inset-inline-start:\s*max\([\s\S]*?width:\s*calc\(var\(--_thread-col-content\)\s*\+\s*var\(--chat-sprite-rail-offset\)\);/
   );
 });
 

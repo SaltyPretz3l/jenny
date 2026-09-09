@@ -12,7 +12,7 @@
   }
   root.markdownUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   /* ── Resolve marked and DOMPurify from globalThis or require() ── */
   function resolveMarked() {
     if (typeof globalThis !== 'undefined' && typeof globalThis.marked !== 'undefined') return globalThis.marked;
@@ -268,12 +268,12 @@
           className: 'markdown-mermaid-outer-toggle',
           ariaExpanded: true,
           ariaControls: previewId,
-          ariaLabel: 'Collapse Mermaid diagram',
+          ariaLabel: jt('markdown.mermaid.collapseLabel', 'Collapse Mermaid diagram'),
         });
         const outerToggleIcon = ownerDocument.createElement('span');
         outerToggleIcon.className = 'markdown-mermaid-toggle-icon';
         const outerToggleLabel = ownerDocument.createElement('span');
-        outerToggleLabel.textContent = 'Mermaid diagram';
+        outerToggleLabel.textContent = jt('markdown.mermaid.diagramLabel', 'Mermaid diagram');
         if (outerToggle) {
           outerToggle.appendChild(outerToggleIcon);
           outerToggle.appendChild(outerToggleLabel);
@@ -292,23 +292,23 @@
           className: 'markdown-mermaid-source-toggle',
           ariaExpanded: false,
           ariaControls: sourcePreId,
-          ariaLabel: 'Show Mermaid source',
+          ariaLabel: jt('markdown.mermaid.showSourceLabel', 'Show Mermaid source'),
         });
         const label = ownerDocument.createElement('span');
         label.className = 'markdown-code-language';
-        label.textContent = 'Mermaid code';
+        label.textContent = jt('markdown.mermaid.codeLabel', 'Mermaid code');
         if (sourceToggle) {
           sourceToggle.appendChild(label);
           header.appendChild(sourceToggle);
         } else {
           header.appendChild(label);
         }
-        const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: 'Wrap long lines', label: 'Wrap', ariaPressed: false });
+        const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: jt('markdown.code.wrapLongLinesLabel', 'Wrap long lines'), label: jt('markdown.code.wrap', 'Wrap'), ariaPressed: false });
         if (wrapBtn) header.appendChild(wrapBtn);
         const copyBtn = createActionButtonNode(ownerDocument, {
           className: 'inv-codeblock-copy',
-          ariaLabel: 'Copy code',
-          label: 'Copy',
+          ariaLabel: jt('markdown.code.copyLabel', 'Copy code'),
+          label: jt('common.copy', 'Copy'),
         });
         if (copyBtn) header.appendChild(copyBtn);
 
@@ -340,12 +340,12 @@
       label.className = 'markdown-code-language inv-codeblock-language';
       label.textContent = getCodeLanguageLabel(codeNode);
       header.appendChild(label);
-      const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: 'Wrap long lines', label: 'Wrap', ariaPressed: false });
+      const wrapBtn = createActionButtonNode(ownerDocument, { className: 'inv-codeblock-wrap-toggle', ariaLabel: jt('markdown.code.wrapLongLinesLabel', 'Wrap long lines'), label: jt('markdown.code.wrap', 'Wrap'), ariaPressed: false });
       if (wrapBtn) header.appendChild(wrapBtn);
       const copyBtn = createActionButtonNode(ownerDocument, {
         className: 'inv-codeblock-copy',
-        ariaLabel: 'Copy code',
-        label: 'Copy',
+        ariaLabel: jt('markdown.code.copyLabel', 'Copy code'),
+        label: jt('common.copy', 'Copy'),
       });
       if (copyBtn) header.appendChild(copyBtn);
 
@@ -363,11 +363,11 @@
           className: 'markdown-code-expand-overlay',
           ariaExpanded: false,
           ariaControls: preId,
-          ariaLabel: 'Show more code',
+          ariaLabel: jt('markdown.code.showMoreCodeLabel', 'Show more code'),
         });
 
         const expandSpan = ownerDocument.createElement('span');
-        expandSpan.textContent = 'Show more';
+        expandSpan.textContent = jt('markdown.code.showMore', 'Show more');
         if (expandOverlay) {
           expandOverlay.appendChild(expandSpan);
           wrapper.appendChild(expandOverlay);
@@ -485,6 +485,7 @@
 
     const mermaidMode = options && options.mermaid === 'plain' ? 'plain' : 'rich';
     const frontmatterMode = options && options.frontmatter === 'metadata' ? 'metadata' : 'content';
+    const imagesMode = options && options.images === 'omit' ? 'omit' : 'allow';
     const breaksMode = options && options.breaks === true ? 'breaks' : 'no-breaks';
     const contentKey = typeof content === 'string' ? content : String(content);
     // Structured cache parts keep modes and arbitrary source bytes distinct.
@@ -500,7 +501,7 @@
       && typeof mathUtils.restoreMathPlaceholders === 'function');
     // A math-mode render is keyed apart the same way (a katex_math flip
     // mid-session can never serve stale HTML from the other namespace).
-    const cacheParts = [1, mermaidMode, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, contentKey];
+    const cacheParts = [1, mermaidMode, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, contentKey];
 
     ensureConfigured();
 
@@ -549,11 +550,10 @@
       warnPurifyUnavailableOnce();
       return escapeHtmlFallback(renderSource);
     }
-    const wantsFragment = options && options.returnFragment === true;
-    const sanitizedHtml = _purify.sanitize(
-      rawHtml,
-      wantsFragment ? { ...SANITIZE_CONFIG, RETURN_DOM_FRAGMENT: true } : SANITIZE_CONFIG
-    );
+    const wantsFragment = options?.returnFragment === true;
+    const sanitizeConfig = { ...SANITIZE_CONFIG, ...(wantsFragment ? { RETURN_DOM_FRAGMENT: true } : {}),
+      ...(imagesMode === 'omit' ? { FORBID_TAGS: ['img', 'picture', 'source', 'video', 'audio'] } : {}) };
+    const sanitizedHtml = _purify.sanitize(rawHtml, sanitizeConfig);
     if (!bypassCache && _markdownRenderCache) {
       _markdownRenderCache.set(cacheParts, sanitizedHtml);
     }
@@ -725,11 +725,11 @@
       }
       const retryMarkup = actionButtonMarkup({
         className: 'markdown-mermaid-retry',
-        ariaLabel: 'Retry Mermaid preview',
-        label: 'Retry preview',
+        ariaLabel: jt('markdown.mermaid.retryPreviewLabel', 'Retry Mermaid preview'),
+        label: jt('markdown.mermaid.retryPreview', 'Retry preview'),
       });
       previewNode.innerHTML = '<div class="markdown-mermaid-preview-note" role="status">'
-        + '<span>Preview unavailable. Mermaid source is shown below.</span>'
+        + '<span>' + jt('markdown.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</span>'
         + retryMarkup
         + '</div>';
       const retryButton = previewNode.querySelector('.markdown-mermaid-retry');
@@ -767,7 +767,7 @@
             const toggleSource = function () {
               const nowCollapsed = sourceNode.classList.toggle('markdown-mermaid-source-collapsed');
               sourceToggle.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
-              sourceToggle.setAttribute('aria-label', nowCollapsed ? 'Show Mermaid source' : 'Hide Mermaid source');
+              sourceToggle.setAttribute('aria-label', nowCollapsed ? jt('markdown.mermaid.showSourceLabel', 'Show Mermaid source') : jt('markdown.mermaid.hideSourceLabel', 'Hide Mermaid source'));
             };
             sourceToggle.addEventListener('click', toggleSource);
           }
@@ -777,7 +777,7 @@
           const toggleOuter = function () {
             const nowCollapsed = block.classList.toggle('markdown-mermaid-outer-collapsed');
             outerToggle.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
-            outerToggle.setAttribute('aria-label', nowCollapsed ? 'Expand Mermaid diagram' : 'Collapse Mermaid diagram');
+            outerToggle.setAttribute('aria-label', nowCollapsed ? jt('markdown.mermaid.expandLabel', 'Expand Mermaid diagram') : jt('markdown.mermaid.collapseLabel', 'Collapse Mermaid diagram'));
           };
           outerToggle.addEventListener('click', toggleOuter);
         }
@@ -812,7 +812,7 @@
           }
         }
         if (block.getAttribute('data-mermaid-rendered') !== 'failed') {
-          previewNode.innerHTML = '<div class="markdown-mermaid-preview-note">Preview unavailable. Mermaid source is shown below.</div>';
+          previewNode.innerHTML = '<div class="markdown-mermaid-preview-note">' + escapeHtmlFallback(jt('markdown.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.')) + '</div>';
         }
       },
     });
@@ -950,22 +950,22 @@
       className: 'markdown-mermaid-outer-toggle',
       ariaExpanded: true,
       ariaControls: previewId,
-      ariaLabel: 'Collapse Mermaid diagram',
-      trustedHtml: '<span class="markdown-mermaid-toggle-icon"></span><span>Mermaid diagram</span>',
+      ariaLabel: jt('markdown.mermaid.collapseLabel', 'Collapse Mermaid diagram'),
+      trustedHtml: '<span class="markdown-mermaid-toggle-icon"></span><span>' + escapeHtmlFallback(jt('markdown.mermaid.diagramLabel', 'Mermaid diagram')) + '</span>',
     });
     const sourceToggle = actionButtonMarkup({
       className: 'markdown-mermaid-source-toggle',
       ariaExpanded: false,
       ariaControls: sourcePreId,
-      ariaLabel: 'Show Mermaid source',
-      trustedHtml: '<span class="markdown-code-language">Mermaid code</span>',
+      ariaLabel: jt('markdown.mermaid.showSourceLabel', 'Show Mermaid source'),
+      trustedHtml: '<span class="markdown-code-language">' + escapeHtmlFallback(jt('markdown.mermaid.codeLabel', 'Mermaid code')) + '</span>',
     });
     const copyButton = actionButtonMarkup({
       className: 'inv-codeblock-copy',
-      ariaLabel: 'Copy code',
-      label: 'Copy',
+      ariaLabel: jt('markdown.code.copyLabel', 'Copy code'),
+      label: jt('common.copy', 'Copy'),
     });
-    const wrapButton = actionButtonMarkup({ className: 'inv-codeblock-wrap-toggle', ariaLabel: 'Wrap long lines', label: 'Wrap', ariaPressed: false });
+    const wrapButton = actionButtonMarkup({ className: 'inv-codeblock-wrap-toggle', ariaLabel: jt('markdown.code.wrapLongLinesLabel', 'Wrap long lines'), label: jt('markdown.code.wrap', 'Wrap'), ariaPressed: false });
     return '<div class="markdown-mermaid-block"' + idAttr
       + ' data-mermaid-source="' + escapedSource + '">'
       + outerToggle

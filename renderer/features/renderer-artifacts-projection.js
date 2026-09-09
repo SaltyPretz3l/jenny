@@ -5,6 +5,7 @@
   }
   root.rendererArtifactsProjection = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const IMAGE_FILTER = 'image';
   const TOOL_OUTPUT_FILTER = 'tool_output';
   const GENERATED_FILE_FILTER = 'generated_file';
@@ -144,7 +145,7 @@
 
   function buildImagePreviewText(attachment) {
     const sourceKind = String(attachment?.sourceKind || '').trim().toLowerCase();
-    const sourceLabel = sourceKind === 'capture' ? 'Screenshot' : sourceKind === 'clipboard' ? 'Pasted image' : 'Image attachment';
+    const sourceLabel = sourceKind === 'capture' ? 'Screenshot' : sourceKind === 'clipboard' ? jt('artifacts.detail.pastedImage', 'Pasted image') : jt('artifacts.image.attachment', 'Image attachment');
     const width = Math.max(Number(attachment?.width || 0), 0);
     const height = Math.max(Number(attachment?.height || 0), 0);
     return width > 0 && height > 0 ? `${sourceLabel} - ${width} x ${height}` : sourceLabel;
@@ -152,7 +153,7 @@
 
   function buildGeneratedImagePreviewText(metadata) {
     const sourceKind = String(metadata?.source_kind || '').trim().toLowerCase();
-    const sourceLabel = sourceKind === 'capture' ? 'Screenshot' : sourceKind === 'clipboard' ? 'Pasted image' : 'Image';
+    const sourceLabel = sourceKind === 'capture' ? 'Screenshot' : sourceKind === 'clipboard' ? jt('artifacts.detail.pastedImage', 'Pasted image') : 'Image';
     const width = Math.max(Number(metadata?.width || 0), 0);
     const height = Math.max(Number(metadata?.height || 0), 0);
     return width > 0 && height > 0 ? `${sourceLabel} - ${width} x ${height}` : sourceLabel;
@@ -161,7 +162,7 @@
   function buildToolPreviewText(toolResult) {
     const outputText = String(toolResult?.output_text || '').trim();
     if (!outputText) {
-      return toolResult?.is_error ? 'Tool finished with an error and no output.' : 'Tool finished with no output.';
+      return toolResult?.is_error ? jt('artifacts.tool.errorWithoutOutput', 'Tool finished with an error and no output.') : jt('artifacts.tool.finishedWithoutOutput', 'Tool finished with no output.');
     }
     return clipPreviewText(outputText, TOOL_PREVIEW_MAX_CHARS);
   }
@@ -185,12 +186,12 @@
       ? metadata.is_markdown_document
       : isMarkdownLanguage(language) || isMarkdownPath(displayPath) || isMarkdownPath(metadata?.file_name);
     if (isMarkdownDocument) {
-      return displayPath ? `${displayPath} - Markdown document` : 'Markdown document';
+      return displayPath ? jt('artifacts.generated.markdownDocumentAtPath', '{path} - Markdown document', { path: displayPath }) : jt('artifacts.generated.markdownDocument', 'Markdown document');
     }
     if (displayPath && language) return `${displayPath} - ${language}`;
     if (displayPath) return displayPath;
-    if (language) return `${language} scratch artifact`;
-    return 'Generated scratch artifact';
+    if (language) return jt('artifacts.generated.languageScratchArtifact', '{language} scratch artifact', { language: language });
+    return jt('artifacts.generated.scratchArtifact', 'Generated scratch artifact');
   }
 
   function getArtifactTimestamp(sourceMessage) {
@@ -199,10 +200,10 @@
 
   function formatArtifactTimestamp(value) {
     const normalized = String(value || '').trim();
-    if (!normalized) return 'Unknown time';
+    if (!normalized) return jt('artifacts.time.unknown', 'Unknown time');
     const parsed = new Date(normalized);
     if (Number.isNaN(parsed.valueOf())) return normalized;
-    return parsed.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return parsed.toLocaleString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric', hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit' });
   }
 
   function formatArtifactStatus(value) {
@@ -213,8 +214,8 @@
 
   function formatLanguageLabel(value) {
     const normalized = String(value || '').trim();
-    if (!normalized) return 'Plain text';
-    if (normalized.toLowerCase() === 'plaintext' || normalized.toLowerCase() === 'text') return 'Plain text';
+    if (!normalized) return jt('artifacts.language.plainText', 'Plain text');
+    if (normalized.toLowerCase() === 'plaintext' || normalized.toLowerCase() === 'text') return jt('artifacts.language.plainText', 'Plain text');
     return normalized.replace(/[_-]+/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
@@ -263,7 +264,7 @@
     return {
       artifact_id: artifactId,
       artifact_kind: String(entry.artifact_kind || 'document').trim().toLowerCase() || 'document',
-      title: String(entry.title || '').trim() || 'Generated artifact',
+      title: String(entry.title || '').trim() || jt('artifacts.generated.defaultTitle', 'Generated artifact'),
       file_name: String(entry.file_name || '').trim(),
       display_path: String(entry.display_path || '').trim(),
       absolute_path: String(entry.absolute_path || '').trim(),
@@ -368,7 +369,7 @@
           sourceMessageId,
           sourceKind: 'message_attachment',
           artifactType: IMAGE_FILTER,
-          title: String(attachment?.displayName || 'Image attachment').trim() || 'Image attachment',
+          title: String(attachment?.displayName || jt('artifacts.image.attachment', 'Image attachment')).trim() || jt('artifacts.image.attachment', 'Image attachment'),
           previewText: buildImagePreviewText(attachment),
           timestamp,
           status: String(attachment?.assetPath || '').trim() ? 'available' : 'missing',

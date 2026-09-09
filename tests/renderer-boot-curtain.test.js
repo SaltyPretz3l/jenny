@@ -72,8 +72,8 @@ test('index composes one first-child boot surface and removes the auth overlay s
     path.join(__dirname, '..', 'renderer', 'chat', 'renderer-render-pipeline-chrome.js'),
     'utf8'
   );
-  assert.match(chromeSource, /heroTitle\.textContent = 'New session';/);
-  assert.doesNotMatch(chromeSource, /heroTitle\.textContent = 'New Session';/);
+  assert.match(chromeSource, /heroTitle\.textContent = (?:jt\('[\w.]+', )?'New session'\)?;/);
+  assert.doesNotMatch(chromeSource, /heroTitle\.textContent = (?:jt\('[\w.]+', )?'New Session'\)?;/);
   dom.window.close();
 });
 

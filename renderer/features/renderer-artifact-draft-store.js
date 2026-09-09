@@ -50,6 +50,11 @@
       return drafts.delete(key);
     }
 
+    function discardIfEqual(sessionId, artifactId, value) {
+      const key = draftKey(sessionId, artifactId);
+      return drafts.get(key) === value ? drafts.delete(key) : false;
+    }
+
     function pruneToAllowedSessions(allowedSessionIds) {
       const allowed = allowedSessionIds instanceof Set
         ? allowedSessionIds
@@ -68,7 +73,7 @@
       return drafts.size;
     }
 
-    return { stash, has, take, discard, pruneToAllowedSessions, clear, size };
+    return { stash, has, take, discard, discardIfEqual, pruneToAllowedSessions, clear, size };
   }
 
   return { createArtifactDraftStore };

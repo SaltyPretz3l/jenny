@@ -244,6 +244,7 @@ def _build_live_stream_messages(
             context_blocks,
             include_personality=include_personality_block,
             agent_name=getattr(stack.config, "assistant_name", None),
+            ui_language=getattr(stack.config, "ui_language", "en"),
         ),
         *semantic_history,
     ]

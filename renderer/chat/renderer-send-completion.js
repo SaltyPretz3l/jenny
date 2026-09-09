@@ -5,6 +5,7 @@
   }
   root.rendererSendCompletion = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSendCompletion(deps) {
     const { state, navigationIntent, sendReceipts, constants, callbacks, helpers } = deps;
 
@@ -165,8 +166,8 @@
         await navigationIntent.navigateOrNotify(sendNavigationToken, resolvedSessionId, {
           navigate: (sessionId) => callbacks.activateWorkspaceSession(sessionId, { silent: true }),
           showToastMessage: callbacks.showToastMessage,
-          message: 'Your message started in another chat while you were working here.',
-          title: 'Message started',
+          message: jt('chat.sendCompletion.backgroundStartedMessage', 'Your message started in another chat while you were working here.'),
+          title: jt('chat.sendCompletion.startedTitle', 'Message started'),
           source: constants.TOAST_SOURCE.chatStream,
           dedupeKey: `${constants.TOAST_SOURCE.chatStream}:open:${resolvedSessionId}`,
         });
@@ -300,10 +301,10 @@
           new Error(rejectionDetail
             ? `${constants.EDIT_REGENERATE_FAILURE_MESSAGE} (${rejectionDetail})`
             : constants.EDIT_REGENERATE_FAILURE_MESSAGE),
-          'Edit Failed'
+          jt('chat.transcript.editFailedTitle', 'Edit Failed')
         );
       } else if (!createdOptimisticSession && !isOutboxDispatch) {
-        callbacks.showComposerActionError(error, 'Send Failed');
+      callbacks.showComposerActionError(error, jt('chat.send.failedTitle', 'Send Failed'));
       }
       callbacks.appendClientLog('ERROR', 'chat.send_failed', isEditRegenerate
         ? {

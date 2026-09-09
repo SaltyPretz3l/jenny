@@ -6,6 +6,7 @@
   }
   root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createChatShellController(deps) {
     const { state, slashDependencies, compactionCoordinator } = deps;
     const dom = deps.dom || {};
@@ -40,9 +41,7 @@
       return { flushedCount: 0, catchupRequired: false };
     };
     let _dropBufferedStreamEvents = function noopDropBufferedStreamEvents() {};
-    let _rehydrateSessionFromPersistedTurnEvents = function noopRehydrateSessionFromPersistedTurnEvents() {
-      return null;
-    };
+    let _rehydrateSessionFromPersistedTurnEvents = () => null;
     const slashCommandRegistry = createSlashCommandRegistry({
       state,
       optimisticAppend: (...args) => _optimisticAppend(...args),
@@ -61,7 +60,7 @@
     });
     const createNoteCommandHandler = factories.createNoteCommandHandler
       || windowRef.rendererSlashNoteCommand?.createNoteCommandHandler
-      || (() => () => callbacks.showToastMessage?.('Scratchpad is unavailable.', { title: 'Scratchpad', tone: 'warning' }));
+      || (() => () => callbacks.showToastMessage?.(jt('chat.shell.scratchpadUnavailable', 'Scratchpad is unavailable.'), { title: jt('chat.shell.scratchpadTitle', 'Scratchpad'), tone: 'warning' }));
     const noteHandler = createNoteCommandHandler({
       captureToScratchpad: slashDependencies && slashDependencies.captureToScratchpad,
       showToastMessage: (...a) => callbacks.showToastMessage?.(...a), appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
@@ -83,8 +82,8 @@
       );
       if (!insertion.ok) {
         if (insertion.code === 'command_conflict') {
-          callbacks.showToastMessage?.('Finish or remove the current command before inserting another.', {
-            title: 'Command already present',
+          callbacks.showToastMessage?.(jt('chat.shell.commandConflict', 'Finish or remove the current command before inserting another.'), {
+            title: jt('chat.shell.commandAlreadyPresent', 'Command already present'),
             tone: 'warning',
           });
         }
@@ -100,9 +99,9 @@
       dom.chatInput.focus?.();
       return true;
     }
-    function selectSlashCommand(name, action) {
-      if (action !== 'run') return insertSlashCommand(name);
-      return slashCommandRegistry.execute?.(name) || slashCommandRegistry.tryExecute?.(name);
+    function selectSlashCommand(name) {
+      // Composer menus only insert; the global palette has its own execute seam.
+      return insertSlashCommand(name);
     }
     var selectionController = null;
     function activateWorkspaceSession(...args) {
@@ -205,10 +204,15 @@
       handleCopyMessage = async function noopHandleCopyMessage() {},
       retryFailedPayload = async function noopRetryFailedPayload() {},
       getFailedPayloadRetryAvailability = function noopGetFailedPayloadRetryAvailability() {
-        return { available: false, reason: 'The original failed payload is unavailable.' };
+        return { available: false, reason: jt('chat.shell.failedPayloadUnavailable', 'The original failed payload is unavailable.') };
       },
       dismissFailedPayload = function noopDismissFailedPayload() { return false; },
     } = sendController || {};
+    const resolveOutboxAction = (entry) => {
+      const current = state.sendOutboxController?.list?.(entry?.sessionId)
+        .find((item) => item.id === entry?.id);
+      return current && ['capturing_context', 'ready', 'waiting_for_turn', 'failed', 'needs_review'].includes(current.status) ? current : null;
+    };
     if (sendController && controllers && typeof controllers === 'object') {
       const rerenderOutbox = () => {
         callbacks.renderComposerState();
@@ -216,6 +220,8 @@
       };
       controllers.sendOutboxActions = {
         async edit(entry, prompt) {
+          entry = resolveOutboxAction(entry);
+          if (!entry) return null;
           dispatchQueuedSendForSession.cancelAutoRetry?.(entry?.sessionId);
           const result = state.sendOutboxController?.edit?.(entry, prompt);
           rerenderOutbox();
@@ -223,12 +229,16 @@
           return dispatchQueuedSendForSession(result.sessionId);
         },
         cancel(entry) {
+          entry = resolveOutboxAction(entry);
+          if (!entry) return false;
           dispatchQueuedSendForSession.cancelAutoRetry?.(entry?.sessionId);
           const result = state.sendOutboxController?.remove?.(entry) === true;
           rerenderOutbox();
           return result;
         },
         async retry(entry) {
+          entry = resolveOutboxAction(entry);
+          if (!entry || !['failed', 'needs_review'].includes(entry.status)) return null;
           dispatchQueuedSendForSession.cancelAutoRetry?.(entry?.sessionId);
           const readyEntry = state.sendOutboxController?.retry?.(entry);
           rerenderOutbox();
@@ -237,7 +247,6 @@
         },
       };
     }
-
     var resumeTurnInteraction = null;
     if (globalThis.rendererResumeTurnInteraction
       && typeof globalThis.rendererResumeTurnInteraction.createResumeTurnInteraction === 'function') {
@@ -294,7 +303,7 @@
             const hasApproval = typeof callbacks.hasPendingToolApprovalForSession === 'function'
               && callbacks.hasPendingToolApprovalForSession(currentSessionId);
             if (isBusy || hasApproval) {
-              return { blocked: true, reason: 'Wait for the current response to finish before editing.' };
+              return { blocked: true, reason: jt('chat.edit.waitForCurrentResponse', 'Wait for the current response to finish before editing.') };
             }
             return { blocked: false };
           },
@@ -417,10 +426,10 @@
         return Promise.resolve(false);
       }
       return bulkDeleteConfirmDialog.confirm({
-        title: 'Delete from here?',
+        title: jt('chat.shell.deleteFromHere', 'Delete from here?'),
         message: promptText,
-        confirmLabel: 'Delete',
-        cancelLabel: 'Cancel',
+        confirmLabel: jt('common.delete', 'Delete'),
+        cancelLabel: jt('common.cancel', 'Cancel'),
         variant: 'danger',
       });
     }
@@ -739,7 +748,6 @@
       },
       dom: {
         homeNavButton: dom.homeNavButton,
-        promptGrid: dom.promptGrid,
         chatInput: dom.chatInput,
         newChatButton: dom.newChatButton,
         stopStreamButton: dom.stopStreamButton,
@@ -761,6 +769,7 @@
       },
       callbacks: {
         setActivityChangeListener: (...args) => callbacks.setActivityChangeListener(...args),
+        getSessionMessages: callbacks.getSessionMessages, setSessionMessages: (...args) => { const result = callbacks.setSessionMessages(...args); callbacks.renderWorkspaceChrome?.({ runtimeOnly: true }); return result; },
         handleActivityChange: (...args) => callbacks.handleActivityChange(...args),
         renderHeader: (...args) => callbacks.renderHeader(...args),
         renderSettings: (...args) => callbacks.renderSettings(...args),
@@ -773,7 +782,6 @@
         getRendererElapsedMs: (...args) => callbacks.getRendererElapsedMs(...args),
         loadSessions: (...args) => callbacks.loadSessions(...args),
         refreshSnapshots: (...args) => callbacks.refreshSnapshots(...args),
-        refreshSuggestions: (...args) => callbacks.refreshSuggestions(...args),
         refreshApprovedMemories: (...args) => callbacks.refreshApprovedMemories(...args),
         resetArtifactsState: (...args) => callbacks.resetArtifactsState(...args),
         resetMemorySuggestionState: (...args) => callbacks.resetMemorySuggestionState(...args),
@@ -930,6 +938,12 @@
           .flatMap((section) => state.companion?.openLoopsBoard?.[section] || [])
           .find((task) => String(task?.followUpId || '').trim() === String(taskId || '').trim())?.body || ''),
       });
+      addCleanup(globalThis.rendererCalendarChatBindings?.bindCalendarChatInteractions?.(dom.chatTimeline, {
+        shell: windowRef.jennyShell,
+        setActiveView: (...args) => callbacks.setActiveView(...args),
+        setHomeCalendarFocusDay: (key) => { state.ui.homeCalendarFocusDay = key; },
+        appendClientLog: (...args) => callbacks.appendClientLog(...args),
+      }) || (() => {}));
     }
 
     // Re-checks the stream_envelope_v2 flag against the live subscription and
@@ -959,6 +973,7 @@
     }
 
     return {
+      sendOutboxActions: controllers.sendOutboxActions,
       bind,
       resyncStreamSubscriptionMode,
       dispose,

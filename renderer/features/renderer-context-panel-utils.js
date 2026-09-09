@@ -4,6 +4,7 @@
   root.rendererContextPanelUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var STORAGE_KEY = 'jenny.contextPanel.v1';
   var globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
@@ -64,8 +65,8 @@
       button.classList.toggle('hidden', !showButton);
       button.disabled = !showButton;
       button.setAttribute('aria-expanded', showButton && logsExpanded ? 'true' : 'false');
-      button.textContent = logsExpanded ? 'Hide' : 'Show';
-      button.title = logsExpanded ? 'Hide session logs' : 'Show session logs';
+      button.textContent = logsExpanded ? jt('context.logs.hide', 'Hide') : jt('context.logs.show', 'Show');
+      button.title = logsExpanded ? jt('context.logs.hideSessionLogs', 'Hide session logs') : jt('context.logs.showSessionLogs', 'Show session logs');
     }
 
     function renderContextArtifacts() {
@@ -81,7 +82,7 @@
       if (countEl) countEl.textContent = String(artifacts.length);
 
       if (!artifacts.length) {
-        el.innerHTML = '<div class="context-empty-state">Nothing here yet.</div>';
+        el.innerHTML = '<div class="context-empty-state">' + jt('context.panel.empty', 'Nothing here yet.') + '</div>';
         return;
       }
       var html = '';
@@ -136,7 +137,7 @@
         );
         var activeContextLimit = displayState?.contextLimit || null;
         var activeContextLabel = activeContextLimit && Number.isFinite(activeContextLimit)
-          ? activeContextLimit.toLocaleString()
+          ? activeContextLimit.toLocaleString(globalThis.jennyI18n?.tag?.())
           : '-';
         var tokenDisplay = callbacks.formatTokenUsageDisplay(usedTokens, activeContextLimit, activeContextLabel);
         tokenPct = Math.min(100, Math.round(Number(tokenDisplay.ratio || 0) * 100));
@@ -146,16 +147,16 @@
 
       el.innerHTML =
         '<div class="context-metric-row">'
-          + '<div class="context-metric-header"><span class="context-metric-label">Model</span>'
+          + '<div class="context-metric-header"><span class="context-metric-label">' + jt('context.metrics.model', 'Model') + '</span>'
           + '<span class="context-metric-value">' + modelName + '</span></div>'
         + '</div>'
         + '<div class="context-metric-row">'
-          + '<div class="context-metric-header"><span class="context-metric-label">Tokens</span>'
+          + '<div class="context-metric-header"><span class="context-metric-label">' + jt('context.metrics.tokens', 'Tokens') + '</span>'
           + '<span class="context-metric-value">' + tokenText + '</span></div>'
           + '<div class="context-metric-track"><div class="context-metric-fill" style="width:' + tokenPct + '%"></div></div>'
         + '</div>'
         + '<div class="context-metric-row">'
-          + '<div class="context-metric-header"><span class="context-metric-label">Messages</span>'
+          + '<div class="context-metric-header"><span class="context-metric-label">' + jt('context.metrics.messages', 'Messages') + '</span>'
           + '<span class="context-metric-value">' + msgCount + '</span></div>'
         + '</div>';
     }
@@ -175,7 +176,7 @@
         syncLogDisclosure(false);
         el.toggleAttribute('hidden', false);
         if (logSection) logSection.classList.remove('logs-collapsed');
-        el.innerHTML = '<div class="context-empty-state">Nothing logged yet.</div>';
+        el.innerHTML = '<div class="context-empty-state">' + jt('context.logs.empty', 'Nothing logged yet.') + '</div>';
         return;
       }
       syncLogDisclosure(true);
@@ -212,7 +213,7 @@
       if (dom.contextPanelToggle) {
         var expanded = !dom.chatContextPanel.classList.contains('collapsed');
         dom.contextPanelToggle.setAttribute('aria-expanded', String(expanded));
-        dom.contextPanelToggle.setAttribute('aria-label', expanded ? 'Collapse context panel' : 'Expand context panel');
+        dom.contextPanelToggle.setAttribute('aria-label', expanded ? jt('context.panel.collapse', 'Collapse context panel') : jt('context.panel.expand', 'Expand context panel'));
       }
     }
 

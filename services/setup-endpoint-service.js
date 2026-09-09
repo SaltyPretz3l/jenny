@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeString } = require('./backend/path-utils');
+const { t } = require('./i18n-main');
 const { SETUP_ERROR_CODES } = require('./backend/error-codes');
 const { sameLocalOrigin } = require('./local-origin');
 
@@ -225,7 +226,7 @@ class SetupEndpointService {
       if (!catalogHasModels(engineType, catalog)) {
         return publicFailure('empty_catalog', 'Endpoint returned no usable models.', engineType, status);
       }
-      return { ok: true, engineType, checkedUrl, status, code: 'ok', error_code: '', message: 'Endpoint is ready.', retryable: false };
+  return { ok: true, engineType, checkedUrl, status, code: 'ok', error_code: '', message: t('main.setup.endpointReady', 'Endpoint is ready.'), retryable: false };
     } catch (error) {
       if (error?.name === 'AbortError' || controller?.signal?.aborted) {
         return publicFailure('request_timeout', 'Endpoint validation timed out.', engineType);

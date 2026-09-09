@@ -16,8 +16,11 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
     'html:id:homeOpenLoopNotesInput',
     'html:id:chatInput',
   ],
+  'renderer/browser/browser-view.js': [
+    "textField:id:'composer-prompt'",
+  ],
   'renderer/chat/renderer-send-outbox-render.js': [
-    'textField:id:`send-outbox-input-${itemKey}`',
+    'textField:id:inputId',
   ],
   'renderer/chat/renderer-user-questions-block.js': [
     'markup:data-user-question-other-input',
@@ -104,7 +107,7 @@ function findHtmlControlById(source, id) {
 }
 
 function findTextFieldCalls(source) {
-  return source.match(/\b(?:[A-Za-z_$][\w$]*\.)?textField\s*\(\s*\{[\s\S]*?\}\s*\)/g) || [];
+  return source.match(/\b(?:[A-Za-z_$][\w$]*\.)?(?:textField|field)\s*\(\s*\{[\s\S]*?\}\s*\)/g) || [];
 }
 
 function stripSelectorDeclaration(source) {
@@ -153,7 +156,7 @@ function propertyValue(objectSource, propertyName) {
 
 function textFieldRecords(source) {
   const records = [];
-  const pattern = /\b(?:[A-Za-z_$][\w$]*\.)?textField\s*\(\s*\{[\s\S]*?\}\s*\)/g;
+  const pattern = /\b(?:[A-Za-z_$][\w$]*\.)?(?:textField|field)\s*\(\s*\{[\s\S]*?\}\s*\)/g;
   for (const match of source.matchAll(pattern)) {
     if (!/\bspellcheck\s*:\s*true\b/.test(match[0])) continue;
     const id = propertyValue(match[0], 'id');

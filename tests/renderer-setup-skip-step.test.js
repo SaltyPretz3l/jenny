@@ -16,7 +16,9 @@ const INITIAL_STEPS = {
 function snapshot(steps) {
   return normalizeSetupPayload({
     setup_complete: false,
-    setup_state: { first_run_completed: false, setup_complete: false, steps },
+    setup_state: {
+      acknowledged_version: '1', first_run_completed: false, setup_complete: false, steps,
+    },
   });
 }
 

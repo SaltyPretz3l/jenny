@@ -272,6 +272,7 @@
       }
       function createListener(useEnvelopeHandler) {
         return (payload) => streamMailbox.enqueue(payload, async ({ guard, signal, rendererEpoch }) => {
+          try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
           try {
             const continuation = { continuationGuard: guard, signal, rendererEpoch };
             if (useEnvelopeHandler) {

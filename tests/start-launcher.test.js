@@ -6,6 +6,12 @@ const { resolveLaunch, resolveAgentWorkspaceRoot, resolveChildExitCode } = requi
 
 const CWD = path.resolve('C:/dev/jenny');
 
+test('existing-server startup choice reaches Electron without changing the environment', () => {
+  const launch = resolveLaunch({ argv: ['--existing-server'], env: {}, cwd: CWD });
+  assert.deepEqual(launch.forwardedArgs, ['--existing-server']);
+  assert.deepEqual(launch.env, {});
+});
+
 test('non-agent launch forwards args verbatim and never seeds a tools workspace root', () => {
   const { agentMode, env, forwardedArgs } = resolveLaunch({
     argv: ['--some-electron-flag', 'value'],

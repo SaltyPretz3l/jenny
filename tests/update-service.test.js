@@ -118,22 +118,24 @@ class DeferredAutoUpdater extends FakeAutoUpdater {
   }
 }
 
-test('UpdateService fails closed in unpackaged development mode', async () => {
+test('UpdateService discovers releases in development but cannot self-install', async () => {
   const updater = new FakeAutoUpdater();
   const service = new UpdateService({
     app: makeApp({ isPackaged: false }),
     autoUpdater: updater,
+    releaseClient: async () => ({ latestVersion: '0.2.0', packageAvailable: true }),
     storePath: path.join(makeTempDir(), 'updates.json'),
   });
 
-  assert.equal(service.getState().status, 'disabled');
-  assert.match(service.getState().reason, /packaged/i);
+  assert.equal(service.getState().status, 'unchecked');
+  assert.match(service.getState().installUnavailableReason, /packaged/i);
 
   const checked = await service.check();
   const downloaded = await service.download();
 
-  assert.equal(checked.status, 'disabled');
-  assert.equal(downloaded.status, 'disabled');
+  assert.equal(checked.status, 'manual');
+  assert.equal(checked.canDownload, false);
+  assert.equal(downloaded.status, 'manual');
   assert.deepEqual(updater.calls, []);
 });
 
@@ -145,9 +147,9 @@ test('UpdateService disables auto-update on an unsigned macOS build with a manua
     platform: 'darwin',
     macUpdatesSigned: false,
   });
-  assert.equal(service.getState().status, 'disabled');
-  assert.match(service.getState().reason, /signed build/i);
-  assert.match(service.getState().reason, /DMG/i);
+  assert.equal(service.getState().status, 'unchecked');
+  assert.match(service.getState().installUnavailableReason, /signed build/i);
+  assert.match(service.getState().installUnavailableReason, /DMG/i);
 });
 
 test('UpdateService enables auto-update on a signed macOS build', () => {
@@ -158,7 +160,7 @@ test('UpdateService enables auto-update on a signed macOS build', () => {
     platform: 'darwin',
     macUpdatesSigned: true,
   });
-  assert.equal(service.getState().status, 'idle');
+  assert.equal(service.getState().status, 'unchecked');
   assert.equal(service.getState().reason, '');
   assert.equal(service.getState().autoUpdateAllowed, true);
 });
@@ -171,8 +173,8 @@ test('UpdateService disables auto-update for Linux packages without APPIMAGE', (
     platform: 'linux',
     env: {},
   });
-  assert.equal(service.getState().status, 'disabled');
-  assert.match(service.getState().reason, /download the latest/i);
+  assert.equal(service.getState().status, 'unchecked');
+  assert.match(service.getState().installUnavailableReason, /download the latest/i);
 });
 
 test('UpdateService enables auto-update for a Linux AppImage', () => {
@@ -187,7 +189,7 @@ test('UpdateService enables auto-update for a Linux AppImage', () => {
     },
     execPath: '/tmp/.mount_Jenny/usr/bin/jenny',
   });
-  assert.equal(service.getState().status, 'idle');
+  assert.equal(service.getState().status, 'unchecked');
   assert.equal(service.getState().reason, '');
   assert.equal(service.getState().autoUpdateAllowed, true);
 });
@@ -201,8 +203,8 @@ test('UpdateService ignores inherited AppImage variables on Linux', () => {
     env: { APPIMAGE: '/tools/Other.AppImage', APPDIR: '/tmp/.mount_Other' },
     execPath: '/opt/Jenny/jenny',
   });
-  assert.equal(service.getState().status, 'disabled');
-  assert.match(service.getState().reason, /unavailable for this Linux package/i);
+  assert.equal(service.getState().status, 'unchecked');
+  assert.match(service.getState().installUnavailableReason, /unavailable for this Linux package/i);
 });
 
 test('UpdateService keeps auto-update disabled on unknown platforms', () => {
@@ -212,7 +214,7 @@ test('UpdateService keeps auto-update disabled on unknown platforms', () => {
     storePath: path.join(makeTempDir(), 'updates.json'),
     platform: 'freebsd',
   });
-  assert.equal(service.getState().status, 'disabled');
+  assert.equal(service.getState().status, 'unchecked');
 });
 
 test('UpdateService exposes available, download, install, and changed states', async () => {
@@ -253,6 +255,7 @@ test('UpdateService coalesces overlapping check and download requests', async ()
 
   const firstCheck = service.check();
   const secondCheck = service.check();
+  await Promise.resolve();
   assert.deepEqual(updater.calls, ['checkForUpdates']);
   updater.resolveCheck();
   const [firstAvailable, secondAvailable] = await Promise.all([firstCheck, secondCheck]);
@@ -261,6 +264,7 @@ test('UpdateService coalesces overlapping check and download requests', async ()
 
   const firstDownload = service.download();
   const secondDownload = service.download();
+  await Promise.resolve();
   assert.deepEqual(updater.calls, ['checkForUpdates', 'downloadUpdate']);
   updater.resolveDownload();
   const [firstDownloaded, secondDownloaded] = await Promise.all([firstDownload, secondDownload]);
@@ -279,6 +283,7 @@ test('UpdateService ignores check and download settlements after disposal', asyn
   });
 
   const pendingCheck = checkService.check();
+  await Promise.resolve();
   checkService.dispose();
   resolveCheck({ updateInfo: checkUpdater.updateInfo });
   const checkState = await pendingCheck;
@@ -296,11 +301,12 @@ test('UpdateService ignores check and download settlements after disposal', asyn
   });
   await downloadService.check();
   const pendingDownload = downloadService.download();
+  await Promise.resolve();
   downloadService.dispose();
   rejectDownload(new Error('late download failure'));
   const downloadState = await pendingDownload;
   assert.equal(downloadState.failureCount, 0);
-  assert.equal(fs.existsSync(downloadStorePath), false);
+  assert.equal(JSON.parse(fs.readFileSync(downloadStorePath, 'utf8')).failureCount, 0);
 });
 
 test('UpdateService persists skipped versions without calling the updater', async () => {
@@ -387,7 +393,7 @@ test('UpdateService keeps getState cache-only and resolves the updater on first 
     storePath: path.join(makeTempDir(), 'updates.json'),
   });
 
-  assert.equal(service.getState().status, 'idle');
+  assert.equal(service.getState().status, 'unchecked');
   assert.equal(loaderCalls, 0);
   assert.equal(updater.autoDownload, true);
 
@@ -410,15 +416,16 @@ test('UpdateService caches updater loader failure', async () => {
       loaderCalls += 1;
       throw new Error('module load failed');
     },
+    releaseClient: async () => null,
     storePath: path.join(makeTempDir(), 'updates.json'),
   });
 
-  assert.equal(service.getState().status, 'idle');
+  assert.equal(service.getState().status, 'unchecked');
   assert.equal(loaderCalls, 0);
-  assert.equal((await service.check()).status, 'disabled');
-  assert.equal((await service.check()).status, 'disabled');
+  assert.equal((await service.check()).status, 'no-release');
+  assert.equal((await service.check()).status, 'no-release');
   assert.equal(loaderCalls, 1);
-  assert.match(service.getState().reason, /electron-updater is not loaded/i);
+  assert.match(service.getState().installUnavailableReason, /unavailable/i);
 });
 
 test('UpdateService binds no updater listeners when check() is called after dispose()', async () => {

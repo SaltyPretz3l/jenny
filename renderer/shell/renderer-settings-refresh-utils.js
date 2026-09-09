@@ -6,6 +6,7 @@
   }
   root.rendererSettingsRefreshUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function ensureRefreshState(state) {
     if (!state.settingsRefresh || typeof state.settingsRefresh !== 'object') {
       state.settingsRefresh = {};
@@ -19,7 +20,7 @@
   function toErrorMessage(error) {
     return error && typeof error === 'object' && error.message
       ? String(error.message)
-      : String(error || 'Refresh failed.');
+      : String(error || jt('settings.shell.refreshFailed', 'Refresh failed.'));
   }
 
   async function runSettingsRefreshBatch(options) {

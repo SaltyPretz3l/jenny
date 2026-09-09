@@ -5,6 +5,7 @@
   }
   root.rendererArtifactsSurfaceController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function resolveRendererModule(globalName, modulePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
       return globalThis[globalName];
@@ -45,9 +46,7 @@
       renderCodeReviewSurface = null,
       renderArtifactsPanel = noop,
       renderArtifactReviewPanel = noop,
-      // UIUX-025: cheap per-keystroke chrome sync (footer meta, save/revert
-      // visibility) — safe to call on every edit, unlike renderArtifactsPanel
-      // / renderArtifactReviewPanel which rebuild the catalog + full detail.
+      // The panel exposes a cheap per-keystroke dirty/save patch.
       panelV2 = null,
       invalidateSessionArtifacts = noop,
       clearSelection = noop,
@@ -131,6 +130,7 @@
     }
     function resetLoadedState() {
       state.artifacts.loadedArtifactId = '';
+      state.artifacts.loadState = 'idle';
       state.artifacts.loadedArtifactContent = '';
       state.artifacts.dirtyContent = '';
       bumpArtifactDocumentRevision();
@@ -140,15 +140,8 @@
       documentViewModeBySurface.full = 'read';
       documentViewModeBySurface.split = 'read';
     }
-    // UIUX-025: a keystroke used to trigger renderArtifactsPanel() (full
-    // catalog innerHTML rebuild, cost grows with artifact count) AND
-    // renderArtifactReviewPanel()/renderSelectedArtifactDetail() (full
-    // markdown/mermaid preview rebuild) on every character. Now a keystroke
-    // only patches the dirty/save/revert chrome in place; the heavier detail
-    // re-render (which the preview + editor.setDocument round trip needs) is
-    // debounced so it runs once after typing pauses. The catalog is never
-    // touched from here — it only re-renders on list/filter/selection change
-    // (the other renderArtifactsPanel() call sites in this file).
+    // Keystrokes patch only save/dirty chrome. Defer preview and metadata work
+    // until typing pauses, then render through the current rail-mode owner.
     const PREVIEW_REFRESH_DEBOUNCE_MS = 220;
     let previewRefreshTimer = null;
     function cancelScheduledPreviewRefresh() {
@@ -178,16 +171,13 @@
       const chrome = computeArtifactDirtyChrome(artifact);
       patchArtifactDirtyChrome(surfaces.full, chrome);
       patchArtifactDirtyChrome(surfaces.split, chrome);
-      panelV2?.afterRender?.(artifact);
+      panelV2?.patchDirtyState?.(artifact);
     }
     function schedulePreviewRefresh() {
       cancelScheduledPreviewRefresh();
       previewRefreshTimer = setTimeout(() => {
         previewRefreshTimer = null;
-        const artifact = getSelectedArtifact();
-        renderSelectedArtifactDetail(surfaces.full, artifact);
-        renderSelectedArtifactDetail(surfaces.split, artifact);
-        panelV2?.afterRender?.(artifact);
+        renderArtifactReviewPanel();
       }, PREVIEW_REFRESH_DEBOUNCE_MS);
     }
     function getEditorState(key = 'full') { return editorState[String(key || 'full').trim()] || editorState.full; }
@@ -225,8 +215,7 @@
       }
     }
     function getPreferredEditorValue() {
-      if (state.artifacts.dirtyContent !== state.artifacts.loadedArtifactContent) return state.artifacts.dirtyContent || '';
-      return getExistingEditor('split')?.getValue() || getExistingEditor('full')?.getValue() || state.artifacts.dirtyContent || '';
+      return state.artifacts.dirtyContent || '';
     }
     function normalizeArtifactDocumentViewMode(nextMode) {
       return String(nextMode || '').trim().toLowerCase() === 'source' ? 'source' : 'read';
@@ -459,7 +448,7 @@
     function formatError(error, fallback) {
       return typeof toErrorMessage === 'function'
         ? toErrorMessage(error)
-        : String(error?.message || error || fallback || 'Unknown error.');
+        : String(error?.message || error || fallback || jt('common.unknownError', 'Unknown error.'));
     }
 
     async function loadGeneratedImageArtifactAsset(artifact) {
@@ -494,7 +483,7 @@
       } catch (error) {
         if (!artifactOperationTarget.isCurrent(token)) return;
         failedImageArtifactKeys.add(failureKey);
-        state.artifacts.lastError = formatError(error, 'Image artifact load failed.');
+        state.artifacts.lastError = formatError(error, jt('artifacts.errors.imageLoadFailed', 'Image artifact load failed.'));
       } finally {
         loadingImageArtifactDataKeys.delete(dataKey);
         if (artifactOperationTarget.isCurrent(token)) {
@@ -518,7 +507,7 @@
     // shared note/editor toggles; the registry mermaid kind receives it
     // through rendererDeps so both dispatch paths run this exact function.
     function renderMermaidToolOutputArtifact(surface, artifact) {
-      setDetailNote(surface, 'Transcript-derived tool output. Read-only in the artifact panel.');
+      setDetailNote(surface, jt('artifacts.text.transcriptOutputReadOnlyNote', 'Transcript-derived tool output. Read-only in the artifact panel.'));
       surface.editorShell.classList.add('hidden');
       surface.previewContent.classList.remove('hidden');
       const mermaidSource = extractMermaidSourceFromToolArtifact(artifact);
@@ -526,13 +515,13 @@
       const sourceHtml = `<pre class="artifact-preview-pre artifact-preview-mermaid-source">${escapeHtml(mermaidSource)}</pre>`;
       if (getArtifactViewMode('mermaid') === 'edit') {
         surface.previewContent.innerHTML = sourceHtml;
-        setDetailNote(surface, 'Viewing read-only Mermaid source.');
+        setDetailNote(surface, jt('artifacts.mermaid.viewingReadOnlySource', 'Viewing read-only Mermaid source.'));
         return;
       }
       surface.previewContent.innerHTML = (
         `<div class="artifact-preview-mermaid-shell">`
         + `<div class="artifact-preview-mermaid-host" id="${escapeHtml(hostId)}">`
-        + '<div class="artifacts-empty">Rendering Mermaid preview...</div>'
+        + '<div class="artifacts-empty">' + jt('artifacts.mermaid.renderingPreview', 'Rendering Mermaid preview...') + '</div>'
         + '</div>'
         + '</div>'
         + sourceHtml
@@ -545,11 +534,11 @@
       );
       if (!previewStarted) {
         surface.previewContent.innerHTML = (
-          '<div class="artifacts-empty">Preview unavailable. Mermaid source is shown below.</div>'
+          '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>'
           + sourceHtml
         );
       }
-      setDetailNote(surface, 'Mermaid tool output with preview and source fallback.');
+      setDetailNote(surface, jt('artifacts.mermaid.toolOutputNote', 'Mermaid tool output with preview and source fallback.'));
     }
 
     function writeDetailTitle(surface, value) {
@@ -561,16 +550,13 @@
     }
 
     function renderSelectedArtifactDetail(surface, artifact) {
-      // Any full detail render supersedes a pending debounced preview
-      // refresh (UIUX-025) — firing it later would just redo this work.
+      // A full render supersedes the pending preview refresh.
       cancelScheduledPreviewRefresh();
       if (!surface) return;
       const prefs = getArtifactReviewState();
       const isCodeReviewSurface = surface.key === 'split' && normalizeArtifactReviewMode(prefs.mode) === 'code_review';
       if (isCodeReviewSurface && typeof renderCodeReviewSurface === 'function') {
-        // Hide all artifact-mode chrome (action buttons stay rendered for tab
-        // order stability — toggling .hidden via the same per-button loop the
-        // artifact branch uses).
+        // The code-review owner replaces the artifact body and actions.
         surface.detailEmpty?.classList.add('hidden');
         surface.detailPanel?.classList.remove('hidden');
         if (surface.metaPane) surface.metaPane.classList.add('hidden');
@@ -586,6 +572,7 @@
         if (surface.detailMeta) surface.detailMeta.innerHTML = '';
         if (surface.dirtyBadge) surface.dirtyBadge.classList.add('hidden');
         renderProvenanceTimeline(surface.provenanceTimeline, null);
+        setDetailNote(surface, '');
         renderCodeReviewSurface(surface);
         return;
       }
@@ -593,6 +580,7 @@
       surface.detailPanel?.classList.toggle('hidden', !artifact);
       if (surface.metaPane) surface.metaPane.classList.toggle('hidden', !artifact);
       if (!artifact) {
+        if (surface.detailEmpty) surface.detailEmpty.textContent = jt("artifactsSurfaceController.noArtifactsInThisConversationAskJennyToCreate", "No artifacts in this conversation. Ask Jenny to create a document, diagram, or visualization.");
         if (surface.detailPanel?.dataset) {
           delete surface.detailPanel.dataset.artifactType;
           delete surface.detailPanel.dataset.detailMode;
@@ -605,7 +593,7 @@
       const isMermaidGenerated = isGenerated && isMermaidGeneratedArtifact(artifact);
       const isMarkdownGenerated = isGenerated && isMarkdownGeneratedArtifact(artifact) && !isMermaidGenerated;
       const file = artifact.generatedFile || null;
-      const editable = isGenerated && file?.editable === true && artifact.status !== 'missing';
+      const editable = isGenerated && file?.editable === true && artifact.status !== 'missing' && state.artifacts.loadState !== 'unavailable';
       const dirty = isGenerated && state.artifacts.loadedArtifactId === file?.artifactId && state.artifacts.dirtyContent !== state.artifacts.loadedArtifactContent;
       if (surface.detailPanel?.dataset) {
         surface.detailPanel.dataset.artifactType = String(artifact.artifactType || 'artifact');
@@ -613,36 +601,36 @@
       }
       if (surface.dirtyBadge) surface.dirtyBadge.classList.toggle('hidden', !dirty);
       surface.detailKicker.textContent = isMermaidGenerated
-        ? 'Mermaid Diagram'
+        ? jt('artifacts.types.mermaidDiagram', 'Mermaid Diagram')
         : isMarkdownGenerated
-          ? 'Markdown Document'
-          : isGenerated ? 'Generated File' : isImage ? 'Image' : 'Tool Output';
+          ? jt('artifacts.types.markdownDocument', 'Markdown Document')
+          : isGenerated ? jt('artifacts.types.generatedFile', 'Generated File') : isImage ? jt('artifacts.types.image', 'Image') : jt('artifacts.types.toolOutput', 'Tool Output');
       writeDetailTitle(surface, artifact.title || 'Artifact');
       surface.detailPath.textContent = isGenerated ? String(file?.displayPath || file?.fileName || '').trim() : artifact.filePath || artifact.previewText || '';
       surface.detailStatus.textContent = formatArtifactStatus(artifact.status);
       const metaItems = isGenerated
         ? [
-          { label: 'Created', value: formatArtifactTimestamp(artifact.timestamp) },
-          { label: 'Kind', value: String(file?.artifactKind || 'document').replace(/_/g, ' ') },
-          { label: 'Language', value: formatLanguageLabel(file?.language || 'plaintext') },
+          { label: jt('artifacts.detail.created', 'Created'), value: formatArtifactTimestamp(artifact.timestamp) },
+          { label: jt('artifacts.detail.kind', 'Kind'), value: String(file?.artifactKind || 'document').replace(/_/g, ' ') },
+          { label: jt('artifacts.detail.language', 'Language'), value: formatLanguageLabel(file?.language || 'plaintext') },
         ]
         : isImage
           ? [
-            { label: 'Created', value: formatArtifactTimestamp(artifact.timestamp) },
+            { label: jt('artifacts.detail.created', 'Created'), value: formatArtifactTimestamp(artifact.timestamp) },
             {
-              label: 'Source',
+              label: jt('artifacts.detail.source', 'Source'),
               value: String(artifact?.image?.sourceKind || '').trim().toLowerCase() === 'capture'
                 ? 'Screenshot'
                 : String(artifact?.image?.sourceKind || '').trim().toLowerCase() === 'clipboard'
                   ? 'Clipboard'
                   : 'Attachment',
             },
-            { label: 'Status', value: formatArtifactStatus(artifact.status) },
+            { label: jt('artifacts.detail.status', 'Status'), value: formatArtifactStatus(artifact.status) },
           ]
           : [
-            { label: 'Created', value: formatArtifactTimestamp(artifact.timestamp) },
-            { label: 'Tool', value: artifact.tool?.toolName || 'Tool' },
-            { label: 'Status', value: formatArtifactStatus(artifact.status) },
+            { label: jt('artifacts.detail.created', 'Created'), value: formatArtifactTimestamp(artifact.timestamp) },
+            { label: jt('artifacts.detail.tool', 'Tool'), value: artifact.tool?.toolName || 'Tool' },
+            { label: jt('artifacts.detail.status', 'Status'), value: formatArtifactStatus(artifact.status) },
           ];
       surface.detailMeta.innerHTML = renderDetailMeta(metaItems, surface.stackedMeta === true);
       surface.jumpButton.dataset.artifactJump = artifact.sourceMessageId || '';
@@ -652,12 +640,27 @@
       }
       surface.saveButton.disabled = !editable || !dirty || state.artifacts.loading || state.artifacts.savePending;
       surface.revertButton.disabled = !isGenerated || state.artifacts.loading || state.artifacts.savePending || (!dirty && !state.artifacts.lastError);
+      const retry = state.artifacts.loadState === 'error';
+      surface.revertButton.textContent = retry ? jt("common.retry", "Retry") : jt("common.revert", "Revert");
+      surface.revertButton.setAttribute?.('aria-label', retry ? jt("artifactsSurfaceController.retryLoadingArtifact", "Retry loading artifact") : jt("artifacts.actions.revertLabel", "Revert artifact"));
       surface.revealButton.disabled = !isGenerated;
       surface.openExternalButton.disabled = !isGenerated;
       surface.deleteButton.disabled = !isGenerated || state.artifacts.loading || state.artifacts.savePending;
-      // WS2 registry dispatch (artifact_renderer_registry ON): one resolver +
-      // registry call replaces the legacy if/else below. Both paths call the
-      // same per-kind implementations, so flag-off stays byte-identical.
+      if (isGenerated && ['loading', 'error', 'unavailable'].includes(state.artifacts.loadState)) {
+        const failed = state.artifacts.loadState === 'error';
+        surface.editorShell?.classList.add('hidden');
+        surface.previewContent?.classList.add('hidden');
+        setDetailNote(surface, failed ? state.artifacts.lastError : state.artifacts.loading
+          ? jt("artifactsSurfaceController.loadingArtifact", "Loading artifact…") : jt("artifactsSurfaceController.contentIsNotAvailableForInlineViewingTheFile", "Content is not available for inline viewing. The file may be missing or exceed the 512 KB editor limit. Reveal or open externally to inspect it."), failed);
+        if (state.artifacts.loadState === 'unavailable' && surface.previewContent) {
+          surface.previewContent.textContent = surface.detailNote?.textContent || jt("artifactsSurfaceController.contentUnavailableRevealOrOpenExternallyToInspectIt", "Content unavailable. Reveal or open externally to inspect it.");
+          surface.previewContent.classList.remove('hidden');
+          setDetailNote(surface, jt("artifactsSurfaceController.readOnlyArtifact", "Read-only artifact."));
+        }
+        renderProvenanceTimeline(surface.provenanceTimeline, artifact);
+        return;
+      }
+      // Registry and legacy dispatch share the same per-kind renderers.
       if (isRendererRegistryEnabled()) {
         const kind = rendererRegistryModule.resolveArtifactRenderKind(artifact, rendererKindPredicates);
         artifactRendererRegistry.render(kind, {
@@ -694,11 +697,7 @@
       }
       renderProvenanceTimeline(surface.provenanceTimeline, artifact);
     }
-    // UIUX-007: read/save/revert/reveal/open-external/delete moved to
-    // renderer-artifact-async-ops.js (generation-gated completion + delete's
-    // explicit-target support). preloadSelectedArtifact stays here since it
-    // dispatches to BOTH the moved file-load path and the image-load path
-    // that stays local (image-state Maps live in this closure).
+    // Async file operations own target fencing; image loading stays local.
     const artifactAsyncOps = asyncOpsModule.createArtifactAsyncOps({
       state,
       surfaces,
@@ -733,7 +732,7 @@
     function preloadSelectedArtifact(artifact, eventName) {
       if (isGeneratedFile(artifact)) {
         const fileId = String(artifact?.generatedFile?.artifactId || '').trim();
-        if (!fileId || state.artifacts.loadedArtifactId === fileId || state.artifacts.loading === true) {
+        if (!fileId || state.artifacts.loadedArtifactId === fileId || state.artifacts.loading === true || state.artifacts.loadState === 'error') {
           return;
         }
         loadGeneratedArtifactContent(artifact).catch((error) => appendClientLog('WARN', eventName || 'artifacts.autoload_failed', {
@@ -760,39 +759,39 @@
     }
 
     async function writeArtifactTextToClipboard(text, successMessage) {
-      if (!text) return;
+      if (text == null) return;
       try {
         const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
         if (!clipboard?.writeText) {
           throw new Error('Clipboard is unavailable.');
         }
         await clipboard.writeText(text);
-        showToastMessage?.(successMessage, { title: 'Artifact', tone: 'success' });
+        showToastMessage?.(successMessage, { title: jt('artifacts.detail.title', 'Artifact'), tone: 'success' });
       } catch (error) {
-        showToastMessage?.(formatError(error, 'Copy failed.'), { title: 'Copy Failed', tone: 'danger' });
+        showToastMessage?.(formatError(error, jt('artifacts.errors.copyFailed', 'Copy failed.')), { title: jt('artifacts.titles.copyFailed', 'Copy Failed'), tone: 'danger' });
       }
     }
     async function copyArtifactDocumentCodeBlock(copyButton) {
       const text = readArtifactDocumentCodeBlockText(copyButton);
-      await writeArtifactTextToClipboard(text, 'Code copied.');
+      await writeArtifactTextToClipboard(text, jt('artifacts.code.copied', 'Code copied.'));
     }
     function getSelectedArtifactSource() {
       const artifact = getSelectedArtifact();
-      if (!artifact || isImageArtifact(artifact)) return '';
+      if (!artifact || isImageArtifact(artifact)) return null;
       if (isGeneratedFile(artifact)) {
         const file = artifact.generatedFile || null;
         const isLoaded = Boolean(file) && state.artifacts.loadedArtifactId === file.artifactId;
-        return isLoaded
+        return isLoaded && !state.artifacts.loading && !['error', 'unavailable'].includes(state.artifacts.loadState)
           ? getPreferredEditorValue()
-          : String(state.artifacts.loadedArtifactContent || artifact.previewText || '');
+          : null;
       }
       const mermaidSource = extractMermaidSourceFromToolArtifact(artifact);
       return mermaidSource || prettyPrintJson(artifact.outputText || artifact.previewText || '');
     }
     async function copySelectedArtifactSource() {
       const text = getSelectedArtifactSource();
-      if (!text) return;
-      await writeArtifactTextToClipboard(text, 'Artifact copied.');
+      if (text == null) return;
+      await writeArtifactTextToClipboard(text, jt('artifacts.copied', 'Artifact copied.'));
     }
     // WS2 per-kind view-mode model: state.artifacts.viewModeByKind, with
     // state.artifacts.mermaidViewMode kept as the synced alias the mermaid
@@ -830,23 +829,16 @@
       if (!isMermaidGeneratedArtifact(artifact)) return;
       setArtifactViewMode('mermaid', nextMode);
     }
-    // UIUX-007 single choke point for selection changes: bumps the
-    // operation generation (invalidating any outstanding read/save/delete
-    // token) AND resets the per-selection UI scalars in one call, so no
-    // call site can flip selectedSessionId/selectedArtifactId without also
-    // invalidating in-flight work — that omission is exactly how the
-    // original "selection changes before dirty-discard handling" bug shipped.
+    // Retarget reads and reset the selected UI without losing pending saves.
     function applySelection(sessionId, artifactId) {
       failedImageArtifactKeys.delete(imageArtifactFailureKey(sessionId, artifactId));
       artifactOperationTarget.setSelection(sessionId, artifactId);
       resetLoadedState();
       state.artifacts.loading = false;
-      state.artifacts.savePending = false;
+      state.artifacts.savePending = artifactAsyncOps.isSelectedArtifactSaving();
     }
     function captureSelectedTarget() { return artifactOperationTarget.captureSelected(); }
-    // Read<->source toggle only exists for markdown generated artifacts (see
-    // setArtifactDocumentViewMode's early return above); panel chrome uses
-    // this to know whether the Edit affordance can do anything.
+    // Only generated markdown has the Read/Source toggle.
     function isSelectedArtifactMarkdownGenerated() {
       const artifact = getSelectedArtifact();
       return isGeneratedFile(artifact) && isMarkdownGeneratedArtifact(artifact);

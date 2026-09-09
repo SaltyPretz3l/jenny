@@ -6,11 +6,12 @@
   }
   root.rendererIdeTreeDnd = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
   const TREE_DRAG_PATHS_MIME = 'application/x-jenny-tree-paths';
   const EXISTS_CODE = 'CMP-WORKSPACEFS-0030';
   function noop() {}
-
   function hasType(transfer, type) {
     const types = transfer?.types;
     if (!types) return false;
@@ -189,7 +190,7 @@
       const badge = doc.createElement('span');
       badge.className = 'ide-tree-drag-ghost-count';
       badge.textContent = String(count);
-      node.append(badge, doc.createTextNode(' items'));
+      node.append(badge, doc.createTextNode(jt('ide.treeDnd.itemsSuffix', ' items')));
       doc.body.appendChild(node);
       ghostNode = node;
       transfer.setDragImage(node, 12, 12);
@@ -327,15 +328,15 @@
           if (didMove !== false) restored += 1;
         } catch (error) {
           if (undoIsStale(context)) return;
-          showError(String(error?.message || error || 'Could not restore an item.'), {
-            title: 'Workspace', dedupeKey: 'ide:tree:move-undo',
+          showError(String(error?.message || error || jt('ide.treeDnd.restoreFailed', 'Could not restore an item.')), {
+            title: jt('ide.treeDnd.workspaceTitle', 'Workspace'), dedupeKey: 'ide:tree:move-undo',
           });
         }
       }
       if (undoIsStale(context)) return;
       showUndoToast(restored === moves.length
-        ? `Restored ${moves.length} items`
-        : `Restored ${restored} of ${moves.length}`);
+        ? jt('ide.treeDnd.restoredAll', 'Restored {count} items', { count: moves.length })
+        : jt('ide.treeDnd.restoredPartial', 'Restored {restored} of {total}', { restored, total: moves.length }));
     }
 
     async function handleDrop(event) {
@@ -385,10 +386,10 @@
           }
         } catch (error) {
           const message = isExistsError(error)
-            ? `A file named ${nameOf(path)} already exists in ${target.path || 'the workspace root'}.`
-            : String(error?.message || error || `Could not ${copying ? 'copy' : 'move'} the item.`);
+            ? jt('ide.treeDnd.fileExists', 'A file named {name} already exists in {destination}.', { name: nameOf(path), destination: target.path || jt('ide.treeDnd.workspaceRoot', 'the workspace root') })
+            : String(error?.message || error || jt('ide.treeDnd.operationFailed', 'Could not {action} the item.', { action: copying ? 'copy' : 'move' }));
           if (!disposed && generation === operationGeneration && rootEpoch === getRootEpoch()) {
-            showError(message, { title: 'Workspace', dedupeKey: `ide:tree:${copying ? 'copy' : 'move'}` });
+            showError(message, { title: jt('ide.treeDnd.workspaceTitle', 'Workspace'), dedupeKey: `ide:tree:${copying ? 'copy' : 'move'}` });
           }
         }
       }
@@ -396,13 +397,13 @@
         && rootEpoch === getRootEpoch() && copied) {
         await refreshDirectory(target.path);
         if (disposed || generation !== operationGeneration || rootEpoch !== getRootEpoch()) return;
-        showToast(`Copied ${copied} ${copied === 1 ? 'item' : 'items'} to ${target.path ? `${target.path}/` : 'the workspace root'}`);
+        showToast(jtn('ide.treeDnd.copied', copied, { count: copied, target: target.path ? `${target.path}/` : jt('ide.treeDnd.workspaceRoot', 'the workspace root') }, 'Copied {count} item to {target}', 'Copied {count} items to {target}'));
       } else if (!copying && !disposed && generation === operationGeneration
         && rootEpoch === getRootEpoch() && moved.length) {
         const count = moved.length;
         const undoContext = { generation, rootEpoch };
         showUndoToast(
-          `Moved ${count} ${count === 1 ? 'item' : 'items'} to ${target.path ? `${target.path}/` : 'the workspace root'}`,
+          jtn('ide.treeDnd.moved', count, { count, target: target.path ? `${target.path}/` : jt('ide.treeDnd.workspaceRoot', 'the workspace root') }, 'Moved {count} item to {target}', 'Moved {count} items to {target}'),
           () => undoMoves(moved, undoContext)
         );
       }

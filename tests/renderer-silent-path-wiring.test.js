@@ -19,10 +19,9 @@ test('settings-refresh failures report with origin settings-refresh and keep the
 
   const memorySites = source.match(/dedupeKey: 'settings-refresh:memories'/g) || [];
   assert.equal(memorySites.length, 2, 'both memory-refresh catches (backend-ready + auth) report');
-  assert.match(source, /dedupeKey: 'settings-refresh:suggestions'/);
-  assert.equal((source.match(/\{ origin: 'settings-refresh' \}/g) || []).length, 3);
+  assert.equal((source.match(/\{ origin: 'settings-refresh' \}/g) || []).length, 2);
 
-  for (const warnEvent of ['chat.refresh_memories_failed', 'chat.refresh_suggestions_failed', 'chat.auth_refresh_memories_failed']) {
+  for (const warnEvent of ['chat.refresh_memories_failed', 'chat.auth_refresh_memories_failed']) {
     assert.ok(source.includes(warnEvent), `observability WARN ${warnEvent} kept`);
   }
 });

@@ -21,7 +21,7 @@
  */
 
 const PERSONALITY_HEADING = '## Personality';
-const PERSONALITY_PRECEDENCE_TEMPLATE = 'Your name is {name}. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.';
+const PERSONALITY_PRECEDENCE_TEMPLATE = 'Your name is {name}. You are software, not a living being: you have no body, feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.';
 const DEFAULT_AGENT_NAME = 'Jenny';
 
 const ADVANCED_CONTEXT_MAX_BYTES = 4 * 1024;

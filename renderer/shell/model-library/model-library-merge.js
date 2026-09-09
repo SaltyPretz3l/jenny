@@ -11,6 +11,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils, fitUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var canonicalOllamaTag = formatUtils && formatUtils.canonicalOllamaTag;
   if (typeof canonicalOllamaTag !== 'function'
     || !fitUtils || typeof fitUtils.effectiveCatalogFitState !== 'function'
@@ -343,7 +344,7 @@
     var hasEstimate = Boolean(fitEstimate) && context.hardware.detected;
     var fitState = 'unknown';
     var fitRatio = 0;
-    var fitLabel = 'Not in catalog';
+    var fitLabel = jt('models.library.merge.notInCatalog', 'Not in catalog');
     var fitSource = '';
     var fitConfidence = '';
     var vramRequiredMb = 0;
@@ -438,10 +439,10 @@
 
   function groupModelCards(cards) {
     var groups = [
-      { id: 'in-use', label: 'In use', cards: [] },
-      { id: 'installed', label: 'Installed', cards: [] },
-      { id: 'cloud', label: 'Cloud', cards: [] },
-      { id: 'available', label: 'Available to download', cards: [] },
+      { id: 'in-use', label: jt('models.library.groups.inUse', 'In use'), cards: [] },
+      { id: 'installed', label: jt('models.library.groups.installed', 'Installed'), cards: [] },
+      { id: 'cloud', label: jt('models.library.groups.cloud', 'Cloud'), cards: [] },
+      { id: 'available', label: jt('models.library.groups.availableToDownload', 'Available to download'), cards: [] },
     ];
     var source = Array.isArray(cards) ? cards : [];
     source.forEach(function (card) {

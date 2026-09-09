@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (actionButton, inventoryPopover, segmentedControl) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var ICONS = {
     'file-code': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M5 3h9l5 5v13H5z"></path><path d="m10 13-2 2 2 2"></path><path d="m14 13 2 2-2 2"></path></svg>',
     'file-text': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"></path><path d="M5 3h9l5 5v13H5z"></path><path d="M9 13h6M9 17h6"></path></svg>',
@@ -17,7 +18,7 @@
     photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9" r="1.5"></circle><path d="m4 17 5-5 4 4 2-2 5 4"></path></svg>',
     'terminal-2': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 4 4-4 4M12 17h7"></path></svg>',
     'chevron-down': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>',
-    'chevron-right': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>',
+    'chevron-right': '<svg class="icon-mirror-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>',
     dots: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></svg>',
     'text-wrap': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h12a3 3 0 0 1 0 6h-3"></path><path d="m15 16-2 2 2 2"></path><path d="M4 18h5"></path></svg>',
     maximize: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"></path></svg>',
@@ -65,11 +66,11 @@
       : '';
     var titleContent = '<span class="artifact-panel-title-text">' + escapeHtml(title) + '</span>';
     var titleNode = input?.artifactCount >= 2
-      ? actionButton({ plain: true, domId: 'artifactReviewDetailTitle', className: 'artifact-panel-title', ariaLabel: 'Select an artifact', title: 'Select an artifact', ariaHaspopup: 'listbox', ariaExpanded: input.switcherOpen === true, ariaControls: 'artifactPanelSwitcher', dataset: { 'artifact-switcher-trigger': '' }, trustedHtml: titleContent + '<span class="artifact-panel-title-chevron">' + ICONS['chevron-down'] + '</span>' })
+      ? actionButton({ plain: true, domId: 'artifactReviewDetailTitle', className: 'artifact-panel-title', ariaLabel: jt('artifacts.review.emptyHeading', 'Select an artifact'), title: jt('artifacts.review.emptyHeading', 'Select an artifact'), ariaHaspopup: 'listbox', ariaExpanded: input.switcherOpen === true, ariaControls: 'artifactPanelSwitcher', dataset: { 'artifact-switcher-trigger': '' }, trustedHtml: titleContent + '<span class="artifact-panel-title-chevron">' + ICONS['chevron-down'] + '</span>' })
       : '<span class="artifact-panel-title" id="artifactReviewDetailTitle">' + titleContent + '</span>';
     var chip = typeChipForArtifact(input?.artifact, input?.kind);
     return glyph + titleNode + (chip ? '<span class="artifact-panel-type-chip">' + escapeHtml(chip) + '</span>' : '')
-      + (input?.dirty ? '<span class="artifact-panel-dirty-dot" title="Unsaved changes" aria-hidden="true"></span>' : '');
+      + (input?.dirty ? '<span class="artifact-panel-dirty-dot" title="' + escapeHtml(jt('artifacts.review.unsavedChanges', 'Unsaved changes')) + '" aria-hidden="true"></span>' : '');
   }
 
   // Header "Open in IDE": rendered hidden/disabled and revealed by
@@ -82,8 +83,8 @@
     return actionButton({
       plain: true,
       className: 'artifact-panel-icon-btn artifact-panel-open-ide hidden',
-      ariaLabel: 'Open in IDE',
-      title: 'Open in IDE',
+      ariaLabel: jt('artifacts.actions.openInIde', 'Open in IDE'),
+      title: jt('artifacts.actions.openInIde', 'Open in IDE'),
       disabled: true,
       dataset: { 'artifact-panel-open-ide': '', 'file-preview-open-ide': 'true' },
       trustedHtml: ICONS['external-link'],
@@ -93,9 +94,9 @@
   function buildHeaderHtml() {
     return '<div class="artifact-panel-header"><div class="artifact-panel-header-primary" data-artifact-panel-title-slot><span class="artifact-panel-title" id="artifactReviewDetailTitle"><span class="artifact-panel-title-text">Artifact</span></span></div><div class="artifact-panel-header-actions">'
       + buildOpenIdeButtonHtml()
-      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-maximize', ariaLabel: 'Maximize panel', title: 'Maximize panel', ariaPressed: false, dataset: { 'artifact-panel-maximize': '' }, trustedHtml: ICONS.maximize })
-      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-overflow', ariaLabel: 'More actions', title: 'More actions', ariaHaspopup: 'menu', ariaExpanded: false, dataset: { 'artifact-panel-overflow': '' }, trustedHtml: ICONS.dots })
-      + actionButton({ plain: true, domId: 'artifactReviewCollapseButton', className: 'artifact-panel-icon-btn', ariaLabel: 'Collapse panel', title: 'Collapse panel', trustedHtml: ICONS['chevron-right'] })
+      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-maximize', ariaLabel: jt('artifacts.actions.maximizePanel', 'Maximize panel'), title: jt('artifacts.actions.maximizePanel', 'Maximize panel'), ariaPressed: false, dataset: { 'artifact-panel-maximize': '' }, trustedHtml: ICONS.maximize })
+      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-overflow', ariaLabel: jt('artifacts.actions.moreActions', 'More actions'), title: jt('artifacts.actions.moreActions', 'More actions'), ariaHaspopup: 'menu', ariaExpanded: false, dataset: { 'artifact-panel-overflow': '' }, trustedHtml: ICONS.dots })
+      + actionButton({ plain: true, domId: 'artifactReviewCollapseButton', className: 'artifact-panel-icon-btn', ariaLabel: jt('artifacts.review.collapseTitle', 'Collapse panel'), title: jt('artifacts.review.collapseTitle', 'Collapse panel'), trustedHtml: ICONS['chevron-right'] })
       + '</div></div>';
   }
 
@@ -107,8 +108,8 @@
     return actionButton({
       plain: true,
       className: 'artifact-panel-icon-btn artifact-panel-wrap hidden',
-      ariaLabel: 'Wrap long lines',
-      title: 'Wrap long lines',
+      ariaLabel: jt('artifacts.actions.wrapLongLines', 'Wrap long lines'),
+      title: jt('artifacts.actions.wrapLongLines', 'Wrap long lines'),
       ariaPressed: true,
       dataset: { 'artifact-panel-wrap': '' },
       trustedHtml: ICONS['text-wrap'],
@@ -119,36 +120,36 @@
     return '<div class="artifact-panel-controls"><div class="artifact-panel-controls-view" data-artifact-panel-view-slot></div><div class="artifact-panel-controls-actions">'
       + '<span data-artifact-panel-v2-stepper-slot></span><span class="artifact-panel-divider hidden" data-artifact-panel-stepper-divider></span>'
       + buildWrapButtonHtml()
-      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-copy', ariaLabel: 'Copy', title: 'Copy', dataset: { 'artifact-panel-v2-copy': '' }, trustedHtml: ICONS.copy })
-      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-download', ariaLabel: 'Download', title: 'Download', dataset: { 'artifact-panel-download': '' }, trustedHtml: ICONS.download })
+      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-copy', ariaLabel: jt('common.copy', 'Copy'), title: jt('common.copy', 'Copy'), dataset: { 'artifact-panel-v2-copy': '' }, trustedHtml: ICONS.copy })
+      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-download', ariaLabel: jt('artifacts.actions.download', 'Download'), title: jt('artifacts.actions.download', 'Download'), dataset: { 'artifact-panel-download': '' }, trustedHtml: ICONS.download })
       + '<span class="artifact-panel-save-revert" data-artifact-panel-v2-save-revert>'
-      + actionButton({ plain: true, domId: 'artifactReviewRevertButton', className: 'artifact-panel-text-btn hidden', ariaLabel: 'Revert', title: 'Revert', label: 'Revert' })
-      + actionButton({ plain: true, domId: 'artifactReviewSaveButton', className: 'artifact-panel-text-btn artifact-panel-save-btn hidden', ariaLabel: 'Save', title: 'Save', label: 'Save' })
+      + actionButton({ plain: true, domId: 'artifactReviewRevertButton', className: 'artifact-panel-text-btn hidden', ariaLabel: jt('common.revert', 'Revert'), title: jt('common.revert', 'Revert'), label: jt('common.revert', 'Revert') })
+      + actionButton({ plain: true, domId: 'artifactReviewSaveButton', className: 'artifact-panel-text-btn artifact-panel-save-btn hidden', ariaLabel: jt('common.save', 'Save'), title: jt('common.save', 'Save'), label: jt('common.save', 'Save') })
       + '</span></div></div>';
   }
 
   function buildViewControlHtml(value) {
-    return segmentedControl({ id: 'artifact-view', className: 'inv-segmented--compact', ariaLabel: 'Artifact view', value: value, options: [{ value: 'preview', label: 'Preview' }, { value: 'code', label: 'Code' }] });
+    return segmentedControl({ id: 'artifact-view', className: 'inv-segmented--compact', ariaLabel: jt('artifacts.review.viewLabel', 'Artifact view'), value: value, options: [{ value: 'preview', label: jt('artifacts.review.preview', 'Preview') }, { value: 'code', label: jt('artifacts.review.code', 'Code') }] });
   }
 
   function buildContentHtml() {
-    return '<div class="artifact-review-scroll artifact-panel-v2-scroll"><div class="artifact-panel-v2-empty" id="artifactReviewDetailEmpty">Select an artifact</div>'
+    return '<div class="artifact-review-scroll artifact-panel-v2-scroll"><div class="artifact-panel-v2-empty" id="artifactReviewDetailEmpty">' + escapeHtml(jt('artifacts.review.emptyHeading', 'Select an artifact')) + '</div>'
       + '<div class="artifact-review-detail-panel hidden" id="artifactReviewDetailPanel"><div class="hidden" id="artifactReviewDetailKicker"></div><div class="hidden" id="artifactReviewDetailPath"></div><div class="hidden" id="artifactReviewDetailStatus"></div><div class="hidden" id="artifactReviewDetailMeta"></div><div class="hidden" id="artifactReviewDetailNote"></div><span class="hidden" id="artifactReviewDirtyBadge"></span>'
-      + '<div class="artifact-panel-v2-content-host" id="artifactReviewPreviewShell"><div class="artifact-editor-shell hidden" id="artifactReviewEditorShell"><div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="Artifact editor"></div><textarea class="artifact-editor-fallback hidden" id="artifactReviewEditorFallback" spellcheck="false" aria-label="Artifact editor fallback"></textarea></div><div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div></div></div></div>';
+      + '<div class="artifact-panel-v2-content-host" id="artifactReviewPreviewShell"><div class="artifact-editor-shell hidden" id="artifactReviewEditorShell"><div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="' + escapeHtml(jt('artifacts.review.editorLabel', 'Artifact editor')) + '"></div><textarea class="artifact-editor-fallback hidden" id="artifactReviewEditorFallback" spellcheck="false" aria-label="' + escapeHtml(jt('artifacts.review.editorFallbackLabel', 'Artifact editor fallback')) + '"></textarea></div><div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div></div></div></div>';
   }
 
   function buildStatusHtml() {
-    var popover = inventoryPopover({ id: 'artifact-panel-v2-provenance', domId: 'artifactPanelV2ProvenancePopover', className: 'artifact-panel-v2-provenance-popover', ariaLabel: 'Provenance', trustedHtml: '<div class="artifacts-provenance-timeline" id="artifactReviewProvenanceTimeline"></div>' });
+    var popover = inventoryPopover({ id: 'artifact-panel-v2-provenance', domId: 'artifactPanelV2ProvenancePopover', className: 'artifact-panel-v2-provenance-popover', ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'), trustedHtml: '<div class="artifacts-provenance-timeline" id="artifactReviewProvenanceTimeline"></div>' });
     return '<div class="artifact-panel-status"><span class="artifact-panel-status-meta" id="artifactPanelV2FooterMeta"></span><span class="hidden" id="artifactReviewStatus"></span><span class="artifact-panel-save-state" data-artifact-save-state aria-live="polite"></span>'
-      + actionButton({ plain: true, domId: 'artifactPanelV2ProvenanceTrigger', className: 'artifact-panel-icon-btn artifact-panel-v2-footer-action', ariaLabel: 'Provenance', title: 'Provenance', ariaHaspopup: 'dialog', ariaControls: 'artifactPanelV2ProvenancePopover', trustedHtml: ICONS.history }) + popover + '</div>';
+      + actionButton({ plain: true, domId: 'artifactPanelV2ProvenanceTrigger', className: 'artifact-panel-icon-btn artifact-panel-v2-footer-action', ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'), title: jt('artifacts.detail.provenanceHeading', 'Provenance'), ariaHaspopup: 'dialog', ariaControls: 'artifactPanelV2ProvenancePopover', trustedHtml: ICONS.history }) + popover + '</div>';
   }
 
   function buildHiddenLegacyActionsHtml() {
     return '<div class="artifact-panel-hidden-actions" aria-hidden="true">'
-      + actionButton({ plain: true, domId: 'artifactReviewRevealButton', className: 'hidden', ariaLabel: 'Reveal in folder' })
-      + actionButton({ plain: true, domId: 'artifactReviewOpenExternalButton', className: 'hidden', ariaLabel: 'Open externally' })
-      + actionButton({ plain: true, domId: 'artifactReviewJumpButton', className: 'hidden', ariaLabel: 'Jump to chat' })
-      + actionButton({ plain: true, domId: 'artifactReviewDeleteButton', className: 'hidden', ariaLabel: 'Delete artifact' })
+      + actionButton({ plain: true, domId: 'artifactReviewRevealButton', className: 'hidden', ariaLabel: jt('artifacts.actions.revealInFolder', 'Reveal in folder') })
+      + actionButton({ plain: true, domId: 'artifactReviewOpenExternalButton', className: 'hidden', ariaLabel: jt('artifacts.actions.openExternally', 'Open externally') })
+      + actionButton({ plain: true, domId: 'artifactReviewJumpButton', className: 'hidden', ariaLabel: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat') })
+      + actionButton({ plain: true, domId: 'artifactReviewDeleteButton', className: 'hidden', ariaLabel: jt('artifacts.actions.deleteLabel', 'Delete artifact') })
       + '</div>';
   }
 
@@ -170,7 +171,7 @@
   function formatFooterTimestamp(value) {
     var parsed = new Date(String(value || ''));
     if (Number.isNaN(parsed.getTime())) return '';
-    try { return parsed.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+    try { return parsed.toLocaleString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric', hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit' }); }
     catch (_error) { return ''; }
   }
 
@@ -179,7 +180,7 @@
     var file = artifact.generatedFile || {};
     var label = file.language && typeof formatLanguageLabel === 'function'
       ? formatLanguageLabel(file.language)
-      : artifact.artifactType === 'image' ? 'image' : artifact.artifactType === 'tool_output' ? 'tool output' : String(file.artifactKind || '');
+      : artifact.artifactType === 'image' ? jt('artifacts.types.imageLowercase', 'image') : artifact.artifactType === 'tool_output' ? jt('artifacts.types.toolOutputLowercase', 'tool output') : String(file.artifactKind || '');
     var segments = [];
     if (label) segments.push(String(label).toLowerCase());
     if (source !== undefined && source !== null) segments.push(formatByteSize(byteLength(source)));

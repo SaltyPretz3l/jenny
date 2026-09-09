@@ -193,7 +193,8 @@ test('F10 hardening: malformed message ids do not throw during jump resolution',
   assert.doesNotThrow(() => {
     assert.equal(harness.controller.jumpToFirstUnread(), false);
   });
-  assert.equal(harness.state.ui.firstUnreadMessageIdBySession.has('s1'), false);
+  assert.equal(harness.state.ui.firstUnreadMessageIdBySession.has('s1'), true,
+    'a canonical message with an unusual id retains unread state after a failed reveal');
 });
 
 test('F10: unread orientation reports state changes for the Wayfinder', () => {

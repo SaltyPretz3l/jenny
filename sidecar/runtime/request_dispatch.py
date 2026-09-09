@@ -17,6 +17,10 @@ from sidecar.ai.error_codes import (
     CMP_SRV_INITIALIZE_FAILED,
 )
 from sidecar.ai.feature_flags import is_feature_flag_enabled  # noqa: F401
+from sidecar.ai.host_policy import (
+    HOST_ALLOWED_RPC_METHODS,
+    container_host_policy_is_enforced,
+)
 from sidecar.ai.mode_policy import policy_for_mode  # noqa: F401
 from sidecar.ai.tools.catalog import build_tool_catalog  # noqa: F401
 from sidecar.protocol import (
@@ -87,6 +91,15 @@ PROTOCOL_VERSION_MISMATCH = CMP_PROTO_VERSION_MISMATCH
 MAX_REASON_CODE_LENGTH = 64
 _PLUGIN_RUNTIME_SCHEMA_V6 = 6
 _APPROVAL_PLAN_CACHE = ApprovalPlanCache()
+
+
+def _hosted_method_rejection(message_id: Any) -> ProcessOutcome:
+    response = None if message_id is None else error_response(
+            message_id, code=METHOD_NOT_FOUND_CODE,
+            message="method unavailable in hosted runtime",
+            data={"reason": "host_method_not_allowed", "host_mode": "server"},
+    )
+    return ProcessOutcome(True, False, response, [])
 
 # Re-export the chat-send cluster moved out to the sibling modules so that
 # ``from sidecar.runtime.request_dispatch import X`` and the
@@ -411,6 +424,8 @@ def process_message(
                 )
 
             if mode_resolution.mode == PLUGIN_RUNTIME_MODE:
+                if container_host_policy_is_enforced(brain_container):
+                    return _hosted_method_rejection(message_id)
                 return _process_plugin_runtime_initialize(
                     message_id=message_id,
                     params=params,
@@ -452,6 +467,9 @@ def process_message(
                     if isinstance(params, dict)
                     else ""
                 )
+                from sidecar.ai.execution_policy import latch_runtime_policies
+
+                latch_runtime_policies(brain_container, params)
 
                 def emit_runtime_progress(progress: dict[str, Any]) -> None:
                     if request_id:
@@ -560,6 +578,12 @@ def process_message(
                 ),
                 notifications=[],
             )
+
+        if (
+            container_host_policy_is_enforced(brain_container)
+            and method not in HOST_ALLOWED_RPC_METHODS
+        ):
+            return _hosted_method_rejection(message_id)
 
         if method == MODELS_LIST_METHOD:
             log_event(

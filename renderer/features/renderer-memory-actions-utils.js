@@ -5,6 +5,7 @@
   }
   root.rendererMemoryActionsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const windowRef = globalRef.window || globalRef;
   const MEMORY_RENDER_BATCH_SIZE = 200;
@@ -131,8 +132,8 @@
             message: toErrorMessage(error, 'Could not save memory capture preference.'),
           });
           if (!legacyAdoption) {
-            showShellErrorToast('Could not save the memory capture preference.', {
-              title: 'Memory Preference Not Saved',
+            showShellErrorToast(jt('memory.toasts.capturePreferenceNotSaved', 'Could not save the memory capture preference.'), {
+              title: jt('memory.titles.preferenceNotSaved', 'Memory Preference Not Saved'),
               source: TOAST_SOURCE.memory,
               dedupeKey: `${TOAST_SOURCE.memory}:capture-preference:error`,
             });
@@ -213,7 +214,7 @@
       const memory = getApprovedMemoryById(memoryId);
       if (!memory) return;
       if (!memoryApi || typeof memoryApi.update !== 'function') {
-        reportUnavailableAction('Memory Update Unavailable', 'Approved memory editing is unavailable.', 'update');
+        reportUnavailableAction(jt('memory.titles.updateUnavailable', 'Memory Update Unavailable'), jt('memory.errors.editingUnavailable', 'Approved memory editing is unavailable.'), 'update');
         return;
       }
       const patch = {
@@ -232,8 +233,8 @@
         clearApprovedMemoryDraft(memory.id);
         setEditingMemoryId(null);
         saveSucceeded = true;
-        showToastMessage('I updated that memory.', {
-          title: 'Memory Updated',
+        showToastMessage(jt('memory.toasts.updated', 'I updated that memory.'), {
+          title: jt('memory.titles.updated', 'Memory Updated'),
           tone: 'success',
           source: TOAST_SOURCE.memory,
           dedupeKey: `${TOAST_SOURCE.memory}:updated:${memory.id}`,
@@ -241,8 +242,8 @@
         await refreshApprovedMemories({ force: true });
       } catch (error) {
         if (disposed) return;
-        showShellErrorToast(toErrorMessage(error, 'Could not update approved memory.'), {
-          title: 'Memory Update Failed',
+        showShellErrorToast(toErrorMessage(error, jt('memory.errors.updateApproved', 'Could not update approved memory.')), {
+          title: jt('memory.titles.updateFailed', 'Memory Update Failed'),
           source: TOAST_SOURCE.memory,
           dedupeKey: `${TOAST_SOURCE.memory}:update:error:${memory.id}`,
         });
@@ -262,7 +263,7 @@
       const memoryApi = getMemoryApi();
       if (!memory) return;
       if (!memoryApi || typeof memoryApi.delete !== 'function') {
-        reportUnavailableAction('Memory Delete Unavailable', 'Approved memory deletion is unavailable.', 'delete');
+        reportUnavailableAction(jt('memory.titles.deleteUnavailable', 'Memory Delete Unavailable'), jt('memory.errors.deletionUnavailable', 'Approved memory deletion is unavailable.'), 'delete');
         return;
       }
       const deletedSnapshot = { ...memory };
@@ -279,15 +280,15 @@
           setEditingMemoryId(null);
         }
         const undoDedupeKey = `${TOAST_SOURCE.memory}:deleted:${memory.id}`;
-        showToastMessage('I removed that memory.', {
-          title: 'Memory Deleted',
+        showToastMessage(jt('memory.toasts.removed', 'I removed that memory.'), {
+          title: jt('memory.titles.deleted', 'Memory Deleted'),
           tone: 'success',
           source: TOAST_SOURCE.memory,
           dedupeKey: undoDedupeKey,
           actions: [
             {
               id: 'undo-delete',
-              label: 'Undo',
+              label: jt('memory.actions.undo', 'Undo'),
               kind: 'secondary',
               onClick: async () => {
                 dismissToast(undoDedupeKey);
@@ -303,8 +304,8 @@
                   });
                   if (disposed) return;
                   if (!isSuccessfulMemorySave(restored)) throw new Error('Could not restore memory.');
-                  showToastMessage('Memory restored.', {
-                    title: 'Undo Successful',
+                  showToastMessage(jt('memory.toasts.restored', 'Memory restored.'), {
+                    title: jt('memory.titles.undoSuccessful', 'Undo Successful'),
                     tone: 'success',
                     source: TOAST_SOURCE.memory,
                     dedupeKey: `${TOAST_SOURCE.memory}:undo:${memory.id}`,
@@ -316,8 +317,8 @@
                   ]);
                 } catch (undoError) {
                   if (disposed) return;
-                  showShellErrorToast(toErrorMessage(undoError, 'Could not restore memory.'), {
-                    title: 'Undo Failed',
+                  showShellErrorToast(toErrorMessage(undoError, jt('memory.errors.restore', 'Could not restore memory.')), {
+                    title: jt('memory.titles.undoFailed', 'Undo Failed'),
                     source: TOAST_SOURCE.memory,
                     dedupeKey: `${TOAST_SOURCE.memory}:undo:error:${memory.id}`,
                   });
@@ -333,8 +334,8 @@
         ]);
       } catch (error) {
         if (disposed) return;
-        showShellErrorToast(toErrorMessage(error, 'Could not delete approved memory.'), {
-          title: 'Memory Delete Failed',
+        showShellErrorToast(toErrorMessage(error, jt('memory.errors.deleteApproved', 'Could not delete approved memory.')), {
+          title: jt('memory.titles.deleteFailed', 'Memory Delete Failed'),
           source: TOAST_SOURCE.memory,
           dedupeKey: `${TOAST_SOURCE.memory}:delete:error:${memory.id}`,
         });
@@ -354,9 +355,9 @@
       }
       const deleteDedupeKey = `${TOAST_SOURCE.memory}:confirm-delete:${memory.id}`;
       showToastMessage(
-        `Delete "${memory.title}"? You can undo this for a short time.`,
+        jt('memory.toasts.deleteConfirm', 'Delete "{title}"? You can undo this for a short time.', { title: memory.title }),
         {
-          title: 'Confirm Delete',
+          title: jt('memory.titles.confirmDelete', 'Confirm Delete'),
           tone: 'warning',
           sticky: true,
           source: TOAST_SOURCE.memory,
@@ -364,7 +365,7 @@
           actions: [
             {
               id: 'confirm-delete',
-              label: 'Delete',
+              label: jt('common.delete', 'Delete'),
               kind: 'danger',
               onClick: () => {
                 dismissToast(deleteDedupeKey);
@@ -373,7 +374,7 @@
             },
             {
               id: 'cancel-delete',
-              label: 'Cancel',
+              label: jt('common.cancel', 'Cancel'),
               kind: 'secondary',
               onClick: () => {
                 dismissToast(deleteDedupeKey);
@@ -390,7 +391,7 @@
       const memoryApi = getMemoryApi();
       if (!memory) return;
       if (!memoryApi || typeof memoryApi.update !== 'function') {
-        reportUnavailableAction('Source Removal Unavailable', 'Memory source removal is unavailable.', 'source');
+        reportUnavailableAction(jt('memory.titles.sourceRemovalUnavailable', 'Source Removal Unavailable'), jt('memory.errors.sourceRemovalUnavailable', 'Memory source removal is unavailable.'), 'source');
         return;
       }
       setApprovedMemoryPendingAction(memory.id, 'source');
@@ -408,8 +409,8 @@
         await refreshApprovedMemories({ force: true });
       } catch (error) {
         if (disposed) return;
-        showShellErrorToast(toErrorMessage(error, 'Could not remove memory source.'), {
-          title: 'Source Removal Failed', source: TOAST_SOURCE.memory,
+        showShellErrorToast(toErrorMessage(error, jt('memory.errors.removeSource', 'Could not remove memory source.')), {
+          title: jt('memory.titles.sourceRemovalFailed', 'Source Removal Failed'), source: TOAST_SOURCE.memory,
           dedupeKey: `${TOAST_SOURCE.memory}:source:error:${memory.id}`,
         });
       } finally {
@@ -430,7 +431,7 @@
       const candidate = getPendingMemoryCandidate(sessionId, fingerprint);
       if (!candidate) return;
       if (!memoryApi) {
-        reportUnavailableAction('Memory Review Unavailable', 'Pending memory review is unavailable.', 'review');
+        reportUnavailableAction(jt('memory.titles.reviewUnavailable', 'Memory Review Unavailable'), jt('memory.errors.reviewUnavailable', 'Pending memory review is unavailable.'), 'review');
         return;
       }
       setPendingMemoryReviewAction(sessionId, fingerprint, action);
@@ -456,8 +457,8 @@
         ]);
       } catch (error) {
         if (disposed) return;
-        showShellErrorToast(toErrorMessage(error, 'Could not update pending memory.'), {
-          title: 'Memory Review Failed', source: TOAST_SOURCE.memory,
+        showShellErrorToast(toErrorMessage(error, jt('memory.errors.updatePending', 'Could not update pending memory.')), {
+          title: jt('memory.titles.reviewFailed', 'Memory Review Failed'), source: TOAST_SOURCE.memory,
           dedupeKey: `${TOAST_SOURCE.memory}:review:error:${fingerprint}`,
         });
       } finally {
@@ -508,9 +509,9 @@
         let toastId = '';
         const dedupeKey = `${TOAST_SOURCE.memory}:${sessionId}`;
         toastId = showToastMessage(
-          String(candidate.lesson_text || 'I noticed something worth remembering.'),
+          String(candidate.lesson_text || jt('memory.suggestions.captureFallback', 'I noticed something worth remembering.')),
           {
-            title: 'Remember this?',
+            title: jt('memory.titles.rememberPrompt', 'Remember this?'),
             tone: 'warning',
             sticky: true,
             source: TOAST_SOURCE.memory,
@@ -518,7 +519,7 @@
             actions: [
               {
                 id: 'remember',
-                label: 'Remember',
+                label: jt('memory.actions.remember', 'Remember'),
                 kind: 'primary',
                 onClick: async () => {
                   try {
@@ -533,9 +534,9 @@
                       refreshMemoryStatus({ force: true }),
                     ]);
                     showToastMessage(
-                      saved?.created === false ? 'I already had that saved.' : "I'll remember that.",
+                      saved?.created === false ? jt('memory.toasts.alreadySaved', 'I already had that saved.') : jt('memory.toasts.saved', "I'll remember that."),
                       {
-                        title: 'Memory Saved',
+                        title: jt('memory.titles.saved', 'Memory Saved'),
                         tone: 'success',
                         source: TOAST_SOURCE.memory,
                         dedupeKey: `${dedupeKey}:saved`,
@@ -554,8 +555,8 @@
                       streamId,
                       message: toErrorMessage(error, 'Could not save memory.'),
                     });
-                    showShellErrorToast(toErrorMessage(error, 'Could not save memory.'), {
-                      title: 'Memory Save Failed',
+                    showShellErrorToast(toErrorMessage(error, jt('memory.errors.save', 'Could not save memory.')), {
+                       title: jt('memory.titles.saveFailed', 'Memory Save Failed'),
                       source: TOAST_SOURCE.memory,
                       dedupeKey: `${dedupeKey}:error`,
                     });
@@ -564,7 +565,7 @@
               },
               {
                 id: 'open-memory-hub',
-                label: 'Review in Memory',
+                label: jt('memory.actions.review', 'Review in Memory'),
                 kind: 'secondary',
                 onClick: () => {
                   dismissToast(toastId);
@@ -578,7 +579,7 @@
               },
               {
                 id: 'dismiss',
-                label: 'Not now',
+                label: jt('memory.actions.notNow', 'Not now'),
                 kind: 'secondary',
                 onClick: () => {
                   if (disposed) return;

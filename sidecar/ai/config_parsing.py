@@ -35,6 +35,51 @@ VALID_MCP_AUTH_KINDS = frozenset(
 )
 VALID_REASONING_EFFORTS = frozenset({"", "low", "medium", "high", "xhigh"})
 VALID_SAFETY_MODES = frozenset({"normal", "strict", "paranoid"})
+VALID_UI_LANGUAGES = frozenset(
+    {
+        "en",
+        "es",
+        "fr",
+        "de",
+        "it",
+        "pt-BR",
+        "nl",
+        "pl",
+        "ru",
+        "uk",
+        "tr",
+        "ar",
+        "hi",
+        "id",
+        "vi",
+        "ja",
+        "ko",
+        "zh-CN",
+        "zh-TW",
+    }
+)
+UI_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "pt-BR": "Brazilian Portuguese",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "ru": "Russian",
+    "uk": "Ukrainian",
+    "tr": "Turkish",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "id": "Indonesian",
+    "vi": "Vietnamese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh-CN": "Simplified Chinese",
+    "zh-TW": "Traditional Chinese",
+}
+_UI_LANGUAGE_BY_CASEFOLD = {language.casefold(): language for language in VALID_UI_LANGUAGES}
 LOCAL_FIRST_FALLBACK_ENGINES = frozenset(
     {"ollama", "vllm", "openai-compatible", "codex-cli", "mock"}
 )
@@ -231,6 +276,13 @@ def _normalize_safety_mode(value: Any, *, default: str = "normal") -> str:
     if normalized in VALID_SAFETY_MODES:
         return normalized
     return default
+
+
+def _normalize_ui_language(value: Any, *, default: str = "en") -> str:
+    token = _as_non_empty_string(value)
+    if token is None:
+        return default
+    return _UI_LANGUAGE_BY_CASEFOLD.get(token.casefold(), default)
 
 
 def _normalize_tool_search_mode(value: Any) -> str:

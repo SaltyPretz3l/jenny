@@ -6,6 +6,7 @@
   }
   root.rendererStreamBufferUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const STATUS_TYPES = new Set(['thinking_status', 'agent_status']);
 
   function utf8ByteLength(value) {
@@ -137,7 +138,7 @@
         droppedBytes: Number(payload?.droppedBytes) || 0,
       });
       guardedMutate(callOptions, () => {
-        setSessionComposerNotice?.(sessionId, 'Some live updates were skipped. Resyncing this chat…');
+      setSessionComposerNotice?.(sessionId, jt('chat.streamBuffer.someUpdatesSkipped', 'Some live updates were skipped. Resyncing this chat…'));
       });
       try {
         const persisted = await getPersistedSession?.(sessionId);
@@ -151,7 +152,7 @@
             turnEvents: Array.isArray(persisted.turn_events) ? persisted.turn_events : [],
             activeTurn: persisted.active_turn ?? null,
           });
-          setSessionComposerNotice?.(sessionId, 'Live updates were resynced after local buffering reached its safety limit.');
+      setSessionComposerNotice?.(sessionId, jt('chat.streamBuffer.resyncedAfterLimit', 'Live updates were resynced after local buffering reached its safety limit.'));
           queueSessionRender?.(sessionId, { messages: true, chrome: true });
         });
         return { buffered: false, terminal: false, degraded: true, hydrated: committed === true };
@@ -162,7 +163,7 @@
           message: String(error?.message || error).slice(0, 200),
         });
         guardedMutate(callOptions, () => {
-          setSessionComposerNotice?.(sessionId, 'Live updates were interrupted. Reopen this chat to resync.');
+      setSessionComposerNotice?.(sessionId, jt('chat.streamBuffer.interruptedReopen', 'Live updates were interrupted. Reopen this chat to resync.'));
         });
         return { buffered: false, terminal: false, degraded: true, hydrated: false };
       }

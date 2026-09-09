@@ -26,12 +26,13 @@
   root.rendererIdeDebugInspector = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const asyncFence = globalRef.rendererAsyncFence
     || (typeof require === 'function' ? require('../shared/async-fence') : {});
 
   const ACTION_ID = 'jenny.debug.inspect-node';
-  const ACTION_LABEL = 'Debug this file (Node Inspector)';
+  const ACTION_LABEL = jt('ide.debug.actionLabel', 'Debug this file (Node Inspector)');
   const TOAST_KEY = 'ide:debug:inspect';
   // The DevTools front-end parses the ws target itself, so the value is the RAW
   // host:port/uuid (NOT percent-encoded - encoding the ':' breaks attach).
@@ -146,14 +147,14 @@
       finishWith(() => {
         const clipboard = getClipboardApi();
         if (!clipboard || typeof clipboard.writeText !== 'function') {
-          toast('Debugger ready (' + hostPort + '). Inspector URL: ' + devtoolsUrl);
+          toast(jt('ide.debug.readyWithInspectorUrl', 'Debugger ready ({hostPort}). Inspector URL: {url}', { hostPort, url: devtoolsUrl }));
           return;
         }
         Promise.resolve(clipboard.writeText(devtoolsUrl))
-          .then(() => toast('Inspector URL copied (' + hostPort + ') — paste it into a Chromium-compatible DevTools window to attach.'))
+          .then(() => toast(jt('ide.debug.inspectorUrlCopied', 'Inspector URL copied ({hostPort}) — paste it into a Chromium-compatible DevTools window to attach.', { hostPort })))
           .catch((error) => {
             appendClientLog('WARN', 'ide.debug.clipboard_failed', { message: messageOf(error) });
-            toast('Debugger ready (' + hostPort + '). Inspector URL: ' + devtoolsUrl);
+            toast(jt('ide.debug.readyWithInspectorUrl', 'Debugger ready ({hostPort}). Inspector URL: {url}', { hostPort, url: devtoolsUrl }));
           });
       });
     }
@@ -163,7 +164,7 @@
         return;
       }
       if (busy) {
-        toast('A debug session is already starting…');
+        toast(jt('ide.debug.alreadyStarting', 'A debug session is already starting…'));
         return;
       }
       const path = editorHost?.getActivePath?.() || '';
@@ -171,17 +172,17 @@
         return;
       }
       if (isDiffTabId(path)) {
-        toast('Open the file itself (not a diff or preview tab) to debug it.');
+        toast(jt('ide.debug.openFileToDebug', 'Open the file itself (not a diff or preview tab) to debug it.'));
         return;
       }
       if (!isJavaScriptTarget(path)) {
-        toast('Debugging is currently available for JavaScript files only.');
+        toast(jt('ide.debug.javascriptOnly', 'Debugging is currently available for JavaScript files only.'));
         return;
       }
       const terminal = getWorkspaceTerminalApi();
       if (!terminal || typeof terminal.start !== 'function'
         || typeof terminal.write !== 'function' || typeof terminal.onData !== 'function') {
-        toast('The workspace terminal is unavailable in this shell mode.');
+        toast(jt('ide.debug.terminalUnavailable', 'The workspace terminal is unavailable in this shell mode.'));
         return;
       }
 
@@ -230,12 +231,12 @@
         }) || null;
       } catch (error) {
         appendClientLog('WARN', 'ide.debug.subscribe_failed', { message: messageOf(error) });
-        finishWith(() => toast('Could not attach to the terminal output.'));
+        finishWith(() => toast(jt('ide.debug.attachFailed', 'Could not attach to the terminal output.')));
         return;
       }
 
       activeTimer = setTimeout(() => {
-        finishWith(() => toast('Timed out waiting for the debugger to start. Check the Terminal panel.'));
+        finishWith(() => toast(jt('ide.debug.startTimeout', 'Timed out waiting for the debugger to start. Check the Terminal panel.')));
       }, inspectTimeoutMs);
 
       try {
@@ -252,7 +253,7 @@
         appendClientLog('INFO', 'ide.debug.launched', {});
       } catch (error) {
         appendClientLog('WARN', 'ide.debug.launch_failed', { message: messageOf(error) });
-        finishWith(() => toast('Could not launch the debug session.'));
+        finishWith(() => toast(jt('ide.debug.launchFailed', 'Could not launch the debug session.')));
       }
     }
 

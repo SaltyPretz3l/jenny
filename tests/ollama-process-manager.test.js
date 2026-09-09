@@ -540,10 +540,10 @@ test('ollama manager any_local stop skips the sweep when this install owns no lo
   );
   const skip = logs.find((entry) => entry.event === 'ollama.any_local_sweep_skipped');
   assert.ok(skip, 'expected the ollama.any_local_sweep_skipped observability log');
-  assert.equal(skip.details.reason, 'no_local_ollama_residue');
+  assert.equal(skip.details.reason, 'no_verified_owned_pid');
 });
 
-test('ollama manager any_local stop runs the sweep once this run has owned a process', async () => {
+test('ollama manager any_local stop skips cleanup when only historical ownership remains', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-ollama-any-local-residue-'));
   trackDirectory(userDataPath);
 
@@ -564,14 +564,16 @@ test('ollama manager any_local stop runs the sweep once this run has owned a pro
 
   await manager.stop({ scope: 'any_local' });
 
-  assert.equal(forceKillCalls.length, 1, 'residue present, so the sweep runs');
+  assert.deepEqual(forceKillCalls, [], 'historical ownership cannot authorize a process sweep');
   assert.equal(
     logs.some((entry) => entry.event === 'ollama.stopping_any_local'),
-    true
+    false
   );
+  assert.ok(logs.some((entry) => entry.event === 'ollama.any_local_sweep_skipped'
+    && entry.details.reason === 'no_verified_owned_pid'));
 });
 
-test('ollama manager any_local stop clears stale owned state before aggressive shutdown', async () => {
+test('ollama manager any_local stop clears dead owned state without discovering other processes', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-ollama-any-local-stale-'));
   trackDirectory(userDataPath);
 
@@ -584,9 +586,8 @@ test('ollama manager any_local stop clears stale owned state before aggressive s
   }, null, 2));
 
   const logs = [];
-  // The stale-state log is emitted BEFORE the residue gate and the state file is
-  // deleted regardless, so an unrecorded sweep stub leaves both assertions below
-  // true even when production skips the aggressive sweep entirely.
+  // A dead owned PID permits clearing its record, never discovering or killing
+  // another application's live Ollama processes.
   let sweepCalls = 0;
   const manager = new OllamaProcessManager({
     detectTrayConflictImpl: () => null,
@@ -601,10 +602,7 @@ test('ollama manager any_local stop clears stale owned state before aggressive s
 
   await manager.stop({ scope: 'any_local' });
 
-  assert.equal(sweepCalls, 1, 'the aggressive sweep must run exactly once');
-  // "clears stale owned state before" is the in-memory _resetLiveOwnership() and
-  // its log, not the file: _finalizeOwnedStop deletes ollama-process.json AFTER
-  // the sweep, so the file is still on disk while the sweep callback runs.
+  assert.equal(sweepCalls, 0, 'a dead owned PID must not authorize any sweep');
   assert.equal(fs.existsSync(stateFilePath), false);
   assert.equal(
     logs.some((entry) => entry.event === 'ollama.stale_owned_process_state_cleared'),

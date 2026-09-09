@@ -204,7 +204,7 @@ test('F8: supplied hover meta renders even when the action model hides default m
     '~2 tokens est. · ~2 cumulative'
   );
 
-  assert.match(html, /<div class="chat-hover-meta">~2 tokens est\. · ~2 cumulative<\/div>/);
+  assert.match(html, /<div class="chat-hover-meta" tabindex="0" title="[^"]+" aria-label="[^"]+">~2 tokens est\. · ~2 cumulative<\/div>/);
   assert.doesNotMatch(html, /chat-hover-meta-empty/);
 });
 

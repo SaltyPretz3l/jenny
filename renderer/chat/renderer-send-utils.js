@@ -5,6 +5,8 @@
   }
   root.rendererSendUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const _sendFlowHelpers = typeof globalThis !== 'undefined' && globalThis.rendererSendFlowHelpers
     ? globalThis.rendererSendFlowHelpers
     : typeof require === 'function'
@@ -113,14 +115,13 @@
     && globalThis.rendererTurnStatusPill.SOURCES)
     || { TURN_SENDING: 'turn.sending' };
 
-  const FOLLOW_UP_ACTION_BUSY_REASON = 'Wait for the current response to finish before trying that.';
-  const FOLLOW_UP_AUTH_BLOCKED_REASON = 'Sign in before trying that.';
-  const FOLLOW_UP_BACKEND_NOT_READY_REASON = 'Wait for Jenny to finish connecting before trying that.';
+  const FOLLOW_UP_ACTION_BUSY_REASON = jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
+  const FOLLOW_UP_AUTH_BLOCKED_REASON = jt('chat.send.signInBeforeTrying', 'Sign in before trying that.');
+  const FOLLOW_UP_BACKEND_NOT_READY_REASON = jt('chat.send.waitForBackend', 'Wait for Jenny to finish connecting before trying that.');
   // Atomic edit failures keep the inline editor open; this notice points the
   // user back to that retained retry surface instead of the ordinary composer.
   const EDIT_REGENERATE_FAILURE_MESSAGE =
-    'Your edit was not applied because the replacement response could not start. Retry from the open editor.';
-
+    jt('chat.send.editReplacementFailed', 'Your edit was not applied because the replacement response could not start. Retry from the open editor.');
 
   function createSendController(deps) {
     const { state } = deps;
@@ -230,7 +231,7 @@
         }
       }
       setTurnStatusPill(PILL_SOURCES.TURN_SENDING, {
-        message: 'Sending\u2026',
+        message: jt('chat.send.sendingStatus', 'Sending\u2026'),
         tone: 'pending',
         spinner: true,
         badgeText: 'Sending',
@@ -434,7 +435,7 @@
         // Audio clips carry no prompt content (voice transcription was
         // removed), so a clip-only draft has nothing to send. Say so
         // instead of silently ignoring the click/Enter.
-        setComposerStatusNotice('Audio clips need a typed message — add some text before sending.', {
+        setComposerStatusNotice(jt('composer.send.audioNeedsText', 'Audio clips need a typed message — add some text before sending.'), {
           owner: 'send:audio_only',
           tone: 'warning',
         });
@@ -453,7 +454,7 @@
       }
       const requestedSessionId = String(settings.sessionIdOverride || state.currentSessionId || '').trim();
       if (compactionCoordinator?.isPending?.(requestedSessionId)) {
-        setComposerStatusNotice('Compacting context…', { owner: `compaction:${requestedSessionId}`, tone: 'pending', spinner: true });
+      setComposerStatusNotice(jt('settings.compaction.compacting', 'Compacting context…'), { owner: `compaction:${requestedSessionId}`, tone: 'pending', spinner: true });
         renderComposerState();
         appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_compacting' });
         return { rejected: true, reason: 'session_compacting', sessionId: requestedSessionId };
@@ -533,7 +534,7 @@
             },
           });
           if (!queuedEntry) {
-            setComposerStatusNotice('The send outbox is full. Cancel or send an existing item first.', {
+      setComposerStatusNotice(jt('chat.send.outboxFull', 'The send outbox is full. Cancel or send an existing item first.'), {
               owner: 'send:outbox_full', tone: 'warning',
             });
             renderComposerState();
@@ -580,9 +581,9 @@
       }
       if (attachmentBudget.skipped.length) {
         showToastMessage(
-          `${attachmentBudget.skipped.length} attachment${attachmentBudget.skipped.length === 1 ? '' : 's'} skipped because the session budget is full.`,
+          jtn('chat.send.attachmentBudgetSkipped', attachmentBudget.skipped.length, { count: attachmentBudget.skipped.length }, '{count} attachment skipped because the session budget is full.', '{count} attachments skipped because the session budget is full.'),
           {
-            title: 'Attachment Budget Reached',
+            title: jt('chat.send.attachmentBudgetReachedTitle', 'Attachment Budget Reached'),
             tone: 'warning',
             sticky: true,
             source: TOAST_SOURCE.attachments,
@@ -854,7 +855,7 @@
       if (!availability.available) return availability;
       const payload = sendReceipts.getFailedPayload(payloadId);
       if (!payload || !payload.sessionId) {
-        return { available: false, reason: 'The original failed payload has no destination chat.' };
+      return { available: false, reason: jt('chat.send.failedPayloadNoDestination', 'The original failed payload has no destination chat.') };
       }
       return availability;
     }
@@ -879,7 +880,7 @@
       if (!availability.available) return null;
       const payload = sendReceipts.getFailedPayload(payloadId);
       if (isSessionBusy(payload.sessionId)) {
-        showComposerActionError(new Error('Wait for the current response to finish before retrying.'), 'Retry Unavailable');
+      showComposerActionError(new Error('Wait for the current response to finish before retrying.'), jt('chat.send.retryUnavailableTitle', 'Retry Unavailable'));
         return null;
       }
       const result = await startPromptSend(payload.prompt, {

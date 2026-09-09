@@ -17,26 +17,27 @@
   root.rendererCommandPaletteProviders = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   /* ── Scopes ──
      `groups: null` means "every group". Tab cycles this list in order; the
      prefix characters below jump straight to one. */
   const SCOPES = [
     { id: 'all', label: '', groups: null },
-    { id: 'chats', label: 'Chats', groups: ['Sessions'] },
+    { id: 'chats', label: jt('commandPalette.scopes.chats', 'Chats'), groups: ['Sessions'] },
     {
       id: 'commands',
-      label: 'Commands',
-      groups: ['Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Skills', 'Slash commands', 'Help'],
+      label: jt('commandPalette.scopes.commands', 'Commands'),
+      groups: ['Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help'],
     },
-    { id: 'settings', label: 'Settings', groups: ['Settings'] },
+    { id: 'settings', label: jt('commandPalette.scopes.settings', 'Settings'), groups: ['Settings'] },
   ];
 
   const SCOPE_PREFIXES = { '#': 'chats', '>': 'commands', '@': 'settings' };
 
   // Empty-query display order. Also the group order for the grouped view.
   const GROUP_ORDER = [
-    'Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Sessions', 'Settings', 'Skills', 'Slash commands', 'Help',
+    'Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Sessions', 'Settings', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help',
   ];
 
   // Row type word shown on the trailing edge. Sentence case, singular.
@@ -65,6 +66,7 @@
     'Slash commands': 'slash',
     Help: 'help',
   };
+  GROUP_TAGS[jt('commandPalette.groups.slashCommands', 'Slash commands')] = GROUP_TAGS['Slash commands']; GROUP_ICONS[jt('commandPalette.groups.slashCommands', 'Slash commands')] = GROUP_ICONS['Slash commands'];
 
   function groupOrder(groupName) {
     const index = GROUP_ORDER.indexOf(groupName);
@@ -135,20 +137,20 @@
 
     function getNavigateItems() {
       return [
-        { id: 'nav:home', group: 'Navigate', label: 'Home', description: 'Companion home view', hint: 'Ctrl 1', run: navigateTo('home') },
-        { id: 'nav:chat', group: 'Navigate', label: 'Chat', description: 'Active conversation', hint: 'Ctrl 2', run: navigateTo('chat') },
-        { id: 'nav:ide', group: 'Navigate', label: 'Workspace', description: 'File editor and Jenny change review', hint: 'Ctrl 3', run: navigateTo('ide') },
-        { id: 'nav:logs', group: 'Navigate', label: 'Logs', description: 'Client and backend logs', hint: 'Ctrl 4', run: navigateTo('logs') },
-        { id: 'nav:settings', group: 'Navigate', label: 'Settings', description: 'Models, personality, features', hint: 'Ctrl 5', run: navigateTo('settings') },
+        { id: 'nav:home', group: 'Navigate', label: jt('commandPalette.navigation.home', 'Home'), description: jt('commandPalette.navigation.homeDescription', 'Companion home view'), hint: jt('commandPalette.navigation.homeHint', 'Ctrl 1'), run: navigateTo('home') },
+        { id: 'nav:chat', group: 'Navigate', label: jt('commandPalette.navigation.chat', 'Chat'), description: jt('commandPalette.navigation.chatDescription', 'Active conversation'), hint: jt('commandPalette.navigation.chatHint', 'Ctrl 2'), run: navigateTo('chat') },
+        { id: 'nav:ide', group: 'Navigate', label: jt('commandPalette.navigation.workspace', 'Workspace'), description: jt('commandPalette.navigation.workspaceDescription', 'File editor and Jenny change review'), hint: jt('commandPalette.navigation.workspaceHint', 'Ctrl 3'), run: navigateTo('ide') },
+        { id: 'nav:logs', group: 'Navigate', label: jt('commandPalette.navigation.logs', 'Logs'), description: jt('commandPalette.navigation.logsDescription', 'Client and backend logs'), hint: jt('commandPalette.navigation.logsHint', 'Ctrl 4'), run: navigateTo('logs') },
+        { id: 'nav:settings', group: 'Navigate', label: jt('commandPalette.navigation.settings', 'Settings'), description: jt('commandPalette.navigation.settingsDescription', 'Models, personality, features'), hint: jt('commandPalette.navigation.settingsHint', 'Ctrl 5'), run: navigateTo('settings') },
       ];
     }
 
     function getActionItems() {
       const items = [
-        { id: 'action:new-chat', group: 'Actions', label: 'New chat', description: 'Start a fresh session', hint: null, run: () => { try { clickNewChat(); } catch (_err) { /* noop */ } } },
-        { id: 'action:search-recents', group: 'Actions', label: 'Search recent chats', description: 'Focus the sidebar search input', hint: null, run: () => { try { focusConversationSearch(); } catch (_err) { /* noop */ } } },
-        { id: 'action:workspace', group: 'Actions', label: 'Open workspace', description: 'Jump to the Workspace editor', hint: null, run: navigateTo('ide') },
-        { id: 'action:toggle-sidebar', group: 'Actions', label: 'Toggle sidebar', description: 'Collapse or expand the sidebar rail', hint: null, run: () => { try { toggleSidebarCollapsed(); } catch (_err) { /* noop */ } } },
+        { id: 'action:new-chat', group: 'Actions', label: jt('commandPalette.actions.newChat', 'New chat'), description: jt('commandPalette.actions.newChatDescription', 'Start a fresh session'), hint: null, run: () => { try { clickNewChat(); } catch (_err) { /* noop */ } } },
+        { id: 'action:search-recents', group: 'Actions', label: jt('commandPalette.actions.searchRecentChats', 'Search recent chats'), description: jt('commandPalette.actions.searchRecentChatsDescription', 'Focus the sidebar search input'), hint: null, run: () => { try { focusConversationSearch(); } catch (_err) { /* noop */ } } },
+        { id: 'action:workspace', group: 'Actions', label: jt('commandPalette.actions.openWorkspace', 'Open workspace'), description: jt('commandPalette.actions.openWorkspaceDescription', 'Jump to the Workspace editor'), hint: null, run: navigateTo('ide') },
+        { id: 'action:toggle-sidebar', group: 'Actions', label: jt('commandPalette.actions.toggleSidebar', 'Toggle sidebar'), description: jt('commandPalette.actions.toggleSidebarDescription', 'Collapse or expand the sidebar rail'), hint: null, run: () => { try { toggleSidebarCollapsed(); } catch (_err) { /* noop */ } } },
       ];
       // Labels resolve against live state at snapshot time, so Pin/Unpin and
       // Archive/Unarchive stay truthful for the session the palette opened over.
@@ -158,16 +160,16 @@
         items.push({
           id: 'action:pin-session',
           group: 'Actions',
-          label: currentSession.pinned === true ? 'Unpin current chat' : 'Pin current chat',
-          description: currentSession.pinned === true ? 'Drop the active chat out of PINNED' : 'Keep the active chat at the top of the panel',
+          label: currentSession.pinned === true ? jt('commandPalette.actions.unpinCurrentChat', 'Unpin current chat') : jt('commandPalette.actions.pinCurrentChat', 'Pin current chat'),
+          description: currentSession.pinned === true ? jt('commandPalette.actions.unpinCurrentChatDescription', 'Drop the active chat out of PINNED') : jt('commandPalette.actions.pinCurrentChatDescription', 'Keep the active chat at the top of the panel'),
           hint: null,
           run: () => { try { togglePinActiveSession(); } catch (_err) { /* noop */ } },
         });
         items.push({
           id: 'action:archive-session',
           group: 'Actions',
-          label: currentSession.archived_at ? 'Unarchive current chat' : 'Archive current chat',
-          description: currentSession.archived_at ? 'Bring the active chat back to recents' : 'Move the active chat into Archived',
+          label: currentSession.archived_at ? jt('commandPalette.actions.unarchiveCurrentChat', 'Unarchive current chat') : jt('commandPalette.actions.archiveCurrentChat', 'Archive current chat'),
+          description: currentSession.archived_at ? jt('commandPalette.actions.unarchiveCurrentChatDescription', 'Bring the active chat back to recents') : jt('commandPalette.actions.archiveCurrentChatDescription', 'Move the active chat into Archived'),
           hint: null,
           run: () => { try { toggleArchiveActiveSession(); } catch (_err) { /* noop */ } },
         });
@@ -175,16 +177,16 @@
       items.push({
         id: 'action:show-archived',
         group: 'Actions',
-        label: (state.ui && state.ui.sidebarArchivedView === true) ? 'Back to recent chats' : 'Show archived chats',
-        description: 'Toggle the archived view in the chats panel',
+        label: (state.ui && state.ui.sidebarArchivedView === true) ? jt('commandPalette.actions.backToRecentChats', 'Back to recent chats') : jt('commandPalette.actions.showArchivedChats', 'Show archived chats'),
+        description: jt('commandPalette.actions.toggleArchivedViewDescription', 'Toggle the archived view in the chats panel'),
         hint: null,
         run: () => { try { toggleArchivedView(); } catch (_err) { /* noop */ } },
       });
       items.push({
         id: 'action:sweep-empty',
         group: 'Actions',
-        label: 'Sweep empty chats',
-        description: 'Clean up untitled chats with no messages (confirms first)',
+        label: jt('commandPalette.actions.sweepEmptyChats', 'Sweep empty chats'),
+        description: jt('commandPalette.actions.sweepEmptyChatsDescription', 'Clean up untitled chats with no messages (confirms first)'),
         hint: null,
         run: () => { try { sweepEmptyChats(); } catch (_err) { /* noop */ } },
       });
@@ -195,8 +197,8 @@
         items.push({
           id: 'action:quick-settings',
           group: 'Actions',
-          label: 'Open quick settings',
-          description: 'Theme, model, and display settings in a compact overlay',
+          label: jt('commandPalette.actions.openQuickSettings', 'Open quick settings'),
+          description: jt('commandPalette.actions.openQuickSettingsDescription', 'Theme, model, and display settings in a compact overlay'),
           hint: null,
           run: () => { try { quickSettings.toggle(); } catch (_err) { /* noop */ } },
         });
@@ -207,14 +209,14 @@
     function getSlashItems() {
       return safeList(listSlashCommands).filter((entry) => entry.action !== 'attach').map((entry) => ({
         id: 'slash:' + String(entry.name || ''),
-        group: 'Slash commands',
+        group: jt('commandPalette.groups.slashCommands', 'Slash commands'),
         label: String(entry.name || ''),
         description: entry.available === false
-          ? String(entry.description || '') + ' — ' + String(entry.unavailableReason || 'Command unavailable.')
+          ? String(entry.description || '') + ' — ' + String(entry.unavailableReason || jt('commandPalette.unavailableMessage', 'Command unavailable.'))
           : String(entry.description || ''),
-        hint: entry.action === 'insert' ? 'Insert' : 'Run',
+        hint: entry.action === 'insert' ? jt('commandPalette.hints.insert', 'Insert') : jt('commandPalette.hints.run', 'Run'),
         disabled: entry.available === false,
-        unavailableReason: String(entry.unavailableReason || 'Command unavailable.'),
+        unavailableReason: String(entry.unavailableReason || jt('commandPalette.unavailableMessage', 'Command unavailable.')),
         run: () => { try { (entry.action === 'insert' ? insertSlashCommand : tryExecuteSlashCommand)(String(entry.name || '')); } catch (_err) { /* noop */ } },
       }));
     }
@@ -225,7 +227,7 @@
         group: 'Skills',
         label: String(entry.name || ''),
         description: [entry.skill.name, entry.description].filter(Boolean).join(' \u2014 '),
-        hint: 'Attach',
+        hint: jt('commandPalette.hints.attach', 'Attach'),
         run: () => { try { tryExecuteSlashCommand(String(entry.name || '')); } catch (_err) { /* noop */ } },
       }));
     }
@@ -246,8 +248,8 @@
         return {
           id: 'session:' + String(session.id),
           group: 'Sessions',
-          label: String(session.title || 'Untitled chat'),
-          description: session.archived_at ? (preview ? preview + ' · archived' : 'archived') : preview,
+          label: String(session.title || jt('commandPalette.sessions.untitledChat', 'Untitled chat')),
+          description: session.archived_at ? (preview ? jt('commandPalette.sessions.archivedPreview', '{preview} · archived', { preview }) : jt('commandPalette.sessions.archived', 'archived')) : preview,
           hint: null,
           recencyTimestamp: session.updated_at || session.created_at || '',
           run: () => { Promise.resolve().then(() => activateWorkspaceSession(session.id)).catch(() => {}); },
@@ -260,10 +262,10 @@
       return pendings.map((pending) => ({
         id: 'undo:' + String(pending.kind || 'pending') + ':' + String(pending.key || ''),
         group: 'Undo',
-        label: 'Undo: ' + String(pending.label || 'recent action'),
+        label: jt('commandPalette.undo.label', 'Undo: {label}', { label: String(pending.label || 'recent action') }),
         // No countdown: it was computed once at render and never ticked, so it
         // was wrong the moment it was read.
-        description: 'Reverse this action',
+        description: jt('commandPalette.undo.description', 'Reverse this action'),
         hint: null,
         run: () => { try { if (typeof pending.undo === 'function') pending.undo(); } catch (_err) { /* noop */ } },
       }));
@@ -305,8 +307,8 @@
         .concat([{
           id: 'help:keyboard',
           group: 'Help',
-          label: 'Keyboard shortcuts',
-          description: 'Quick reference for hotkeys across Jenny',
+          label: jt('commandPalette.help.keyboardShortcuts', 'Keyboard shortcuts'),
+          description: jt('commandPalette.help.keyboardShortcutsDescription', 'Quick reference for hotkeys across Jenny'),
           hint: null,
           run: () => { try { openKeyboardShortcuts(); } catch (_err) { /* noop */ } },
         }])

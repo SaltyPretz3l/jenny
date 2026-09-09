@@ -5,6 +5,7 @@
   }
   root.rendererTranscriptAttachmentsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createTranscriptAttachmentsRenderer(deps) {
     const { escapeHtml } = deps || {};
 
@@ -48,7 +49,7 @@
     }
 
     function unavailableMedia(kind) {
-      const label = kind === 'audio' ? 'Audio unavailable' : 'Image unavailable';
+      const label = kind === 'audio' ? jt('chat.attachments.audioUnavailable', 'Audio unavailable') : jt('artifacts.image.unavailable', 'Image unavailable');
       return `<div class="message-attachment-card message-attachment-unavailable" role="status">${escapeHtml(label)}</div>`;
     }
 
@@ -75,9 +76,9 @@
                     <img
                       class="message-attachment-image-preview"
                       src="${escapeHtml(mediaUrl)}"
-                      alt="${escapeHtml(attachment.displayName || 'Image attachment')}"
+                      alt="${escapeHtml(attachment.displayName || jt('artifacts.image.attachment', 'Image attachment'))}"
                     >
-                    <figcaption class="message-attachment-caption">${escapeHtml(attachment.displayName || 'Image attachment')}</figcaption>
+                    <figcaption class="message-attachment-caption">${escapeHtml(attachment.displayName || jt('artifacts.image.attachment', 'Image attachment'))}</figcaption>
                   </figure>
                 `;
               }
@@ -93,21 +94,21 @@
                       preload="metadata"
                       src="${escapeHtml(mediaUrl)}"
                     ></audio>
-                    <div class="message-attachment-label">${escapeHtml(attachment.displayName || 'Audio attachment')}</div>
+                    <div class="message-attachment-label">${escapeHtml(attachment.displayName || jt('chat.attachments.audioAttachment', 'Audio attachment'))}</div>
                     <div class="message-attachment-meta">${escapeHtml(
                       attachment.transcriptStatus === 'complete'
-                        ? 'voice attachment - transcript ready'
+                        ? jt('chat.attachments.voiceTranscriptReady', 'voice attachment - transcript ready')
                         : attachment.transcriptStatus === 'error'
-                          ? 'voice attachment - transcript failed'
-                          : 'voice attachment'
+                          ? jt('chat.attachments.voiceTranscriptFailed', 'voice attachment - transcript failed')
+                          : jt('chat.attachments.voiceAttachment', 'voice attachment')
                     )}</div>
                   </div>
                 `;
               }
               return `
                 <div class="message-attachment-card">
-                  <div class="message-attachment-label">${escapeHtml(attachment.displayName || 'Attachment')}</div>
-                  <div class="message-attachment-meta">${escapeHtml(attachment.truncated ? 'truncated text attachment' : 'text attachment')}</div>
+                    <div class="message-attachment-label">${escapeHtml(attachment.displayName || jt('chat.attachments.attachment', 'Attachment'))}</div>
+                    <div class="message-attachment-meta">${escapeHtml(attachment.truncated ? jt('chat.attachments.truncatedTextAttachment', 'truncated text attachment') : jt('chat.attachments.textAttachment', 'text attachment'))}</div>
                 </div>
               `;
             })

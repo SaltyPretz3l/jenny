@@ -26,6 +26,7 @@
   root.rendererIdeSymbolNav = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const RENDER_DEBOUNCE_MS = 90;
   const MAX_SYMBOL_RESULTS = 200;
@@ -35,9 +36,9 @@
   // Breadcrumbs show names only; picker rows include the kind so ambiguous names
   // remain distinguishable. Unmapped kinds pass through verbatim.
   const KIND_LABEL = {
-    class: 'class', interface: 'interface', enum: 'enum', 'enum member': 'enum member',
-    function: 'function', method: 'method', 'local function': 'function', constructor: 'constructor',
-    property: 'property', getter: 'property', setter: 'property', accessor: 'property',
+    class: jt('ide.symbolNav.class', 'class'), interface: jt('ide.symbolNav.interface', 'interface'), enum: jt('ide.symbolNav.enum', 'enum'), 'enum member': jt('ide.symbolNav.enumMember', 'enum member'),
+    function: jt('ide.symbolNav.function', 'function'), method: jt('ide.symbolNav.method', 'method'), 'local function': jt('ide.symbolNav.function', 'function'), constructor: jt('ide.symbolNav.constructor', 'constructor'),
+    property: jt('ide.symbolNav.property', 'property'), getter: jt('ide.symbolNav.property', 'property'), setter: jt('ide.symbolNav.property', 'property'), accessor: jt('ide.symbolNav.property', 'property'),
     var: 'variable', let: 'variable', const: 'const', alias: 'alias', module: 'module',
     type: 'type', 'type parameter': 'type', 'index signature': 'index',
   };
@@ -371,8 +372,8 @@
         parts.push(actionButton({
           plain: true,
           className: 'ide-crumb ide-crumb-action ide-crumb-symbol',
-          title: `Go to ${label}`,
-          ariaLabel: `Go to ${label}`,
+          title: jt('ide.symbolNav.goTo', 'Go to {symbol}', { symbol: label }),
+          ariaLabel: jt('ide.symbolNav.goTo', 'Go to {symbol}', { symbol: label }),
           trustedHtml: escapeHtml(label),
           dataset: { 'ide-symbol-crumb': String(seg.offset) },
         }));
@@ -600,9 +601,9 @@
       fieldClass: 'ide-symbol-open-field',
       resultsClass: 'ide-symbol-open-results',
       inputId: 'ideSymbolOpenInput',
-      placeholder: 'Go to symbol in workspace…',
-      ariaLabel: 'Go to symbol in workspace',
-      resultsAriaLabel: 'Matching symbols',
+      placeholder: jt('ide.symbolNav.workspacePlaceholder', 'Go to symbol in workspace…'),
+      ariaLabel: jt('ide.symbolNav.workspaceLabel', 'Go to symbol in workspace'),
+      resultsAriaLabel: jt('ide.symbolNav.matchingSymbols', 'Matching symbols'),
       inputDataset: { 'ide-symbol-open-input': '1' },
       inputSelector: '[data-ide-symbol-open-input]',
       rowSelector: '[data-ide-symbol-path]',
@@ -614,10 +615,10 @@
         computeMatches: (query) => rankSymbols(symbols || [], query, paletteUtils.scoreMatch, MAX_SYMBOL_RESULTS),
         buildRowMarkup: buildResultRow,
         isLoading: () => symbols === null || indexing,
-        renderLoadingStatus: () => status('Indexing open files…'),
+        renderLoadingStatus: () => status(jt('ide.symbolNav.indexingOpenFiles', 'Indexing open files…')),
         renderEmptyStatus: (query) => status(query
-          ? 'No matching symbols in open files.'
-          : 'No symbols in open TS/JS files. Open a file to search it.'),
+          ? jt('ide.symbolNav.noMatches', 'No matching symbols in open files.')
+          : jt('ide.symbolNav.empty', 'No symbols in open TS/JS files. Open a file to search it.')),
         onSubmit: (row, { close }) => {
           close();
           if (row) {

@@ -38,6 +38,16 @@ test('inferEngineTypeFromModel maps codex CLI model IDs before local heuristics'
   assert.equal(inferEngineTypeFromModel('CODEX-CLI/Qwen/Qwen3.5-9B'), 'codex-cli');
 });
 
+test('inferEngineTypeFromModel recognizes Astra without claiming other GPT-6 or local IDs', () => {
+  for (const model of ['gpt-6-astra', ' GPT-6-ASTRA ']) {
+    assert.equal(inferEngineTypeFromModel(model), 'chatgpt');
+  }
+  assert.equal(inferEngineTypeFromModel('codex-cli/gpt-6-astra'), 'codex-cli');
+  for (const model of ['gpt-6-future', 'gpt-6-astra-local', 'gpt-oss:20b', 'local/gpt-6-astra']) {
+    assert.equal(inferEngineTypeFromModel(model), 'ollama');
+  }
+});
+
 test('inferEngineTypeFromModel maps ChatGPT subscription model IDs', () => {
   assert.equal(inferEngineTypeFromModel('gpt-5.5'), 'chatgpt');
   assert.equal(inferEngineTypeFromModel('gpt-5.6-sol'), 'chatgpt');

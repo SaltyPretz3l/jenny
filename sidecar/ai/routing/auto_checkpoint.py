@@ -23,6 +23,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
+from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.electron_tool_bridge import (
@@ -116,7 +117,10 @@ def maybe_create_auto_checkpoint(loop_run: Any, remaining: list[tuple[Any, int]]
     # dispatch set (this runs on every iteration that has tool calls).
     if getattr(loop_run, "checkpoint_created", False):
         return
-    feature_flags = getattr(getattr(loop_run.kernel, "_config", None), "feature_flags", None)
+    config = getattr(loop_run.kernel, "_config", None)
+    if host_policy_is_enforced(config):
+        return
+    feature_flags = getattr(config, "feature_flags", None)
     # tool_ids stays lazy (a generator): should_create_checkpoint tests the flag
     # before it consumes them, so the dispatch set is never walked on the common
     # flag-off path.

@@ -340,6 +340,9 @@
       String(message.kind || ''),
       String(message.status || ''),
       String(message.finalizedAt || ''),
+      String(message.timestamp || ''),
+      String(message.model_used || ''),
+      String(message.terminal_status || ''),
       String(message.updatedAt || message.updated_at || ''),
       String(message.content || ''),
       // Per-entry text lengths (not just counts): with the id-keyed reuse of

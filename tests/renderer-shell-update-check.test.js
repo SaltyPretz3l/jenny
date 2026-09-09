@@ -66,7 +66,7 @@ test('disabled dev-install state paints the reason, and the click flow stays clo
   await waitForUi(window, 20);
 
   const summary = doc.getElementById('updateSettingsSummary');
-  assert.match(summary.textContent, /Jenny 9\.9\.9-test — Automatic updates are disabled/);
+  assert.match(summary.textContent, /Updates unavailable/);
 
   doc.getElementById('checkUpdatesButton').click();
   await waitForUi(window, 20);
@@ -81,4 +81,42 @@ test('disabled dev-install state paints the reason, and the click flow stays clo
   closeButton.click();
   await waitForUi(window, 20);
   assert.equal(mount.innerHTML, '', 'close dismisses the dialog');
+});
+
+
+test('Settings reflects pushed download state and reopens it without another check', async (t) => {
+  const { window } = await loadRendererTestApp(t, {
+    shell: { updates: { state: { currentVersion: '1.0.1', status: 'unchecked' } } },
+  });
+  await waitForUi(window, 20);
+  await window.jennyShell.__emitUpdatesState({ status: 'downloaded', currentVersion: '1.0.1',
+    latestVersion: '1.0.2', canCheck: false, canInstall: true,
+    lastCheckedAt: '2026-09-09T00:00:00Z', downloadProgress: { percent: 100 } });
+  const summary = window.document.getElementById('updateSettingsSummary');
+  assert.match(summary.textContent, /1\.0\.2.*ready to install/);
+  assert.match(summary.textContent, /Last checked/);
+  window.jennyUpdateDialog.close();
+  let checks = 0;
+  window.jennyShell.updates.check = async () => { checks += 1; };
+  window.document.getElementById('checkUpdatesButton').click();
+  await waitForUi(window, 20);
+  assert.equal(checks, 0);
+  assert.ok(window.document.querySelector('[data-step-modal-action="install"]'));
+});
+
+test('a late check response cannot replace newer updater events in Settings or its dialog', async (t) => {
+  const { window } = await loadRendererTestApp(t, {
+    shell: { updates: { state: { currentVersion: '1.0.1', status: 'unchecked' } } },
+  });
+  await waitForUi(window, 20);
+  let finish;
+  window.jennyShell.updates.check = () => new Promise((resolve) => { finish = resolve; });
+  window.document.getElementById('checkUpdatesButton').click();
+  await waitForUi(window, 20);
+  await window.jennyShell.__emitUpdatesState({ status: 'downloaded', currentVersion: '1.0.1',
+    latestVersion: '1.0.2', canCheck: false, canInstall: true, downloadProgress: { percent: 100 } });
+  finish({ status: 'available', latestVersion: '1.0.2', canDownload: true });
+  await waitForUi(window, 20);
+  assert.match(window.document.getElementById('updateSettingsSummary').textContent, /ready to install/);
+  assert.ok(window.document.querySelector('[data-step-modal-action="install"]'));
 });

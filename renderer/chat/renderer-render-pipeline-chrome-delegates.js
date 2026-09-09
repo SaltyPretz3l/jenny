@@ -5,6 +5,7 @@
   }
   root.rendererRenderPipelineChromeDelegates = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createChromeDelegates(deps) {
     const { chromePipeline, clearActivity, failActivity, beginActivity, ACTIVITY_SCOPE } = deps;
 
@@ -75,7 +76,7 @@
 
       if (phase === 'failed') {
         failActivity(ACTIVITY_SCOPE.backendFailed, {
-          message: detail || 'Backend unavailable.',
+        message: detail || jt('chat.chrome.backendUnavailable', 'Backend unavailable.'),
           emphasis: 'strong',
           autoClearMs: persistentStrongMs,
         });
@@ -84,7 +85,7 @@
 
       if (phase === 'retrying') {
         beginActivity(ACTIVITY_SCOPE.backendRetrying, {
-          message: detail || 'Retrying backend startup...',
+        message: detail || jt('chat.chrome.retryingBackendStartup', 'Retrying backend startup...'),
           emphasis: 'strong',
           autoClearMs: persistentStrongMs,
         });
@@ -92,7 +93,7 @@
       }
 
       beginActivity(ACTIVITY_SCOPE.backendStarting, {
-        message: detail || 'Preparing Jenny...',
+        message: detail || jt('chat.chrome.preparingJenny', 'Preparing Jenny...'),
         emphasis: 'strong',
         autoClearMs: persistentStrongMs,
       });

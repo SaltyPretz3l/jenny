@@ -234,7 +234,7 @@ test('Split review panel (Artifact Panel V2): confirming Delete on the only arti
 
     const emptyEl = doc.getElementById('artifactReviewDetailEmpty');
     assert.equal(emptyEl.classList.contains('hidden'), false, 'artifact empty state ("Select an artifact") must show once the only artifact is deleted');
-    assert.match(emptyEl.textContent, /Select an artifact/);
+    assert.match(emptyEl.textContent, /No artifacts in this conversation/);
     assert.equal(doc.getElementById('artifactReviewDetailPanel').classList.contains('hidden'), true, 'detail body must not stay stuck rendering the deleted artifact');
   } finally {
     await app.dispose();

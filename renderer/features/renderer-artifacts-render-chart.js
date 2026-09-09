@@ -14,7 +14,7 @@
   }
   root.rendererArtifactsRenderChart = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const surfaceRenderGates = new WeakMap();
 
   function beginSurfaceRender(surface) {
@@ -47,11 +47,11 @@
     setDetailNote(
       surface,
       spec
-        ? 'Chart spec preview. No chart runtime is installed; showing the JSON spec.'
-        : 'Chart artifact could not be parsed as JSON. Showing the raw source.'
+        ? jt('artifacts.chart.specPreviewNote', 'Chart spec preview. No chart runtime is installed; showing the JSON spec.')
+        : jt('artifacts.chart.parseFailedNote', 'Chart artifact could not be parsed as JSON. Showing the raw source.')
     );
     surface.previewContent.innerHTML = (
-      '<div class="artifacts-empty">Chart rendering is an extension point - no runtime installed.</div>'
+      '<div class="artifacts-empty">' + jt('artifacts.chart.runtimeUnavailable', 'Chart rendering is an extension point - no runtime installed.') + '</div>'
       + `<pre class="artifact-preview-pre">${escapeHtml(prettyPrintJson(source))}</pre>`
     );
   }
@@ -65,7 +65,7 @@
     surface.editorShell.classList.add('hidden');
     surface.previewContent.classList.remove('hidden');
     if ((typeof getArtifactViewMode === 'function' ? getArtifactViewMode('chart') : 'preview') === 'edit') {
-      setDetailNote(surface, 'Viewing the chart JSON spec.');
+      setDetailNote(surface, jt('artifacts.chart.viewingJsonSpec', 'Viewing the chart JSON spec.'));
       surface.previewContent.innerHTML = `<pre class="artifact-preview-pre">${escapeHtml(prettyPrintJson(source))}</pre>`;
       return;
     }
@@ -78,18 +78,18 @@
       try {
         const result = runtime.render({ host, spec });
         if (result && typeof result.then === 'function') {
-          setDetailNote(surface, 'Rendering chart with the installed chart runtime.');
+          setDetailNote(surface, jt('artifacts.chart.rendering', 'Rendering chart with the installed chart runtime.'));
           return Promise.resolve(result).then(function onRendered() {
             if (!renderTarget.gate.isCurrent(renderTarget.token)
               || !host?.isConnected || !surface.previewContent.contains(host)) return;
-            setDetailNote(surface, 'Chart rendered by the installed chart runtime.');
+            setDetailNote(surface, jt('artifacts.chart.rendered', 'Chart rendered by the installed chart runtime.'));
           }, function onRenderFailed() {
             if (!renderTarget.gate.isCurrent(renderTarget.token)
               || !host?.isConnected || !surface.previewContent.contains(host)) return;
             renderSpecFallback(surface, spec, source, deps);
           });
         }
-        setDetailNote(surface, 'Chart rendered by the installed chart runtime.');
+        setDetailNote(surface, jt('artifacts.chart.rendered', 'Chart rendered by the installed chart runtime.'));
         return;
       } catch (_err) {
         /* fall through to the spec view */

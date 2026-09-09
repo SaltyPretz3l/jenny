@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const _terminalStatusVocabulary = typeof globalThis !== 'undefined' && typeof globalThis.chatTerminalStatusVocabulary !== 'undefined'
     ? globalThis.chatTerminalStatusVocabulary
     : typeof require === 'function' ? require('./chat-terminal-status-vocabulary')
@@ -151,8 +152,8 @@
     }
     const detail = normalizeToken(payload?.detail);
     const baseMessage = phase === 'stopped'
-      ? 'The backend stopped before this response finished.'
-      : 'The backend connection failed before this response finished.';
+      ? jt('chat.backendRecovery.stoppedBeforeFinished', 'The backend stopped before this response finished.')
+      : jt('chat.backendRecovery.connectionFailedBeforeFinished', 'The backend connection failed before this response finished.');
     const errorMessage = detail ? `${baseMessage} ${detail}` : baseMessage;
     for (const sessionId of sessionIds) {
       clearChatSendLifecycle(sessionId);
@@ -179,7 +180,7 @@
       ? reportError({
         message: errorMessage,
         options: {
-          title: 'Backend Unavailable',
+          title: jt('chat.backendRecovery.unavailableTitle', 'Backend Unavailable'),
           source: toastSource,
           dedupeKey: `${toastSource}:backend-unusable`,
         },
@@ -187,7 +188,7 @@
       : null;
     if (!routed) {
       showToastMessage(errorMessage, {
-        title: 'Backend Unavailable',
+        title: jt('chat.backendRecovery.unavailableTitle', 'Backend Unavailable'),
         tone: 'danger',
         sticky: true,
         source: toastSource,

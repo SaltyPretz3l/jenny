@@ -69,6 +69,17 @@ def test_load_skill_explicit_scope(tmp_path: Path) -> None:
     assert "Bundled body." in result.output
 
 
+def test_real_bundled_po_review_loads_without_truncation() -> None:
+    bundled_root = Path(__file__).resolve().parents[5] / "skills"
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    result = load_skill_tool({"name": "po-review", "scope": "bundled"}, _guard())
+
+    assert result.success is True
+    assert result.metadata["truncated"] is False
+    assert result.output == (bundled_root / "po-review" / "SKILL.md").read_text(encoding="utf-8")
+
+
 # ── Unknown name lists available skills ─────────────────────────────
 
 

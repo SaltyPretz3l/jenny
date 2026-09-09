@@ -7,7 +7,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const DEFAULT_INLINE_PROMPT = 'Approval is required before this tool can continue.';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const DEFAULT_INLINE_PROMPT = jt('approval.block.requiredPrompt', 'Approval is required before this tool can continue.');
   // The card shows the exact command being approved; beyond this the Input
   // panel (auto-expanded while awaiting approval) carries the full payload.
   const COMMAND_PREVIEW_MAX_CHARS = 600;
@@ -52,6 +53,22 @@
     ? stringUtils.escapeHtml
     : fallbackEscapeHtml;
 
+  function resolveBackendStrings() {
+    if (typeof globalThis !== 'undefined' && globalThis.jennyBackendStrings) {
+      return globalThis.jennyBackendStrings;
+    }
+    if (typeof require === 'function') {
+      try { return require('../shared/i18n-backend-strings'); } catch (_error) { /* not available */ }
+    }
+    return null;
+  }
+
+  function translatePolicyText(method, text) {
+    const backendStrings = resolveBackendStrings();
+    if (!backendStrings || typeof backendStrings[method] !== 'function') return text;
+    try { return backendStrings[method](text); } catch (_error) { return text; }
+  }
+
   function normalizeText(value) {
     return String(value == null ? '' : value).trim();
   }
@@ -73,10 +90,10 @@
   // What the folded preview counts, in the tool's own terms.
   function commandUnitNoun(toolName) {
     switch (toolName) {
-      case 'python_execute': return 'lines of Python';
-      case 'run_command': case 'Bash': case 'run_temp_script': return 'lines of shell';
-      case 'move_file': return 'moves';
-      default: return 'lines';
+      case 'python_execute': return jt('approval.block.pythonLines', 'lines of Python');
+      case 'run_command': case 'Bash': case 'run_temp_script': return jt('approval.block.shellLines', 'lines of shell');
+      case 'move_file': return jt('approval.block.moves', 'moves');
+      default: return jt('approval.block.lines', 'lines');
     }
   }
 
@@ -109,10 +126,10 @@
     const toolCallId = normalizeText(source.toolCallId);
     const approvalId = normalizeText(source.approvalId);
     const toolName = normalizeText(source.toolName);
-    const displayToolName = normalizeText(source.displayToolName) || toolName || 'this tool';
+    const displayToolName = normalizeText(source.displayToolName) || toolName || jt('approval.block.thisTool', 'this tool');
     const mode = source.mode === 'card' ? 'card' : 'inline';
     const prompt = normalizeText(source.prompt)
-      || (mode === 'inline' ? DEFAULT_INLINE_PROMPT : `Approve ${displayToolName}?`);
+      || (mode === 'inline' ? DEFAULT_INLINE_PROMPT : jt('approval.block.approvePrompt', 'Approve {tool}?', { tool: displayToolName }));
 
     const callIdAttr = escapeHtml(toolCallId);
     const approvalIdAttr = escapeHtml(approvalId);
@@ -127,10 +144,9 @@
         + `${approvalAttrMarkup}`
         + ` data-approval-status="pending" data-approval-variant="plan"></div>`;
     }
-    const labelName = escapeHtml(displayToolName);
     const promptTag = mode === 'inline' ? 'p' : 'div';
     const kickerMarkup = mode === 'inline'
-      ? `<div class="tool-approval-kicker"><span class="tool-approval-kicker-dot" aria-hidden="true"></span>Approval needed</div>`
+      ? `<div class="tool-approval-kicker"><span class="tool-approval-kicker-dot" aria-hidden="true"></span>${escapeHtml(jt('approval.block.needed', 'Approval needed'))}</div>`
       : '';
     // The headline says what will happen. A model-authored purpose wins it when
     // present -- only the model knows intent -- and the facts row below is the
@@ -141,16 +157,18 @@
     const purpose = boundedText(source.purpose, PURPOSE_TEXT_MAX_CHARS);
     const headline = purpose || prompt;
     const attributionMarkup = purpose
-      ? `<span class="tool-approval-intent-source">Jenny says</span> ` : '';
+      ? `<span class="tool-approval-intent-source">${escapeHtml(jt('approval.block.jennySays', 'Jenny says'))}</span> ` : '';
     const promptMarkup = `<${promptTag} class="tool-approval-prompt"`
       + ` data-approval-intent="${purpose ? 'stated' : 'derived'}">`
       + `${attributionMarkup}${escapeHtml(headline)}</${promptTag}>`;
     const policyScope = normalizePolicyText(source.policyScope, POLICY_SCOPES);
     const policyConsequence = normalizePolicyText(source.policyConsequence, POLICY_CONSEQUENCES);
+    const localizedPolicyScope = translatePolicyText('approvalScope', policyScope);
+    const localizedPolicyConsequence = translatePolicyText('approvalConsequence', policyConsequence);
     // Bounded like the policy strings above: this also renders from persisted
     // and replayed payloads, which never passed through the backend sanitizer.
     const reason = boundedText(source.reason, REASON_TEXT_MAX_CHARS);
-    const consequence = reason || policyConsequence;
+    const consequence = reason || localizedPolicyConsequence;
     const consequenceMarkup = consequence
       ? `<div class="tool-approval-consequence">${escapeHtml(consequence)}</div>`
       : '';
@@ -158,7 +176,7 @@
     // payload itself declares. No severity tint -- a warning on every
     // side-effecting call teaches the reader to click through it.
     const chips = [{ field: 'tool', label: displayToolName }];
-    if (policyScope) chips.push({ field: 'scope', label: policyScope });
+    if (policyScope) chips.push({ field: 'scope', label: localizedPolicyScope });
     for (const fact of normalizeFacts(source.facts)) {
       chips.push({ field: fact.kind, label: fact.label });
     }
@@ -168,7 +186,7 @@
       + `</ul>`;
     const policyMarkup = consequence || policyScope
       ? `${consequenceMarkup}${factsMarkup}`
-      : `<div class="tool-approval-policy-fallback">${POLICY_FALLBACK}</div>${factsMarkup}`;
+      : `<div class="tool-approval-policy-fallback">${escapeHtml(translatePolicyText('approvalConsequence', POLICY_FALLBACK))}</div>${factsMarkup}`;
     // The exact command/argument being approved, verbatim (bounded): the
     // headline paraphrases, this quotes. Skipped when the caller has nothing
     // meaningful to show or the preview would only repeat the headline.
@@ -176,7 +194,7 @@
     let commandMarkup = '';
     if (commandText && commandText !== headline) {
       const clipped = commandText.length > COMMAND_PREVIEW_MAX_CHARS
-        ? `${commandText.slice(0, COMMAND_PREVIEW_MAX_CHARS)}… (+${commandText.length - COMMAND_PREVIEW_MAX_CHARS} more chars)`
+        ? jt('approval.block.clippedCommand', '{command}… (+{count} more chars)', { command: commandText.slice(0, COMMAND_PREVIEW_MAX_CHARS), count: commandText.length - COMMAND_PREVIEW_MAX_CHARS })
         : commandText;
       const quoted = `<pre class="tool-approval-command"><code>${escapeHtml(clipped)}</code></pre>`;
       // A one-liner is shorter than the sentence describing it, so hiding it
@@ -186,7 +204,7 @@
       const lineCount = commandText.split('\n').length;
       commandMarkup = lineCount > 1
         ? `<details class="tool-approval-disclosure"><summary>`
-          + `Show all ${lineCount} ${commandUnitNoun(toolName)}</summary>${quoted}</details>`
+          + `${escapeHtml(jt('approval.block.showAllLines', 'Show all {count} {unit}', { count: lineCount, unit: commandUnitNoun(toolName) }))}</summary>${quoted}</details>`
         : quoted;
     }
     // Three decisions, three buttons. The old checkbox-then-Allow pairing
@@ -198,13 +216,13 @@
     const actionsMarkup = `<div class="tool-approval-actions">`
       + `<button class="tool-approve-btn" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
-      + ` title="Allow this tool call" aria-label="Allow ${labelName} once">Allow once</button>`
+      + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`
       + `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
       + ` data-approval-scope="always"${buttonIdentity}`
-      + ` title="Allow this tool call and stop asking for ${labelName}"`
-      + ` aria-label="Always allow ${labelName}">Always allow</button>`
+      + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
+      + ` aria-label="${escapeHtml(jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
-      + ` title="Deny this tool call" aria-label="Deny ${labelName}">Deny</button>`
+      + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`
       + `</div>`;
 
     const block = `<div class="tool-approval-block"`

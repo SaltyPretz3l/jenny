@@ -111,7 +111,11 @@ const ROOT = path.resolve(__dirname, '..');
 // verified by measuring the tree with only these two tags removed.
 // +2 on 2026-09-05 (composer model picker): renderer-composer-model-picker-utils.js and renderer-composer-model-picker.js enter production order before renderer-app-shell-bindings.js, which mounts the picker. Measured 648 -> 650.
 // +5 on 2026-09-05 (Tasks Slice 0): checkbox, task-brief, spawn-chip, and two task-rail modules enter production order. Measured 648 -> 653.
-const MAX_TOTAL_SCRIPT_COUNT = 657; // measured 657 on 2026-09-05 (cherry-pick of wt/post-pack-trio Tasks Slice 0)
+// +2 on 2026-09-07 (merge of wt/plugin-sign-pipeline / Remote Control Slice 7b): the bounded Settings controller and composer banner enter deferred production order.
+// +3 on 2026-09-07 (merge of wt/i18n-safety-101): eager i18n-utils and i18n-bootstrap head scripts, and scene-acknowledgement.js in setup scene order.
+// +1 on 2026-09-07 (M11): i18n-backend-strings.js translates closed backend vocabularies at renderer sinks.
+// +2 on 2026-09-08: calendar chat markup and interaction owners.
+const MAX_TOTAL_SCRIPT_COUNT = 667; // measured 665 on 2026-09-08 after merge-review fixes; +2 scripts of headroom.
 // +1 on 2026-09-01 (merge of wt/motion-css into main): this budget is a SECOND, independent
 // ceiling from the complexity ratchets, so the same merge arithmetic applies to it - both
 // parents counted their own scripts off a shared base and the file auto-merged clean. Main
@@ -256,7 +260,17 @@ const MAX_TOTAL_SCRIPT_COUNT = 657; // measured 657 on 2026-09-05 (cherry-pick o
 // +38_594 bytes on 2026-09-05 (composer model picker): the two picker modules add the model catalog/popover UI without vendor payload. Measured 9,353,609; re-based to that + the established 20,000-byte review headroom.
 // +14_731 on 2026-09-05 (Tasks Slice 0): five bounded plain renderer modules and their wiring measure 9,419,103 bytes; preserve the established 20,000-byte review headroom.
 // +39_550 on 2026-09-05: Tasks rail controller + render module filled in (post-pack trio Slice A); measured 9,458,653.
-const MAX_TOTAL_SCRIPT_BYTES = 9_550_658; // measured 9,530,658 on 2026-09-05 (cherry-pick of wt/post-pack-trio Tasks rail), +20k headroom
+// +31_168 on 2026-09-07 (merge of wt/plugin-sign-pipeline / Remote Control Slice 7b): two new modules and their bounded renderer wiring.
+// +27_672 on 2026-09-07 (merge of wt/i18n-safety-101: i18n runtime core + one-time disclosure scene).
+// +34_147 on 2026-09-07 (1.0.1 i18n migration Wave 2: jt()/jtn() wrappers and keys across Settings, the top chat modules,
+// and the static index.html markers; no vendor payload). Measured 9,648,861; re-based to that + the established 20,000-byte review headroom.
+// +170_182 on 2026-09-07 (1.0.1 i18n migration Waves 3-5: jt()/jtn() wrappers across shell, chat, setup scenes, IDE,
+// features, shared, inventory and app modules, plus i18n-backend-strings.js; no vendor payload). Measured 9,839,043;
+// re-based to that + the established 20,000-byte review headroom.
+// 2026-09-08: combine hosted/chat/calendar/artifact growth with upstream translations.
+// 2026-09-09 integration: sandbox settings, Remote Control setup, time formatting,
+// and their translations. Independent review found no new vendor payload or eager loader.
+const MAX_TOTAL_SCRIPT_BYTES = 10156491; // measured 10136491 LF bytes; existing 20,000-byte headroom.
 const MAX_EAGER_SCRIPT_COUNT = 16; // headroom above the measured 8 non-defer local scripts
 const MAX_EAGER_SCRIPT_BYTES = 300_000; // repo-LOCAL eager bytes only; vendor re-adds are caught by the eagerVendorPattern assertion below, not this budget (measureLocalScripts skips node_modules/ + vendor/)
 const STAGE4B_LAZY_MODULES = Object.freeze([

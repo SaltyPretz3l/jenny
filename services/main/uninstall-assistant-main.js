@@ -14,6 +14,7 @@ const {
 } = require('../data-lifecycle/data-lifecycle-result');
 const { UNINSTALL_CHANNELS, UNINSTALL_EXIT_CODES } = require('../data-lifecycle/uninstall-contract');
 const { ShellConfigService } = require('../shell-config-service');
+const { resolveUiLanguage, t } = require('../i18n-main');
 const { createRemovalPreparation, normalizeArchiveOptions } = require('./data-lifecycle-ipc-registration');
 const { createTrustedSenderAuthorizer } = require('./ipc-sender-authorization');
 
@@ -104,7 +105,7 @@ function createUninstallAssistantWindow({
   handle(UNINSTALL_CHANNELS.getOverview, () => service.getOverview());
   handle(UNINSTALL_CHANNELS.chooseArchiveDestination, async () => {
     const result = await dialog.showOpenDialog(window, {
-      title: 'Choose Jenny archive folder',
+      title: t('main.dialog.dataLifecycle.chooseArchiveFolder', 'Choose Jenny archive folder'),
       properties: ['openDirectory', 'createDirectory'],
     });
     return result.canceled || !result.filePaths?.[0]
@@ -152,10 +153,17 @@ function createUninstallAssistantWindow({
   });
   window.once('ready-to-show', () => window.show());
   const portableAppearance = service.preferencesStore?.read?.()?.appearance || { paletteId: 'obsidian' };
-  const loadPromise = window.loadFile(UNINSTALL_DOCUMENT_PATH, { query: {
+  const query = {
     parent: String(parent || 'app').slice(0, 24),
     jennyAppearance: JSON.stringify(portableAppearance),
-  } });
+  };
+  try {
+    const uiLanguage = resolveUiLanguage({ shellConfigService: service.shellConfigService });
+    if (typeof uiLanguage === 'string' && uiLanguage.length > 0) query.jennyUiLanguage = uiLanguage;
+  } catch (_error) {
+    // Language projection is optional; the renderer falls back to storage.
+  }
+  const loadPromise = window.loadFile(UNINSTALL_DOCUMENT_PATH, { query });
   if (loadPromise && typeof loadPromise.catch === 'function') {
     void loadPromise.catch(() => {
       log('WARN', 'uninstall_assistant.document_load_failed', { reason: 'document_load_failed' });

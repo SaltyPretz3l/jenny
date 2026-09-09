@@ -288,7 +288,11 @@ function applyCanonicalBridgeEvent(ctx, event, {
     });
   }
   return typeof handleToolNotification === 'function'
-    ? handleToolNotification(service, toolContext, toolNotification)
+    ? handleToolNotification(service, toolContext, toolNotification, {
+      ...(toolNotification.method === 'tool.executing'
+        ? { nextAssistantMessageId: `assistant_${ctx.streamId}_seg${ctx.textSegmentIndex}` }
+        : {}),
+    })
     : false;
 }
 
@@ -663,7 +667,8 @@ function handleNotification(ctx, notification, {
   if (notification.method === 'tool.executing') {
     touchProgress();
     const callId = String(params.tool_call_id || '').trim();
-    if (canonicalBridgeEnabled && callId && ctx.canonicalToolStartedCallIds.has(callId)) {
+    if (callId && ((canonicalBridgeEnabled && ctx.canonicalToolStartedCallIds.has(callId))
+      || (toolContext?.seenToolCalls instanceof Set && toolContext.seenToolCalls.has(callId)))) {
       return true;
     }
     ctx.unfinishedToolsSettled = false;
@@ -712,7 +717,11 @@ function handleNotification(ctx, notification, {
       toolResultMessageId: buildStreamToolResultMessageId(streamId, params.tool_call_id),
     });
   }
-  if (handleToolNotification(service, toolContext, notification)) {
+  if (handleToolNotification(service, toolContext, notification, {
+    ...(notification.method === 'tool.executing'
+      ? { nextAssistantMessageId: `assistant_${streamId}_seg${ctx.textSegmentIndex}` }
+      : {}),
+  })) {
     return;
   }
   const notificationMethod = String(notification.method || '').trim();

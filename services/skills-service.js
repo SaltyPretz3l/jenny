@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { normalizeString } = require('../renderer/shared/string-utils');
+const { t } = require('./i18n-main');
 
 const {
   DEFAULT_SKILLS,
@@ -663,7 +664,7 @@ class SkillsService extends EventEmitter {
         path: normalizedPath,
         enabled: false,
         status: 'disabled',
-        message: `${scopeDef.label} skills are disabled in Settings.`,
+        message: t('main.skills.disabledInSettings', '{scope} skills are disabled in Settings.', { scope: scopeDef.label }),
         entries: [],
         warnings: [],
       };
@@ -675,7 +676,7 @@ class SkillsService extends EventEmitter {
         path: '',
         enabled: scopeDef.enabled,
         status: 'blocked',
-        message: 'Set a tools workspace root to enable project skills.',
+        message: t('main.skills.workspaceRootRequired', 'Set a tools workspace root to enable project skills.'),
         entries: [],
       };
     }
@@ -686,7 +687,7 @@ class SkillsService extends EventEmitter {
         path: '',
         enabled: scopeDef.enabled,
         status: 'missing',
-        message: 'No skill folder is configured for this scope.',
+        message: t('main.skills.folderNotConfigured', 'No skill folder is configured for this scope.'),
         entries: [],
       };
     }
@@ -697,7 +698,7 @@ class SkillsService extends EventEmitter {
         path: normalizedPath,
         enabled: scopeDef.enabled,
         status: 'missing',
-        message: 'Skill folder does not exist yet.',
+        message: t('main.skills.folderMissing', 'Skill folder does not exist yet.'),
         entries: [],
       };
     }
@@ -708,7 +709,7 @@ class SkillsService extends EventEmitter {
         path: normalizedPath,
         enabled: scopeDef.enabled,
         status: 'invalid',
-        message: 'Configured skill path is not a directory.',
+        message: t('main.skills.pathNotDirectory', 'Configured skill path is not a directory.'),
         entries: [],
       };
     }
@@ -723,7 +724,7 @@ class SkillsService extends EventEmitter {
         path: normalizedPath,
         enabled: scopeDef.enabled,
         status: 'invalid',
-        message: 'Skill folder could not be resolved safely.',
+        message: t('main.skills.folderResolveFailed', 'Skill folder could not be resolved safely.'),
         entries: [],
         warnings: [this._buildWarning(scopeDef, normalizedPath, error)],
       };
@@ -785,10 +786,12 @@ class SkillsService extends EventEmitter {
       enabled: scopeDef.enabled,
       status: entries.length ? 'ready' : 'empty',
       message: entries.length
-        ? `${entries.length} skill${entries.length === 1 ? '' : 's'} available.`
+        ? entries.length === 1
+          ? t('main.skills.availableOne', '{count} skill available.', { count: entries.length })
+          : t('main.skills.availableOther', '{count} skills available.', { count: entries.length })
         : warnings.length
-          ? 'No loadable skills found in this folder.'
-          : 'No skills found in this folder yet.',
+          ? t('main.skills.noneLoadable', 'No loadable skills found in this folder.')
+          : t('main.skills.noneFound', 'No skills found in this folder yet.'),
       entries,
       warnings,
     };

@@ -12,6 +12,7 @@
   root.rendererIdeExplodeToggle = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -51,12 +52,12 @@
       if (seg || !documentRef || !bar || typeof actionButton !== 'function') return;
       // Buttons come from the inventory action-button primitive (no raw element).
       const holder = documentRef.createElement('div');
-      holder.innerHTML = actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: 'Code', ariaLabel: 'Show file as code', title: 'Show file as code', dataset: { viewmode: 'code' } })
-        + actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: 'Exploded', ariaLabel: 'Show file as an exploded node graph', title: 'Show file as an exploded node graph', dataset: { viewmode: 'exploded' } });
+      holder.innerHTML = actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: jt('ide.explode.code', 'Code'), ariaLabel: jt('ide.explode.showCode', 'Show file as code'), title: jt('ide.explode.showCode', 'Show file as code'), dataset: { viewmode: 'code' } })
+        + actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: jt('ide.explode.exploded', 'Exploded'), ariaLabel: jt('ide.explode.showExploded', 'Show file as an exploded node graph'), title: jt('ide.explode.showExploded', 'Show file as an exploded node graph'), dataset: { viewmode: 'exploded' } });
       seg = documentRef.createElement('div');
       seg.className = 'ide-viewmode-seg';
       seg.setAttribute('role', 'group');
-      seg.setAttribute('aria-label', 'File view mode');
+      seg.setAttribute('aria-label', jt('ide.explode.viewModeLabel', 'File view mode'));
       while (holder.firstChild) seg.appendChild(holder.firstChild);
       codeBtn = seg.querySelector('[data-viewmode="code"]');
       explodeBtn = seg.querySelector('[data-viewmode="exploded"]');

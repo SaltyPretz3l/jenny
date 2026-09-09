@@ -10,7 +10,7 @@
   }
   root.rendererRenderPipelineArticleMarkupUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createArticleMarkupPipeline(deps) {
     const {
       state = {},
@@ -228,7 +228,7 @@
           bubbleInnerHtml = revealModel.bubbleInnerHtml;
           streamUnits = revealModel.streamUnits;
           streamChangedStart = revealModel.streamChangedStart;
-          messageMarkup = `<div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="Assistant response (streaming)">${revealModel.bubbleInnerHtml}</div>`;
+          messageMarkup = `<div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.article.streamingAssistantResponse', 'Assistant response (streaming)'))}">${revealModel.bubbleInnerHtml}</div>`;
         } else {
           messageMarkup = '';
         }
@@ -256,7 +256,7 @@
             && sendFailure.state === 'failed'
             && sendFailure.dismissed !== true;
           const failureChip = sendFailureActive
-            ? '<span class="chat-bubble-send-status" role="status">Failed to send</span>'
+          ? '<span class="chat-bubble-send-status" role="status">' + escapeHtml(jt('chat.article.failedToSend', 'Failed to send')) + '</span>'
             : '';
           const sendStateAttr = sendFailureActive ? ' data-send-state="failed"' : '';
           messageMarkup = `<div class="chat-bubble chat-bubble-markdown" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true })}${failureChip}</div>`;
@@ -590,13 +590,13 @@
             (messageId) => getMessageFromCollection(messageId, messages, projectionContext)
           )
         : null;
-      const metaLabel = buildMessageMetaLabel(
-        buildAssistantMetaLabel(terminalErrorMessage || actionTargetMessage, formatMessageTerminalTimestamp),
-        terminalErrorMessage || actionTargetMessage,
-        messages,
-        projectionContext
+      const turnMessageIds = [...new Set(Array.isArray(turn?.source_message_ids) ? turn.source_message_ids : [actionTargetMessageId])];
+      const turnMessages = turnMessageIds.map((id) => getMessageFromCollection(id, messages, projectionContext)).filter((item) => item?.role === 'assistant');
+      const tokenMeta = buildMessageTokenMeta(turnMessages, turnMessageIds).get(actionTargetMessageId);
+      const metaLabel = combineMessageMetaLabels(
+        buildAssistantMetaLabel(terminalErrorMessage || actionTargetMessage, formatMessageTerminalTimestamp, turnMessages, turn),
+        formatMessageTokenMeta(tokenMeta)
       );
-      const turnMessageIds = Array.isArray(turn?.source_message_ids) ? turn.source_message_ids : [];
       const hasActiveStreamingMessage = String(projectionContext?.activeStreamingMessageId || '').trim() !== '';
       const isStreaming = hasActiveStreamingMessage && (
         renderOptions.isStreaming === true || turnMessageIds.some(function hasStreamingMessage(messageId) {

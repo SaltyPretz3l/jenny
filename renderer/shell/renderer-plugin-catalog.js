@@ -4,6 +4,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (semver) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function comparePrerelease(left, right) {
     var leftIds = left ? left.split('.') : [];
     var rightIds = right ? right.split('.') : [];
@@ -60,10 +61,10 @@
   }
 
   function renderCatalog(model, installed, button, escapeHtml, busy) {
-    if (!model) return '<div class="settings-note">Loading verified catalogs…</div>';
+    if (!model) return '<div class="settings-note">' + escapeHtml(jt('plugins.catalog.loading', 'Loading verified catalogs…')) + '</div>';
     if (!model.configured) {
-      return '<div class="settings-note" data-plugin-catalog-empty><strong>No catalog configured.</strong> '
-        + 'Jenny has no hosted catalog endpoint. Add a trusted offline mirror to browse verified packages.</div>';
+      return '<div class="settings-note" data-plugin-catalog-empty><strong>' + escapeHtml(jt('plugins.catalog.notConfigured', 'No catalog configured.')) + '</strong> '
+        + escapeHtml(jt('plugins.catalog.offlineMirrorHelp', 'Jenny has no hosted catalog endpoint. Add a trusted offline mirror to browse verified packages.')) + '</div>';
     }
     var rows = model.entries.map(function (entry) {
       var current = installed.find(function (plugin) {
@@ -75,7 +76,7 @@
       return '<div class="settings-field-row plugin-catalog-row" data-catalog-entry="' + escapeHtml(entry.digest) + '">'
         + '<span class="settings-field-row-text"><strong>' + escapeHtml(entry.displayName) + '</strong><small>'
         + escapeHtml(secondary) + '</small></span>'
-        + button({ label: update ? 'Update' : (installedAlready ? 'Installed' : 'Install'), variant: 'ghost', size: 'sm',
+        + button({ label: update ? jt('plugins.manager.catalog.update', 'Update') : (installedAlready ? jt('plugins.manager.catalog.installed', 'Installed') : jt('plugins.manager.catalog.install', 'Install')), variant: 'ghost', size: 'sm',
           disabled: busy || installedAlready,
           dataset: { 'plugins-settings-action': update ? 'catalog-update' : 'catalog-install',
             'source-id': entry.sourceId, 'publisher-id': entry.publisherId,
@@ -83,7 +84,7 @@
         + '</div>';
     });
     return rows.length ? rows.join('')
-      : '<div class="settings-note">Configured catalogs contain no installable Jenny targets.</div>';
+      : '<div class="settings-note">' + escapeHtml(jt('plugins.catalog.noInstallableTargets', 'Configured catalogs contain no installable Jenny targets.')) + '</div>';
   }
 
   return Object.freeze({ normalizeCatalogState: normalizeCatalogState, renderCatalog: renderCatalog,

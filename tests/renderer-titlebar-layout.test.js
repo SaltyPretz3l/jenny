@@ -147,13 +147,13 @@ test('titlebar Jenny wordmark uses the bundled Anastasia face at a readable size
   );
   assert.match(
     foundationCss,
-    /\.titlebar\s*\{[^}]*padding:\s*0\s+0\s+0\s+var\(--space-5\);/,
-    'the titlebar should retain its 10px left inset'
+    /\.titlebar\s*\{[^}]*padding-block:\s*0;[^}]*padding-inline-start:\s*var\(--space-5\);[^}]*padding-inline-end:\s*0;/,
+    'the titlebar should retain its 10px inline-start inset'
   );
   assert.match(
     foundationCss,
-    /\.titlebar-brand\s*\{[^}]*padding-left:\s*var\(--space-9\);/,
-    'the brand group should add 18px for a 28px effective left inset'
+    /\.titlebar-brand\s*\{[^}]*padding-inline-start:\s*var\(--space-9\);/,
+    'the brand group should add 18px for a 28px effective inline-start inset'
   );
 });
 

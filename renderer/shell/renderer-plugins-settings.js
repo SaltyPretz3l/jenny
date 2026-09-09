@@ -9,6 +9,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this,
   function (root, catalogModule, detailsModule, operationsModule) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var CARD_SELECTOR = '.settings-card[data-settings-section="plugins"]';
   var NAV_SELECTOR = '.settings-nav [data-settings-section="plugins"]';
   var HEADER_ACTIONS_HOST_ID = 'pluginsHeaderActionsHost';
@@ -17,35 +19,35 @@
   var GROUP_ID = 'pluginsSettingsGroup';
   var SOURCES_GROUP_ID = 'pluginsSourcesGroup';
   var SOURCE_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
-  var STATE_COPY = Object.freeze({ absent: 'not installed', staged: 'installing…',
-    installed_disabled: 'turned off', preparing: 'starting…', active: 'active',
-    disabling: 'turning off…', blocked: 'blocked', quarantined: 'quarantined',
-    uninstalling: 'uninstalling…' });
-  var ACTIVATION_REASON_COPY = Object.freeze({ eligible: '', already_active: 'already active',
-    safe_mode: 'plugins are in safe mode', store_read_only: 'plugin state is read-only',
-    not_first_party: 'only trusted first-party packages can start',
-    publisher_key_not_current: 'publisher trust is no longer current',
-    permissions_requested: 'requested permissions are not supported',
-    dependencies_not_supported: 'plugin dependencies are not supported',
-    no_supported_contributions: 'no supported contributions',
-    mixed_or_unsupported_contributions: 'contains unsupported contributions',
-    package_record_unavailable: 'verified package record is unavailable' });
-  var PROGRESS_COPY = Object.freeze({ staging: 'Staging…', validating: 'Validating…',
-    committing: 'Applying changes…', preparing: 'Starting…', cleanup: 'Cleaning up…' });
+  var STATE_COPY = Object.freeze({ absent: jt('plugins.settings.stateNotInstalled', 'not installed'), staged: jt('plugins.settings.stateInstalling', 'installing…'),
+    installed_disabled: jt('plugins.settings.stateTurnedOff', 'turned off'), preparing: jt('plugins.settings.stateStarting', 'starting…'), active: jt('plugins.settings.stateActive', 'active'),
+    disabling: jt('plugins.settings.turningOff', 'turning off…'), blocked: jt('plugins.settings.stateBlocked', 'blocked'), quarantined: jt('plugins.settings.stateQuarantined', 'quarantined'),
+    uninstalling: jt('plugins.settings.stateUninstalling', 'uninstalling…') });
+  var ACTIVATION_REASON_COPY = Object.freeze({ eligible: '', already_active: jt('plugins.settings.alreadyActive', 'already active'),
+    safe_mode: jt('plugins.settings.safeModeReason', 'plugins are in safe mode'), store_read_only: jt('plugins.settings.stateReadOnly', 'plugin state is read-only'),
+    not_first_party: jt('plugins.settings.firstPartyOnly', 'only trusted first-party packages can start'),
+    publisher_key_not_current: jt('plugins.settings.publisherTrustOutdated', 'publisher trust is no longer current'),
+    permissions_requested: jt('plugins.settings.permissionsUnsupported', 'requested permissions are not supported'),
+    dependencies_not_supported: jt('plugins.settings.dependenciesUnsupported', 'plugin dependencies are not supported'),
+    no_supported_contributions: jt('plugins.settings.noSupportedContributions', 'no supported contributions'),
+    mixed_or_unsupported_contributions: jt('plugins.settings.containsUnsupportedContributions', 'contains unsupported contributions'),
+    package_record_unavailable: jt('plugins.settings.packageRecordUnavailable', 'verified package record is unavailable') });
+  var PROGRESS_COPY = Object.freeze({ staging: jt('plugins.settings.staging', 'Staging…'), validating: jt('plugins.settings.validating', 'Validating…'),
+    committing: jt('plugins.settings.applyingChanges', 'Applying changes…'), preparing: jt('plugins.settings.starting', 'Starting…'), cleanup: jt('plugins.settings.cleaningUp', 'Cleaning up…') });
   // Reasons invented by THIS renderer (never wire codes). Wire refusals keep their
   // CMP-PLUGIN code + bounded reason verbatim; these would otherwise surface a raw
   // enum in a toast, which is the leak the lifecycle copy above exists to prevent.
   var LOCAL_FAILURE_COPY = Object.freeze({
-    operation_busy: 'Another plugin operation is still running. Wait for it to finish.',
-    bridge_call_failed: 'The plugin service did not respond. Try again.',
-    bridge_method_missing: 'This plugin action is unavailable in this build.' });
+    operation_busy: jt('plugins.settings.operationBusy', 'Another plugin operation is still running. Wait for it to finish.'),
+    bridge_call_failed: jt('plugins.settings.serviceUnresponsive', 'The plugin service did not respond. Try again.'),
+    bridge_method_missing: jt('plugins.settings.actionUnavailable', 'This plugin action is unavailable in this build.') });
 
   function classifyPluginsPlatform(ok, payload) {
     var envelope = ok && payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
-    if (!envelope) return { kind: 'unavailable', message: 'Plugin platform status is unavailable.' };
+    if (!envelope) return { kind: 'unavailable', message: jt('plugins.settings.statusUnavailable', 'Plugin platform status is unavailable.') };
     if (envelope.safe_mode_active === true) return { kind: 'safe_mode', source: String(envelope.safe_mode_source || 'unknown') };
     if (envelope.ok !== true) return envelope.enabled === false
-      ? { kind: 'unavailable', message: 'The plugin platform is turned off in this build.' }
+      ? { kind: 'unavailable', message: jt('plugins.settings.platformDisabled', 'The plugin platform is turned off in this build.') }
       : { kind: 'refused', code: String(envelope.code || ''), reason: String(envelope.reason || '') };
     var plugins = Array.isArray(envelope.plugins) ? envelope.plugins : [];
     return { kind: 'ready', revision: Number.isInteger(envelope.revision) ? envelope.revision : 0,
@@ -54,7 +56,7 @@
       installedCount: Number.isInteger(envelope.installed_count) ? envelope.installed_count : plugins.length,
       plugins: plugins.map(function (entry) { return {
         publisherId: String(entry?.publisher_id || ''), pluginId: String(entry?.plugin_id || ''),
-        displayName: String(entry?.display_name || '').trim() || '(unnamed plugin)',
+        displayName: String(entry?.display_name || '').trim() || jt('plugins.settings.unnamedPlugin', '(unnamed plugin)'),
         version: String(entry?.resolved_version || ''), effectiveState: String(entry?.effective_state || ''),
         sourceKind: String(entry?.source_kind || ''),
         desiredState: String(entry?.desired_state || ''), activationEligible: entry?.activation_eligible === true,
@@ -68,18 +70,18 @@
     var source = result && typeof result === 'object' ? result : {};
     var code = String(source.code || source.error?.code || '').trim();
     var reason = String(source.reason || source.error?.message || '').trim();
-    return code && reason ? code + ' · ' + reason : code || reason || 'The operation failed.';
+    return code && reason ? code + ' · ' + reason : code || reason || jt('plugins.settings.operationFailed', 'The operation failed.');
   }
   function failureMessage(result) {
     var reason = String(result?.reason || '');
     return Object.hasOwn(LOCAL_FAILURE_COPY, reason) ? LOCAL_FAILURE_COPY[reason] : formatWireFailure(result);
   }
-  function stateCopy(value) { return STATE_COPY[value] || 'state unavailable'; }
+  function stateCopy(value) { return STATE_COPY[value] || jt('plugins.settings.stateUnavailable', 'state unavailable'); }
   function activationReasonCopy(value) {
     return Object.hasOwn(ACTIVATION_REASON_COPY, value)
-      ? ACTIVATION_REASON_COPY[value] : 'activation unavailable';
+      ? ACTIVATION_REASON_COPY[value] : jt('plugins.settings.activationUnavailable', 'activation unavailable');
   }
-  function progressCopy(value) { return PROGRESS_COPY[value] || 'Working…'; }
+  function progressCopy(value) { return PROGRESS_COPY[value] || jt('plugins.settings.working', 'Working…'); }
   function pluginToggleId(plugin) { return 'pluginToggle_' + plugin.publisherId + '_' + plugin.pluginId; }
   function primaryViewContribution(plugin) {
     return plugin.contributions.find(function (item) {
@@ -215,19 +217,19 @@
 
     function headerActionsMarkup() {
       if (!actionButton || platform?.kind !== 'ready') return '';
-      return actionButton({ label: 'Install plugin', variant: 'primary', size: 'sm',
+      return actionButton({ label: jt('plugins.settings.installPlugin', 'Install plugin'), variant: 'primary', size: 'sm',
         disabled: operations.busy() || platform.readOnly || !platform.storeWritable,
         dataset: { 'plugins-settings-action': 'install-package' } });
     }
 
     function dropZoneMarkup() {
       return '<div class="plugins-drop-zone" data-plugins-drop-zone>'
-        + 'Drop a .jenny-plugin file here or use Install plugin. '
-        + 'Unsigned plugins are labelled and run in the developer profile.</div>';
+        + actionButton.escapeHtml(jt('plugins.settings.dropPackageHint', 'Drop a .jenny-plugin file here or use Install plugin.')) + ' '
+        + actionButton.escapeHtml(jt('plugins.settings.unsignedProfileHint', 'Unsigned plugins are labelled and run in the developer profile.')) + '</div>';
     }
 
     function installedMarkup(escapeHtml) {
-      if (!platform.plugins.length) return '<div class="settings-note" data-plugins-empty-state>No plugins installed.</div>';
+      if (!platform.plugins.length) return '<div class="settings-note" data-plugins-empty-state>' + escapeHtml(jt('plugins.settings.noPluginsInstalled', 'No plugins installed.')) + '</div>';
       return platform.plugins.map(function (plugin) {
         var active = plugin.effectiveState === 'active';
         var key = plugin.publisherId + '/' + plugin.pluginId;
@@ -238,16 +240,16 @@
         }));
         var reason = !active && !plugin.activationEligible ? activationReasonCopy(plugin.activationReasonCode) : '';
         var publisher = plugin.sourceKind === 'developer_link'
-          ? 'developer (unsigned)' : plugin.publisherId || 'Publisher unavailable';
-        var secondary = [plugin.version || 'Version unavailable', publisher,
+          ? 'developer (unsigned)' : plugin.publisherId || jt('plugins.settings.publisherUnavailable', 'Publisher unavailable');
+        var secondary = [plugin.version || jt('plugins.settings.versionUnavailable', 'Version unavailable'), publisher,
           stateCopy(plugin.effectiveState)];
-        if (updateAvailable) secondary.push('update available');
+        if (updateAvailable) secondary.push(jt('plugins.settings.updateAvailable', 'update available'));
         if (reason) secondary.push('can’t start — ' + reason);
         var disabled = operations.busy() || platform.readOnly || !platform.storeWritable
           || (!active && !plugin.activationEligible);
         var viewReady = primaryView?.effective_enabled === true;
         var viewButton = primaryView ? actionButton({
-          label: primaryView.kind === 'setup_scene' || primaryView.view?.view_kind === 'setup_scene' ? 'Set up' : 'Open',
+          label: primaryView.kind === 'setup_scene' || primaryView.view?.view_kind === 'setup_scene' ? jt('plugins.settings.setUp', 'Set up') : jt('common.open', 'Open'),
           disabled: !viewReady, title: viewReady ? '' : detailsModule.viewBlockedTitle(primaryView),
           variant: 'ghost', size: 'sm', dataset: { 'plugins-settings-action': 'open-view',
             'publisher-id': plugin.publisherId, 'plugin-id': plugin.pluginId,
@@ -258,23 +260,23 @@
           + contributionAttr + '><span class="settings-field-row-text"><strong>' + escapeHtml(plugin.displayName)
           + '</strong><small>' + escapeHtml(secondary.join(' · ')) + '</small></span>'
           + '<span class="plugins-settings-row-controls">' + viewButton
-          + actionButton({ label: 'Details', variant: 'ghost', size: 'sm', ariaHaspopup: 'dialog', dataset: {
+          + actionButton({ label: jt('plugins.settings.details', 'Details'), variant: 'ghost', size: 'sm', ariaHaspopup: 'dialog', dataset: {
             'plugins-settings-action': 'details', 'publisher-id': plugin.publisherId,
             'plugin-id': plugin.pluginId, 'display-name': plugin.displayName } })
           + (root.inventoryToggleSwitch?.toggleSwitch?.({ id: pluginToggleId(plugin),
-            label: plugin.displayName + ' enabled', checked: active, disabled: disabled,
+            label: jt('plugins.settings.enabledLabel', '{plugin} enabled', { plugin: plugin.displayName }), checked: active, disabled: disabled,
             className: 'plugins-settings-row-toggle' }) || '') + '</span></div>';
       }).join('');
     }
     function installedGroupMarkup() {
       if (!actionButton) return '';
       var escapeHtml = actionButton.escapeHtml;
-      var heading = '<h4 class="settings-group-heading" id="pluginsInstalledHeading">Installed</h4>';
+      var heading = '<h4 class="settings-group-heading" id="pluginsInstalledHeading">' + escapeHtml(jt('plugins.settings.installedHeading', 'Installed')) + '</h4>';
       if (!platform) return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsInstalledHeading" id="'
-        + GROUP_ID + '">' + heading + '<div class="settings-note">Checking plugin platform…</div>' + operationStatusMarkup() + '</div>';
+        + GROUP_ID + '">' + heading + '<div class="settings-note">' + escapeHtml(jt('plugins.settings.checkingPlatform', 'Checking plugin platform…')) + '</div>' + operationStatusMarkup() + '</div>';
       if (platform.kind === 'safe_mode') return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsInstalledHeading" id="'
-        + GROUP_ID + '">' + heading + '<div class="settings-note plugins-safe-mode-banner" data-plugins-safe-mode>Plugins are in safe mode ('
-        + escapeHtml(platform.source) + ').</div>' + operationStatusMarkup() + '</div>';
+        + GROUP_ID + '">' + heading + '<div class="settings-note plugins-safe-mode-banner" data-plugins-safe-mode>'
+        + escapeHtml(jt('plugins.settings.safeModeSource', 'Plugins are in safe mode ({source}).', { source: platform.source })) + '</div>' + operationStatusMarkup() + '</div>';
       if (platform.kind === 'unavailable') return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsInstalledHeading" id="'
         + GROUP_ID + '">' + heading + '<div class="settings-note" data-plugins-unavailable>' + escapeHtml(platform.message)
         + '</div>' + operationStatusMarkup() + '</div>';
@@ -282,23 +284,22 @@
         + GROUP_ID + '">' + heading + '<div class="settings-note plugins-settings-error" data-plugins-refused>'
         + escapeHtml(formatWireFailure(platform)) + '</div>' + operationStatusMarkup() + '</div>';
       var readOnly = platform.readOnly || !platform.storeWritable
-        ? '<div class="settings-note plugins-settings-error" data-plugins-read-only>Plugin state is read-only and preserved unchanged.</div>' : '';
+        ? '<div class="settings-note plugins-settings-error" data-plugins-read-only>' + escapeHtml(jt('plugins.settings.readOnlyPreserved', 'Plugin state is read-only and preserved unchanged.')) + '</div>' : '';
       var error = lastError ? '<div class="settings-note plugins-settings-error" data-plugins-last-error>' + escapeHtml(lastError) + '</div>' : '';
       return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsInstalledHeading" id="'
-        + GROUP_ID + '">' + heading + '<p class="settings-group-copy">' + platform.installedCount + ' installed plugin'
-        + (platform.installedCount === 1 ? '.' : 's.') + '</p>' + installedMarkup(escapeHtml)
+        + GROUP_ID + '">' + heading + '<p class="settings-group-copy">' + escapeHtml(jtn('plugins.settings.installedPluginCount', platform.installedCount, { count: platform.installedCount }, '{count} installed plugin.', '{count} installed plugins.')) + '</p>' + installedMarkup(escapeHtml)
         + dropZoneMarkup() + readOnly + error + operationStatusMarkup() + '</div>';
     }
     function mirrorFormMarkup(escapeHtml) {
       if (!mirrorDraft || !textField) return '';
       var error = mirrorError ? '<p class="settings-note plugins-settings-error" role="alert">' + escapeHtml(mirrorError) + '</p>' : '';
       return '<div class="plugins-mirror-form" data-plugins-mirror-form>'
-        + textField({ id: 'pluginMirrorSourceId', label: 'Source ID', value: mirrorDraft.sourceId, maxLength: 64 })
-        + '<p class="settings-group-copy">Use lowercase letters, numbers, underscores, or hyphens. This is the name the mirror is stored and shown under. Jenny will ask you to choose the mirror folder next.</p>'
+        + textField({ id: 'pluginMirrorSourceId', label: jt('plugins.settings.sourceId', 'Source ID'), value: mirrorDraft.sourceId, maxLength: 64 })
+        + '<p class="settings-group-copy">' + escapeHtml(jt('plugins.settings.sourceIdHint', 'Use lowercase letters, numbers, underscores, or hyphens. This is the name the mirror is stored and shown under. Jenny will ask you to choose the mirror folder next.')) + '</p>'
         + error + '<div class="settings-actions">'
-        + actionButton({ label: 'Choose mirror folder', size: 'sm', disabled: operations.busy(),
+        + actionButton({ label: jt('plugins.settings.chooseMirrorFolder', 'Choose mirror folder'), size: 'sm', disabled: operations.busy(),
           dataset: { 'plugins-settings-action': 'save-mirror' } })
-        + actionButton({ label: 'Cancel', variant: 'ghost', size: 'sm', disabled: operations.busy(),
+        + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', disabled: operations.busy(),
           dataset: { 'plugins-settings-action': 'cancel-mirror' } }) + '</div></div>';
     }
     function sourcesGroupMarkup() {
@@ -306,22 +307,22 @@
       var escapeHtml = actionButton.escapeHtml;
       var unavailable = platform.readOnly || !platform.storeWritable;
       return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsSourcesHeading" id="'
-        + SOURCES_GROUP_ID + '"><h4 class="settings-group-heading" id="pluginsSourcesHeading">Advanced</h4>'
+        + SOURCES_GROUP_ID + '"><h4 class="settings-group-heading" id="pluginsSourcesHeading">' + escapeHtml(jt('plugins.settings.advancedHeading', 'Advanced')) + '</h4>'
         + '<div class="settings-field-row plugins-advanced-summary"><span class="settings-field-row-text">'
-        + '<strong>Package sources</strong><small>'
-        + escapeHtml(catalog?.configured ? catalog.entries.length + ' catalog entr' + (catalog.entries.length === 1 ? 'y' : 'ies')
-          : 'No catalog configured') + ' · offline mirrors · audit log</small></span>'
-        + actionButton({ label: 'Open', variant: 'ghost', size: 'sm', ariaExpanded: advancedExpanded,
+        + '<strong>' + escapeHtml(jt('plugins.settings.packageSources', 'Package sources')) + '</strong><small>'
+        + escapeHtml(catalog?.configured ? jtn('plugins.settings.catalogEntryCount', catalog.entries.length, { count: catalog.entries.length }, '{count} catalog entry', '{count} catalog entries')
+          : jt('plugins.settings.noCatalogConfigured', 'No catalog configured')) + escapeHtml(jt('plugins.settings.sourcesSummarySuffix', ' · offline mirrors · audit log')) + '</small></span>'
+        + actionButton({ label: jt('common.open', 'Open'), variant: 'ghost', size: 'sm', ariaExpanded: advancedExpanded,
           ariaControls: 'pluginsAdvancedDisclosure', dataset: { 'plugins-settings-action': 'toggle-advanced' } })
         + '</div><div class="plugins-advanced-disclosure" id="pluginsAdvancedDisclosure" data-plugins-advanced-disclosure'
         + (advancedExpanded ? '' : ' hidden') + '><div class="plugin-catalog-list">'
         + catalogModule.renderCatalog(catalog, platform.plugins, actionButton, escapeHtml, operations.busy()) + '</div>'
         + mirrorFormMarkup(escapeHtml) + '<div class="settings-actions plugins-sources-actions">'
-        + actionButton({ label: 'Add offline mirror', size: 'sm', disabled: operations.busy() || unavailable,
+        + actionButton({ label: jt('plugins.settings.addOfflineMirror', 'Add offline mirror'), size: 'sm', disabled: operations.busy() || unavailable,
           dataset: { 'plugins-settings-action': 'add-mirror' } })
-        + actionButton({ label: 'Install signed package', size: 'sm', disabled: operations.busy() || unavailable,
+        + actionButton({ label: jt('plugins.settings.installSignedPackage', 'Install signed package'), size: 'sm', disabled: operations.busy() || unavailable,
           dataset: { 'plugins-settings-action': 'install-package' } })
-        + actionButton({ label: 'Export audit log', size: 'sm', disabled: operations.busy(),
+        + actionButton({ label: jt('plugins.settings.exportAuditLog', 'Export audit log'), size: 'sm', disabled: operations.busy(),
           dataset: { 'plugins-settings-action': 'export-audit' } }) + '</div></div></div>';
     }
     function render() {
@@ -372,12 +373,12 @@
       if (disposed) return;
       if (!result?.ok) { await afterOperation(result); return; }
       try {
-        await windowRef.jennyShell?.dialog?.saveFile?.({ title: 'Export plugin audit log',
+        await windowRef.jennyShell?.dialog?.saveFile?.({ title: jt('plugins.settings.exportPluginAuditLog', 'Export plugin audit log'),
           defaultName: 'jenny-plugin-audit-' + new Date().toISOString().slice(0, 10) + '.json',
           format: 'json', content: JSON.stringify(result.document, null, 2) });
       } catch (_error) {
         if (disposed) return;
-        lastError = 'Could not save the plugin audit log. Try again.';
+        lastError = jt('plugins.settings.auditSaveFailed', 'Could not save the plugin audit log. Try again.');
         log('WARN', 'plugins_settings.audit_export_save_failed', { reason: 'save_failed' });
         toast(lastError, { tone: 'warning' });
       }
@@ -385,10 +386,10 @@
     }
     async function uninstall(target) {
       var identity = { publisher_id: target.dataset.publisherId, plugin_id: target.dataset.pluginId };
-      if (!await confirmDanger({ title: 'Uninstall ' + (target.dataset.displayName || 'plugin') + '?',
-        message: 'Remove this plugin and revoke its active contributions?', confirmLabel: 'Uninstall', cancelLabel: 'Keep' })) return;
+      if (!await confirmDanger({ title: jt('plugins.settings.uninstallTitle', 'Uninstall {plugin}?', { plugin: target.dataset.displayName || jt('plugins.settings.pluginFallback', 'plugin') }),
+        message: jt('plugins.settings.uninstallMessage', 'Remove this plugin and revoke its active contributions?'), confirmLabel: jt('plugins.settings.uninstall', 'Uninstall'), cancelLabel: jt('plugins.settings.keep', 'Keep') })) return;
       if (disposed) return;
-      var result = await runSimple('uninstall', identity, 'Plugin uninstalled.');
+      var result = await runSimple('uninstall', identity, jt('plugins.settings.uninstalled', 'Plugin uninstalled.'));
       if (!disposed && result?.ok) details?.close?.();
     }
     function catalogPayload(target) { return { source_id: target.dataset.sourceId,
@@ -398,9 +399,9 @@
       if (!mirrorDraft || operations.busy()) return;
       var sourceId = String(mirrorDraft.sourceId || '').trim();
       mirrorError = SOURCE_ID_RE.test(sourceId) ? ''
-        : 'Source ID must start with a letter and use only lowercase letters, numbers, underscores, or hyphens.';
+        : jt('plugins.settings.invalidSourceId', 'Source ID must start with a letter and use only lowercase letters, numbers, underscores, or hyphens.');
       if (mirrorError) { render(); return; }
-      var result = await runSimple('selectOfflineMirror', { source_id: sourceId }, 'Offline mirror trusted.');
+      var result = await runSimple('selectOfflineMirror', { source_id: sourceId }, jt('plugins.settings.offlineMirrorTrusted', 'Offline mirror trusted.'));
       if (disposed || result?.canceled === true) return;
       if (result?.ok) { mirrorDraft = null; mirrorError = ''; render(); }
     }
@@ -414,17 +415,17 @@
         generation_id: target.dataset.generationId, display_name: target.dataset.displayName });
       else if (action === 'enable' || action === 'disable') runSimple(action,
         { publisher_id: target.dataset.publisherId, plugin_id: target.dataset.pluginId },
-        action === 'enable' ? 'Plugin enabled.' : 'Plugin disabled.', true);
+        action === 'enable' ? jt('plugins.settings.enabled', 'Plugin enabled.') : jt('plugins.settings.disabled', 'Plugin disabled.'), true);
       else if (action === 'uninstall') uninstall(target);
-      else if (action === 'install-package') runSimple('installLocalPackage', {}, 'Plugin installed — inactive.');
+      else if (action === 'install-package') runSimple('installLocalPackage', {}, jt('plugins.settings.installedInactive', 'Plugin installed — inactive.'));
       else if (action === 'toggle-advanced') { advancedExpanded = !advancedExpanded; render(); }
       else if (action === 'export-audit') exportAudit();
       else if (action === 'add-mirror') { mirrorDraft = { sourceId: '' }; mirrorError = ''; render();
         documentRef.getElementById('pluginMirrorSourceId')?.focus?.(); }
       else if (action === 'cancel-mirror') { mirrorDraft = null; mirrorError = ''; render(); }
       else if (action === 'save-mirror') saveMirror();
-      else if (action === 'catalog-install') runSimple('installFromCatalog', catalogPayload(target), 'Plugin installed — inactive.');
-      else if (action === 'catalog-update') runSimple('updateFromCatalog', catalogPayload(target), 'Plugin updated — inactive.');
+      else if (action === 'catalog-install') runSimple('installFromCatalog', catalogPayload(target), jt('plugins.settings.installedInactive', 'Plugin installed — inactive.'));
+      else if (action === 'catalog-update') runSimple('updateFromCatalog', catalogPayload(target), jt('plugins.settings.updatedInactive', 'Plugin updated — inactive.'));
     }
     function handleInput(event) {
       if (!mirrorDraft) return;
@@ -437,7 +438,7 @@
       if (!plugin) return;
       var action = event.detail?.checked === true ? 'enable' : 'disable';
       void runSimple(action, { publisher_id: plugin.publisherId, plugin_id: plugin.pluginId },
-        action === 'enable' ? 'Plugin enabled.' : 'Plugin disabled.', true);
+        action === 'enable' ? jt('plugins.settings.enabled', 'Plugin enabled.') : jt('plugins.settings.disabled', 'Plugin disabled.'), true);
     }
     function handleDropZoneEvent(event) {
       var zone = event.target?.closest?.('[data-plugins-drop-zone]');
@@ -450,7 +451,7 @@
       var file = event.dataTransfer?.files?.[0];
       if (!file) return;
       if (!String(file.name || '').toLowerCase().endsWith('.jenny-plugin')) {
-        toast('Choose a .jenny-plugin file.');
+        toast(jt('plugins.settings.choosePackageFile', 'Choose a .jenny-plugin file.'));
         return;
       }
       var getPathForFile = windowRef.jennyShell?.attachments?.getPathForFile;
@@ -458,16 +459,16 @@
       try { packagePath = typeof getPathForFile === 'function' ? String(getPathForFile(file) || '').trim() : ''; }
       catch (_error) { packagePath = ''; }
       if (!packagePath) {
-        toast("Couldn't read that file. Use Install plugin instead.");
+        toast(jt('plugins.settings.fileReadFailed', "Couldn't read that file. Use Install plugin instead."));
         return;
       }
       if (!packagePath.toLowerCase().endsWith('.jenny-plugin')) {
-        toast('Choose a .jenny-plugin file.');
+        toast(jt('plugins.settings.choosePackageFile', 'Choose a .jenny-plugin file.'));
         return;
       }
       void runSimple('installLocalPackageFromPath', {
         client_request_id: 'drop_' + Date.now().toString(36), path: packagePath,
-      }, 'Plugin installed — inactive.');
+      }, jt('plugins.settings.installedInactive', 'Plugin installed — inactive.'));
     }
     function handleOperationProgress(payload) {
       if (disposed || !operations.busy()) return;

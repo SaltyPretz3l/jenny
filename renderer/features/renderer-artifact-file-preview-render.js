@@ -24,6 +24,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MAX_FILE_PREVIEW_BYTES = 512000;
   const MAX_FILE_PREVIEW_LINES = 2000;
   // When the cited line falls outside the head window, re-centre the window so
@@ -38,7 +39,7 @@
   const HTML_EXTENSIONS = new Set(['html', 'htm']);
   // Mirrored BY CONVENTION from renderer-ide-preview-stage.js
   // SELF_CONTAINED_NOTE; the rail cannot import the IDE stage module.
-  const SELF_CONTAINED_NOTE = 'Self-contained preview — external stylesheets, scripts, images, and network requests are not loaded.';
+  const SELF_CONTAINED_NOTE = jt('artifacts.filePreview.selfContainedNote', 'Self-contained preview — external stylesheets, scripts, images, and network requests are not loaded.');
   // Mirrored BY CONVENTION from renderer-ide-file-operations.js
   // IMAGE_MIME_BY_EXTENSION — the two lists must stay in lockstep.
   const IMAGE_MIME_BY_EXTENSION = Object.freeze({
@@ -50,18 +51,18 @@
   // failures the IDE can still do something useful with (large/binary/image
   // files open fine in a real editor); not-found / outside-root cannot.
   const FAILURE_BY_CODE = Object.freeze({
-    'CMP-WORKSPACEFS-0001': { stateKind: 'root-missing', message: 'No workspace folder is set, so this file can’t be previewed here.', retryInIde: false },
-    'CMP-WORKSPACEFS-0003': { stateKind: 'outside-root', message: 'That file is outside the workspace folder, so it can’t be previewed here.', retryInIde: false },
-    'CMP-WORKSPACEFS-0004': { stateKind: 'not-found', message: 'That file no longer exists in the workspace — it may have been renamed or deleted.', retryInIde: false },
-    'CMP-WORKSPACEFS-0008': { stateKind: 'root-transitioning', message: 'The workspace folder is changing right now. Try again in a moment.', retryInIde: false },
-    'CMP-WORKSPACEFS-0010': { stateKind: 'binary', message: 'That file isn’t text, so it can’t be previewed here. Open it in the IDE instead.', retryInIde: true },
-    'CMP-WORKSPACEFS-0011': { stateKind: 'too-large', message: 'That file is too large to preview here. Open it in the IDE instead.', retryInIde: true },
-    'CMP-WORKSPACEFS-0012': { stateKind: 'image-too-large', message: 'That image is too large to preview here. Open it in the IDE instead.', retryInIde: true },
-    'CMP-WORKSPACEFS-0013': { stateKind: 'binary', message: 'That file isn’t text, so it can’t be previewed here. Open it in the IDE instead.', retryInIde: true },
-    'CMP-WORKSPACEFS-0014': { stateKind: 'image-unsupported', message: 'That image format can’t be previewed here. Open it in the IDE instead.', retryInIde: true },
+    'CMP-WORKSPACEFS-0001': { stateKind: 'root-missing', message: jt('artifacts.filePreview.rootMissing', 'No workspace folder is set, so this file can’t be previewed here.'), retryInIde: false },
+    'CMP-WORKSPACEFS-0003': { stateKind: 'outside-root', message: jt('artifacts.filePreview.outsideRoot', 'That file is outside the workspace folder, so it can’t be previewed here.'), retryInIde: false },
+    'CMP-WORKSPACEFS-0004': { stateKind: 'not-found', message: jt('artifacts.filePreview.notFound', 'That file no longer exists in the workspace — it may have been renamed or deleted.'), retryInIde: false },
+    'CMP-WORKSPACEFS-0008': { stateKind: 'root-transitioning', message: jt('artifacts.filePreview.rootTransitioning', 'The workspace folder is changing right now. Try again in a moment.'), retryInIde: false },
+    'CMP-WORKSPACEFS-0010': { stateKind: 'binary', message: jt('artifacts.filePreview.binary', 'That file isn’t text, so it can’t be previewed here. Open it in the IDE instead.'), retryInIde: true },
+    'CMP-WORKSPACEFS-0011': { stateKind: 'too-large', message: jt('artifacts.filePreview.tooLarge', 'That file is too large to preview here. Open it in the IDE instead.'), retryInIde: true },
+    'CMP-WORKSPACEFS-0012': { stateKind: 'image-too-large', message: jt('artifacts.filePreview.imageTooLarge', 'That image is too large to preview here. Open it in the IDE instead.'), retryInIde: true },
+    'CMP-WORKSPACEFS-0013': { stateKind: 'binary', message: jt('artifacts.filePreview.binary', 'That file isn’t text, so it can’t be previewed here. Open it in the IDE instead.'), retryInIde: true },
+    'CMP-WORKSPACEFS-0014': { stateKind: 'image-unsupported', message: jt('artifacts.filePreview.imageUnsupported', 'That image format can’t be previewed here. Open it in the IDE instead.'), retryInIde: true },
   });
   const UNKNOWN_FAILURE = Object.freeze({
-    stateKind: 'failed', message: 'That file could not be read from the workspace.', retryInIde: true,
+    stateKind: 'failed', message: jt('artifacts.filePreview.readFailed', 'That file could not be read from the workspace.'), retryInIde: true,
   });
 
   const actionButton = typeof inventoryActionButton === 'function'
@@ -145,22 +146,22 @@
 
   function kindLabel(kind) {
     if (kind === 'markdown') return 'Markdown';
-    if (kind === 'html') return 'Sandboxed HTML';
+    if (kind === 'html') return jt('artifacts.filePreview.sandboxedHtml', 'Sandboxed HTML');
     if (kind === 'image') return 'Image';
     return 'Code';
   }
 
   function viewToggleHtml(view) {
     const current = view === 'code' ? 'code' : 'read';
-    return '<span class="artifact-file-preview-views" role="group" aria-label="Preview view">'
+    return '<span class="artifact-file-preview-views" role="group" aria-label="' + defaultEscapeHtml(jt('artifacts.filePreview.previewViewLabel', 'Preview view')) + '">'
       + actionButton({
-        plain: true, className: 'artifact-file-preview-view-btn', label: 'Read',
-        title: 'View rendered',
+        plain: true, className: 'artifact-file-preview-view-btn', label: jt('artifacts.filePreview.read', 'Read'),
+        title: jt('artifacts.filePreview.viewRendered', 'View rendered'),
         ariaPressed: current === 'read', dataset: { 'file-preview-view': 'read' },
       })
       + actionButton({
-        plain: true, className: 'artifact-file-preview-view-btn', label: 'Source',
-        title: 'View raw source',
+        plain: true, className: 'artifact-file-preview-view-btn', label: jt('artifacts.filePreview.source', 'Source'),
+        title: jt('artifacts.filePreview.viewRawSource', 'View raw source'),
         ariaPressed: current === 'code', dataset: { 'file-preview-view': 'code' },
       })
       + '</span>';
@@ -170,8 +171,8 @@
     return actionButton({
       plain: true,
       className: 'artifact-file-preview-ide-btn',
-      label: 'Open in IDE',
-      title: 'Open this file in the Workspace IDE',
+      label: jt('artifacts.actions.openInIde', 'Open in IDE'),
+      title: jt('artifacts.filePreview.openInIdeTitle', 'Open this file in the Workspace IDE'),
       dataset: { 'file-preview-open-ide': 'true' },
     });
   }
@@ -232,7 +233,7 @@
     const actions = (showOpenInIde ? openInIdeButtonHtml() : '')
       + (showRetry
         ? actionButton({
-          plain: true, className: 'artifact-file-preview-retry-btn', label: 'Try again',
+          plain: true, className: 'artifact-file-preview-retry-btn', label: jt('artifacts.filePreview.tryAgain', 'Try again'),
           dataset: { 'file-preview-retry': 'true' },
         })
         : '');

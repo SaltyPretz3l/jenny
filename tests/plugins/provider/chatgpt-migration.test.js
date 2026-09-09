@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { createMemoryFsFacade } = require('../../../services/plugins/store/fs-facade');
 const {
+  createBundledPluginMigration,
   createChatGptPluginMigration,
 } = require('../../../services/plugins/provider/chatgpt-migration');
 
@@ -37,6 +38,67 @@ test('prior ChatGPT users install once, preserve the credential owner, and wait 
   assert.equal((await migration.run()).migrated, true);
   assert.equal(installs.length, 1);
   assert.equal(enables.length, 1);
+});
+
+test('ChatGPT keeps its legacy request id while generic packages use their bundled prefix', async () => {
+  const chatgpt = setup({
+    chatgptAuthService: { hasCredential: () => false },
+  });
+  await chatgpt.migration.run();
+  assert.equal(chatgpt.installs[0].client_request_id,
+    `chatgpt_migration_${chatgpt.expectedSha256.slice(0, 12)}`);
+
+  const bytes = Buffer.from('generic-request-id-package');
+  const expectedSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  const installs = [];
+  const generic = createBundledPluginMigration({
+    identity: { publisher_id: 'jenny-official', plugin_id: 'generic-plugin' },
+    facade: createMemoryFsFacade(),
+    baseDir: 'plugins',
+    stage5Service: { installBundledPackage: async (payload) => {
+      installs.push(payload);
+      return { ok: true, status: 'committed' };
+    } },
+    loadBundledPackage: async () => ({ ok: true, bytes, expectedSha256 }),
+  });
+  assert.equal((await generic.run()).ok, true);
+  assert.equal(installs[0].client_request_id,
+    `bundled_install_generic-plugin_${expectedSha256.slice(0, 12)}`);
+  assert.match(installs[0].client_request_id, /^[a-z0-9][a-z0-9_-]{0,63}$/);
+});
+
+test('a joined failed operation is receipted as failed and retried with a new request id', async () => {
+  const attempts = [];
+  const responses = [
+    { ok: true, operation_id: 'operation_failed', status: 'failed' },
+    { ok: true, operation_id: 'operation_retry', status: 'committed' },
+  ];
+  const { migration, expectedSha256 } = setup({
+    chatgptAuthService: { hasCredential: () => false },
+    stage5Service: { installBundledPackage: async (payload) => {
+      attempts.push(payload);
+      return responses.shift();
+    } },
+  });
+
+  assert.deepEqual(await migration.run(), {
+    ok: false, reason: 'bundled_install_not_committed',
+  });
+  assert.deepEqual({
+    status: (await migration.readState()).status,
+    reason: (await migration.readState()).reason_code,
+  }, { status: 'failed', reason: 'bundled_install_not_committed' });
+  assert.equal(attempts[0].client_request_id,
+    `chatgpt_migration_${expectedSha256.slice(0, 12)}`);
+
+  const retry = await migration.run();
+  const retryHash = crypto.createHash('sha256')
+    .update('2026-08-06T00:00:00.000Z').digest('hex').slice(0, 8);
+  assert.equal(attempts[1].client_request_id,
+    `chatgpt_migration_${expectedSha256.slice(0, 12)}_r${retryHash}`);
+  assert.match(attempts[1].client_request_id, /^[a-z0-9][a-z0-9_-]{0,63}$/);
+  assert.equal(retry.ok, true);
+  assert.equal((await migration.readState()).status, 'installed');
 });
 
 test('fresh users remain inactive and explicit removal creates an idempotent tombstone', async () => {
@@ -144,4 +206,55 @@ test('a corrupt receipt is diagnosed and replaced by an idempotent valid receipt
   assert.equal((await migration.readState()).status, 'installed');
   assert.deepEqual(diagnostics, [{ event: 'plugin.chatgpt_migration.receipt_invalid',
     detail: { reason_code: 'migration_receipt_invalid' } }]);
+});
+
+test('the generic factory rejects an invalid official identity', () => {
+  assert.throws(() => createBundledPluginMigration({
+    identity: { publisher_id: 'other', plugin_id: 'valid-plugin' },
+    facade: createMemoryFsFacade(),
+    stage5Service: {},
+    loadBundledPackage: async () => ({ ok: false }),
+  }), TypeError);
+  assert.throws(() => createBundledPluginMigration({
+    identity: { publisher_id: 'jenny-official', plugin_id: 'Bad_Plugin' },
+    facade: createMemoryFsFacade(),
+    stage5Service: {},
+    loadBundledPackage: async () => ({ ok: false }),
+  }), TypeError);
+});
+
+test('the generic factory stores its receipt under the plugin id', async () => {
+  const bytes = Buffer.from('second-signed-package');
+  const expectedSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  const facade = createMemoryFsFacade();
+  const migration = createBundledPluginMigration({
+    identity: { publisher_id: 'jenny-official', plugin_id: 'second-plugin' },
+    facade,
+    baseDir: 'plugins',
+    stage5Service: { installBundledPackage: async () => ({ ok: true, status: 'committed' }) },
+    loadBundledPackage: async () => ({ ok: true, bytes, expectedSha256 }),
+    now: () => '2026-08-06T00:00:00.000Z',
+  });
+  await migration.run();
+  assert.equal((await facade.stat(
+    'plugins/provider-migrations/second-plugin.json')).isFile, true);
+  assert.equal((await facade.stat(
+    'plugins/provider-migrations/chatgpt-subscription.json')).exists, false);
+});
+
+test('the generic factory never enables when autoEnable is false', async () => {
+  const bytes = Buffer.from('inactive-signed-package');
+  const expectedSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  let enableCalls = 0;
+  const migration = createBundledPluginMigration({
+    identity: { publisher_id: 'jenny-official', plugin_id: 'inactive-plugin' },
+    facade: createMemoryFsFacade(),
+    baseDir: 'plugins',
+    stage5Service: { installBundledPackage: async () => ({ ok: true, status: 'committed' }) },
+    loadBundledPackage: async () => ({ ok: true, bytes, expectedSha256 }),
+    autoEnable: () => false,
+    enablePlugin: async () => { enableCalls += 1; return { ok: true }; },
+  });
+  assert.equal((await migration.run()).migrated, false);
+  assert.equal(enableCalls, 0);
 });

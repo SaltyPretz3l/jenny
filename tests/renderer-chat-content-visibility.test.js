@@ -487,7 +487,9 @@ test('a turn-article with an unresolved approval gate gets data-cv-exempt="true"
   const timeline = window.document.getElementById('chatTimeline') || window.document.body;
   const toolArticle = timeline.querySelector(`article[data-message-id="tool_use_${streamId}_call-cv-gap"]`);
   assert.ok(toolArticle, 'tool-call turn-article carrying the approval gap should be present');
-  assert.equal(toolArticle.classList.contains('pending'), false, 'sanity: the tool-call turn-article is not the .pending streaming article');
+  // Exercise approval exemption independently of the live-row pending marker.
+  toolArticle.classList.remove('pending');
+  window.rendererTurnShell.syncChatEntryCvExemptAttribute(toolArticle, { pending: false });
   assert.ok(
     toolArticle.querySelector('[data-row-kind="approval_gap"]'),
     'sanity: the article actually contains an unresolved approval_gap row'

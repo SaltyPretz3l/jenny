@@ -58,7 +58,7 @@
   animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
   position: fixed;
   top: var(--titlebar-height); /* fallback; refined inline per active tab */
-  left: var(--space-6);
+  left: var(--space-6); /* rtl:physical */
   z-index: calc(var(--z-toast) + 2); /* above toasts (75), below auth/startup (80) + capture (85) */
   display: flex;
   flex-direction: column;
@@ -102,7 +102,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  padding-block: var(--space-2);
+  padding-inline-start: var(--space-3);
+  padding-inline-end: var(--space-2);
   border-bottom: 1px solid var(--border-subtle, var(--border-strong));
 }
 

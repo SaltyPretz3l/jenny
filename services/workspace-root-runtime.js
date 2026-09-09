@@ -1,5 +1,7 @@
 'use strict';
 
+const { t } = require('./i18n-main');
+
 const {
   WorkspaceRootCoordinator,
   defaultNormalizeRootPath,
@@ -135,7 +137,7 @@ function createWorkspaceRootRuntime({
         );
       }
       const result = await dialog.showOpenDialog(getOwnerWindow(), {
-        title: 'Choose Workspace Root',
+        title: t('main.dialog.workspaceRoot.choose', 'Choose Workspace Root'),
         properties: ['openDirectory'],
       });
       const selectedPath = Array.isArray(result?.filePaths) ? result.filePaths[0] : '';

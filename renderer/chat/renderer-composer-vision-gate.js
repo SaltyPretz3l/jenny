@@ -5,11 +5,12 @@
   }
   root.rendererComposerVisionGate = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   // Must equal sidecar/ai/engines/vision_input.py MAX_VISION_ATTACHMENTS (tests/attachment-image-cap-parity.test.js pins it).
   const MAX_IMAGE_ATTACHMENTS = 4;
   const HEURISTIC_VISION_SOURCES = new Set(['model_name', 'name_heuristic', 'heuristic', 'catalog_absent']);
-
-  function unknownVision(modelLabel = 'The active model') {
+  function unknownVision(modelLabel = jt('composer.visionGate.activeModel', 'The active model')) {
     return { supported: null, source: 'unknown', modelLabel };
   }
 
@@ -17,7 +18,7 @@
     try {
       const preferred = String(runtimePreferences?.preferredModel || '').trim();
       const backendModel = String(state?.status?.model || '').trim();
-      const modelLabel = preferred || backendModel || 'The active model';
+      const modelLabel = preferred || backendModel || jt('composer.visionGate.activeModel', 'The active model');
       if (preferred === '' || preferred === backendModel) {
         // No model resolved or loaded yet: the send itself triggers the lazy
         // load, so there is nothing to judge — fail open (sidecar stays the authority).
@@ -76,9 +77,9 @@
         const excess = imageCount - maxImages;
         return {
           blocked: true,
-          notice: `Up to ${maxImages} images per message. Remove ${excess} to send.`,
+          notice: jt('composer.visionGate.tooManyImages', 'Up to {max} images per message. Remove {excess} to send.', { max: maxImages, excess }),
           tone: 'warning',
-          sendReason: `Remove ${excess} image${excess === 1 ? '' : 's'} to send.`,
+          sendReason: jtn('composer.visionGate.removeImagesToSend', excess, { count: excess }, 'Remove {count} image to send.', 'Remove {count} images to send.'),
           imageCount,
           vision,
         };
@@ -87,7 +88,7 @@
         if (HEURISTIC_VISION_SOURCES.has(vision.source)) {
           return {
             blocked: false,
-            notice: `${vision.modelLabel} may not support images. If the reply fails, switch to a vision model.`,
+            notice: jt('composer.visionGate.mayNotSupportImages', '{model} may not support images. If the reply fails, switch to a vision model.', { model: vision.modelLabel }),
             tone: 'warning',
             sendReason: '',
             imageCount,
@@ -96,9 +97,9 @@
         }
         return {
           blocked: true,
-          notice: `${vision.modelLabel} can't see images. Switch to a vision model or remove the image.`,
+          notice: jt('composer.visionGate.cannotSeeImages', "{model} can't see images. Switch to a vision model or remove the image.", { model: vision.modelLabel }),
           tone: 'warning',
-          sendReason: 'Remove the image or choose a vision model to send.',
+          sendReason: jt('composer.visionGate.removeOrChooseVisionModel', 'Remove the image or choose a vision model to send.'),
           imageCount,
           vision,
         };

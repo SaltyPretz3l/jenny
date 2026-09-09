@@ -23,6 +23,7 @@
   toolDetailBody,
   userQuestionsActionsModule
 ) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const motionHeightUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionHeightUtils)
     || (typeof require === 'function' ? require('../shared/motion-height-utils') : null) || {};
   function createTranscriptEventBindings(deps) {
@@ -139,7 +140,7 @@
         messageId: recapRow.dataset.messageId,
         recapId,
       })).catch((error) => {
-        showComposerActionError(error, 'Recap Toggle Failed');
+        showComposerActionError(error, jt('chat.transcript.recapToggleFailedTitle', 'Recap Toggle Failed'));
       });
     }
 
@@ -501,7 +502,7 @@
             window.jennyShell.tools.approve(callId, { alwaysAllow }).then((result) => {
               // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
               if (handleApprovalOutcomeRefused(result, {
-                block, callId, logEvent: 'tool.approve_refused', title: 'Approval Failed',
+                block, callId, logEvent: 'tool.approve_refused', title: jt('chat.transcript.approvalFailedTitle', 'Approval Failed'),
               })) {
                 return;
               }
@@ -520,7 +521,7 @@
             }).catch((error) => {
               setApprovalBlockBusy(block, false);
               appendClientLog('ERROR', 'tool.approve_failed', { callId, message: error.message || String(error) });
-              showComposerActionError(error, 'Approval Failed');
+              showComposerActionError(error, jt('chat.transcript.approvalFailedTitle', 'Approval Failed'));
             });
           }
           return;
@@ -545,7 +546,7 @@
             window.jennyShell.tools.deny(callId).then((result) => {
               // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
               if (handleApprovalOutcomeRefused(result, {
-                block, callId, logEvent: 'tool.deny_refused', title: 'Deny Failed',
+                block, callId, logEvent: 'tool.deny_refused', title: jt('chat.transcript.denyFailedTitle', 'Deny Failed'),
               })) {
                 return;
               }
@@ -557,7 +558,7 @@
             }).catch((error) => {
               setApprovalBlockBusy(block, false);
               appendClientLog('ERROR', 'tool.deny_failed', { callId, message: error.message || String(error) });
-              showComposerActionError(error, 'Deny Failed');
+              showComposerActionError(error, jt('chat.transcript.denyFailedTitle', 'Deny Failed'));
             });
           }
           return;
@@ -597,7 +598,7 @@
             errorClass: errorActionButton.dataset.errorClass, streamId: errorActionButton.dataset.streamId,
             contextNode: errorActionButton,
           }).catch((error) => {
-            showComposerActionError(error, 'Error Action Failed');
+            showComposerActionError(error, jt('chat.transcript.errorActionFailedTitle', 'Error Action Failed'));
           }).finally(() => {
             errorActionButton.removeAttribute('aria-busy');
             errorActionButton.disabled = false;
@@ -614,7 +615,7 @@
             sessionId: artifactActionButton.dataset.sessionId,
             contextNode: artifactActionButton,
           }).catch((error) => {
-            showComposerActionError(error, 'Artifact Action Failed');
+            showComposerActionError(error, jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
           });
           return;
         }
@@ -629,7 +630,7 @@
             fileKey: codeReviewButton.dataset.fileKey,
             contextNode: codeReviewButton,
           })).catch((error) => {
-            showComposerActionError(error, 'Code Review Failed');
+            showComposerActionError(error, jt('chat.transcript.codeReviewFailedTitle', 'Code Review Failed'));
           });
           return;
         }
@@ -648,7 +649,7 @@
             changeId: openChangeDiffButton.dataset.changeId,
             contextNode: openChangeDiffButton,
           })).catch((error) => {
-            showComposerActionError(error, 'Open Diff Failed');
+            showComposerActionError(error, jt('chat.transcript.openDiffFailedTitle', 'Open Diff Failed'));
           });
           return;
         }
@@ -698,7 +699,7 @@
             }
             showComposerActionError(
               error,
-              action === 'discard' ? 'Discard Failed' : 'Save Retry Failed'
+              action === 'discard' ? jt('chat.transcript.discardFailedTitle', 'Discard Failed') : jt('chat.transcript.saveRetryFailedTitle', 'Save Retry Failed')
             );
           });
           return;
@@ -716,10 +717,10 @@
             try {
               const maybePromise = handleEditCommit();
               if (maybePromise && typeof maybePromise.catch === 'function') {
-                maybePromise.catch((error) => showComposerActionError(error, 'Edit Failed'));
+                maybePromise.catch((error) => showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed')));
               }
             } catch (error) {
-              showComposerActionError(error, 'Edit Failed');
+              showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed'));
             }
           } else if (editAction === 'cancel') {
             try {
@@ -740,7 +741,7 @@
             try {
               handleEditMessage(messageId);
             } catch (error) {
-              showComposerActionError(error, 'Edit Failed');
+              showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed'));
             }
             return;
           }
@@ -755,43 +756,43 @@
           }
           if (messageAction === 'regenerate') {
             handleRegenerateMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Regenerate Failed');
+              showComposerActionError(error, jt('chat.transcript.regenerateFailedTitle', 'Regenerate Failed'));
             });
             return;
           }
           if (messageAction === 'branch') {
             handleBranchMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Branch Failed');
+              showComposerActionError(error, jt('chat.transcript.branchFailedTitle', 'Branch Failed'));
             });
             return;
           }
           if (messageAction === 'elaborate') {
             handleElaborateMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Elaborate Failed');
+              showComposerActionError(error, jt('chat.transcript.elaborateFailedTitle', 'Elaborate Failed'));
             });
             return;
           }
           if (messageAction === 'follow-up') {
             handleFollowUpMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Follow-up Failed');
+              showComposerActionError(error, jt('chat.transcript.followUpFailedTitle', 'Follow-up Failed'));
             });
             return;
           }
           if (messageAction === 'use-suggestion') {
             handleUseProactiveSuggestionMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Suggestion Failed');
+              showComposerActionError(error, jt('chat.transcript.suggestionFailedTitle', 'Suggestion Failed'));
             });
             return;
           }
           if (messageAction === 'save-suggestion') {
             handleSaveProactiveSuggestionMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Save Failed');
+              showComposerActionError(error, jt('chat.transcript.saveFailedTitle', 'Save Failed'));
             });
             return;
           }
           if (messageAction === 'later-suggestion') {
             handleLaterProactiveSuggestionMessage(messageId).catch((error) => {
-              showComposerActionError(error, 'Later Failed');
+              showComposerActionError(error, jt('chat.transcript.laterFailedTitle', 'Later Failed'));
             });
             return;
           }

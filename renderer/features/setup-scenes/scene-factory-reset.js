@@ -14,6 +14,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var escapeHtml = sceneUtils && sceneUtils.escapeHtml;
@@ -28,23 +29,23 @@
 
   function buildBodyHtml(viewState) {
     var status = viewState.submitting
-      ? '<p class="setup-scene-note">' + escapeHtml('Resetting first-launch setup...') + '</p>'
+      ? '<p class="setup-scene-note">' + escapeHtml(jt('setup.factoryReset.resetting', 'Resetting first-launch setup...')) + '</p>'
       : '';
     return ''
       + '<div class="setup-scene-body setup-reset-body">'
       + '<section class="setup-reset-section">'
       + '<h3>' + escapeHtml('Cleared') + '</h3>'
       + bulletList([
-        'Setup progress and first-launch completion state.',
-        'Assistant name, profile, and custom personality text.',
+        jt('setup.factoryReset.clearedSetupProgress', 'Setup progress and first-launch completion state.'),
+        jt('setup.factoryReset.clearedPersonality', 'Assistant name, profile, and custom personality text.'),
       ])
       + '</section>'
       + '<section class="setup-reset-section">'
       + '<h3>' + escapeHtml('Preserved') + '</h3>'
       + bulletList([
-        'Chat sessions and sidebar history.',
-        'Memories, attachments, credentials, and auth state.',
-        'Feature settings, workspace root, and local runtime preferences.',
+        jt('setup.factoryReset.preservedChats', 'Chat sessions and sidebar history.'),
+        jt('setup.factoryReset.preservedPrivateData', 'Memories, attachments, credentials, and auth state.'),
+        jt('setup.factoryReset.preservedSettings', 'Feature settings, workspace root, and local runtime preferences.'),
       ])
       + '</section>'
       + status
@@ -69,14 +70,14 @@
       if (!rootEl) return;
       rootEl.innerHTML = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: 'setup-factory-reset',
-        title: 'Reset onboarding',
+        title: jt('setup.factoryReset.title', 'Reset onboarding'),
         tone: 'danger',
-        eyebrow: 'Settings',
-        summary: 'Redo first-launch setup without deleting your conversations or private data.',
+        eyebrow: jt('setup.factoryReset.eyebrow', 'Settings'),
+        summary: jt('setup.factoryReset.summary', 'Redo first-launch setup without deleting your conversations or private data.'),
         bodyHtml: buildBodyHtml(viewState),
         actions: [
-          { id: 'cancel', label: 'Cancel', variant: 'secondary', disabled: viewState.submitting },
-          { id: 'confirm', label: 'Reset onboarding', variant: 'danger', disabled: viewState.submitting },
+          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary', disabled: viewState.submitting },
+          { id: 'confirm', label: jt('setup.factoryReset.title', 'Reset onboarding'), variant: 'danger', disabled: viewState.submitting },
         ],
       }) : '';
     }
@@ -101,8 +102,8 @@
           applySnapshot(snapshot);
         }
         showHome();
-        showToastMessage('Onboarding reset complete — setup tiles reopened on Companion Home.', {
-          title: 'Onboarding Reset',
+        showToastMessage(jt('setup.factoryReset.complete', 'Onboarding reset complete — setup tiles reopened on Companion Home.'), {
+          title: jt('setup.factoryReset.successTitle', 'Onboarding Reset'),
           tone: 'success',
           source: 'setup.factory_reset',
           dedupeKey: 'setup.factory_reset.complete',
@@ -114,8 +115,8 @@
         appendClientLog('WARN', 'setup.factory_reset_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        showShellErrorToast('Could not reset first-launch setup. Try again in a moment.', {
-          title: 'Onboarding Reset Failed',
+        showShellErrorToast(jt('setup.factoryReset.failed', 'Could not reset first-launch setup. Try again in a moment.'), {
+          title: jt('setup.factoryReset.failureTitle', 'Onboarding Reset Failed'),
         });
       }
     }

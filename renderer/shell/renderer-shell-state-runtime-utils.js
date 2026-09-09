@@ -6,6 +6,7 @@
   }
   root.rendererShellStateRuntimeUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const asyncFence = (typeof globalThis !== 'undefined' && globalThis.rendererAsyncFence)
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
   function noop() {}
@@ -137,7 +138,7 @@
             }
           : {
               state: 'missing',
-              message: 'No workspace root is configured yet.',
+              message: jt('ide.root.notConfigured', 'No workspace root is configured yet.'),
             };
       // Canonical root identity (WIDE-030): workspaceRoot.getState() includes
       // the root coordinator's context { rootId, generation } when the
@@ -319,9 +320,9 @@
           }).join(' | '),
         });
         showShellErrorToast(
-          'Some workspace-dependent views may still be stale. Try the action again if something looks off.',
+          jt('ide.root.viewsMayBeStale', 'Some workspace-dependent views may still be stale. Try the action again if something looks off.'),
           {
-            title: 'Workspace Root Refresh Incomplete',
+            title: jt('ide.root.refreshIncompleteLongTitle', 'Workspace Root Refresh Incomplete'),
             source: TOAST_SOURCE.settings,
             dedupeKey: `${TOAST_SOURCE.settings}:workspace-root:partial-refresh`,
           }
@@ -457,8 +458,8 @@
           committed: false, changed: false, canceled: false, blocked: true,
           mode, stage: 'renderer', code: 'transition_controller_unavailable',
         };
-        showShellErrorToast('Workspace folder changes are unavailable in this shell mode.', {
-          title: 'Workspace',
+        showShellErrorToast(jt('ide.root.changesUnavailable', 'Workspace folder changes are unavailable in this shell mode.'), {
+          title: jt('ide.root.workspaceTitle', 'Workspace'),
           source: TOAST_SOURCE.settings,
           dedupeKey: `${TOAST_SOURCE.settings}:workspace-root:unavailable`,
         });

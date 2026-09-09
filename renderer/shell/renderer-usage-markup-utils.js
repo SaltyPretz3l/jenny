@@ -7,6 +7,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const CSV_COLUMNS = Object.freeze([
     'record_id', 'recorded_at', 'session_id', 'stream_id', 'request_id', 'trace_id',
     'model', 'provider', 'terminal_type', 'outcome', 'outcome_detail', 'duration_ms',
@@ -29,7 +31,7 @@
   }
 
   function formatInteger(value) {
-    return Math.round(finiteNumber(value)).toLocaleString('en-US');
+    return Math.round(finiteNumber(value)).toLocaleString(globalThis.jennyI18n?.tag?.());
   }
 
   function formatRate(value) {
@@ -55,12 +57,12 @@
 
   function formatTimestamp(value) {
     const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return 'Unknown time';
+    if (!Number.isFinite(date.getTime())) return jt('diagnostics.usage.unknownTime', 'Unknown time');
     const elapsed = Date.now() - date.getTime();
-    if (elapsed >= 0 && elapsed < 60000) return 'just now';
-    if (elapsed >= 0 && elapsed < 3600000) return `${Math.floor(elapsed / 60000)}m ago`;
-    if (elapsed >= 0 && elapsed < 86400000) return `${Math.floor(elapsed / 3600000)}h ago`;
-    return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    if (elapsed >= 0 && elapsed < 60000) return jt('diagnostics.usage.justNow', 'just now');
+    if (elapsed >= 0 && elapsed < 3600000) return jtn('diagnostics.usage.minutesAgo', Math.floor(elapsed / 60000), { count: Math.floor(elapsed / 60000) }, '{count}m ago', '{count}m ago');
+    if (elapsed >= 0 && elapsed < 86400000) return jtn('diagnostics.usage.hoursAgo', Math.floor(elapsed / 3600000), { count: Math.floor(elapsed / 3600000) }, '{count}h ago', '{count}h ago');
+    return date.toLocaleString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(globalThis.jennyI18n?.timeOptions?.().hourCycle ? globalThis.jennyI18n.timeOptions() : { hour12: false }) });
   }
 
   function formatCost(value) {
@@ -84,12 +86,12 @@
     if (typeof render !== 'function') return '';
     return render({
       id: 'usage-scope',
-      ariaLabel: 'Usage scope',
+      ariaLabel: jt('usage.scopeLabel', 'Usage scope'),
       value: value || 'today',
       options: [
-        { value: 'session', label: 'This chat' },
-        { value: 'today', label: 'Today' },
-        { value: 'all', label: 'All retained' },
+        { value: 'session', label: jt('usage.scopeThisChat', 'This chat') },
+        { value: 'today', label: jt('usage.scopeToday', 'Today') },
+        { value: 'all', label: jt('usage.scopeAllRetained', 'All retained') },
       ],
     });
   }
@@ -110,24 +112,24 @@
     const firstToken = speed.ttft_ms || {};
     const outcomes = outcomeCounts(data);
     const outcomeParts = [];
-    if (outcomes.stopped) outcomeParts.push(`${formatInteger(outcomes.stopped)} stopped`);
-    if (outcomes.failed) outcomeParts.push(`${formatInteger(outcomes.failed)} failed`);
+    if (outcomes.stopped) outcomeParts.push(jt('diagnostics.usage.stoppedCount', '{count} stopped', { count: formatInteger(outcomes.stopped) }));
+    if (outcomes.failed) outcomeParts.push(jt('diagnostics.usage.failedCount', '{count} failed', { count: formatInteger(outcomes.failed) }));
     const outcomeFilter = outcomeParts.length
-      ? `<span class="usage-stat-note usage-stat-note--action" role="button" tabindex="0" data-usage-outcome-filter aria-pressed="${outcomeOnly ? 'true' : 'false'}">${outcomeParts.join(' · ')}</span>`
-      : '<span class="usage-stat-note">all completed</span>';
+      ? `<span class="usage-stat-note usage-stat-note--action" role="button" tabindex="0" data-usage-outcome-filter aria-pressed="${outcomeOnly ? 'true' : 'false'}">${escapeHtml(outcomeParts.join(' · '))}</span>`
+      : '<span class="usage-stat-note">' + escapeHtml(jt('diagnostics.usage.allCompleted', 'all completed')) + '</span>';
     const measured = finiteNumber(speed.measured_turns);
     const ttftMeasured = finiteNumber(firstToken.measured_turns);
     const missingMeasured = Math.max(finiteNumber(data.turn_count) - measured, 0);
     const rateDetail = measured
-      ? `p10–p90 ${formatRate(rate.p10)}–${formatRate(rate.p90)} tok/s${missingMeasured ? ` · ${formatInteger(missingMeasured)} not measured` : ''}`
-      : 'not reported by this provider';
+      ? (missingMeasured ? jt('diagnostics.usage.speedRangeNotMeasured', 'p10–p90 {p10}–{p90} tok/s · {count} not measured', { p10: formatRate(rate.p10), p90: formatRate(rate.p90), count: formatInteger(missingMeasured) }) : `p10–p90 ${formatRate(rate.p10)}–${formatRate(rate.p90)} tok/s`)
+      : jt('diagnostics.usage.notReportedByProvider', 'not reported by this provider');
     return [
-      ['Tokens', formatInteger(data.total_tokens), '', `${formatInteger(data.input_tokens)} in · ${formatInteger(data.output_tokens)} out`],
+      ['Tokens', formatInteger(data.total_tokens), '', jt('diagnostics.usage.tokensInOut', '{input} in · {output} out', { input: formatInteger(data.input_tokens), output: formatInteger(data.output_tokens) })],
       ['Speed', measured ? formatRate(rate.median) : '—', measured ? 'tok/s' : '', rateDetail],
       ['Turns', formatInteger(data.turn_count), '', outcomeFilter],
-      ['First token', ttftMeasured ? formatTtft(firstToken.median) : '—', '', ttftMeasured
-        ? `median wait${ttftMeasured < finiteNumber(data.turn_count) ? ` · ${formatInteger(finiteNumber(data.turn_count) - ttftMeasured)} not measured` : ''}`
-        : 'not reported by this provider'],
+      [jt('diagnostics.usage.firstToken', 'First token'), ttftMeasured ? formatTtft(firstToken.median) : '—', '', ttftMeasured
+        ? (ttftMeasured < finiteNumber(data.turn_count) ? jt('diagnostics.usage.medianWaitNotMeasured', 'median wait · {count} not measured', { count: formatInteger(finiteNumber(data.turn_count) - ttftMeasured) }) : jt('diagnostics.usage.medianWait', 'median wait'))
+        : jt('diagnostics.usage.notReportedByProvider', 'not reported by this provider')],
     ].map(([label, value, unit, detail]) => (
       `<div class="usage-stat"><span class="usage-stat-label">${escapeHtml(label)}</span>`
       + `<div class="usage-stat-value${value === '—' ? ' usage-none' : ''}">${escapeHtml(value)}`
@@ -147,9 +149,9 @@
 
   function buildModelTableMarkup(totals, selectedModel) {
     const rows = sortedModels(totals);
-    if (!rows.length) return '<p class="usage-empty-inline">No model usage in this scope.</p>';
+    if (!rows.length) return '<p class="usage-empty-inline">' + escapeHtml(jt('diagnostics.usage.noModelUsage', 'No model usage in this scope.')) + '</p>';
     const body = rows.map((row) => {
-      const model = String(row.model || 'Unknown model');
+      const model = String(row.model || jt('diagnostics.usage.unknownModel', 'Unknown model'));
       const pressed = model === selectedModel;
       return `<tr role="button" tabindex="0" data-usage-model="${escapeHtml(model)}" aria-pressed="${pressed ? 'true' : 'false'}">`
         + `<th scope="row" title="${escapeHtml(model)}">${escapeHtml(model)}</th>`
@@ -160,11 +162,11 @@
     }).join('');
     const totalModels = Object.keys(totals && totals.models || {}).length;
     const overflow = totalModels > rows.length
-      ? `<div class="usage-model-overflow">and ${formatInteger(totalModels - rows.length)} more models — export for the full list</div>`
+      ? '<div class="usage-model-overflow">' + escapeHtml(jt('diagnostics.usage.moreModels', 'and {count} more models — export for the full list', { count: formatInteger(totalModels - rows.length) })) + '</div>'
       : '';
     return '<table class="usage-table usage-model-table">'
-      + '<caption class="sr-only">Usage by model. Select a row to filter recent turns.</caption>'
-      + '<thead><tr><th scope="col">Model</th><th scope="col" class="usage-cell-num">Turns</th><th scope="col" class="usage-cell-num">Tokens</th><th scope="col" class="usage-cell-num">Tok/s</th><th scope="col" class="usage-cell-num">First token</th><th scope="col" class="usage-cell-num usage-col-time">Time</th></tr></thead>'
+      + '<caption class="sr-only">' + escapeHtml(jt('diagnostics.usage.modelTableCaption', 'Usage by model. Select a row to filter recent turns.')) + '</caption>'
+      + '<thead><tr><th scope="col">Model</th><th scope="col" class="usage-cell-num">Turns</th><th scope="col" class="usage-cell-num">Tokens</th><th scope="col" class="usage-cell-num">Tok/s</th><th scope="col" class="usage-cell-num">' + escapeHtml(jt('diagnostics.usage.firstToken', 'First token')) + '</th><th scope="col" class="usage-cell-num usage-col-time">Time</th></tr></thead>'
       + `<tbody>${body}</tbody></table>${overflow}`;
   }
 
@@ -179,23 +181,23 @@
     const actions = [];
     if (row.session_id) {
       actions.push(actionButton(inventory, {
-        label: 'chat', variant: 'ghost', size: 'sm', className: 'usage-link',
+        label: jt('usage.chatAction', 'chat'), variant: 'ghost', size: 'sm', className: 'usage-link',
         dataset: { 'usage-action': 'chat', 'session-id': String(row.session_id) },
-        ariaLabel: 'Open turn in chat',
-        title: 'Open this turn in chat',
+        ariaLabel: jt('usage.openTurnInChatLabel', 'Open turn in chat'),
+        title: jt('usage.openTurnInChatTitle', 'Open this turn in chat'),
       }));
     }
     if (row.stream_id) {
       actions.push(actionButton(inventory, {
-        label: 'trace', variant: 'ghost', size: 'sm', className: 'usage-link',
+        label: jt('usage.traceAction', 'trace'), variant: 'ghost', size: 'sm', className: 'usage-link',
         dataset: {
           'usage-action': 'trace',
           'stream-id': String(row.stream_id),
           'trace-id': String(row.trace_id || ''),
           'session-id': String(row.session_id || ''),
         },
-        ariaLabel: 'Open diagnostics trace',
-        title: 'Open the diagnostics trace for this turn',
+        ariaLabel: jt('usage.openDiagnosticsTraceLabel', 'Open diagnostics trace'),
+        title: jt('usage.openDiagnosticsTraceTitle', 'Open the diagnostics trace for this turn'),
       }));
     }
     return actions.filter(Boolean).join('');
@@ -203,8 +205,8 @@
 
   function buildRecentRowsMarkup(inventory, rows, filteredEmpty) {
     if (!rows.length) {
-      const message = filteredEmpty ? 'No retained turns match these filters.' : 'No retained turns in this scope.';
-      return `<tr><td colspan="7" class="usage-table-empty">${escapeHtml(filteredEmpty ? 'No turns match this filter.' : message)}</td></tr>`;
+      const message = filteredEmpty ? jt('diagnostics.usage.noRetainedTurnsMatchFilters', 'No retained turns match these filters.') : jt('diagnostics.usage.noRetainedTurns', 'No retained turns in this scope.');
+      return `<tr><td colspan="7" class="usage-table-empty">${escapeHtml(filteredEmpty ? jt('diagnostics.usage.noTurnsMatchFilter', 'No turns match this filter.') : message)}</td></tr>`;
     }
     return rows.map((row) => {
       const detail = String(row.outcome_detail || '');
@@ -225,8 +227,8 @@
 
   function buildRecentTableMarkup(inventory, rows, filteredEmpty) {
     return '<table class="usage-table usage-recent-table">'
-      + '<caption class="sr-only">Recent turns, newest first.</caption>'
-      + '<thead><tr><th scope="col">When</th><th scope="col">Model</th><th scope="col" class="usage-cell-num">In / out</th><th scope="col" class="usage-cell-num">Tok/s</th><th scope="col" class="usage-cell-num usage-col-ttft">First token</th><th scope="col" class="usage-cell-num">Total</th><th scope="col">Open</th></tr></thead>'
+      + '<caption class="sr-only">' + escapeHtml(jt('diagnostics.usage.recentTurnsCaption', 'Recent turns, newest first.')) + '</caption>'
+      + '<thead><tr><th scope="col">When</th><th scope="col">Model</th><th scope="col" class="usage-cell-num">In / out</th><th scope="col" class="usage-cell-num">Tok/s</th><th scope="col" class="usage-cell-num usage-col-ttft">' + escapeHtml(jt('diagnostics.usage.firstToken', 'First token')) + '</th><th scope="col" class="usage-cell-num">Total</th><th scope="col">Open</th></tr></thead>'
       + `<tbody data-usage-recent-body>${buildRecentRowsMarkup(inventory, rows, filteredEmpty)}</tbody></table>`;
   }
 
@@ -237,11 +239,11 @@
     const coverage = data.cost_coverage || {};
     const notes = [];
     const estimated = finiteNumber(data.estimated_turns);
-    if (estimated) notes.push(`${formatInteger(estimated)} of ${formatInteger(total)} turns use estimated token counts.`);
+    if (estimated) notes.push(jt('diagnostics.usage.estimatedTokenCounts', '{estimated} of {total} turns use estimated token counts.', { estimated: formatInteger(estimated), total: formatInteger(total) }));
     const hasKnownCost = finiteNumber(coverage.provider_reported_turns) > 0
       || finiteNumber(coverage.local_zero_turns) > 0;
     const spend = hasKnownCost ? formatCost(data.provider_cost_usd) : 'Unavailable';
-    notes.push(`Provider-reported spend: ${spend} across ${formatInteger(coverage.provider_reported_turns)} turns — ${formatInteger(coverage.local_zero_turns)} local, ${formatInteger(coverage.unavailable_turns)} not reported.`);
+    notes.push(jt('diagnostics.usage.providerSpend', 'Provider-reported spend: {spend} across {turns} turns — {local} local, {unreported} not reported.', { spend, turns: formatInteger(coverage.provider_reported_turns), local: formatInteger(coverage.local_zero_turns), unreported: formatInteger(coverage.unavailable_turns) }));
     return notes.map((note) => `<div class="usage-footnote">${escapeHtml(note)}</div>`).join('');
   }
 
@@ -251,14 +253,14 @@
     const retained = finiteNumber(meta.retained);
     const filters = [];
     if (meta.selectedModel) filters.push(meta.selectedModel);
-    if (meta.outcomeOnly) filters.push('failed or stopped');
+    if (meta.outcomeOnly) filters.push(jt('diagnostics.usage.failedOrStopped', 'failed or stopped'));
     const total = filters.length ? matched : retained;
     const copy = (shown < total
-      ? `${formatInteger(shown)} of ${formatInteger(total)} turns`
-      : `${plural(total, 'turn')} · all shown`)
+      ? jt('diagnostics.usage.shownOfTurns', '{shown} of {total} turns', { shown: formatInteger(shown), total: formatInteger(total) })
+      : jt('diagnostics.usage.allShown', '{turnLabel} · all shown', { turnLabel: plural(total, 'turn') }))
       + (filters.length ? ` · ${filters.join(' · ')}` : '');
     const clear = filters.length ? actionButton(inventory, {
-      label: 'Clear', variant: 'ghost', size: 'sm', dataset: { 'usage-action': 'clear-filters' },
+      label: jt('common.clear', 'Clear'), variant: 'ghost', size: 'sm', dataset: { 'usage-action': 'clear-filters' },
     }) : '';
     return `<span>${escapeHtml(copy)}</span>${clear}`;
   }
@@ -266,18 +268,18 @@
   function buildMoreMarkup(inventory, visible, matched) {
     if (visible >= matched) return '';
     return actionButton(inventory, {
-      label: 'Show 50 more',
+      label: jt('usage.showMore', 'Show 50 more'),
       variant: 'ghost', size: 'sm', dataset: { 'usage-action': 'more' },
     });
   }
 
   function buildActionsMarkup(inventory, busyAction) {
     return actionButton(inventory, {
-      label: busyAction === 'export' ? 'Exporting…' : 'Export CSV',
+      label: busyAction === 'export' ? jt('usage.exporting', 'Exporting…') : jt('usage.exportCsv', 'Export CSV'),
       variant: 'secondary', size: 'sm', disabled: Boolean(busyAction),
       dataset: { 'usage-action': 'export' },
     }) + actionButton(inventory, {
-      label: busyAction === 'clear' ? 'Clearing…' : 'Clear history',
+      label: busyAction === 'clear' ? jt('usage.clearing', 'Clearing…') : jt('usage.clearHistory', 'Clear history'),
       variant: 'danger', size: 'sm', disabled: Boolean(busyAction),
       dataset: { 'usage-action': 'clear' },
     });

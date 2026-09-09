@@ -492,6 +492,16 @@ def test_parse_runtime_config_defaults_invalid_safety_mode() -> None:
     assert parse_runtime_config({"safety_mode": "anything"}).safety_mode == "normal"
 
 
+def test_parse_runtime_config_reads_ui_language() -> None:
+    assert parse_runtime_config({"ui_language": "PT-br"}).ui_language == "pt-BR"
+    assert parse_runtime_config({"ui_language": "zh-cn"}).ui_language == "zh-CN"
+
+
+def test_parse_runtime_config_defaults_invalid_ui_language() -> None:
+    assert parse_runtime_config({}).ui_language == "en"
+    assert parse_runtime_config({"ui_language": "anything"}).ui_language == "en"
+
+
 def test_parse_runtime_config_reads_max_budget_usd() -> None:
     config = parse_runtime_config({"max_budget_usd": 12.5})
     assert config.max_budget_usd == 12.5
@@ -1069,3 +1079,9 @@ def test_parse_runtime_config_fallback_models_non_list_ignored() -> None:
     assert parse_runtime_config({"fallback_models": "ollama"}).fallback_models == ()
     assert parse_runtime_config({"fallback_models": 42}).fallback_models == ()
     assert parse_runtime_config({"fallback_models": None}).fallback_models == ()
+
+
+def test_parse_runtime_config_validates_24_hour_time() -> None:
+    assert parse_runtime_config({"use_24_hour_time": True}).use_24_hour_time is True
+    for value in (None, False, "true", 1, {}):
+        assert parse_runtime_config({"use_24_hour_time": value}).use_24_hour_time is False

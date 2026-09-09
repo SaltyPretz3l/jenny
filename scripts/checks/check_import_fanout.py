@@ -74,7 +74,7 @@ EXEMPT = {
     # (python-runtime headroom slices, 2026-09-04). Same extraction-not-hub shape
     # as ollama_runtime.py above; interpreter.py re-exports both clusters so
     # existing import sites remain stable.
-    (ROOT / "sidecar" / "ai" / "tools" / "builtins" / "python_runtime" / "interpreter.py").resolve(),
+    (ROOT / "sidecar/ai/tools/builtins/python_runtime/interpreter.py").resolve(),
     # Sits at 7 because two of its imports are function-level cycle-breakers
     # (file_history and trash_maintenance import the retention hooks back), and
     # the seventh is the canonical error-code constant that check_error_codes
@@ -83,6 +83,23 @@ EXEMPT = {
     (ROOT / "sidecar" / "ai" / "tools" / "workspace_retention.py").resolve(),
 }
 
+
+# Hosted request assembly must combine descriptor owners with independent host
+# admission policy. Edit orchestration adds the canonical atomic-write owner to
+# existing read/checkpoint/result owners. Keep these explicit edges narrowly capped;
+# do not obscure security ownership with forwarding modules or general exemptions.
+WIRING_CAPS = {
+    # Desktop command sandbox adds one independent execution-policy owner at
+    # these configuration/dispatch composition seams (DESKTOP_COMMAND_SANDBOX.md).
+    # Exact caps preserve explicit security imports rather than hiding them in facades.
+    (ROOT / "sidecar/ai/config.py").resolve(): 7,
+    # Combined hosted worker and desktop sandbox integration adds two canonical
+    # policy owners (6 -> 8): hosted direct-dispatch fencing and desktop approval
+    # routing. Independently reviewed; retain both visible security dependencies.
+    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 8,
+    (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 8,
+    (ROOT / "sidecar/ai/tools/builtins/edit_file.py").resolve(): 7,
+}
 
 def count_internal_imports(path: Path) -> int:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -107,7 +124,7 @@ def main() -> int:
         if file_path.name == "__init__.py" or file_path.resolve() in EXEMPT:
             continue
         import_count = count_internal_imports(file_path)
-        if import_count > MAX_IMPORTS:
+        if import_count > WIRING_CAPS.get(file_path.resolve(), MAX_IMPORTS):
             violations.append(
                 f"{file_path.relative_to(ROOT)} imports {import_count} sibling/internal modules"
             )

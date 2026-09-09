@@ -20,6 +20,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const { PERSONALITY_ERROR_CODES } = require('./backend/error-codes');
+const { t } = require('./i18n-main');
 const {
   ADVANCED_CONTEXT_MAX_BYTES,
   CLIP_MARKER,
@@ -657,15 +658,15 @@ class PersonalityWorkspaceService {
 
   async openWorkspaceFolder() {
     await this.ensureSeeded();
-    if (!this.openPathImpl) return { ok: false, message: 'Workspace folder opening is unavailable.' };
+    if (!this.openPathImpl) return { ok: false, message: t('main.personality.workspaceOpenUnavailable', 'Workspace folder opening is unavailable.') };
     try {
       const result = await this.openPathImpl(this.workspacePath);
       if (!result) return { ok: true, message: '' };
       this._logContextFileFailure('open_folder', 'workspace', { code: 'launch_failed' });
-      return { ok: false, message: 'Unable to open the context-files folder.' };
+      return { ok: false, message: t('main.personality.contextFolderOpenFailed', 'Unable to open the context-files folder.') };
     } catch (error) {
       this._logContextFileFailure('open_folder', 'workspace', error);
-      return { ok: false, message: 'Unable to open the context-files folder.' };
+      return { ok: false, message: t('main.personality.contextFolderOpenFailed', 'Unable to open the context-files folder.') };
     }
   }
 

@@ -394,30 +394,16 @@ test('_isRunning returns false when connection is refused', async (t) => {
 
 test('_waitForReady returns false when _isRunning never becomes true', async (t) => {
   const manager = makeManager();
-  // Patch _isRunning to always return false and speed up the loop via
-  // patching the internal constant — instead, override at class level.
   let callCount = 0;
-  manager._isRunning = async () => {
-    callCount += 1;
-    return false;
-  };
-
-  // Override _waitForReady to call the original with a tiny deadline
-  // We replicate the same logic with a 1ms max-wait to avoid blocking tests.
-  const tinyDeadline = 1; // ms
-  const result = await (async () => {
-    const deadline = Date.now() + tinyDeadline;
-    while (Date.now() < deadline) {
-      if (await manager._isRunning()) {
-        return true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    return false;
-  })();
-
-  assert.equal(result, false, '_waitForReady must return false after deadline');
-  assert.ok(callCount >= 1, '_isRunning must have been called at least once');
+  manager._isRunning = async () => { callCount += 1; return false; };
+  // Exercise the production loop with one poll, independent of scheduler jitter.
+  let clockReads = 0;
+  const originalNow = Date.now;
+  Date.now = () => clockReads++ < 2 ? 0 : 1_000_000;
+  t.after(() => { Date.now = originalNow; });
+  const result = await manager._waitForReady();
+  assert.equal(result, false);
+  assert.equal(callCount, 1);
 });
 
 // ---------------------------------------------------------------------------

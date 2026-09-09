@@ -6,7 +6,8 @@
   root.rendererToolMarkerUtils = factory(root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const STUCK_LOOP_EVENTS = new Set([
     'agent.stopped_due_to_loop',
     'agent.stopped_loop',
@@ -70,7 +71,7 @@
     return buildBannerMarkup(
       'stuck-loop',
       ''
-        + '<span class="tool-marker-banner-title">Agent stopped — repeated tool pattern detected</span>'
+        + '<span class="tool-marker-banner-title">' + escapeHtml(jt('chat.toolMarker.repeatedPatternStopped', 'Agent stopped — repeated tool pattern detected')) + '</span>'
         + '<span class="tool-marker-banner-detail">' + escapeHtml(code) + '</span>'
         + (summary
           ? '<span class="tool-marker-banner-meta" title="' + escapeHtml(summary) + '">'
@@ -96,7 +97,7 @@
     return buildBannerMarkup(
       'orphan',
       ''
-        + '<span class="tool-marker-banner-title">Tool was cancelled and recovered</span>'
+        + '<span class="tool-marker-banner-title">' + escapeHtml(jt('chat.toolMarker.cancelledAndRecovered', 'Tool was cancelled and recovered')) + '</span>'
         + detailHtml
         + '<span class="tool-marker-banner-meta">' + escapeHtml(code) + '</span>'
     );
@@ -108,7 +109,7 @@
     return buildBannerMarkup(
       'budget',
       ''
-        + '<span class="tool-marker-banner-title">Budget limit reached</span>'
+        + '<span class="tool-marker-banner-title">' + escapeHtml(jt('chat.toolMarker.budgetLimitReached', 'Budget limit reached')) + '</span>'
         + '<span class="tool-marker-banner-detail">' + escapeHtml(code) + '</span>'
         + (summary ? '<span class="tool-marker-banner-meta">' + escapeHtml(summary) + '</span>' : '')
     );
@@ -148,11 +149,9 @@
 
   function buildOrphanCarryNoticeMarkup(payload) {
     const count = readOrphanCarryCount(payload);
-    const phrase = count === 1
-      ? '1 orphaned tool call was carried into a clean turn.'
-      : (count > 1
-        ? count + ' orphaned tool calls were carried into a clean turn.'
-        : 'Orphaned tool calls were carried into a clean turn.');
+    const phrase = count > 0
+      ? jtn('chat.toolMarker.orphanedCount', count, { count }, '{count} orphaned tool call was carried into a clean turn.', '{count} orphaned tool calls were carried into a clean turn.')
+      : jt('chat.toolMarker.orphanedUnknownCount', 'Orphaned tool calls were carried into a clean turn.');
     return ''
       + '<div class="system-notice-orphan-carry" role="note" data-orphan-count="' + escapeHtml(String(count)) + '">'
       + '<span class="system-notice-orphan-carry-icon" aria-hidden="true"></span>'

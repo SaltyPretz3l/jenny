@@ -184,6 +184,7 @@
       ) {
         return null;
       }
+      layoutRuntime.measuredStageHeight = Math.round(stageRect.height);
       const stageBottom = Number.isFinite(stageRect.bottom) ? stageRect.bottom : (stageRect.top + stageRect.height);
       const composerTop = Number.isFinite(composerRect.top) ? composerRect.top : 0;
       const stageToComposerGap = Math.max(Math.ceil(composerTop - stageBottom), 0);
@@ -201,7 +202,9 @@
         return;
       }
       const safeOffsetChanged = layoutRuntime.safeOffset !== nextSafeOffset;
-      if (!safeOffsetChanged && !viewportHeightChanged && !chatSurfaceEffectWidthsChanged && !options.force) {
+      const stageHeightChanged = layoutRuntime.stageHeight !== layoutRuntime.measuredStageHeight;
+      layoutRuntime.stageHeight = layoutRuntime.measuredStageHeight;
+      if (!safeOffsetChanged && !stageHeightChanged && !viewportHeightChanged && !chatSurfaceEffectWidthsChanged && !options.force) {
         return;
       }
       layoutRuntime.safeOffset = nextSafeOffset;

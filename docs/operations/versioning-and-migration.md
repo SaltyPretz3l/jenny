@@ -46,8 +46,9 @@ mention the change explicitly: either reference the constant by name
 `### Contract changes` / `### Migration notes` subsection. The script refuses
 to run otherwise. The same validator is reachable from
 `scripts/checks/check_release_version_policy.py --strict`, which is what the
-release-attestation workflow runs on tag push so a missing notes entry blocks
-the publish.
+release-cut validation can use to reject undocumented contract changes.
+The former private release-attestation workflow has been retired; its removal
+does not establish a replacement attestation service.
 
 Release-version policy is checked by:
 
@@ -60,8 +61,8 @@ runtime dependency, release scripts to stay explicit, SBOM metadata to read
 the package version, and `RELEASE_NOTES.md` to carry a section for the current
 app version. Pre-release dev iteration runs the default mode so contract
 constants can move freely while features are still landing. Add `--strict` to
-also enforce the contract-version validation; `release-attestation.yml`
-invokes the strict variant on tag push.
+also enforce the contract-version validation. Run it against the frozen release
+candidate before publication.
 
 ## API_VERSION handshake
 
@@ -525,7 +526,16 @@ registered as `electron.terminal_repair_store` with forward policy
 
 ## Shell config schema (JSON)
 
-**Source of truth:** `CONFIG_VERSION = 41` in
+For the 1.1 candidate, v52 adds `uiLanguage`, `safetyMode` and
+`unattendedGuardMinutes`. V53 adds normalized `commandSandbox` configuration,
+defaulting off for existing profiles. The additive `use24HourTime` preference
+defaults false and does not require another schema bump. Older schema notes
+below explain earlier transitions rather than the complete current shape.
+Hosted configuration and command-worker journals are separate contracts; see
+[hosting operations](HOSTED_JENNY.md) and
+[desktop sandbox operations](DESKTOP_COMMAND_SANDBOX.md).
+
+**Source of truth:** `CONFIG_VERSION = 53` in
 [services/shell-config-state.js](../../services/shell-config-state.js), consumed
 by [services/shell-config-service.js](../../services/shell-config-service.js).
 
@@ -853,7 +863,7 @@ The additive `mcp.inspect` request shares `API_VERSION` negotiation and adds no
 notification, turn-event kind, or durable sidecar state. Configuration edits or
 `CMP-MCP-0009` tool-surface drift invalidate approval and return the row to
 disabled/pending review. See
-[PLUGIN_SECURITY.md § Plugin Catalogs and MCP Trust](../PLUGIN_SECURITY.md#plugin-catalogs-and-mcp-trust).
+[PLUGIN_SECURITY.md ` Plugin Catalogs and MCP Trust](../PLUGIN_SECURITY.md#plugin-catalogs-and-mcp-trust).
 
 ## Plugin contract and generation compatibility
 

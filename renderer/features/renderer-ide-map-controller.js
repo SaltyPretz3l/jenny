@@ -42,8 +42,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
       return globalRef[globalName];
@@ -447,8 +448,8 @@
         : [];
       controls?.setStatus?.(
         searchMatches.length > 0
-          ? `${searchMatches.length} match${searchMatches.length === 1 ? '' : 'es'} — Enter to cycle`
-          : `No files match “${searchText}”`,
+          ? jtn('ide.map.searchMatches', searchMatches.length, { count: searchMatches.length }, '{count} match — Enter to cycle', '{count} matches — Enter to cycle')
+          : jt('ide.map.noSearchMatches', 'No files match “{query}”', { query: searchText }),
         { tone: 'default' }
       );
     }
@@ -541,7 +542,7 @@
       }
       if (activityTurnActive && lastGraph) {
         pendingScanResult = result;
-        controls?.setStatus?.('Map update held while Jenny works…', { tone: 'default' });
+        controls?.setStatus?.(jt('ide.map.updateHeld', 'Map update held while Jenny works…'), { tone: 'default' });
         return;
       }
       applyScanResultNow(result);
@@ -561,7 +562,7 @@
             reason,
             message: (result && result.message) || '',
           });
-          states?.render('error', { message: (result && result.message) || 'Unknown error.' });
+          states?.render('error', { message: (result && result.message) || jt('ide.map.unknownError', 'Unknown error.') });
         }
         return;
       }
@@ -702,13 +703,13 @@
       }
       if (!view?.getNodePosition?.(relPath)) {
         controls?.setStatus?.(
-          `“${relPath}” isn’t in the map (ignored, unsupported, or not scanned yet)`,
+          jt('ide.map.pathNotMapped', '“{path}” isn’t in the map (ignored, unsupported, or not scanned yet)', { path: relPath }),
           { autoClearMs: 5000 }
         );
         return 'not-in-map';
       }
       if (view?.isNodeNavigable?.(relPath) === false) {
-        controls?.setStatus?.(`“${relPath}” is hidden by Hide tests`, { autoClearMs: 5000 });
+        controls?.setStatus?.(jt('ide.map.pathHiddenByTests', '“{path}” is hidden by Hide tests', { path: relPath }), { autoClearMs: 5000 });
         return 'not-in-map';
       }
       panNodeToCenter(relPath);

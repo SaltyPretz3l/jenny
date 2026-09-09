@@ -23,6 +23,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (injectedActionButton, injectedBadge) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -46,8 +47,7 @@
    * renders 'calm' with three lockdown-specific actions instead of the generic
    * danger-card machinery. */
   var LOCKDOWN_REMOTE_ENGINE_CODE = 'lockdown_remote_engine';
-  var LOCKDOWN_REFUSAL_MESSAGE = 'This session is in offline lockdown; the selected engine is remote. '
-    + 'Switch to a local model or turn lockdown off.';
+  var LOCKDOWN_REFUSAL_MESSAGE = jt('chat.errorRecovery.lockdownRefusal', 'This session is in offline lockdown; the selected engine is remote. Switch to a local model or turn lockdown off.');
 
   var PREFIX_CLASS_MAP = {
     'CMP-AI-0002': 'transport',   /* engine connection */
@@ -143,7 +143,7 @@
   var ICONS = {
     retry: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><path d="M13 8a5 5 0 1 1-1.43-3.49" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M13 3v3.5H9.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     settings: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>',
-    skip: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><path d="M4 4l8 4-8 4V4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 4v8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+    skip: '<svg class="icon-mirror-rtl" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><path d="M4 4l8 4-8 4V4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 4v8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
   };
 
   var CARD_ICONS = {
@@ -152,11 +152,11 @@
   };
 
   var BACKEND_ACTIONS = {
-    retry_turn: { icon: 'retry', label: 'Retry turn' },
-    restart_sidecar: { icon: 'retry', label: 'Restart sidecar' },
-    open_diagnostics: { icon: 'settings', label: 'Open diagnostics' },
-    open_settings: { icon: 'settings', label: 'Open settings' },
-    start_new_session: { icon: 'skip', label: 'Start new session' },
+    retry_turn: { icon: 'retry', label: jt('chat.errorRecovery.retryTurn', 'Retry turn') },
+    restart_sidecar: { icon: 'retry', label: jt('chat.errorRecovery.restartSidecar', 'Restart sidecar') },
+    open_diagnostics: { icon: 'settings', label: jt('chat.errorRecovery.openDiagnostics', 'Open diagnostics') },
+    open_settings: { icon: 'settings', label: jt('chat.errorRecovery.openSettings', 'Open settings') },
+    start_new_session: { icon: 'skip', label: jt('chat.errorRecovery.startNewSession', 'Start new session') },
   };
 
   /* Secondary navigations that demote to a muted/tertiary style when they
@@ -191,13 +191,13 @@
   /* Local fallback titles per error class — mirrors the backend
    * RECOVERY_COPY titles so the pre-enrichment path reads the same. */
   var LOCAL_TITLES = {
-    transport: 'Connection issue',
-    provider: 'Provider issue',
-    tool: 'Tool failed',
-    context: 'Context limit reached',
-    setup: 'Setup required',
-    loop: 'Processing issue',
-    unknown: 'Turn failed',
+    transport: jt('chat.errorRecovery.connectionIssueTitle', 'Connection issue'),
+    provider: jt('chat.errorRecovery.providerIssueTitle', 'Provider issue'),
+    tool: jt('chat.errorRecovery.toolFailedTitle', 'Tool failed'),
+    context: jt('chat.errorRecovery.contextLimitTitle', 'Context limit reached'),
+    setup: jt('chat.errorRecovery.setupRequiredTitle', 'Setup required'),
+    loop: jt('chat.errorRecovery.processingIssueTitle', 'Processing issue'),
+    unknown: jt('chat.errorRecovery.turnFailedTitle', 'Turn failed'),
   };
 
   /**
@@ -206,19 +206,19 @@
   function getRecoveryHint(errorClass, errorMessage) {
     switch (errorClass) {
       case 'transport':
-        return 'Connection issue — the request may succeed on retry.';
+        return jt('chat.errorRecovery.connectionRetryHint', 'Connection issue — the request may succeed on retry.');
       case 'provider':
-        if (/rate.?limit/i.test(errorMessage)) return 'Rate limit reached — wait a moment or check provider settings.';
-        if (/not.?loaded|model.?load/i.test(errorMessage)) return 'Model not available — load it or choose another in settings.';
-        return 'Provider error — check your model or API configuration.';
+        if (/rate.?limit/i.test(errorMessage)) return jt('chat.errorRecovery.rateLimitHint', 'Rate limit reached — wait a moment or check provider settings.');
+        if (/not.?loaded|model.?load/i.test(errorMessage)) return jt('chat.errorRecovery.modelUnavailableHint', 'Model not available — load it or choose another in settings.');
+        return jt('chat.errorRecovery.providerErrorHint', 'Provider error — check your model or API configuration.');
       case 'tool':
-        return 'Tool execution failed — you can retry, skip, or edit the input.';
+        return jt('chat.errorRecovery.toolFailedHint', 'Tool execution failed — you can retry, skip, or edit the input.');
       case 'context':
-        return 'Context window limit reached — consider starting a new session.';
+        return jt('chat.errorRecovery.contextLimitHint', 'Context window limit reached — consider starting a new session.');
       case 'setup':
-        return 'A workspace root is not set — open Settings to set one, then retry.';
+        return jt('chat.errorRecovery.workspaceRootRequiredHint', 'A workspace root is not set — open Settings to set one, then retry.');
       case 'loop':
-        return 'Processing limit hit — the request can be retried.';
+        return jt('chat.errorRecovery.processingLimitHint', 'Processing limit hit — the request can be retried.');
       default:
         return '';
     }
@@ -270,6 +270,22 @@
     return typeof injectedBadge === 'function' ? injectedBadge : null;
   }
 
+  function resolveBackendStrings() {
+    if (typeof globalThis !== 'undefined' && globalThis.jennyBackendStrings) {
+      return globalThis.jennyBackendStrings;
+    }
+    if (typeof require === 'function') {
+      try { return require('../shared/i18n-backend-strings'); } catch (_error) { /* not available */ }
+    }
+    return null;
+  }
+
+  function translateBackendError(errorCode, errorText) {
+    var backendStrings = resolveBackendStrings();
+    if (!backendStrings || typeof backendStrings.errorText !== 'function') return errorText;
+    try { return backendStrings.errorText(errorCode, errorText); } catch (_error) { return errorText; }
+  }
+
   function buildActionButton(action, options) {
     var settings = options || {};
     var actionId = normalizeActionText(action && action.id);
@@ -314,7 +330,7 @@
   /* Tooltip copy for the logs deep-link chip. The global tooltip layer
    * (renderer/inventory/tooltip.js) migrates a plain title= into its own
    * popover, so setting title is the whole contract. */
-  var LOGS_LINK_TITLE = "View this error's diagnostic event in Activity";
+  var LOGS_LINK_TITLE = jt('chat.errorRecovery.activityDiagnosticTitle', "View this error's diagnostic event in Activity");
 
   /**
    * Resolve the turn's stream id from a message-shaped error payload.
@@ -416,6 +432,9 @@
     var severity = o.severity === 'calm' ? 'calm' : 'danger';
     var errorCode = String(o.errorCode || '').trim();
     var message = normalizeActionText(o.message);
+    /* Hint/retry heuristics inspect the backend's English text; the translated
+     * message is display-only (opts.rawMessage carries the untranslated text). */
+    var decisionMessage = normalizeActionText(o.rawMessage) || message;
     var callId = String(o.callId || '').trim();
     var sessionId = String(o.sessionId || '').trim();
     var messageId = String(o.messageId || '').trim();
@@ -429,16 +448,16 @@
       ? (BACKEND_CLASS_TO_LOCAL_CLASS[backendRecoveryClass] || classifyError(errorCode))
       : classifyError(errorCode);
     var title = isLockdownRefusal
-      ? 'Offline lockdown is on'
+      ? jt('chat.errorRecovery.offlineLockdownTitle', 'Offline lockdown is on')
       : (normalizeActionText(o.recoveryTitle) || normalizeActionText(o.recovery_title)
-        || (severity === 'calm' ? 'Response stopped' : (LOCAL_TITLES[errorClass] || LOCAL_TITLES.unknown)));
+        || (severity === 'calm' ? jt('chat.errorRecovery.responseStoppedTitle', 'Response stopped') : (LOCAL_TITLES[errorClass] || LOCAL_TITLES.unknown)));
     if (isLockdownRefusal) {
       message = LOCKDOWN_REFUSAL_MESSAGE;
     }
     var serverHint = normalizeActionText(o.recoveryHint) || normalizeActionText(o.recovery_hint);
     var hint = severity === 'calm'
       ? serverHint
-      : (serverHint || getRecoveryHint(errorClass, message));
+      : (serverHint || getRecoveryHint(errorClass, decisionMessage));
     var nextActionLabel = normalizeActionText(o.nextActionLabel) || normalizeActionText(o.next_action_label);
     var nextAction = normalizeActionText(o.nextAction) || normalizeActionText(o.next_action);
     /* Retryability follows the SAME source as errorClass: a backend-classified
@@ -448,7 +467,7 @@
       ? o.retryable
       : (backendRecoveryClass
         ? (errorClass === 'transport' || errorClass === 'loop')
-        : isRetryable(errorCode, message));
+        : isRetryable(errorCode, decisionMessage));
 
     var codeBadge = buildErrorCodeChip(errorCode, {
       tone: severity === 'calm' ? 'default' : 'danger',
@@ -487,13 +506,13 @@
       // backend recovery metadata replace one of the three usable exits.
       actions = [];
       actionIds = [];
-      actions.push(buildActionButton({ id: 'lockdown_off', label: 'Turn lockdown off' }, {
+      actions.push(buildActionButton({ id: 'lockdown_off', label: jt('chat.errorRecovery.turnLockdownOff', 'Turn lockdown off') }, {
         sessionId: sessionId,
         errorClass: 'lockdown',
         primary: true,
       }));
       actionIds.push('lockdown_off');
-      actions.push(buildActionButton({ id: 'switch_local_model', label: 'Switch to a local model' }, {
+      actions.push(buildActionButton({ id: 'switch_local_model', label: jt('chat.errorRecovery.switchLocalModel', 'Switch to a local model') }, {
         sessionId: sessionId,
         errorClass: 'lockdown',
       }));
@@ -501,7 +520,7 @@
       /* The refused turn is already in the transcript (the gate runs after the
        * user message is persisted), so after either fix the user needs a
        * re-send, not a retype: the standard stream-level retry. */
-      actions.push(buildActionButton({ id: 'retry_turn', label: 'Retry turn', icon: 'retry', title: 'Retry the failed turn' }, {
+      actions.push(buildActionButton({ id: 'retry_turn', label: jt('chat.errorRecovery.retryTurn', 'Retry turn'), icon: 'retry', title: jt('chat.errorRecovery.retryFailedTurn', 'Retry the failed turn') }, {
         sessionId: sessionId,
         errorClass: 'lockdown',
       }));
@@ -521,7 +540,7 @@
      * render backend-supplied actions verbatim (W4 adds Regenerate). */
     if (severity === 'danger' && !isLockdownRefusal) {
       if (!actions.length && (errorClass === 'transport' || errorClass === 'loop' || retryable)) {
-        actions.push(buildActionButton({ id: 'retry', label: applyPrimaryLabel('Retry'), icon: 'retry', title: 'Retry this request' }, {
+        actions.push(buildActionButton({ id: 'retry', label: applyPrimaryLabel('Retry'), icon: 'retry', title: jt('chat.errorRecovery.retryRequest', 'Retry this request') }, {
           callId: callId,
           sessionId: sessionId,
           messageId: messageId,
@@ -540,13 +559,13 @@
       }
 
       if (!actions.length && errorClass === 'tool' && callId) {
-        actions.push(buildActionButton({ id: 'retry-tool', label: applyPrimaryLabel('Retry tool'), icon: 'retry', title: 'Retry this tool call' }, {
+        actions.push(buildActionButton({ id: 'retry-tool', label: applyPrimaryLabel(jt('chat.errorRecovery.retryTool', 'Retry tool')), icon: 'retry', title: jt('chat.errorRecovery.retryToolCall', 'Retry this tool call') }, {
           callId: callId,
           messageId: messageId,
           errorClass: errorClass,
           primary: true,
         }));
-        actions.push(buildActionButton({ id: 'skip-tool', label: 'Skip', icon: 'skip', title: 'Skip this tool call and continue' }, {
+        actions.push(buildActionButton({ id: 'skip-tool', label: jt('common.skip', 'Skip'), icon: 'skip', title: jt('chat.errorRecovery.skipToolCall', 'Skip this tool call and continue') }, {
           callId: callId,
           errorClass: errorClass,
           muted: true,
@@ -555,7 +574,7 @@
       }
 
       if (!actions.length && errorClass === 'context') {
-        actions.push(buildActionButton({ id: 'new-session', label: applyPrimaryLabel('New session') }, {
+        actions.push(buildActionButton({ id: 'new-session', label: applyPrimaryLabel(jt('chat.errorRecovery.newSession', 'New session')) }, {
           errorClass: errorClass,
           primary: true,
         }));
@@ -565,7 +584,7 @@
       /* A config/setup error (e.g. no workspace root) is fixed in Settings, not by retry —
        * lead with Settings (the universal-retry fallback below is suppressed for this class). */
       if (!actions.length && errorClass === 'setup') {
-        actions.push(buildActionButton({ id: 'settings', label: applyPrimaryLabel('Open settings'), icon: 'settings' }, {
+        actions.push(buildActionButton({ id: 'settings', label: applyPrimaryLabel(jt('chat.errorRecovery.openSettings', 'Open settings')), icon: 'settings' }, {
           errorClass: errorClass,
           primary: true,
         }));
@@ -585,7 +604,7 @@
     if (messageId && !hasRetryLikeAction && (retryable || errorClass === 'provider')) {
       var universalRetry = buildActionButton({
         id: 'retry',
-        label: severity === 'calm' ? 'Regenerate response' : 'Retry',
+        label: severity === 'calm' ? jt('chat.errorRecovery.regenerateResponse', 'Regenerate response') : jt('common.retry', 'Retry'),
         icon: 'retry',
       }, {
         callId: callId,
@@ -624,7 +643,7 @@
      * of the Details panel for discoverability). Danger cards only; calm
      * cards stay minimal (the user asked it to stop). */
     if (severity === 'danger') {
-      var logsButton = buildActionButton({ id: 'open_logs', label: 'View in logs' }, {
+      var logsButton = buildActionButton({ id: 'open_logs', label: jt('chat.errorRecovery.viewInLogs', 'View in logs') }, {
         sessionId: sessionId,
         messageId: messageId,
         errorClass: errorClass,
@@ -647,7 +666,7 @@
       if (createdAt) diagnosticLines.push('Time:    ' + createdAt);
       if (errorCode) diagnosticLines.push('Code:    ' + errorCode);
       if (sessionId) diagnosticLines.push('Session: ' + sessionId);
-      if (messageId) diagnosticLines.push('Msg ID:  ' + messageId);
+      if (messageId) diagnosticLines.push(jt('chat.errorRecovery.messageIdDiagnostic', 'Msg ID:  {id}', { id: messageId }));
       var suppressedErrors = Array.isArray(o.suppressedErrors) ? o.suppressedErrors : [];
       for (var s = 0; s < suppressedErrors.length; s++) {
         var suppressed = suppressedErrors[s] || {};
@@ -658,7 +677,7 @@
       }
       var rawDetailText = diagnosticLines.length
         ? diagnosticLines.join('\n')
-        : 'No additional diagnostic data available.';
+        : jt('chat.errorRecovery.noDiagnosticData', 'No additional diagnostic data available.');
       // Same buildActionButton() markup, just relocated into Details — add
       // the one new modifier class (styled as a link, not a button) onto
       // the existing class="inv-error-action ..." attribute without forking
@@ -729,7 +748,8 @@
     var severity = options.severity === 'calm' || options.severity === 'danger'
       ? options.severity
       : (isLockdownRefusal ? 'calm' : resolveErrorSeverity(m));
-    var errorText = normalizeActionText(m.stream_error) || normalizeActionText(m.streamError);
+    var rawErrorText = normalizeActionText(m.stream_error) || normalizeActionText(m.streamError);
+    var errorText = translateBackendError(errorCode, rawErrorText);
     if (severity !== 'calm' && !errorText && !errorCode && !hasRecoveryMetadata(m)) {
       return '';
     }
@@ -752,6 +772,7 @@
       errorCode: errorCode,
       terminalSubcode: terminalSubcode,
       message: errorText,
+      rawMessage: rawErrorText,
       sessionId: m.session_id || m.sessionId || options.sessionId,
       messageId: m.id || options.messageId,
       streamId: resolveErrorStreamId(m, options),
@@ -777,10 +798,9 @@
    */
   function renderEnhancedFailureNotice(message) {
     var m = message && typeof message === 'object' ? message : {};
-    if (!normalizeActionText(m.stream_error) && !normalizeActionText(m.streamError)) {
-      return '';
-    }
-    return renderTimelineErrorCard(m);
+    var errorText = normalizeActionText(m.stream_error) || normalizeActionText(m.streamError);
+    if (!errorText) return '';
+    return renderTimelineErrorCard(m, {});
   }
 
   return {

@@ -6,7 +6,8 @@
   root.rendererStreamToolLiveTail = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   /* W2-1: live stdout/stderr tail for an in-flight run_command tool row.
      Chunks are EPHEMERAL — this module patches the DOM directly (textContent
      appends, like the deck clock and patchStatus) and never touches the
@@ -155,7 +156,7 @@
       const marker = pane.querySelector('.tool-live-output-truncation');
       if (marker) {
         if (droppedTotal > 0) {
-          marker.textContent = `… ${droppedTotal} line${droppedTotal === 1 ? '' : 's'} omitted — full output arrives with the result`;
+          marker.textContent = jtn('chat.toolLiveTail.omittedLines', droppedTotal, { count: droppedTotal }, '… {count} line omitted — full output arrives with the result', '… {count} lines omitted — full output arrives with the result');
           marker.classList.remove('hidden');
         } else {
           marker.classList.add('hidden');

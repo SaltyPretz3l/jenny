@@ -14,6 +14,7 @@
   }
   root.rendererDashboardLoops = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TASK_SESSION_ACTION_PREFIX = 'start_task_session:';
 
   function findTaskLoop(state, actionId) {
@@ -90,7 +91,7 @@
     return createAdoptedPanelWidget({
       id: 'open-loops',
       panelId: 'homeOpenLoopsPanel',
-      unavailableCopy: 'Open Loops are unavailable.',
+      unavailableCopy: jt('dashboard.widgets.openLoopsUnavailable', 'Open Loops are unavailable.'),
     });
   }
 

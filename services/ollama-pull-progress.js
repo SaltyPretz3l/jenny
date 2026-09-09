@@ -1,5 +1,7 @@
 'use strict';
 
+const { t } = require('./i18n-main');
+
 /**
  * services/ollama-pull-progress.js
  *
@@ -51,16 +53,16 @@ function parsePullLine(line) {
   }
   const lower = text.toLowerCase();
   if (lower.startsWith('pulling manifest')) {
-    return { kind: 'status', label: 'Pulling manifest' };
+    return { kind: 'status', label: t('main.ollamaPull.pullingManifest', 'Pulling manifest') };
   }
   if (lower.startsWith('verifying')) {
     return { kind: 'status', label: 'Verifying' };
   }
   if (lower.startsWith('writing manifest')) {
-    return { kind: 'status', label: 'Writing manifest' };
+    return { kind: 'status', label: t('main.ollamaPull.writingManifest', 'Writing manifest') };
   }
   if (lower.startsWith('removing')) {
-    return { kind: 'status', label: 'Finishing up' };
+    return { kind: 'status', label: t('main.ollamaPull.finishingUp', 'Finishing up') };
   }
   if (lower.startsWith('success')) {
     return { kind: 'success', label: 'Complete' };

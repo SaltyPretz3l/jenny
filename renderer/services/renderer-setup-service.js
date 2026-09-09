@@ -13,7 +13,7 @@
   root.rendererSetupService = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function clone(value) {
     if (value === null || typeof value !== 'object') {
       return value;
@@ -104,7 +104,10 @@
       dismissed: setupState.dismissed === true,
       completedAt: String(setupState.completed_at || ''),
       updatedAt: String(setupState.updated_at || ''),
+      acknowledgedVersion: String(setupState.acknowledged_version || setupState.acknowledgedVersion || ''),
+      acknowledgedAt: String(setupState.acknowledged_at || setupState.acknowledgedAt || ''),
       steps: {
+        acknowledgement: String(steps.acknowledgement || 'pending'),
         workspaceRoot: String(steps.workspace_root || 'pending'),
         localModel: String(steps.local_model || 'pending'),
         endpoint: String(steps.endpoint || 'pending'),
@@ -308,7 +311,7 @@
           checkedUrl: '',
           status: 0,
           code: 'bridge_unavailable',
-          message: 'Setup bridge is unavailable.',
+          message: jt('setup.service.bridgeUnavailable', 'Setup bridge is unavailable.'),
         };
       }
       try {
@@ -322,7 +325,7 @@
           checkedUrl: '',
           status: 0,
           code: 'request_failed',
-          message: toErrorMessage(error) || 'Endpoint validation failed.',
+          message: toErrorMessage(error) || jt('setup.service.endpointValidationFailed', 'Endpoint validation failed.'),
         };
       }
     }
@@ -335,7 +338,7 @@
             ok: false,
             code: 'bridge_unavailable',
             error_code: 'CMP-SETUP-0001',
-            message: 'Setup bridge is unavailable.',
+            message: jt('setup.service.bridgeUnavailable', 'Setup bridge is unavailable.'),
             retryable: true,
           }),
           snapshot: null,
@@ -353,7 +356,7 @@
           result: normalizeValidationResult({
             ok: false,
             code: 'request_failed',
-            message: 'Endpoint settings could not be saved.',
+            message: jt('setup.service.endpointSaveFailed', 'Endpoint settings could not be saved.'),
             retryable: true,
           }),
           snapshot: null,

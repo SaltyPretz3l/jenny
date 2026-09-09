@@ -9,6 +9,7 @@
   root.rendererIdeReplaceJournal = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const MAX_APPLIED = 200;
   const MAX_QUERY = 500;
@@ -80,8 +81,8 @@
       };
       appendClientLog('WARN', 'ide.replace_journal_recovered', meta);
       showToast(
-        `A replace-all was interrupted after at least ${meta.applied} of ${meta.total} files — review those files or use Source Control to verify.`,
-        { title: 'Replace Interrupted', dedupeKey: 'ide:replace:journal-recovery' }
+        jt('ide.replaceJournal.interrupted', 'A replace-all was interrupted after at least {applied} of {total} files — review those files or use Source Control to verify.', { applied: meta.applied, total: meta.total }),
+        { title: jt('ide.replaceJournal.interruptedTitle', 'Replace Interrupted'), dedupeKey: 'ide:replace:journal-recovery' }
       );
       getIde().replaceJournal = null;
       if (journal === openedJournal) {

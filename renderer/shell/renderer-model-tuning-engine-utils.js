@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (mergeUtils) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function modelPathName(path) {
     return String(path || '').split(/[\\/]/).pop() || '';
   }
@@ -114,7 +115,7 @@
   // llamaServer.chooseGguf fail-soft shapes: the dialog failed, or it worked
   // and the chosen file was rejected.
   function pickerFailureText(result) {
-    return result && result.reason === 'not_gguf' ? 'That file is not a GGUF model.' : 'Could not open the file picker.';
+    return result && result.reason === 'not_gguf' ? jt('models.library.tuning.notGguf', 'That file is not a GGUF model.') : jt('models.library.tuning.pickerFailed', 'Could not open the file picker.');
   }
 
   function pickerDefaultDir(view, draft) {
@@ -155,42 +156,42 @@
 
   function engineStatusText(view, draft, serverStatus) {
     if (view && view.serving) {
-      var statusText = 'Serving on :' + serverStatus.port
-        + (serverStatus.accelerationMode === 'mtp' ? ' \u00b7 MTP on' : '');
+      var statusText = jt('models.library.tuning.servingOn', 'Serving on :{port}', { port: serverStatus.port })
+        + (serverStatus.accelerationMode === 'mtp' ? jt('models.library.tuning.mtpOnSuffix', ' \u00b7 MTP on') : '');
       if (!draft || !draft.mtp || serverStatus.accelerationMode === 'mtp'
           || !Object.prototype.hasOwnProperty.call(serverStatus, 'accelerationReason')) {
         return statusText;
       }
-      if (serverStatus.accelerationMode === 'unknown') return statusText + ' \u00b7 MTP state unknown';
+      if (serverStatus.accelerationMode === 'unknown') return statusText + jt('models.library.tuning.mtpUnknownSuffix', ' \u00b7 MTP state unknown');
       var reason = String(serverStatus.accelerationReason || '');
       if (reason === 'drafter_missing') {
-        return statusText + ' \u00b7 MTP off: no drafter file beside this model';
+        return statusText + jt('models.library.tuning.mtpNoDrafterSuffix', ' \u00b7 MTP off: no drafter file beside this model');
       }
       if (reason === 'spawn_failed') {
-        return statusText + ' \u00b7 MTP off: the server would not start with it';
+        return statusText + jt('models.library.tuning.mtpSpawnFailedSuffix', ' \u00b7 MTP off: the server would not start with it');
       }
       if (reason.indexOf('mtp_ineligible:') === 0) {
-        return statusText + ' \u00b7 MTP off: unsupported by this build or family';
+        return statusText + jt('models.library.tuning.mtpUnsupportedSuffix', ' \u00b7 MTP off: unsupported by this build or family');
       }
-      return statusText + ' \u00b7 MTP off';
+      return statusText + jt('models.library.tuning.mtpOffSuffix', ' \u00b7 MTP off');
     }
-    if (draft && draft.engine === 'llama-server') return 'Starts when you press Use';
-    return view && !view.effectiveModelPath ? 'Choose… the .gguf for this model, then Apply, then Use' : '';
+    if (draft && draft.engine === 'llama-server') return jt('models.library.tuning.startsOnUse', 'Starts when you press Use');
+    return view && !view.effectiveModelPath ? jt('models.library.tuning.chooseGgufThenApply', 'Choose… the .gguf for this model, then Apply, then Use') : '';
   }
 
   function engineNote(view) {
     if (!view.eligible) {
-      if (view.familyMtp === 'unverified') return 'MTP not verified for this family yet (no separate file needed)';
-      if (view.familyMtp === 'no') return 'MTP not supported for this family';
-      return 'Not verified for this model';
+      if (view.familyMtp === 'unverified') return jt('models.library.tuning.mtpFamilyUnverified', 'MTP not verified for this family yet (no separate file needed)');
+      if (view.familyMtp === 'no') return jt('models.library.tuning.mtpFamilyUnsupported', 'MTP not supported for this family');
+      return jt('models.library.tuning.modelUnverified', 'Not verified for this model');
     }
     if (view.ggufEntry && !view.ggufEntry.drafterGguf) {
       if (view.ggufEntry.source === 'ollama' || view.ggufEntry.ollamaBlob === true) {
-        return 'MTP drafter not found beside Ollama\'s copy · add its folder under GGUF folders';
+        return jt('models.library.tuning.ollamaDrafterMissing', 'MTP drafter not found beside Ollama\'s copy · add its folder under GGUF folders');
       }
-      return 'Drafter file missing · falls back to plain decoding';
+      return jt('models.library.tuning.drafterMissing', 'Drafter file missing · falls back to plain decoding');
     }
-    return 'MTP uses about ' + formatGb(view.headroomMb) + ' more VRAM';
+    return jt('models.library.tuning.mtpVramUsage', 'MTP uses about {memory} more VRAM', { memory: formatGb(view.headroomMb) });
   }
 
   // Tune drawer > Engine section markup (per-model engine choice + MTP + GGUF
@@ -201,22 +202,22 @@
     var draft = ctx.draft;
     var escapeHtml = ctx.escapeHtml;
     if (!ctx.segmentedControl || !ctx.toggleSwitch || !ctx.actionButton || !view || !draft) {
-      return '<p>Engine controls are unavailable.</p>';
+      return '<p>' + escapeHtml(jt('models.library.tuning.controlsUnavailable', 'Engine controls are unavailable.')) + '</p>';
     }
     var path = view.effectiveModelPath;
     var llamaServer = draft.engine === 'llama-server';
     var ollamaCopy = (!draft.modelPath && view.ggufEntry && view.ggufEntry.source === 'ollama')
       || /^sha256-[0-9a-f]{64}$/i.test(modelPathName(path));
-    var pathLabel = ollamaCopy ? 'Ollama\'s copy' : (modelPathName(path) || 'Not found for this tag');
+    var pathLabel = ollamaCopy ? 'Ollama\'s copy' : (modelPathName(path) || jt('models.library.tuning.notFoundForTag', 'Not found for this tag'));
     return '<section class="model-tuning-section model-tuning-engine" data-model-tuning-engine>'
       + '<h4 class="model-tuning-section-title">Engine</h4>'
-      + '<p class="model-tuning-section-hint">Ollama or Jenny\'s own llama-server. llama-server can speed up verified models with multi-token prediction.</p>'
+      + '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.library.tuning.engineHint', 'Ollama or Jenny\'s own llama-server. llama-server can speed up verified models with multi-token prediction.')) + '</p>'
       + '<div class="model-tuning-row" data-model-tuning-row="engine">'
-      + '<span class="model-tuning-row-label">Run with</span>'
+      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.runWith', 'Run with')) + '</span>'
       + '<div class="model-tuning-row-control">'
       + ctx.segmentedControl({
         id: 'modelTuningEngine',
-        ariaLabel: 'Inference engine',
+        ariaLabel: jt('models.library.tuning.engineLabel', 'Inference engine'),
         value: draft.engine,
         options: [
           { value: 'ollama', label: 'Ollama', disabled: !view.ollamaAvailable },
@@ -233,7 +234,7 @@
       + '<div class="model-tuning-row-control">'
       + ctx.toggleSwitch({
         id: 'modelTuningMtp',
-        label: 'Multi-token prediction',
+        label: jt('models.library.tuning.mtpLabel', 'Multi-token prediction'),
         checked: Boolean(draft.mtp && view.eligible),
         disabled: ctx.pending || !view.eligible,
       })
@@ -241,12 +242,12 @@
       + '<span class="model-tuning-row-range" data-dirty="false">' + escapeHtml(engineNote(view)) + '</span>'
       + '</div>'
       + '<div class="model-tuning-row model-tuning-row--gguf" data-model-tuning-row="modelPath">'
-      + '<span class="model-tuning-row-label">GGUF file</span>'
+      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.ggufFile', 'GGUF file')) + '</span>'
       + '<div class="model-tuning-row-control">'
       + '<code class="model-tuning-gguf-path" data-model-tuning-gguf title="' + escapeHtml(path) + '">'
       + escapeHtml(pathLabel) + '</code>'
       + '</div>'
-      + ctx.actionButton({ id: 'choose-model-gguf', label: 'Choose…', variant: 'ghost', size: 'sm', disabled: ctx.pending })
+      + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), variant: 'ghost', size: 'sm', disabled: ctx.pending })
       + '</div>'
       + '</section>';
   }
@@ -254,20 +255,20 @@
   // Status line after the drawer applies a patch. Preflight warnings refine
   // the 'applied' copy; the null-prototype map keeps 'constructor' & co. inert.
   var APPLY_STATUS_COPY = Object.assign(Object.create(null), {
-    rolled_back: 'The runtime rejected the change. Previous settings were restored.',
-    degraded: 'The runtime could not confirm rollback. Check Diagnostics before sending.',
-    hardware_fit_unverified: 'Applied. Ollama reports this native context limit, but Jenny could not independently verify RAM or VRAM fit.',
-    hardware_fit_estimated: 'Applied. Fit estimated from model size and your hardware; not yet measured on this machine.',
+    rolled_back: jt('models.library.tuning.runtimeRejected', 'The runtime rejected the change. Previous settings were restored.'),
+    degraded: jt('models.library.tuning.rollbackUnconfirmed', 'The runtime could not confirm rollback. Check Diagnostics before sending.'),
+    hardware_fit_unverified: jt('models.library.tuning.hardwareFitUnverified', 'Applied. Ollama reports this native context limit, but Jenny could not independently verify RAM or VRAM fit.'),
+    hardware_fit_estimated: jt('models.library.tuning.hardwareFitEstimated', 'Applied. Fit estimated from model size and your hardware; not yet measured on this machine.'),
   });
 
   function applyStatusMessage(result) {
     var status = String((result && result.status) || '');
     if (status === 'applied') {
       var warning = String((result && result.preflight && result.preflight.warning) || '');
-      return APPLY_STATUS_COPY[warning] || 'Applied. The runtime acknowledged this model profile.';
+      return APPLY_STATUS_COPY[warning] || jt('models.library.tuning.appliedAcknowledged', 'Applied. The runtime acknowledged this model profile.');
     }
     return APPLY_STATUS_COPY[status]
-      || 'Not applied: ' + String((result && result.reason) || 'validation failed').replaceAll('_', ' ') + '.';
+      || jt('models.library.tuning.notApplied', 'Not applied: {reason}.', { reason: String((result && result.reason) || 'validation failed').replaceAll('_', ' ') });
   }
 
   return {

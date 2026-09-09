@@ -43,7 +43,7 @@
   min-width: 4.25rem;
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 
 .cal-agenda__list {
@@ -51,7 +51,9 @@
   display: grid;
   gap: 0;
   margin: 0;
-  padding: 0 0 0 72px;
+  padding-block: 0;
+  padding-inline-start: 72px;
+  padding-inline-end: 0;
   list-style: none;
 }
 
@@ -59,7 +61,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 64px;
+  inset-inline-start: 64px;
   width: 1px;
   background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
   content: "";
@@ -95,7 +97,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--text-primary);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   isolation: isolate;
 }
@@ -103,8 +105,8 @@
 .cal-agenda__item::before {
   position: absolute;
   inset-block: 0;
-  right: calc(-1 * var(--space-5));
-  left: calc(-1 * var(--space-5));
+  inset-inline-end: calc(-1 * var(--space-5));
+  inset-inline-start: calc(-1 * var(--space-5));
   z-index: -1;
   content: "";
   transition: background var(--motion-duration-fast) var(--motion-ease-standard);
@@ -121,17 +123,17 @@
 
 .cal-agenda__time {
   position: absolute;
-  left: -72px;
+  inset-inline-start: -72px;
   width: 54px;
   color: var(--text-muted);
   font-size: var(--font-size-base);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 
 .cal-agenda__dot {
   position: absolute;
-  left: -12px;
+  inset-inline-start: -12px;
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);
@@ -165,7 +167,7 @@
 
 .cal-agenda__rel {
   min-width: 4.5rem;
-  text-align: right;
+  text-align: end;
 }
 
 .cal-agenda__badge {
@@ -439,7 +441,9 @@
  * expires on its own — no toast, and no contribution to the render key. */
 .cal-agenda__undo-note {
   flex: 0 0 100%;
-  padding: 0 0 var(--space-2) var(--space-1);
+  padding-block: 0 var(--space-2);
+  padding-inline-start: var(--space-1);
+  padding-inline-end: 0;
   color: color-mix(in srgb, var(--state-warning) 40%, var(--text-secondary));
   font-size: var(--font-size-sm);
 }

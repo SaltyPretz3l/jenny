@@ -55,6 +55,7 @@ Options:
   --yes, -y         Assume "yes" for every prompt (non-interactive).
   --model <tag>     Pull a specific Ollama model instead of the default.
   --skip-model      Skip the model download (you can pull it later in-app).
+  --existing-server  Skip Ollama entirely; connect your server in Jenny's setup.
   --no-launch       Set up everything but do not start Jenny at the end.
   --dev             Contributor setup: install the Python dev/test/build extra
                     (.[dev]) and the git pre-commit hook. Default is run-only.
@@ -69,6 +70,7 @@ function parseArgs(argv) {
     help: false,
     yes: false,
     skipModel: false,
+    existingServer: false,
     noLaunch: false,
     noPrecommit: false,
     dev: false,
@@ -90,6 +92,9 @@ function parseArgs(argv) {
         break;
       case '--skip-model':
         opts.skipModel = true;
+        break;
+      case '--existing-server':
+        opts.existingServer = true;
         break;
       case '--no-launch':
         opts.noLaunch = true;
@@ -129,6 +134,7 @@ function parseArgs(argv) {
   if (opts.model && (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(opts.model) || opts.model.startsWith('-'))) {
     opts.errors.push('The model tag is invalid.');
   }
+  if (opts.existingServer && opts.model) opts.errors.push('--existing-server cannot be combined with --model.');
   return opts;
 }
 
@@ -326,114 +332,120 @@ async function runSetup(options = {}) {
   }
   ui.ok('Sidecar environment ready.');
 
-  // ---- Phase D: ensure Ollama -------------------------------------------
-  ui.heading('4/7 · Ollama runtime');
-  let ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
-  if (!ollama.installed || ollama.upgradeRequired === true) {
-    const upgrading = ollama.installed && ollama.upgradeRequired === true;
-    const plan = ollamaStep.installPlan(platform, { upgrade: upgrading });
-    let attemptedInstall = false;
-    if (plan.command) {
-      const verb = upgrading ? `Upgrade Ollama to ${ollama.minimumVersion}+ with ${plan.manager}?` : `Install Ollama with ${plan.manager}?`;
-      const consent = await promptYesNo(verb, { yes: opts.yes });
-      if (consent) {
-        ui.step(`${plan.manager} ${upgrading ? 'upgrade' : 'install'}`);
-        const [cmd, cmdArgs] = plan.command;
-        // winget/brew are real executables -> bare spawn resolves them.
-        const installResult = await runStreaming(cmd, cmdArgs, { cwd: repoRoot });
-        attemptedInstall = installResult.status === 0;
-        if (!attemptedInstall) {
-          ui.warn(`${plan.manager} ${upgrading ? 'upgrade' : 'install'} failed with exit ${installResult.status}.`);
-        }
-        // winget wrote the new PATH to the registry, but this process kept its
-        // old PATH snapshot. Prepend the known Ollama install dir(s) so the
-        // re-detect and the later serve/pull/show spawns resolve 'ollama'
-        // without the user having to open a fresh shell.
-        if (attemptedInstall) {
-          const ollamaDirs = ollamaStep.ollamaInstallDirs(platform, env).filter((dir) => fileExists(dir));
-          if (ollamaDirs.length) {
-            env.PATH = [...ollamaDirs, env.PATH || ''].filter(Boolean).join(path.delimiter);
-          }
-          if (upgrading) {
-            ui.step('Restarting Ollama to activate the upgraded runtime');
-            try {
-              await restartOllamaAfterUpgrade({ platform, env });
-            } catch (error) {
-              ui.warn(`Could not stop the older Ollama server (${String(error?.message || error).slice(0, 240)}).`);
-            }
-          }
-          ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
-        }
-      }
-    }
-    if (!ollama.installed || ollama.upgradeRequired === true) {
-      if (attemptedInstall) {
-        // We already prepended the known install dir(s) to this process's PATH
-        // and re-detected; if it's still not found, the binary landed somewhere
-        // unexpected (or the manager silently failed). Don't claim it failed outright.
-        ui.warn(upgrading
-          ? `Ollama ${ollama.version || 'unknown'} is still active. Restart Ollama, then re-run setup; ${ollama.minimumVersion}+ is required.`
-          : 'Ollama was installed but could not be located automatically. Open a new terminal and re-run setup to finish.');
-      } else {
-        ui.warn(upgrading
-          ? `Ollama ${ollama.version || ''} is too old. Upgrade it from ${plan.manualUrl} then re-run setup.`
-          : `Ollama is not installed. Install it from ${plan.manualUrl} then re-run setup.`);
-      }
-      if (!opts.skipModel) {
-        return EXIT.OLLAMA;
-      }
-    }
+  if (opts.existingServer) {
+    ui.skip('Ollama and model download skipped (--existing-server).');
+    ui.info('In Jenny, choose Connect an existing server to configure your endpoint.');
   } else {
-    ui.ok('Ollama detected.');
-  }
-
-  if (ollama.installed) {
-    const serving = await ollamaStep.ensureServing({
-      fetchImpl, spawnImpl, run, sleepImpl, initialDetect: ollama, platform, env, fileExists,
-    });
-    if (serving.running) {
-      ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
-      if (ollama.versionSupported !== true) {
-        ui.warn(ollama.upgradeRequired
-          ? `Ollama ${ollama.version} is too old; ${ollama.minimumVersion}+ is required before downloading models.`
-          : `Could not verify the running Ollama version; ${ollama.minimumVersion}+ is required.`);
+    // ---- Phase D: ensure Ollama -------------------------------------------
+    ui.heading('4/7 · Ollama runtime');
+    let ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
+    if (!ollama.installed || ollama.upgradeRequired === true) {
+      const upgrading = ollama.installed && ollama.upgradeRequired === true;
+      const plan = ollamaStep.installPlan(platform, { upgrade: upgrading });
+      let attemptedInstall = false;
+      if (plan.command) {
+        const verb = upgrading ? `Upgrade Ollama to ${ollama.minimumVersion}+ with ${plan.manager}?` : `Install Ollama with ${plan.manager}?`;
+        const consent = await promptYesNo(verb, { yes: opts.yes });
+        if (consent) {
+          ui.step(`${plan.manager} ${upgrading ? 'upgrade' : 'install'}`);
+          const [cmd, cmdArgs] = plan.command;
+          // winget/brew are real executables -> bare spawn resolves them.
+          const installResult = await runStreaming(cmd, cmdArgs, { cwd: repoRoot });
+          attemptedInstall = installResult.status === 0;
+          if (!attemptedInstall) {
+            ui.warn(`${plan.manager} ${upgrading ? 'upgrade' : 'install'} failed with exit ${installResult.status}.`);
+          }
+          // winget wrote the new PATH to the registry, but this process kept its
+          // old PATH snapshot. Prepend the known Ollama install dir(s) so the
+          // re-detect and the later serve/pull/show spawns resolve 'ollama'
+          // without the user having to open a fresh shell.
+          if (attemptedInstall) {
+            const ollamaDirs = ollamaStep.ollamaInstallDirs(platform, env).filter((dir) => fileExists(dir));
+            if (ollamaDirs.length) {
+              env.PATH = [...ollamaDirs, env.PATH || ''].filter(Boolean).join(path.delimiter);
+            }
+            if (upgrading) {
+              ui.step('Restarting Ollama to activate the upgraded runtime');
+              try {
+                await restartOllamaAfterUpgrade({ platform, env });
+              } catch (error) {
+                ui.warn(`Could not stop the older Ollama server (${String(error?.message || error).slice(0, 240)}).`);
+              }
+            }
+            ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
+          }
+        }
+      }
+      if (!ollama.installed || ollama.upgradeRequired === true) {
+        if (attemptedInstall) {
+          // We already prepended the known install dir(s) to this process's PATH
+          // and re-detected; if it's still not found, the binary landed somewhere
+          // unexpected (or the manager silently failed). Don't claim it failed outright.
+          ui.warn(upgrading
+            ? `Ollama ${ollama.version || 'unknown'} is still active. Restart Ollama, then re-run setup; ${ollama.minimumVersion}+ is required.`
+            : 'Ollama was installed but could not be located automatically. Open a new terminal and re-run setup to finish.');
+        } else {
+          ui.warn(upgrading
+            ? `Ollama ${ollama.version || ''} is too old. Upgrade it from ${plan.manualUrl} then re-run setup.`
+            : `Ollama is not installed. Install it from ${plan.manualUrl} then re-run setup.`);
+        }
         if (!opts.skipModel) {
           return EXIT.OLLAMA;
         }
-      } else {
-        ui.ok(ollama.version
-          ? `Ollama server ${ollama.version} is running.`
-          : 'Ollama server is running (version unverified).');
       }
     } else {
-      ui.warn('Ollama is installed but not serving. Start it with: ollama serve');
-      if (!opts.skipModel) {
-        return EXIT.OLLAMA;
-      }
+      ui.ok('Ollama detected.');
     }
-  }
 
-  // ---- Phase E: default model -------------------------------------------
-  ui.heading('5/7 · Default model');
-  if (opts.skipModel) {
-    ui.skip('Model download skipped (--skip-model). Pull it later from the in-app setup tile.');
-  } else if (!opts.force && ollamaStep.modelExists(modelTag, { run, platform, env, fileExists })) {
-    ui.skip(`${modelTag} already downloaded.`);
-  } else {
-    ui.step(`Pulling ${modelTag} — this is a multi-GB download.`);
-    const pull = await ollamaStep.pullModel(modelTag, {
-      spawnImpl,
-      platform,
-      env,
-      fileExists,
-      onProgress: ({ percent, label }) => ui.progress(label, percent),
-    });
-    if (pull.ok) {
-      ui.ok(`${modelTag} ready.`);
-    } else {
-      ui.warn(`Model pull failed (${pull.error || `exit ${pull.code}`}). Jenny will still launch; retry from the in-app setup tile or run: ollama pull ${modelTag}`);
-      deferredCode = EXIT.MODEL;
+    if (ollama.installed) {
+      const serving = await ollamaStep.ensureServing({
+        fetchImpl, spawnImpl, run, sleepImpl, initialDetect: ollama, platform, env, fileExists,
+      });
+      if (serving.running) {
+        ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
+        if (ollama.versionSupported !== true) {
+          ui.warn(ollama.upgradeRequired
+            ? `Ollama ${ollama.version} is too old; ${ollama.minimumVersion}+ is required before downloading models.`
+            : `Could not verify the running Ollama version; ${ollama.minimumVersion}+ is required.`);
+          if (!opts.skipModel) {
+            return EXIT.OLLAMA;
+          }
+        } else {
+          ui.ok(ollama.version
+            ? `Ollama server ${ollama.version} is running.`
+            : 'Ollama server is running (version unverified).');
+        }
+      } else {
+        ui.warn('Ollama is installed but not serving. Start it with: ollama serve');
+        if (!opts.skipModel) {
+          return EXIT.OLLAMA;
+        }
+      }
     }
+
+    // ---- Phase E: default model -------------------------------------------
+    ui.heading('5/7 · Default model');
+    if (opts.skipModel) {
+      ui.skip('Model download skipped (--skip-model). Pull it later from the in-app setup tile.');
+    } else if (!opts.force && ollamaStep.modelExists(modelTag, { run, platform, env, fileExists })) {
+      ui.skip(`${modelTag} already downloaded.`);
+    } else {
+      ui.step(`Pulling ${modelTag} — this is a multi-GB download.`);
+      const pull = await ollamaStep.pullModel(modelTag, {
+        spawnImpl,
+        platform,
+        env,
+        fileExists,
+        onProgress: ({ percent, label }) => ui.progress(label, percent),
+      });
+      if (pull.ok) {
+        ui.ok(`${modelTag} ready.`);
+      } else {
+        ui.warn(`Model pull failed (${pull.error || `exit ${pull.code}`}). Jenny will still launch; retry from the in-app setup tile or run: ollama pull ${modelTag}`);
+        deferredCode = EXIT.MODEL;
+      }
+    }
+
   }
 
   // ---- Phase F: pre-commit (contributor-only) ---------------------------
@@ -460,7 +472,10 @@ async function runSetup(options = {}) {
   // no console window is tied to the app; the dev repo keeps the attached
   // `npm run dev` so contributors still see live logs in their terminal.
   const distribution = isDistribution(repoRoot);
-  const startLater = distribution
+  const launchArgs = ['run', 'dev', ...(opts.existingServer ? ['--', '--existing-server'] : [])];
+  const startLater = opts.existingServer
+    ? 'Start Jenny with: npm run dev -- --existing-server'
+    : distribution
     ? 'Start Jenny anytime from the "Jenny" desktop shortcut, or run: npm run dev'
     : 'Start Jenny anytime with: npm run dev';
   if (opts.noLaunch) {
@@ -478,20 +493,20 @@ async function runSetup(options = {}) {
     // Detached + hidden: setup returns immediately and the terminal can close,
     // while Jenny keeps running in its own window with no log console attached.
     ui.step('Starting Jenny');
-    const started = await launchDetached(npmCommand(platform), ['run', 'dev'], {
+    const started = await launchDetached(npmCommand(platform), launchArgs, {
       cwd: repoRoot,
       shell: platform === 'win32',
     });
     if (started.status !== 0 || started.earlyExit === true) {
-      ui.fail('Could not launch Jenny. Start it manually: npm run dev');
+      ui.fail(`Could not launch Jenny. ${startLater}`);
       return EXIT.UNKNOWN;
     }
     ui.ok('Jenny is starting in its own window — you can close this terminal.');
     if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');
     return deferredCode;
   }
-  ui.step('npm run dev');
-  const dev = await runStreaming(npmCommand(platform), ['run', 'dev'], {
+  ui.step(`npm ${launchArgs.join(' ')}`);
+  const dev = await runStreaming(npmCommand(platform), launchArgs, {
     cwd: repoRoot,
     shell: platform === 'win32',
   });
@@ -501,7 +516,7 @@ async function runSetup(options = {}) {
   // stale (the user chose to launch). Only a spawn failure (couldn't start npm
   // at all) is a real launch error worth a non-zero setup exit.
   if (dev.status === 127) {
-    ui.fail('Could not launch Jenny (npm run dev failed to start). Run it manually: npm run dev');
+    ui.fail(`Could not launch Jenny (npm run dev failed to start). ${startLater}`);
     return EXIT.UNKNOWN;
   }
   if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');

@@ -13,11 +13,12 @@
     root.rendererSetupSceneUtils
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (sceneUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const STEP_ORDER = (sceneUtils && sceneUtils.STEP_ORDER)
     || ['workspaceRoot', 'localModel', 'endpoint', 'personality', 'skills'];
   const SETUP_STEP_LABELS = Object.freeze({
-    workspaceRoot: 'Workspace root',
-    localModel: 'Local model',
+    workspaceRoot: jt('settings.setup.workspaceRoot', 'Workspace root'),
+    localModel: jt('settings.setup.localModel', 'Local model'),
     endpoint: 'Endpoint',
     personality: 'Personality',
     skills: 'Skills',
@@ -42,7 +43,7 @@
   };
   const countCompletedSteps = (sceneUtils && sceneUtils.countCompletedSteps) || fallbackCountCompletedSteps;
   const statusMeta = (sceneUtils && sceneUtils.statusMeta)
-    || ((status) => ({ tone: 'pending', label: status === 'done' ? 'Done' : 'Pending' }));
+    || ((status) => ({ tone: 'pending', label: status === 'done' ? jt('common.done', 'Done') : jt('settings.shell.setupPending', 'Pending') }));
   function dotTone(sceneTone) {
     return SCENE_TONE_TO_DOT[String(sceneTone || '')] || 'muted';
   }
@@ -64,12 +65,12 @@
       </li>`;
     }).join('');
     const summary = setup.setupComplete
-      ? 'Setup is complete. Re-run any step to refine your settings.'
-      : `${done} of ${total} steps complete.`;
+      ? jt('settings.setup.completeSummary', 'Setup is complete. Re-run any step to refine your settings.')
+      : jt('settings.setup.stepsComplete', '{done} of {total} steps complete.', { done, total });
     return `<div class="settings-progress-card" data-component="settings-setup-progress">
       <div class="settings-progress-header">
-        <span class="kicker">Setup progress</span>
-        <span class="settings-progress-percent" aria-label="Setup percent complete">${pct}%</span>
+        <span class="kicker">${escapeHtml(jt('settings.setup.progress', 'Setup progress'))}</span>
+        <span class="settings-progress-percent" aria-label="${escapeHtml(jt('settings.setup.percentCompleteAria', 'Setup percent complete'))}">${pct}%</span>
       </div>
       <div class="settings-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
         <span class="settings-progress-fill" style="width: ${pct}%"></span>

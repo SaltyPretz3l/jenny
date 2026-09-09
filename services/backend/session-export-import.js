@@ -233,7 +233,7 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
  * @returns {Object} Session summary
  * @throws {SessionImportError} on invalid input or attachment restore failure
  */
-function importSession(sessionStore, jsonPayload, attachmentStore, options = {}) {
+function validateSessionImportPayload(jsonPayload) {
   let parsed;
   try {
     parsed = JSON.parse(jsonPayload);
@@ -268,6 +268,29 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
       'Session import failed because the selected file was exported by a newer Jenny version.'
     );
   }
+
+  if (typeof parsed.session !== 'object' || Array.isArray(parsed.session)
+    || (parsed.session.messages !== undefined && !Array.isArray(parsed.session.messages))) {
+    throw createImportError('format_mismatch', 'Session payload is malformed.');
+  }
+  for (const message of parsed.session.messages || []) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)
+      || (message.attachments !== undefined && !Array.isArray(message.attachments))) {
+      throw createImportError('format_mismatch', 'Session message is malformed.');
+    }
+    for (const attachment of message.attachments || []) {
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+        throw createImportError('format_mismatch', 'Session attachment is malformed.');
+      }
+      const kind = normalizeAttachmentKind(attachment);
+      if (isRestorableAttachmentKind(kind) && attachment._exportedData) decodeExportedAttachmentData(attachment, kind);
+    }
+  }
+  return parsed;
+}
+
+function importSession(sessionStore, jsonPayload, attachmentStore, options = {}) {
+  const parsed = validateSessionImportPayload(jsonPayload);
 
   const source = parsed.session;
   const requestedSessionId = String(options.restoredSessionId || '').trim();
@@ -366,6 +389,7 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
 }
 
 module.exports = {
+  validateSessionImportPayload,
   SESSION_IMPORT_ERROR_CODES,
   SessionImportError,
   exportSession,

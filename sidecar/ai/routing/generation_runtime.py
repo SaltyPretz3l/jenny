@@ -287,6 +287,13 @@ def generate_step(
         kernel._engine.get_model_max_output_tokens(),
         user_override=getattr(kernel._config, "resolved_user_max_output_tokens", None),
     )
+    # Preview helpers load on use to preserve the server startup budget.
+    from sidecar.ai.routing import preview_vision as _preview_vision  # noqa: PLC0415
+
+    prompt_messages, max_tokens = _preview_vision.prepare_preview_messages(
+        kernel, runtime, prompt_messages,
+        system=str(system_prompt), tools=tool_schemas, max_tokens=max_tokens,
+    )
     if cache_break_detector is not None:
         cache_break_detector.record_prompt_state(
             source_key,
@@ -543,7 +550,9 @@ def attempt_fallback_generation(
                 continue
 
             images, anchor = _vision_context(runtime)
-            if images and not _vision_turn.engine_supports_vision(fallback_engine):
+            if (images or getattr(runtime, "preview_images", {})) and not (
+                _vision_turn.engine_supports_vision(fallback_engine)
+            ):
                 log_event(
                     logger,
                     logging.WARNING,
@@ -566,6 +575,14 @@ def attempt_fallback_generation(
                 fallback_config.max_tokens,
                 fallback_engine.get_model_max_output_tokens(),
                 user_override=getattr(fallback_config, "resolved_user_max_output_tokens", None),
+            )
+            # Fallback generation shares the lazy preview path.
+            from sidecar.ai.routing import preview_vision as _preview_vision  # noqa: PLC0415
+
+            prompt_messages, max_tokens = _preview_vision.prepare_preview_messages(
+                SimpleNamespace(_engine=fallback_engine, _config=fallback_config),
+                runtime, prompt_messages,
+                system=str(system_prompt), tools=tool_schemas, max_tokens=max_tokens,
             )
 
             fallback_runtime = LoopRuntime(

@@ -29,7 +29,7 @@
  * two-row layout uses one underline plus a meta row. */
 .home-info-strip__ask {
   flex: 0 1 auto;
-  margin-left: auto;
+  margin-inline-start: auto;
   width: 100%;
   max-width: clamp(380px, 32vw, 520px);
   min-width: 0;
@@ -132,7 +132,7 @@
   position: relative;
   flex: 0 1 auto;
   min-width: 0;
-  margin-right: auto;
+  margin-inline-end: auto;
   display: flex;
   align-items: center;
 }
@@ -194,7 +194,7 @@
  * leaving the send button as the only in-flow item there. */
 .home-ask__hint {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   display: block;
   margin: 0;
   max-width: 100%;
@@ -245,7 +245,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
@@ -287,7 +287,7 @@
 /* The settings menu - the ONE box in this feature. It hangs below the trigger,
  * left-aligned to it; nothing inside it is boxed or ruled. */
 .home-ask__panel {
-  left: 0;
+  inset-inline-start: 0;
   top: calc(100% + var(--space-3));
   /* DEFINITE, not a min/max pair. A native <select> is as wide as its WIDEST
    * option - here full model ids, plus an unbounded "(unavailable: reason)"
@@ -339,7 +339,7 @@
 
 .home-ask__panel .inv-select-field-label {
   flex: none;
-  padding-left: var(--space-3);
+  padding-inline-start: var(--space-3);
   font-size: var(--font-size-sm);
   font-weight: 500;
   letter-spacing: var(--tracking-ui);
@@ -363,7 +363,7 @@
   background: transparent;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  text-align: right;
+  text-align: end;
   text-overflow: ellipsis;
   cursor: pointer;
 }
@@ -417,7 +417,7 @@
   .home-info-strip__ask {
     flex-basis: 100%;
     max-width: none;
-    margin-left: 0;
+    margin-inline-start: 0;
   }
 }
 
@@ -450,8 +450,8 @@
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding-left: var(--space-7);
-  border-left: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  padding-inline-start: var(--space-7);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
 }
 
 .home-info-strip__greeting {
@@ -468,7 +468,7 @@
 
 /* Actions: the weather chip, pushed to the right edge. */
 .home-info-strip__actions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -527,7 +527,7 @@
 
 .home-page-menu__popover {
   top: calc(100% + var(--space-4));
-  right: 0;
+  inset-inline-end: 0;
   min-width: 208px;
   display: grid;
   gap: 2px;
@@ -548,7 +548,7 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   letter-spacing: var(--tracking-ui);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

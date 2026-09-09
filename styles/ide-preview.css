@@ -187,7 +187,7 @@
 
 .ide-preview-content ul,
 .ide-preview-content ol {
-  padding-left: 1.6em;
+  padding-inline-start: 1.6em;
 }
 
 .ide-preview-content a {
@@ -218,7 +218,7 @@
 .ide-preview-content blockquote {
   margin: 0.6em 0;
   padding: 2px 14px;
-  border-left: 3px solid var(--accent);
+  border-inline-start: 3px solid var(--accent);
   color: var(--text-secondary);
 }
 

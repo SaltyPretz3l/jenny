@@ -339,7 +339,9 @@ test('renderer renders sidecar write_file diffs with alias display, enriched sum
   const details = block.querySelector('.tool-call-details');
 
   assert.equal(name.textContent.trim(), 'Write');
-  assert.match(summary.textContent, /Write notes\.md \+1 \/ -1/);
+  assert.equal(summary.textContent, 'Write notes.md');
+  assert.equal(header.querySelector('.tool-call-line-add').textContent, '+1');
+  assert.equal(header.querySelector('.tool-call-line-remove').textContent, '−1');
   assert.equal(header.getAttribute('aria-expanded'), 'false');
   assert.equal(details.hidden, true);
 
@@ -347,9 +349,8 @@ test('renderer renders sidecar write_file diffs with alias display, enriched sum
   await waitForUi(window, 20);
 
   const expandedDetails = window.document.getElementById(header.getAttribute('aria-controls'));
-
-  // A user-expanded file tool materializes its nested diff before the outer
-  // disclosure measures its final height, avoiding a second layout jump.
+  assert.equal(header.querySelectorAll('.tool-call-line-counts').length, 1);
+  // Materialize the nested diff before measuring its parent to avoid layout jumps.
   const fileDiff = expandedDetails.querySelector('.file-diff');
   assert.ok(fileDiff, 'the write_file diff renders a per-file diff shell');
   assert.equal(fileDiff.getAttribute('data-expanded'), 'true', 'the diff opens with its parent tool row');

@@ -10,6 +10,8 @@
   }
   root.rendererIdeStatusBar = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -109,7 +111,7 @@
       const ide = getIde();
       const cursor = getCursorInfo() || { lineNumber: 1, column: 1, selectedChars: 0 };
       const selectionSuffix = cursor.selectedChars > 0
-        ? ` (${cursor.selectedChars} selected)`
+        ? jt('ide.statusbar.selectedCountSuffix', ' ({count} selected)', { count: cursor.selectedChars })
         : '';
       const language = getActiveLanguageId() || 'plaintext';
       const eol = getEol(path) === 'crlf' ? 'CRLF' : 'LF';
@@ -124,8 +126,8 @@
         ? `<span class="ide-statusbar-branch-count">${escapeHtml(`●${dirtyCount}`)}</span>`
         : '';
       const branchTitle = dirtyCount > 0
-        ? `Git: ${branch} — ${dirtyCount} change${dirtyCount === 1 ? '' : 's'} (switch branch)`
-        : `Git branch: ${branch} (switch branch)`;
+        ? jtn('ide.statusbar.gitDirtyBranch', dirtyCount, { branch, count: dirtyCount }, 'Git: {branch} — {count} change (switch branch)', 'Git: {branch} — {count} changes (switch branch)')
+        : jt('ide.statusbar.gitBranch', 'Git branch: {branch} (switch branch)', { branch });
       const branchSegment = branch
         ? actionButton({
           plain: true,
@@ -142,8 +144,7 @@
       const problems = getProblemCounts() || null;
       const problemErrors = Number(problems && problems.error) || 0;
       const problemWarnings = Number(problems && problems.warning) || 0;
-      const problemsTitle = `${problemErrors} error${problemErrors === 1 ? '' : 's'}, `
-        + `${problemWarnings} warning${problemWarnings === 1 ? '' : 's'} (open Problems)`;
+      const problemsTitle = problemErrors === 1 ? (problemWarnings === 1 ? jt('ide.statusbar.oneErrorOneWarning', '{errorCount} error, {warningCount} warning (open Problems)', { errorCount: problemErrors, warningCount: problemWarnings }) : jt('ide.statusbar.oneErrorWarnings', '{errorCount} error, {warningCount} warnings (open Problems)', { errorCount: problemErrors, warningCount: problemWarnings })) : (problemWarnings === 1 ? jt('ide.statusbar.errorsOneWarning', '{errorCount} errors, {warningCount} warning (open Problems)', { errorCount: problemErrors, warningCount: problemWarnings }) : jt('ide.statusbar.errorsWarnings', '{errorCount} errors, {warningCount} warnings (open Problems)', { errorCount: problemErrors, warningCount: problemWarnings }));
       const problemsSegment = problemErrors + problemWarnings > 0
         ? actionButton({
           plain: true,
@@ -159,13 +160,13 @@
       // "Run npm script…" is in flight. A non-interactive label span carries the
       // glyph + "Running…"; the nested action-button is the one-click kill.
       const runSegment = getRunning() === true
-        ? `<span class="ide-statusbar-item ide-statusbar-run" title="A task is running">`
-          + `${RUN_ICON}<span class="ide-statusbar-run-label">Running…</span>`
+        ? `<span class="ide-statusbar-item ide-statusbar-run" title="${escapeHtml(jt('ide.statusbar.taskRunning', 'A task is running'))}">`
+          + `${RUN_ICON}<span class="ide-statusbar-run-label">${escapeHtml(jt('ide.statusbar.running', 'Running…'))}</span>`
           + actionButton({
             plain: true,
             className: 'ide-statusbar-run-kill',
-            title: 'Stop the running task',
-            ariaLabel: 'Stop the running task',
+            title: jt('ide.statusbar.stopRunningTask', 'Stop the running task'),
+            ariaLabel: jt('ide.statusbar.stopRunningTask', 'Stop the running task'),
             trustedHtml: STOP_ICON,
             dataset: { 'ide-status-action': 'kill-run' },
           })
@@ -173,8 +174,8 @@
         : '';
       const minimapOverrideSegment = ide.minimap !== false && isLargeFile(path)
         ? '<span class="ide-statusbar-item ide-statusbar-effective-note" '
-          + 'title="Minimap is disabled for this large file to protect editor performance">'
-          + 'Minimap: Off (large file)</span>'
+          + 'title="' + escapeHtml(jt('ide.statusbar.minimapDisabledTitle', 'Minimap is disabled for this large file to protect editor performance')) + '">'
+          + escapeHtml(jt('ide.statusbar.minimapDisabled', 'Minimap: Off (large file)')) + '</span>'
         : '';
       // Inline-suggestions quick toggle + caret (only when the feature is on).
       // The toggle keeps the instant on/off click (pressed state mirrors the
@@ -191,10 +192,10 @@
       const computeStatus = getInlineSuggestComputeStatus() || {};
       const computeTarget = String(computeStatus.target || 'automatic').trim() || 'automatic';
       const computeReason = String(computeStatus.reason || '').trim();
-      const computeTitle = `Compute: ${computeTarget}${computeReason ? ` — ${computeReason}` : ''}`;
+      const computeTitle = jt('ide.statusbar.compute', 'Compute: {target}{reason}', { target: computeTarget, reason: computeReason ? ` — ${computeReason}` : '' });
       const FIM_DEGRADED_TITLE =
-        'Inline suggestions unavailable — the completion model may not be loaded or the sidecar is down';
-      const FIM_PAUSED_TITLE = 'Inline suggestions paused while chat is responding.';
+        jt('ide.statusbar.inlineSuggestionsUnavailable', 'Inline suggestions unavailable — the completion model may not be loaded or the sidecar is down');
+      const FIM_PAUSED_TITLE = jt('ide.statusbar.inlineSuggestionsPaused', 'Inline suggestions paused while chat is responding.');
       const inlineSuggestStatusTitle = inlineSuggestDegradedNow ? FIM_DEGRADED_TITLE : FIM_PAUSED_TITLE;
       const inlineSuggestWarn = inlineSuggestPausedNow || inlineSuggestDegradedNow
         ? `<span class="ide-statusbar-inline-suggest-warn" data-diag-severity="${inlineSuggestDegradedNow ? 'warning' : 'info'}" role="img" title="${escapeHtml(inlineSuggestStatusTitle)}" aria-label="${escapeHtml(inlineSuggestStatusTitle)}">${inlineSuggestDegradedNow ? WARNING_ICON : PAUSE_ICON}</span>`
@@ -207,9 +208,9 @@
             title: inlineSuggestDegradedNow || inlineSuggestPausedNow
               ? inlineSuggestStatusTitle
               : (inlineSuggestEnabledNow
-                ? `Inline suggestions: On (click to turn off). ${computeTitle}`
-                : 'Inline suggestions: Off (click to turn on)'),
-            ariaLabel: 'Toggle inline suggestions',
+                ? jt('ide.statusbar.inlineSuggestionsOn', 'Inline suggestions: On (click to turn off). {compute}', { compute: computeTitle })
+                : jt('ide.statusbar.inlineSuggestionsOff', 'Inline suggestions: Off (click to turn on)')),
+            ariaLabel: jt('ide.statusbar.toggleInlineSuggestions', 'Toggle inline suggestions'),
             ariaPressed: inlineSuggestEnabledNow,
             trustedHtml: INLINE_SUGGEST_ICON,
             dataset: { 'ide-status-action': 'toggle-inline-suggest' },
@@ -218,8 +219,8 @@
           actionButton({
             plain: true,
             className: 'ide-statusbar-item ide-statusbar-action ide-statusbar-inline-suggest-caret',
-            title: 'Completion model & load',
-            ariaLabel: 'Open completion model menu',
+            title: jt('ide.statusbar.completionModelAndLoad', 'Completion model & load'),
+            ariaLabel: jt('ide.statusbar.openCompletionModelMenu', 'Open completion model menu'),
             ariaHaspopup: 'dialog',
             trustedHtml: INLINE_SUGGEST_CARET_ICON,
             dataset: { 'ide-status-action': 'inline-suggest-menu' },
@@ -233,30 +234,30 @@
         + actionButton({
         plain: true,
         className: 'ide-statusbar-item ide-statusbar-action',
-        title: 'Go to Line/Column (Ctrl+G)',
-        trustedHtml: escapeHtml(`Ln ${cursor.lineNumber}, Col ${cursor.column}${selectionSuffix}`),
+        title: jt('ide.statusbar.goToLineColumn', 'Go to Line/Column (Ctrl+G)'),
+        trustedHtml: escapeHtml(jt('ide.statusbar.lineColumn', 'Ln {line}, Col {column}{selection}', { line: cursor.lineNumber, column: cursor.column, selection: selectionSuffix })),
         dataset: { 'ide-status-action': 'go-to-line' },
       })
         + '<span class="ide-statusbar-spacer"></span>'
-        + (dirty ? '<span class="ide-statusbar-item ide-statusbar-dirty" title="Unsaved changes">●</span>' : '')
+        + (dirty ? '<span class="ide-statusbar-item ide-statusbar-dirty" title="' + escapeHtml(jt('ide.statusbar.unsavedChanges', 'Unsaved changes')) + '">●</span>' : '')
         + actionButton({
           plain: true,
           className: 'ide-statusbar-item ide-statusbar-action',
-          title: 'Toggle Word Wrap (Alt+Z)',
+          title: jt('ide.statusbar.toggleWordWrap', 'Toggle Word Wrap (Alt+Z)'),
           trustedHtml: escapeHtml(wrapLabel),
           dataset: { 'ide-status-action': 'toggle-wrap' },
         })
         + actionButton({
           plain: true,
           className: 'ide-statusbar-item ide-statusbar-action',
-          title: 'Select indentation size',
-          trustedHtml: escapeHtml(`Spaces: ${Number(getTabSize()) || 2}`),
+          title: jt('ide.statusbar.selectIndentationSize', 'Select indentation size'),
+          trustedHtml: escapeHtml(jt('ide.statusbar.spaces', 'Spaces: {size}', { size: Number(getTabSize()) || 2 })),
           dataset: { 'ide-status-action': 'tab-size' },
         })
         + actionButton({
           plain: true,
           className: 'ide-statusbar-item ide-statusbar-action',
-          title: 'Select line ending',
+          title: jt('ide.statusbar.selectLineEnding', 'Select line ending'),
           trustedHtml: escapeHtml(eol),
           dataset: { 'ide-status-action': 'eol' },
         })
@@ -268,8 +269,8 @@
         + actionButton({
           plain: true,
           className: `ide-statusbar-item ide-statusbar-action ide-statusbar-panel${getBottomPanelOpen() === true ? ' ide-statusbar-action--active' : ''}`,
-          title: 'Toggle bottom panel (Ctrl+`)',
-          ariaLabel: 'Toggle bottom panel',
+          title: jt('ide.statusbar.toggleBottomPanelTitle', 'Toggle bottom panel (Ctrl+`)'),
+          ariaLabel: jt('ide.statusbar.toggleBottomPanel', 'Toggle bottom panel'),
           ariaPressed: getBottomPanelOpen() === true,
           trustedHtml: PANEL_ICON,
           dataset: { 'ide-status-action': 'toggle-panel' },
@@ -299,7 +300,7 @@
             // quickOutline opens a filterable listbox picker (role=listbox), not a
             // role=menu — advertise the matching popup so AT announces it correctly.
             ariaHaspopup: 'listbox',
-            title: `Outline of ${segment}`,
+            title: jt('ide.statusbar.outlineOf', 'Outline of {file}', { file: segment }),
             trustedHtml: escapeHtml(segment),
             dataset: { 'ide-crumb-leaf': prefix },
           }));
@@ -310,7 +311,7 @@
             plain: true,
             className: 'ide-crumb ide-crumb-action',
             ariaHaspopup: 'menu',
-            title: `Browse ${prefix}`,
+            title: jt('ide.statusbar.browse', 'Browse {path}', { path: prefix }),
             trustedHtml: escapeHtml(segment),
             dataset: { 'ide-crumb-path': prefix },
           }));

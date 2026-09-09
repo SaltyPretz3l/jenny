@@ -3,6 +3,7 @@
 const { EventEmitter } = require('events');
 const { spawn: defaultSpawn } = require('child_process');
 const { buildSanitizedOllamaEnv } = require('./backend/ollama-env');
+const { t } = require('./i18n-main');
 const { killProcessTree } = require('./backend/process-utils');
 const { SETUP_ERROR_CODES } = require('./backend/error-codes');
 const { normalizeString } = require('./backend/path-utils');
@@ -212,9 +213,9 @@ class OllamaPullService extends EventEmitter {
 
   async delete(payload = {}) {
     const model = normalizeModelName(payload.model);
-    if (!model) return { status: 'failed', code: 'invalid_tag', message: 'A valid Ollama model tag is required.' };
+    if (!model) return { status: 'failed', code: 'invalid_tag', message: t('main.ollamaPull.validTagRequired', 'A valid Ollama model tag is required.') };
     if (this.activeByModel.has(model)) {
-      return { status: 'failed', code: 'pull_in_progress', message: 'This model is still downloading.' };
+      return { status: 'failed', code: 'pull_in_progress', message: t('main.ollamaPull.downloadInProgress', 'This model is still downloading.') };
     }
     let child;
     try {
@@ -223,7 +224,7 @@ class OllamaPullService extends EventEmitter {
         env: buildSanitizedOllamaEnv(this.env).env,
       });
     } catch (_error) {
-      return { status: 'failed', code: 'delete_failed', message: 'Could not start model removal.' };
+      return { status: 'failed', code: 'delete_failed', message: t('main.ollamaPull.removalStartFailed', 'Could not start model removal.') };
     }
     return new Promise((resolve) => {
       let output = '';

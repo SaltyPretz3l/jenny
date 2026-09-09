@@ -246,8 +246,10 @@ removes only the app and preserves data. The macOS DMG ships
 `Uninstall Jenny.command`; dragging the app to Trash also preserves data. See
 [Uninstall and Data Recovery](operations/UNINSTALL_AND_DATA_RECOVERY.md).
 
-Installers are built and published by CI (`.github/workflows/release.yml`) on a
-version tag.
+Public version tags start CI (`.github/workflows/release.yml`), which builds and
+verifies installers from that exact commit and uploads them to an unpublished
+draft. The maintainer publishes after every upload job and qualification check
+finishes.
 
 #### One-time prerequisites
 
@@ -256,7 +258,7 @@ version tag.
    at build time, and the Windows build uses `build/icon.ico`. Both files ship in
    the repo, so no manual icon generation is required.
 2. **(Optional) Code-signing secrets** — see "Signing" below. Without them,
-   builds publish **unsigned** (shippable today, with OS warnings).
+   builds are **unsigned** (shippable today, with OS warnings).
 
 #### Cutting a release
 
@@ -271,9 +273,16 @@ CI then, per OS runner:
 1. Sets up Node (from `.nvmrc`) + Python 3.11.
 2. Builds the platform sidecar (`scripts/packaging/build_sidecar_artifact.py` →
    `sidecar.exe` on Windows, `sidecar` on macOS).
-3. Runs `electron-builder --win|--mac --publish always`.
+3. Builds both native plugin hosts with the release builders and locked Cargo
+   dependencies, then runs `electron-builder --win|--mac --publish never`.
+4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar/native-host architecture,
+   bundled preload, runtime provenance, and framed initialize through
+   `scripts/packaging/verify_macos_release.py` before upload.
+5. On public-repository tag pushes only, uploads the verified platform assets
+   into the single prepared draft release. A manual workflow dispatch creates no
+   draft and publishes nothing; it retains downloadable CI artifacts.
 
-This publishes to the GitHub Release for the tag (artifact names are
+Successful tagged builds upload to the draft for the tag (artifact names are
 deliberately version-free so `releases/latest/download/...` URLs are
 permanent):
 
@@ -282,8 +291,8 @@ permanent):
 - **macOS:** `Jenny-arm64.dmg` + `Jenny-arm64.zip` + `latest-mac.yml`
   (the `.zip` is required for electron-updater on macOS).
 
-Both OSes publish to the same Release; electron-updater picks the right
-manifest per platform.
+After publication, electron-updater uses the matching platform manifest from
+that release. A tag or an unpublished draft does not change the latest download.
 
 > The macOS app **must** build on a macOS runner — electron-builder cannot
 > produce or sign a `.app` from Windows, and the PyInstaller sidecar is
@@ -292,9 +301,15 @@ manifest per platform.
 
 #### What a friend downloads
 
-One file for their OS. First launch runs the in-app setup checklist: it installs
-Ollama (auto on Windows; manual link on macOS — see below), downloads the
-default model, and configures workspace root + personality.
+The current public release provides the Windows installer only. macOS stays
+experimental until native CI, Apple Silicon install/launch, and public artifact
+links are verified. Signing and real-hardware testing status must be recorded
+separately from artifact availability; automatic macOS updates remain disabled.
+
+First launch offers a workspace and two alternative model routes: Ollama
+installation/model selection, or an existing local/private-network server.
+Source users can pass `--existing-server` to skip all Ollama operations while
+still installing application dependencies.
 
 ---
 
@@ -324,16 +339,20 @@ automatically (no workflow edit needed):
 
 #### Auto-update notes
 
-- **Windows:** auto-update works from `latest.yml`. For an *unsigned* update
-  channel set `verifyUpdateCodeSignature: false` in `electron-builder.yml`
-  (the NSIS updater otherwise rejects unsigned updates); flip it back once
-  Authenticode signing lands.
-- **macOS:** Squirrel.Mac only applies updates to a **signed + notarized** app.
-  Until then, `services/update-service.js` reports auto-update as disabled on
-  macOS with a "download the latest DMG" hint. When you ship signed mac builds,
-  enable it by making the build set the runtime signal `JENNY_MAC_SIGNED=1`
-  (read by `UpdateService`); the `-mac.zip` + `latest-mac.yml` are already
-  published so no rebuild plumbing is needed.
+Update discovery is explicit in Settings and targets published stable releases.
+Windows NSIS and eligible writable AppImages can offer download followed by
+explicit installation. Other formats offer manual release-page navigation.
+No automatic download or install-on-quit is enabled.
+
+For the unsigned Windows channel, preserve the existing
+`verifyUpdateCodeSignature` setting; revisit it when signing changes. Mac remains
+manual until the implementation, signed artifacts and native upgrade path are
+qualified together. Build configuration alone does not establish Mac updates
+or asset availability.
+
+Tagged builds upload only to a draft release after asset/version validation.
+Wait for all upload jobs, qualify the artifacts, then publish the draft.
+Never replace published release assets with changed bytes under the same version.
 
 ### Linux packages (experimental)
 
@@ -693,3 +712,53 @@ Bundled model, runtime, and tool asset plan:
   ignored `artifacts/release-evidence/` and must obey the same redaction rules.
 - GitHub Actions release evidence artifact: build outputs and attestation for
   `build/sidecar/**` and `dist/**`.
+
+## Hosted browser build
+
+End users can use `docker-setup.ps1` or `bash docker-setup.sh` with Docker/Compose
+only; follow [the guided quick start](operations/HOSTED_QUICKSTART.md). The
+containerized wizard and optional manual deployment share one image and runtime
+Compose definition. Fresh setup uses authenticated localhost HTTP and offers the
+offline command sandbox. The worker requires Linux cgroup v2; it fails closed
+when its namespace, mounts, capabilities or resource controls do not match the
+supported Compose contract. Docker Desktop must run Linux containers.
+
+`npm run build:browser` bundles the browser entrypoint with esbuild into three
+static assets. `npm run test:host` runs the bounded host contracts; provision the
+repository Python environment first. Docker's independent Linux amd64 target uses
+Node 24.19/Python 3.11 and `server/requirements-lock.txt`. The image contains the
+Node service dependency closure and framed Python runtime, not Electron. See
+[HOSTED_JENNY](operations/HOSTED_JENNY.md) for private-network configuration,
+qualification, profile volumes and recovery. No image publication is automatic.
+
+### Updater publication and trust
+
+The manual stable channel is owned by Electron UpdateService. Version discovery
+also works for manual-install formats; self-install eligibility is unchanged.
+GitHub access occurs only on explicit checks/downloads or opening Releases.
+The updater staging header is a constant, not a per-install identifier.
+
+Use Release Process
+for draft-only CI uploads, tag/artifact/hash verification, owner publication,
+and recovery. `release:windows` now builds a candidate without publishing.
+The old private attestation job is retired; no artifact attestation is claimed.
+Current unsigned Windows/AppImage integrity relies on SHA512 metadata over HTTPS,
+which does not independently authenticate a compromised release publisher.
+Keep Authenticode/notarization as a separately qualified signing program.
+
+Localhost and execution qualification uses the same image in two containers:
+
+```sh
+node scripts/packaging/smoke-host-setup.js jenny-host:ci --localhost
+```
+
+This disposable-project lane drives the real setup TTY and compiled Chromium UI,
+uses a deterministic OpenAI-compatible model fixture, checks explicit command
+approval/denial/cancellation, and proves worker identity, offline networking,
+bounded resources, descendant teardown and durable crash recovery. It never uses
+an owner model/profile or publishes an image. The private HTTPS setup lane remains
+`node scripts/packaging/smoke-host-setup.js jenny-host:ci`. Real model generation,
+owner-device/private HTTPS and full backup/restore are separate release gates.
+## Optional desktop command worker
+
+`electron-builder.yml` packages only `Dockerfile.worker`, `config/command-worker-image.json`, and the allowlisted Python worker files under `resources/command-worker`; the context builder remains an application script. The application builds the worker locally, records its content digest and launches an immutable image ID. No image publication or browser deployment is needed. Run `node scripts/packaging/probe-desktop-command-worker.js` with a local Linux Docker daemon to qualify the actual stdin transport; add `--recovery` for controller-crash and journal recovery. See [desktop sandbox operations](operations/DESKTOP_COMMAND_SANDBOX.md). Linux/macOS live qualification remains outstanding.

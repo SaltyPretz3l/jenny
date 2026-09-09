@@ -5,6 +5,7 @@
   }
   root.rendererMemoryUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const sharedUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMemorySharedUtils)
     || (typeof require === 'function' ? require('./renderer-memory-shared-utils') : null)
     || {};
@@ -297,10 +298,10 @@
     }
 
     function memoryReadFailureStatus(error, resourceLabel) {
-      const detail = toErrorMessage(error, 'Memory read failed.');
+      const detail = toErrorMessage(error, jt('memory.status.readFailed', 'Memory read failed.'));
       return /malformed response/i.test(detail)
-        ? `${resourceLabel} returned a malformed response.`
-        : `${resourceLabel} are unavailable right now.`;
+        ? jt('memory.status.malformedResponse', '{resource} returned a malformed response.', { resource: resourceLabel })
+        : jt('memory.status.resourceUnavailable', '{resource} are unavailable right now.', { resource: resourceLabel });
     }
 
     async function refreshMemoryStatus(options) {
@@ -377,7 +378,7 @@
         state.memoryManager.loaded = true;
         state.memoryManager.loading = false;
         state.memoryManager.unavailable = true;
-        state.memoryManager.status = 'Approved memory management is unavailable in this shell build.';
+        state.memoryManager.status = jt('memory.status.approvedUnavailableBuild', 'Approved memory management is unavailable in this shell build.');
         renderMemorySurfaces();
         return { memories: [] };
       }
@@ -386,7 +387,7 @@
         state.memoryManager.loaded = true;
         state.memoryManager.loading = false;
         state.memoryManager.unavailable = true;
-        state.memoryManager.status = 'Approved memory management is available only in managed sidecar mode.';
+        state.memoryManager.status = jt('memory.status.approvedManagedOnly', 'Approved memory management is available only in managed sidecar mode.');
         renderMemorySurfaces();
         return { memories: [] };
       }
@@ -402,7 +403,7 @@
 
       state.memoryManager.loading = true;
       state.memoryManager.unavailable = false;
-      state.memoryManager.status = 'Loading approved memories...';
+      state.memoryManager.status = jt('memory.status.loadingApproved', 'Loading approved memories...');
       renderMemorySurfaces();
       const generation = ++approvedLoadGeneration;
 
@@ -420,8 +421,8 @@
           state.memoryManager.memories = memories;
           state.memoryManager.loaded = true;
           state.memoryManager.status = memories.length
-            ? `${memories.length} approved memories available.`
-            : 'No approved memories saved yet.';
+            ? jt('memory.status.approvedCount', '{count} approved memories available.', { count: memories.length })
+            : jt('memory.status.noApproved', 'No approved memories saved yet.');
           appendClientLog('INFO', 'memory.listed', { count: memories.length });
           return { memories };
         })
@@ -430,7 +431,7 @@
           state.memoryManager.memories = [];
           state.memoryManager.loaded = true;
           state.memoryManager.unavailable = true;
-          state.memoryManager.status = memoryReadFailureStatus(error, 'Approved memories');
+          state.memoryManager.status = memoryReadFailureStatus(error, jt('memory.status.approvedMemories', 'Approved memories'));
           appendClientLog('WARN', 'memory.list_failed', {
             message: state.memoryManager.status,
           });
@@ -458,7 +459,7 @@
         state.memoryManager.pendingLoaded = true;
         state.memoryManager.pendingLoading = false;
         state.memoryManager.pendingUnavailable = true;
-        state.memoryManager.pendingStatus = 'Pending memory review is unavailable in this shell build.';
+        state.memoryManager.pendingStatus = jt('memory.status.pendingUnavailableBuild', 'Pending memory review is unavailable in this shell build.');
         renderMemorySurfaces();
         return { candidates: [] };
       }
@@ -467,7 +468,7 @@
         state.memoryManager.pendingLoaded = true;
         state.memoryManager.pendingLoading = false;
         state.memoryManager.pendingUnavailable = true;
-        state.memoryManager.pendingStatus = 'Pending memory review is available only in managed sidecar mode.';
+        state.memoryManager.pendingStatus = jt('memory.status.pendingManagedOnly', 'Pending memory review is available only in managed sidecar mode.');
         renderMemorySurfaces();
         return { candidates: [] };
       }
@@ -483,7 +484,7 @@
 
       state.memoryManager.pendingLoading = true;
       state.memoryManager.pendingUnavailable = false;
-      state.memoryManager.pendingStatus = 'Loading pending memory candidates...';
+      state.memoryManager.pendingStatus = jt('memory.status.loadingPending', 'Loading pending memory candidates...');
       renderMemorySurfaces();
       const generation = ++pendingLoadGeneration;
 
@@ -501,8 +502,8 @@
           state.memoryManager.pendingCandidates = candidates;
           state.memoryManager.pendingLoaded = true;
           state.memoryManager.pendingStatus = candidates.length
-            ? `${candidates.length} pending memory candidates are waiting for review.`
-            : 'No pending memory candidates are waiting right now.';
+            ? jt('memory.status.pendingCount', '{count} pending memory candidates are waiting for review.', { count: candidates.length })
+            : jt('memory.status.noPending', 'No pending memory candidates are waiting right now.');
           appendClientLog('INFO', 'memory.pending_listed', { count: candidates.length });
           return { candidates };
         })
@@ -511,7 +512,7 @@
           state.memoryManager.pendingCandidates = [];
           state.memoryManager.pendingLoaded = true;
           state.memoryManager.pendingUnavailable = true;
-          state.memoryManager.pendingStatus = memoryReadFailureStatus(error, 'Pending memory candidates');
+          state.memoryManager.pendingStatus = memoryReadFailureStatus(error, jt('memory.status.pendingCandidates', 'Pending memory candidates'));
           appendClientLog('WARN', 'memory.pending_list_failed', {
             message: state.memoryManager.pendingStatus,
           });

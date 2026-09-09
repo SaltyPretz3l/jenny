@@ -1,5 +1,5 @@
-/* Compact, text-first Chats panel. This file is the sole visual owner of the
-   expanded history surface; sidebar.css retains only shared shell scaffolding. */
+/* Compact, text-first Chats panel. Selection styling lives in its companion
+   chats-panel-selection.css; sidebar.css retains only shared shell scaffolding. */
 
 .sidebar-history-section {
   display: flex;
@@ -357,7 +357,7 @@
   border-radius: var(--rail-item-radius);
   background: transparent;
   color: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -378,7 +378,7 @@
 }
 
 .session-row[data-session-dominant-state="streaming"] .session-row__dot,
-.session-row[data-session-dominant-state="approval"] .session-row__dot {
+.session-row:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot {
   display: block;
 }
 
@@ -386,7 +386,7 @@
   background: var(--sidebar-state-streaming-color);
 }
 
-.session-row[data-session-dominant-state="approval"] .session-row__dot {
+.session-row:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot {
   background: var(--sidebar-state-approval-color);
 }
 
@@ -513,7 +513,7 @@
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   line-height: 1.45;
-  text-align: left;
+  text-align: start;
 }
 
 .chats-panel-load-more {
@@ -525,7 +525,7 @@
   color: var(--text-secondary);
   font-size: var(--font-size-base);
   line-height: 1.5;
-  text-align: left;
+  text-align: start;
 }
 
 .sidebar-empty-state {

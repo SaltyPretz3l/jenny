@@ -14,6 +14,7 @@
   root.rendererIdeChipPicker = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -39,7 +40,7 @@
   }
 
   function sessionTitle(session) {
-    return String(session?.title || '').trim() || 'New Chat';
+    return String(session?.title || '').trim() || jt('ide.chipPicker.newChat', 'New Chat');
   }
 
   function defaultEscape(value) {
@@ -79,7 +80,7 @@
         return null;
       }
       const wrap = docRef.createElement('div');
-      wrap.innerHTML = popover({ id: 'ideChipPicker', className: 'ide-chip-popover', ariaLabel: 'Editor setting' });
+      wrap.innerHTML = popover({ id: 'ideChipPicker', className: 'ide-chip-popover', ariaLabel: jt('ide.chipPicker.editorSetting', 'Editor setting') });
       host = wrap.firstChild;
       // The popover hosts single-select menuitemradio options, so it is a menu
       // (the popover primitive defaults to role="dialog"; its logic keys on the
@@ -118,7 +119,7 @@
           plain: true,
           className: `ide-chip-option${size === current ? ' ide-chip-option--active' : ''}`,
           role: 'menuitemradio',
-          trustedHtml: escapeHtml(`Spaces: ${size}`),
+          trustedHtml: escapeHtml(jt('ide.chipPicker.spaces', 'Spaces: {size}', { size })),
           dataset: { 'ide-chip-kind': 'tab-size', 'ide-chip-value': String(size) },
         })).join('');
       }
@@ -302,8 +303,8 @@
       const trigger = actionButton({
         plain: true,
         className: 'ide-chat-dock-session-trigger',
-        ariaLabel: 'Switch chat session',
-        title: 'Switch chat session',
+        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
+        title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
         ariaHaspopup: 'dialog',
         ariaExpanded: false,
         ariaControls: 'ideChatDockSessionPicker',
@@ -312,8 +313,8 @@
       });
       const search = textField({
         id: 'ide-chat-dock-session-search',
-        placeholder: 'Search sessions...',
-        ariaLabel: 'Search chat sessions',
+        placeholder: jt('ide.chipPicker.searchSessionsPlaceholder', 'Search sessions...'),
+        ariaLabel: jt('ide.chipPicker.searchChatSessions', 'Search chat sessions'),
         className: 'ide-chat-dock-session-search',
         dataset: { 'ide-chatdock-session-search': '1' },
       });
@@ -321,9 +322,9 @@
         id: 'ide-chatdock-sessions',
         domId: 'ideChatDockSessionPicker',
         className: 'ide-chat-dock-session-picker',
-        ariaLabel: 'Switch chat session',
+        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
         trustedHtml: search
-          + '<div class="ide-chat-dock-session-list" id="ideChatDockSessionList" role="listbox" aria-label="Chat sessions"></div>'
+      + '<div class="ide-chat-dock-session-list" id="ideChatDockSessionList" role="listbox" aria-label="' + (actionButton.escapeHtml || String)(jt('ide.chipPicker.chatSessions', 'Chat sessions')) + '"></div>'
           + '<div class="ide-chat-dock-session-status" role="status" aria-live="polite"></div>',
       });
       return `<div class="ide-chat-dock-session-control">${trigger}${picker}</div>`;
@@ -351,21 +352,21 @@
               disabled: Boolean(switchingSessionId),
               role: 'option',
               ariaSelected: selected,
-              title: 'Switch chat session',
+              title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
               dataset: { 'ide-chatdock-session-id': id },
               trustedHtml: `<span class="ide-chat-dock-session-option-title">${actionButton.escapeHtml(sessionTitle(session))}</span>`
                 + `<span class="ide-chat-dock-session-check" aria-hidden="true">${selected ? '&#10003;' : ''}</span>`,
             });
           }).join('')
-          : '<div class="ide-chat-dock-session-empty" role="note">No chats found</div>';
+          : '<div class="ide-chat-dock-session-empty" role="note">' + actionButton.escapeHtml(jt('ide.chipPicker.noChatsFound', 'No chats found')) + '</div>';
       }
       let nextStatus = '';
       if (result.searching && result.total > SEARCH_RESULT_LIMIT) {
-        nextStatus = `Showing first ${SEARCH_RESULT_LIMIT} of ${result.total} matches`;
+      nextStatus = jt('ide.chipPicker.showingMatches', 'Showing first {limit} of {total} matches', { limit: SEARCH_RESULT_LIMIT, total: result.total });
       } else if (result.searching) {
         nextStatus = `${result.total} ${result.total === 1 ? 'match' : 'matches'}`;
       } else if (result.total > RECENT_SESSION_LIMIT) {
-        nextStatus = `${RECENT_SESSION_LIMIT} recent chats`;
+        nextStatus = jt('ide.chipPicker.recentChats', '{count} recent chats', { count: RECENT_SESSION_LIMIT });
       }
       if (status.textContent !== nextStatus) status.textContent = nextStatus;
       status.hidden = !nextStatus;
@@ -427,8 +428,8 @@
           });
         } catch (_logError) { /* diagnostics are best-effort */ }
         try {
-          showShellErrorToast('Could not switch chat sessions. The current session remains open.', {
-            title: 'Session Switch Failed',
+          showShellErrorToast(jt('ide.chipPicker.switchFailedMessage', 'Could not switch chat sessions. The current session remains open.'), {
+            title: jt('ide.chipPicker.switchFailedTitle', 'Session Switch Failed'),
             dedupeKey: 'ide-chat-dock:session-switch-failed',
           });
         } catch (_toastError) { /* feedback must not escape the click handler */ }
@@ -446,8 +447,8 @@
       const title = sessionTitle(activeSession());
       const titleEl = header?.querySelector?.('[data-ide-chatdock-session-title]');
       const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
-      if (titleEl && titleEl.textContent !== `Jenny · ${title}`) titleEl.textContent = `Jenny · ${title}`;
-      const triggerLabel = `Switch chat session. Current: ${title}`;
+      if (titleEl) { const dockTitle = jt('ide.chipPicker.dockTitle', 'Jenny · {title}', { title }); if (titleEl.textContent !== dockTitle) titleEl.textContent = dockTitle; }
+      const triggerLabel = jt('ide.chipPicker.currentSessionLabel', 'Switch chat session. Current: {title}', { title });
       if (trigger?.getAttribute?.('aria-label') !== triggerLabel
         || trigger?.getAttribute?.('title') !== triggerLabel) {
         trigger?.setAttribute?.('aria-label', triggerLabel);

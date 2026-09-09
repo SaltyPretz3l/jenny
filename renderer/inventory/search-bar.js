@@ -26,7 +26,7 @@
   root.inventorySearchBar = factory(root, root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var escapeHtml = stringUtils && stringUtils.escapeHtml;
   var sanitizeToken = stringUtils && stringUtils.sanitizeToken;
   if (typeof escapeHtml !== 'function' || typeof sanitizeToken !== 'function') {
@@ -35,34 +35,34 @@
 
   function buildBarHtml(ids) {
     return ''
-      + '<div class="chat-search-bar" role="search" aria-label="Conversation search">'
+      + '<div class="chat-search-bar" role="search" aria-label="' + escapeHtml(jt('inventory.searchBar.conversationSearch', 'Conversation search')) + '">'
       +   '<input'
       +     ' type="text"'
       +     ' class="chat-search-bar-input"'
       +     ' id="' + escapeHtml(ids.input) + '"'
-      +     ' aria-label="Search messages in this conversation"'
+      +     ' aria-label="' + escapeHtml(jt('inventory.searchBar.inputLabel', 'Search messages in this conversation')) + '"'
       +     ' aria-controls="' + escapeHtml(ids.count) + '"'
       +     ' aria-keyshortcuts="Enter Shift+Enter Escape"'
       +     ' autocomplete="off"'
       +     ' spellcheck="false"'
       +     ' data-search-skip="true"'
       +   ' />'
-      +   '<div class="chat-search-bar-toggles" role="group" aria-label="Search options">'
+      +   '<div class="chat-search-bar-toggles" role="group" aria-label="' + escapeHtml(jt('inventory.searchBar.optionsLabel', 'Search options')) + '">'
       +     '<button'
       +       ' type="button"'
       +       ' class="chat-search-bar-button chat-search-bar-toggle chat-search-bar-toggle-case"'
       +       ' data-search-action="toggle-case"'
       +       ' aria-pressed="false"'
-      +       ' aria-label="Match case"'
-      +       ' title="Match case"'
+      +       ' aria-label="' + escapeHtml(jt('inventory.searchBar.matchCase', 'Match case')) + '"'
+      +       ' title="' + escapeHtml(jt('inventory.searchBar.matchCase', 'Match case')) + '"'
       +     '>Aa</button>'
       +     '<button'
       +       ' type="button"'
       +       ' class="chat-search-bar-button chat-search-bar-toggle chat-search-bar-toggle-word"'
       +       ' data-search-action="toggle-word"'
       +       ' aria-pressed="false"'
-      +       ' aria-label="Whole word"'
-      +       ' title="Whole word"'
+      +       ' aria-label="' + escapeHtml(jt('inventory.searchBar.wholeWord', 'Whole word')) + '"'
+      +       ' title="' + escapeHtml(jt('inventory.searchBar.wholeWord', 'Whole word')) + '"'
       +     '>“W”</button>'
       +   '</div>'
       +   '<output'
@@ -71,29 +71,29 @@
       +     ' aria-live="polite"'
       +     ' aria-atomic="true"'
       +     ' for="' + escapeHtml(ids.input) + '"'
-      +   '>No matches</output>'
-      +   '<div class="chat-search-bar-nav" role="group" aria-label="Match navigation">'
+      +   '>' + escapeHtml(jt('inventory.searchBar.noMatches', 'No matches')) + '</output>'
+      +   '<div class="chat-search-bar-nav" role="group" aria-label="' + escapeHtml(jt('inventory.searchBar.matchNavigation', 'Match navigation')) + '">'
       +     '<button'
       +       ' type="button"'
       +       ' class="chat-search-bar-button chat-search-bar-prev"'
       +       ' data-search-action="prev"'
-      +       ' aria-label="Previous match"'
-      +       ' title="Previous match (Shift+Enter)"'
+      +       ' aria-label="' + escapeHtml(jt('inventory.searchBar.previousMatch', 'Previous match')) + '"'
+      +       ' title="' + escapeHtml(jt('inventory.searchBar.previousMatchTitle', 'Previous match (Shift+Enter)')) + '"'
       +     '>↑</button>'
       +     '<button'
       +       ' type="button"'
       +       ' class="chat-search-bar-button chat-search-bar-next"'
       +       ' data-search-action="next"'
-      +       ' aria-label="Next match"'
-      +       ' title="Next match (Enter)"'
+      +       ' aria-label="' + escapeHtml(jt('inventory.searchBar.nextMatch', 'Next match')) + '"'
+      +       ' title="' + escapeHtml(jt('inventory.searchBar.nextMatchTitle', 'Next match (Enter)')) + '"'
       +     '>↓</button>'
       +   '</div>'
       +   '<button'
       +     ' type="button"'
       +     ' class="chat-search-bar-button chat-search-bar-close"'
       +     ' data-search-action="close"'
-      +     ' aria-label="Close search"'
-      +     ' title="Close search (Esc)"'
+      +     ' aria-label="' + escapeHtml(jt('inventory.searchBar.closeSearch', 'Close search')) + '"'
+      +     ' title="' + escapeHtml(jt('inventory.searchBar.closeSearchTitle', 'Close search (Esc)')) + '"'
       +   '>×</button>'
       + '</div>';
   }
@@ -219,7 +219,7 @@
       var totalNum = Number(total) || 0;
       var nextText;
       if (totalNum <= 0) {
-        nextText = 'No matches';
+        nextText = jt('inventory.searchBar.noMatches', 'No matches');
       } else {
         var currentNum = Math.max(1, Math.min(totalNum, Number(current) || 0));
         nextText = currentNum + ' of ' + totalNum + (options && options.truncated === true ? '+' : '');

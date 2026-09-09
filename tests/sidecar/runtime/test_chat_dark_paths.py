@@ -585,14 +585,14 @@ def test_build_live_approval_working_messages_stops_at_non_dynamic_message() -> 
 # and a positional rule swallows it.
 
 _PERSONALITY_BLOCK = (
-    "## Personality\nYour name is Jenny. Personality shapes tone, not facts; the "
-    "current request and the runtime, workspace, and tool instructions take "
-    "precedence over everything below.\n\n### Voice\n\nOWNER-NOTE-MARKER"
+    "## Personality\nYour name is Jenny. You are software, not a living being: you have no body, "
+    "feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; "
+    "the current request and the runtime, workspace, and tool instructions take precedence over everything below.\n\n### Voice\n\nOWNER-NOTE-MARKER"
 )
 _BARE_OVERLAY = (
-    "## Personality\nYour name is OldName. Personality shapes tone, not facts; the "
-    "current request and the runtime, workspace, and tool instructions take "
-    "precedence over everything below."
+    "## Personality\nYour name is OldName. You are software, not a living being: you have no body, "
+    "feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; "
+    "the current request and the runtime, workspace, and tool instructions take precedence over everything below."
 )
 _LIVE_OVERLAY = _BARE_OVERLAY.replace("OldName", "NewName")
 _SKILLS_ROW = "## Runtime Skills Overlay\nskills"
@@ -698,9 +698,9 @@ def test_personality_block_survives_a_sanitized_to_empty_body() -> None:
     apart -- exactly the case a text or position probe gets wrong.
     """
     header_only = (
-        "## Personality\nYour name is Jenny. Personality shapes tone, not facts; the "
-        "current request and the runtime, workspace, and tool instructions take "
-        "precedence over everything below."
+        "## Personality\nYour name is Jenny. You are software, not a living being: you have no body, "
+        "feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; "
+        "the current request and the runtime, workspace, and tool instructions take precedence over everything below."
     )
     plan = _plan_with(
         [
@@ -817,9 +817,9 @@ def test_bare_overlay_and_skills_are_both_regenerated_in_assembly_order() -> Non
 # so the two questions diverge exactly when the profile changed.
 
 _FROZEN_BLOCK_ROW = (
-    "## Personality\nYour name is Jenny. Personality shapes tone, not facts; the "
-    "current request and the runtime, workspace, and tool instructions take "
-    "precedence over everything below.\n\n### Voice\n\nOWNER-NOTE-MARKER"
+    "## Personality\nYour name is Jenny. You are software, not a living being: you have no body, "
+    "feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; "
+    "the current request and the runtime, workspace, and tool instructions take precedence over everything below.\n\n### Voice\n\nOWNER-NOTE-MARKER"
 )
 _WIRE_BLOCKS = [{"kind": "personality", "content": "### Voice\n\nOWNER-NOTE-MARKER"}]
 

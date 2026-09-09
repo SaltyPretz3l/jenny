@@ -107,6 +107,7 @@
       ? Math.max(0, Number(options.threshold))
       : DEFAULT_SCROLL_FOLLOW_THRESHOLD;
     const preferEntries = options.preferEntries === true;
+    const refineEntries = preferEntries && options.refineEntries === true;
     const getContentGeneration = typeof options.getContentGeneration === 'function'
       ? options.getContentGeneration
       : null;
@@ -212,6 +213,17 @@
         }
         if (rowIndex >= 0) row = rows[rowIndex];
       }
+      // Refine only the located article, never scan every transcript row.
+      // Keep its offset separately so a removed interior row has a safe fallback.
+      const parentRect = getRect(row);
+      if (refineEntries && row && containerRect) {
+        const interior = collectLogicalRows(row).find((candidate) => {
+          if (isVolatileApprovalRow(candidate)) return false;
+          const rect = getRect(candidate);
+          return rect && rect.bottom > containerRect.top && rect.bottom > rect.top;
+        });
+        if (interior) row = interior;
+      }
       const identity = readLogicalRowIdentity(row);
       const rowRect = getRect(row);
       touch(normalizedKey, {
@@ -219,6 +231,8 @@
         node: row,
         rowIndex,
         offset: rowRect && containerRect ? Number(rowRect.top - containerRect.top) || 0 : 0,
+        parentOffset: refineEntries && parentRect && containerRect
+          ? Number(parentRect.top - containerRect.top) || 0 : null,
         rawScrollTop: metrics.scrollTop,
         nearBottom: isNearBottom(metrics, threshold),
       });
@@ -239,6 +253,12 @@
       let target = isRetainedAnchorNode(rootNode, anchor.node, anchor.identity)
         ? anchor.node
         : null;
+      if (!target && refineEntries && anchor.identity?.kind === 'row') {
+        const parent = findMessageEntry(rootNode, anchor.identity.parentMessageId);
+        target = collectLogicalRows(parent).find((row) => (
+          readLogicalRowIdentity(row)?.id === anchor.identity.id
+        )) || null;
+      }
       if (!target && anchor.identity) {
         rows = collectLogicalRows(rootNode, { preferEntries });
         target = rows.find((row) => {
@@ -265,7 +285,9 @@
       const targetRect = getRect(target);
       if (target && containerRect && targetRect) {
         container.scrollTop = Math.max(0, (Number(container.scrollTop) || 0)
-          + (Number(targetRect.top - containerRect.top) || 0) - anchor.offset);
+          + (Number(targetRect.top - containerRect.top) || 0)
+          - (outcome === 'parent' && anchor.parentOffset !== null
+            ? anchor.parentOffset : anchor.offset));
         return outcome;
       }
       container.scrollTop = Math.max(0, anchor.rawScrollTop);

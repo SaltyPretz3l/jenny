@@ -565,6 +565,7 @@
       normalizeId,
       normalizeString,
       streamSegmentState,
+      buildAssistantShellMessageId,
       MESSAGE_STATUS,
       appendClientLog,
       getSessionMessages,
@@ -654,6 +655,7 @@
     });
     const toolHandlers = createStreamToolHandlers({
       state,
+      appendClientLog,
       syncThinkingIndicatorMode,
       streamSegmentState,
       getSessionMessages,

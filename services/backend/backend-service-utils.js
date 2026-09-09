@@ -109,8 +109,9 @@ function inferEngineTypeFromModel(model) {
   if (token.startsWith('codex-cli/')) {
     return 'codex-cli';
   }
-  // ChatGPT-subscription catalog slugs use bare gpt-5* names; local runtimes do not (gpt-oss intentionally does not match).
-  if (/^gpt-5([.:-]|$)/.test(token)) {
+  // Recognize Astra exactly; unknown future GPT families keep the local default.
+  // The existing GPT-5 rule deliberately excludes gpt-oss and namespaced IDs.
+  if (token === 'gpt-6-astra' || /^gpt-5([.:-]|$)/.test(token)) {
     return 'chatgpt';
   }
   if (token.startsWith('mock')) {
@@ -138,7 +139,7 @@ function inferEngineTypeFromModel(model) {
 }
 
 // Verdicts inferEngineTypeFromModel reaches from an UNAMBIGUOUS id anchor (the
-// 'codex-cli/', '^gpt-5', 'mock', 'replay' prefixes above) rather than from its
+// Astra id and 'codex-cli/', '^gpt-5', 'mock', 'replay' prefixes) rather than its
 // conservative ollama fallback. Only these may override an explicit user pin.
 const ID_ANCHORED_ENGINE_TYPES = Object.freeze(
   new Set(['codex-cli', 'chatgpt', 'mock', 'replay'])

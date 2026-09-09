@@ -23,6 +23,7 @@
   root.rendererIdeBookmarks = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   // The glyph-margin class (styles/ide-gutter.css). Palette-driven, CSP-safe
@@ -229,7 +230,7 @@
 
     function buildRowMarkup(row, index, selected) {
       const label = `${row.basename}:${row.line}`;
-      const detail = row.snippet || '(empty line)';
+      const detail = row.snippet || jt('ide.bookmarks.emptyLine', '(empty line)');
       return `<div class="ide-picker-row ide-bookmark-row${selected ? ' ide-picker-row--selected ide-bookmark-row--selected' : ''}"`
         + ` role="option" aria-selected="${selected ? 'true' : 'false'}"`
         + ` data-ide-bookmark-path="${escapeHtml(row.path)}"`
@@ -254,8 +255,8 @@
         fieldClass: 'ide-bookmark-open-field',
         resultsClass: 'ide-bookmark-open-results',
         inputId: 'ideBookmarkOpenInput',
-        placeholder: 'Go to bookmark…',
-        ariaLabel: 'Go to bookmark',
+        placeholder: jt('ide.bookmarks.openPlaceholder', 'Go to bookmark…'),
+        ariaLabel: jt('ide.bookmarks.openLabel', 'Go to bookmark'),
         resultsAriaLabel: 'Bookmarks',
         inputDataset: { 'ide-bookmark-open-input': '1' },
         inputSelector: '[data-ide-bookmark-open-input]',
@@ -265,8 +266,8 @@
           buildRowMarkup,
           isLoading: () => false,
           renderEmptyStatus: (query) => status(query
-            ? 'No bookmarks match.'
-            : 'No bookmarks yet. Press Ctrl+Alt+K on a line to add one.'),
+          ? jt('ide.bookmarks.noMatches', 'No bookmarks match.')
+          : jt('ide.bookmarks.empty', 'No bookmarks yet. Press Ctrl+Alt+K on a line to add one.')),
           onSubmit: (row, { close }) => {
             close();
             if (row) {

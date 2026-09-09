@@ -787,7 +787,7 @@ test('captureToScratchpad rejects empty text and a missing shell', async () => {
   assert.deepEqual(await withShell.captureToScratchpad('   '), { error: 'Write something first.' });
 
   const noShell = createScratchpadActions({ shell: {}, getScratchpad: () => scratch(''), nowProvider: () => FIXED_NOW });
-  assert.deepEqual(await noShell.captureToScratchpad('x'), { error: 'Notes are unavailable.' });
+  assert.deepEqual(await noShell.captureToScratchpad('x'), { code: 'scratchpad_unavailable', error: 'Notes are unavailable.' });
 });
 
 test('captureToScratchpad refuses when the result would exceed the 4000-char note cap', async () => {
@@ -801,6 +801,7 @@ test('captureToScratchpad refuses when the result would exceed the 4000-char not
 
   const result = await actions.captureToScratchpad('this push goes past the cap');
 
+  assert.equal(result.code, 'note_full');
   assert.match(result.error, /full/);
   assert.equal(calls.updates.length, 0); // nothing was written (no silent truncation)
 });

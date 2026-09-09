@@ -34,6 +34,7 @@
 ) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var ACTIONS = ['use', 'pull', 'cancel'];
 
   if (!sourcesModule || typeof sourcesModule.createModelLibrarySource !== 'function'
@@ -79,7 +80,7 @@
     var disposed = true;
     var sourceGeneration = 0;
     var merged = { hardware: {}, cards: [] };
-    var statusMessage = 'Loading model library…';
+    var statusMessage = jt('setup.modelLibrary.loading', 'Loading model library…');
     var cardMessages = Object.create(null);
     var activeOperationKey = '';
     var settlingKey = '';
@@ -123,7 +124,7 @@
     function messageForCard(key) {
       var pull = currentPulls()[key];
       if (pull && (pull.status === 'error' || pull.cancelFailed === true)) {
-        return pull.message || (pull.cancelFailed ? 'Could not cancel the pull.' : 'Pull failed.');
+        return pull.message || (pull.cancelFailed ? jt('setup.modelLibrary.cancelPullFailed', 'Could not cancel the pull.') : jt('setup.modelLibrary.pullFailed', 'Pull failed.'));
       }
       return cardMessages[key] || '';
     }
@@ -165,11 +166,11 @@
         id: 'model-library',
         title: sceneUtils.STEPS.localModel.title,
         eyebrow: sceneUtils.setupStepEyebrow('localModel'),
-        summary: 'Choose an installed model or pull one from the local catalog.',
+        summary: jt('setup.modelLibrary.summary', 'Choose an installed model or pull one from the local catalog.'),
         bodyHtml: bodyHtml,
         actions: [
-          { id: 'close', label: 'Back', variant: 'secondary' },
-          { id: 'skip', label: 'Skip for now', variant: 'ghost' },
+          { id: 'close', label: jt('common.back', 'Back'), variant: 'secondary' },
+          { id: 'skip', label: jt('setup.modelLibrary.skipForNow', 'Skip for now'), variant: 'ghost' },
         ],
       });
       removeBuiltInGridFurniture();
@@ -217,7 +218,7 @@
         closeModal();
       } catch (error) {
         if (isStale(sceneToken, operationToken)) return;
-        cardMessages[key] = boundedErrorMessage(error, 'Could not save the model selection.');
+        cardMessages[key] = boundedErrorMessage(error, jt('setup.modelLibrary.saveSelectionFailed', 'Could not save the model selection.'));
         appendClientLog('WARN', 'setup.model_library_selection_failed', {
           tag: tag,
           message: cardMessages[key],
@@ -254,7 +255,7 @@
       var card = findCard(tag);
       if (!card || card.installed !== true || card.engineVisible !== true) return;
       if (!operationCoordinator.acquire()) {
-        showToastMessage('Finish or cancel the model operation first.');
+        showToastMessage(jt('setup.modelLibrary.finishOperationFirst', 'Finish or cancel the model operation first.'));
         return;
       }
       activeOperationKey = card.key;
@@ -266,7 +267,7 @@
       var card = findCard(tag);
       if (!card || card.installed === true) return;
       if (!operationCoordinator.acquire()) {
-        showToastMessage('Finish or cancel the model operation first.');
+        showToastMessage(jt('setup.modelLibrary.finishOperationFirst', 'Finish or cancel the model operation first.'));
         return;
       }
       activeOperationKey = card.key;
@@ -292,7 +293,7 @@
       if (!operationCoordinator.acquire()) {
         // A pull or selection holds the operation lock; a silent no-op reads
         // as a dead button, so say why Skip is unavailable.
-        showToastMessage('Finish or cancel the model operation first.');
+        showToastMessage(jt('setup.modelLibrary.finishOperationFirst', 'Finish or cancel the model operation first.'));
         return;
       }
       var operationToken = operationCoordinator.capture();
@@ -352,7 +353,7 @@
         return result;
       }).catch(function (error) {
         if (isStale(sceneToken)) return null;
-        statusMessage = boundedErrorMessage(error, 'Could not load the model library.');
+        statusMessage = boundedErrorMessage(error, jt('setup.modelLibrary.loadFailed', 'Could not load the model library.'));
         appendClientLog('WARN', 'setup.model_library_load_failed', { message: statusMessage });
         render();
         return null;

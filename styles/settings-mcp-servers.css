@@ -31,7 +31,7 @@
 }
 
 .mcp-servers-row > .mcp-servers-row-actions {
-  margin-left: var(--space-4);
+  margin-inline-start: var(--space-4);
 }
 
 .mcp-servers-list {

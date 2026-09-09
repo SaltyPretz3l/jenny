@@ -1,81 +1,106 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-09
 ---
 
 # 01 — First chat with Jenny
 
-This walkthrough takes you from a fresh install to your first message exchanged with Jenny. Estimated time: 10 minutes, most of it waiting for the model download.
+This guide follows the 1.1 source candidate. The published 1.0.0 installer may
+have different labels; see the [release notes](../../RELEASE_NOTES.md).
+Setup time depends mainly on whether you need to download a model.
 
-## Prerequisites
+## Before you start
 
-Either of these:
+Install a published Windows build, or follow the
+[README source setup](../../README.md). Linux and macOS remain experimental;
+use only assets actually listed for your chosen release.
 
-- **Windows installer.** You ran `Jenny-Setup-x64.exe` from the [releases page](https://github.com/SaltyPretz3l/jenny/releases/latest) and have the **Jenny** desktop shortcut. Setup installs Ollama for you if it is missing.
-- **Source install.** You ran the guided setup (`npm run setup`, or `setup.command` / `setup.sh`) per the [README](../../README.md). It creates the `.venv`, checks Ollama, and downloads the default model.
+Choose one model route:
 
-Jenny needs [Ollama](https://ollama.com/) to run a local model. Verify with `ollama list` from a terminal if you are unsure whether it is installed.
+- **Use Ollama on this computer:** install or select a model through setup.
+  Windows and Linux support verified managed installation; macOS uses external
+  Ollama installation.
+- **Connect an existing server:** use a reachable Ollama, vLLM or
+  OpenAI-compatible endpoint with an installed model. Jenny does not need to
+  install Ollama or download that model. For source setup use
+  `npm run setup -- --existing-server`, then
+  `npm run dev -- --existing-server` for later launches when needed.
 
-## 1. Launch Jenny
+For browser access instead of the desktop app, use the separate
+[Docker quick start](../operations/HOSTED_QUICKSTART.md).
 
-Double-click the **Jenny** shortcut (Windows), or run `npm run dev` from the project folder (any platform; keeps logs in the terminal).
+## 1. Launch and acknowledge how Jenny works
 
-The Electron shell starts, boots the Python backend, and opens the main window. On first launch you land on the **Set up Jenny** checklist instead of an empty chat.
+Open the Jenny shortcut or run `npm run dev` from a prepared source checkout.
+The acknowledgement explains that Jenny is software and can use tools with
+your permission. Read it, tick the acknowledgement and continue to setup.
+Existing profiles see it once when upgrading from a version without it.
 
-If Ollama is not installed or is too old, a **Local engine** scene appears first with **Install Ollama** (or **Upgrade Ollama**) and **Re-check** buttons. On Windows the installer is downloaded and its SHA-256 hash is checked before it runs. On macOS the button links to ollama.com; install it, then press **Re-check**.
+The first-run interface language follows your operating system. Settings >
+Appearance > Language selects another language; restart to apply it and any
+direction change. Translations may fall back to English for newer labels.
 
-## 2. Work through the checklist
+## 2. Complete the relevant setup tiles
 
-The checklist has six steps. Each opens its own scene, and you can leave with **Finish later** and come back:
+- **Workspace:** choose the folder for file and command tools. Those tools
+  remain blocked until a root is configured.
+- **Model route:** use the local model library for the Ollama route, or connect,
+  validate and save your existing endpoint. A reachable server still needs a
+  usable model; validation errors must be resolved before chat can run.
+- **Personality:** choose a name and tone, or keep the defaults. See
+  [personality customization](03-personality-customization.md).
+- **Skills and tools:** review capabilities and permissions. Save your choices;
+  if a read or save fails, retry instead of assuming the setting was applied.
 
-1. **Choose workspace root** — the folder Jenny's file, shell, and git tools may work in. Until you choose one, those tools stay blocked even when they are enabled. Any scratch folder is fine for a first run; you can change it later under **Settings → Tools → Workspace root**.
-2. **Pull a local model** — the model library. The hardware scan recommends the strongest model that fits your GPU and RAM, with download and disk estimates. Pick one and press pull; progress streams in-app and resumes if it is interrupted. Anything already in your Ollama install is listed too.
-3. **Validate your endpoint** (optional) — point Jenny at a local Ollama, vLLM, or OpenAI-compatible server instead of the managed default. Skip it unless you run your own server.
-4. **Personality & name** — name the assistant, pick a voice template, and add a short personality note. See [03 — Personality customization](03-personality-customization.md).
-5. **Review skills & MCP** — a glance at the skills and MCP connections Jenny will use. Nothing to do here on a fresh install.
-6. **Choose tools & permissions** — toggles for local computation (Python runtime, image reading, to-do tracking), network access (web search, web browsing), and workspace changes. Network access and file changes stay off until you enable them.
+You can finish optional steps later and reopen setup from Settings. Reopening
+setup does not delete conversations.
 
-Steps you skip stay marked **Skipped**. When you are done, the checklist closes and the chat composer takes over. You can reopen it any time from **Settings → Local Profile & Setup → Run setup again**; that never deletes your conversations.
+## 3. Send a message
 
-## 3. Send your first message
+Type a short request, such as:
 
-Type something in the composer at the bottom of the chat:
+> Explain what you can help me do in this workspace.
 
-> Hey Jenny, can you tell me a bit about yourself?
+Press Enter. The reply streams into the conversation; models that expose
+reasoning also show a thinking row. The titlebar health indicator reports
+engine readiness. A first reply may wait while the model loads.
 
-Press **Enter** to send. You will see:
+If a session pauses, its indicator distinguishes an approval, a plan review
+or a question awaiting input. Open that conversation and respond there.
 
-- A **thinking** row while the model reasons (on models that expose their reasoning), then the reply streaming in token by token.
-- The session in the sidebar on the left, where this conversation is now saved.
-- The titlebar health indicator, which tells you whether the backend and engine are ready.
+## 4. Choose how tools may act
 
-If the first reply is slow to start, the model is being loaded into memory. Later turns reuse the loaded weights and start much faster.
+Start with **Ask** and review each approval's target and consequences. Actual
+approval behavior follows the tool's policy; read-only inspection does not
+necessarily ask. Saved Always allow choices can be reviewed and removed under
+Settings > Tools > Approval rules. A path-bearing decision can be scoped to its
+path; a pathless tool decision can apply to the whole tool.
 
-## 4. Pick how much Jenny may do
+**Auto** confirms once per session and displays an Auto indicator. It is not
+permission to leave the app unattended: the idle guard and safety modes still
+apply, and some calls always require approval. Settings > Tools exposes these
+controls.
 
-The **Run mode** control next to the composer has three settings:
+**Plan** is for inspection and proposals. It does not authorize ordinary project
+edits or commands; the existing narrow plan-document capability is separate.
+Review the proposed plan before switching to execution.
 
-- **Ask** — Jenny asks before acting. Every side-effecting tool call (writing a file, running a command) stops at an approval card that says exactly what will happen.
-- **Auto** — tools run without asking. Destructive shell commands still stop for approval.
-- **Plan** — read-only planning. Jenny reads and proposes; nothing is written until you approve the plan. Works best with larger models.
+The optional [Docker command sandbox](../operations/DESKTOP_COMMAND_SANDBOX.md)
+changes the available execution capabilities. Command-created files are
+discarded; use typed file tools for durable edits.
 
-Start in **Ask**. When you approve a call you can choose **Always allow**, which is scoped to that tool *and* the path it named. Saved decisions are listed under **Settings → Tools → Approval rules**, each with a Remove action.
+## 5. Organize and review
 
-## What just happened
-
-Behind the scenes:
-
-1. The Electron shell (`main.js`) started, registered IPC handlers, and launched the managed Python backend (the *sidecar*) over stdio JSON-RPC.
-2. The sidecar loaded the tool catalog from `services/tools/tool-manifest.json` and the Python builtins.
-3. Your message went out as a `chat.send` request. Electron keeps the canonical conversation history; the sidecar is stateless per request.
-4. The sidecar assembled the system prompt (personality, workspace instructions, tool contracts), checked the token budget, and called the model.
-5. Tokens streamed back as notifications, rendered live, and were persisted with the turn when it completed.
-
-If you're curious about the full flow, [docs/ARCHITECTURE.md](../ARCHITECTURE.md) describes how the shell, backend services, and sidecar fit together.
+Use sidebar multiselect to archive or restore several conversations. Deletion
+requires confirmation and offers Undo; busy conversations are protected.
+Artifacts and calendar results can be opened from the conversation.
+Settings > Appearance > 24-hour time changes time formatting independently
+of the interface language.
 
 ## Next
 
-- Ask Jenny to read a file in your workspace. In **Ask** mode she requests approval the first time. See [docs/TOOLS.md](../TOOLS.md) for what every tool family can do.
-- Add an MCP server to extend her with new tools — see [02 — Adding an MCP server](02-adding-mcp-server.md).
-- Tune her voice — see [03 — Personality customization](03-personality-customization.md).
-- Something off? Check the [FAQ](../support/FAQ.md) and [Troubleshooting](../support/TROUBLESHOOTING.md).
+- Ask Jenny to read a file in your selected workspace.
+- Add an [MCP connection](02-adding-mcp-server.md) in a supported desktop mode.
+- Try a [skill](../SKILLS.md), or tune [personality](03-personality-customization.md).
+- For problems, see the [FAQ](../support/FAQ.md) and
+  [Troubleshooting](../support/TROUBLESHOOTING.md).

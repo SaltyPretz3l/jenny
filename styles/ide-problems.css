@@ -69,7 +69,7 @@
   padding: 3px 2px;
   color: var(--text-primary);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   background: none;
   border: none;
   border-radius: 5px;
@@ -106,7 +106,7 @@
 
 .ide-prb-file-count {
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 500;
@@ -120,10 +120,12 @@
   gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: 2px 2px 2px 14px;
+  padding-block: 2px;
+  padding-inline-end: 2px;
+  padding-inline-start: 14px;
   color: var(--text-secondary);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   background: none;
   border: none;
   border-radius: 5px;

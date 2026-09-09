@@ -93,6 +93,25 @@ test('N regenerations resolve as N ordered versions with stepping ids', () => {
   assert.deepEqual(unrelated, { index: 1, count: 1, prevId: '', nextId: '' });
 });
 
+test('deleted versions are skipped without losing the original filename lineage', () => {
+  const state = makeState([
+    generatedMessage('a1', 'chart.html', '2026-07-02T10:00:00.000Z'),
+    generatedMessage('a2', 'chart-2.html', '2026-07-02T10:05:00.000Z'),
+    generatedMessage('a3', 'chart-3.html', '2026-07-02T10:10:00.000Z'),
+  ]);
+  state.artifacts = { deletedArtifactIds: [] };
+  const initial = resolveArtifactVersionInfo(artifactRef('a3', 'chart-3.html'), state);
+  assert.equal(initial.count, 3);
+  assert.equal(resolveArtifactVersionInfo(artifactRef('a3', 'chart-3.html'), state), initial, 'unchanged version metadata is cached');
+  state.artifacts.deletedArtifactIds.push('s1::a1');
+  assert.deepEqual(resolveArtifactVersionInfo(artifactRef('a3', 'chart-3.html'), state), {
+    index: 2, count: 2, prevId: 'a2', nextId: '',
+  });
+  state.artifacts.deletedArtifactIds.push('s1::a2');
+  assert.equal(resolveArtifactVersionInfo(artifactRef('a3', 'chart-3.html'), state).prevId, '');
+  assert.equal(resolveArtifactVersionInfo(artifactRef('a2', 'chart-2.html'), state), null);
+});
+
 test('independently authored numbered files remain separate histories', () => {
   const messages = [
     generatedMessage('a1', 'slide-1.html', '2026-07-02T10:00:00.000Z'),

@@ -149,6 +149,10 @@ function handleSidecarLog(service, text) {
   });
 }
 
+function ownsLocalEngineLifecycle(service) {
+  return service?.hostPorts?.posture?.ownsEngineLifecycle !== false;
+}
+
 async function startBackendService(service, options) {
   service._autoReconnectAttempted = false;
   service._autoReconnectPending = false;
@@ -171,14 +175,17 @@ async function startBackendService(service, options) {
     ? options.onProgress : () => {};
   const startedAt = Date.now();
   service._emitServiceLog('INFO', 'backend.start_requested', {
-    mode: 'managed-dev',
+    mode: service.hostMode === 'server' ? 'server' : 'managed-dev',
     defaultModelConfigured: Boolean(service.defaultModel),
   });
   // Kick off the selected local engine while the sidecar process spawns. The
   // initialization coordinator joins it before acquiring/loading the model.
   // vLLM and replay do not use the Ollama daemon.
+  const managesLocalEngine = ownsLocalEngineLifecycle(service);
   let localEngineReadyPromise = null;
-  let localServerReadyPromise = (options || {}).localServerReadyPromise || null;
+  let localServerReadyPromise = managesLocalEngine
+    ? (options || {}).localServerReadyPromise || null
+    : null;
   if (localServerReadyPromise) {
     // Fail-soft is deliberate: a launch-plan failure here (autostart
     // settings, feature flags, acceleration/GGUF/VRAM resolution) must not
@@ -192,8 +199,15 @@ async function startBackendService(service, options) {
       return null;
     });
   }
-  const engineUsesOllamaDaemon = service.currentEngineType !== 'vllm'
+  const engineUsesOllamaDaemon = managesLocalEngine
+    && service.options?.skipOllamaAutoStart !== true
+    && service.currentEngineType !== 'vllm'
     && service.currentEngineType !== 'replay';
+  if (service.options?.skipOllamaAutoStart === true) {
+    service._emitServiceLog('INFO', 'ollama.auto_start_skipped', {
+      reason: 'existing_server_setup',
+    });
+  }
   if (engineUsesOllamaDaemon) {
     onProgress('ollama_start', 'Starting Ollama...');
     localEngineReadyPromise = service.ollamaManager.start().catch((error) => {
@@ -202,7 +216,7 @@ async function startBackendService(service, options) {
       });
       return { started: false, external: false, failed: true };
     });
-  } else if (service.currentEngineType === 'vllm') {
+  } else if (managesLocalEngine && service.currentEngineType === 'vllm') {
     // Read live vLLM configuration because manager construction precedes
     // these settings.
     const vllm = service.configService?.getLocalEngines?.()?.vllm || null;
@@ -361,7 +375,7 @@ async function stopBackendService(service, options) {
   });
   service._clearPendingToolApprovals();
   try {
-    if (!initializationWasActive) {
+    if (!initializationWasActive && ownsLocalEngineLifecycle(service)) {
       onProgress('model_unload', 'Unloading model from Ollama...');
       try {
         await service._unloadManagedModelForShutdown();
@@ -425,6 +439,10 @@ async function stopBackendService(service, options) {
       activeStreamCount: service.activeStreams?.size,
     });
     onProgress('sidecar_stopped', 'Sidecar process stopped');
+    if (service.hostMode === 'server') {
+      if (stopResult.exitConfirmed !== true) throw new Error('Hosted sidecar exit is unconfirmed.');
+      return stopResult;
+    }
   } catch (error) {
     service._emitServiceLog('WARN', 'backend.sidecar_shutdown_stage', {
       stage: 'process_exit',
@@ -439,11 +457,14 @@ async function stopBackendService(service, options) {
       message: String(error && error.message || error).slice(0, 240),
     });
     service._disposeSidecarClient();
+    if (service.hostMode === 'server') throw error;
   } finally {
-    onProgress('ollama_stop', 'Stopping Ollama...');
-    await service.ollamaManager.stop({ scope: ollamaShutdownScope }).catch(() => null);
-    await service.vllmManager.stop().catch(() => null);
-    onProgress('ollama_stopped', 'Ollama stopped');
+    if (ownsLocalEngineLifecycle(service)) {
+      onProgress('ollama_stop', 'Stopping Ollama...');
+      await service.ollamaManager.stop({ scope: ollamaShutdownScope }).catch(() => null);
+      await service.vllmManager.stop().catch(() => null);
+      onProgress('ollama_stopped', 'Ollama stopped');
+    }
     // Drain any debounced writes from the chat-stream stores so a subsequent
     // process (a restart in the same userDataPath, or a different reader of
     // the file) sees the freshest state. The stores opt into trailing-edge

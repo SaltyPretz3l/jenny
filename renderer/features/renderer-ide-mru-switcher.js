@@ -24,6 +24,7 @@
   }
   root.rendererIdeMruSwitcher = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -99,7 +100,7 @@
       overlayEl = documentRef.createElement('div');
       overlayEl.className = 'ide-picker-overlay ide-mru-switcher hidden';
       overlayEl.innerHTML = '<div class="ide-picker-panel ide-mru-switcher-panel">'
-        + '<div class="ide-picker-results ide-mru-switcher-results" role="listbox" aria-label="Recent tabs"></div>'
+        + '<div class="ide-picker-results ide-mru-switcher-results" role="listbox" aria-label="' + escapeHtml(jt('ide.mruSwitcher.recentTabs', 'Recent tabs')) + '"></div>'
         + '</div>';
       // A click on a row commits directly to that tab (mouse parity with the keys).
       overlayEl.addEventListener('click', handleOverlayClick);

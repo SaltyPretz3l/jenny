@@ -308,6 +308,8 @@ def _validation_error(tool_name: str, message: str) -> "ToolExecutionFailure":
 class ToolExecutionFailure(CompanionError):
     """Raised when a tool fails during execution."""
 
+    effects: str
+
     def __init__(
         self,
         *,

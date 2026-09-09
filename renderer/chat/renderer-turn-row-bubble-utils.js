@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function fallbackEscapeHtml(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -134,13 +135,13 @@
         try {
           globalThis.rendererErrorCenterRecord({
             key: 'send-failure:' + String(messageLike.id || ''),
-            title: 'Message failed to send',
+            title: jt('chat.bubble.sendFailedTitle', 'Message failed to send'),
             surface: 'composer',
             severity: 'warning',
           });
         } catch (_err) { /* history is best-effort */ }
       }
-      return '<span class="chat-bubble-send-status" role="status">Failed to send</span>';
+      return '<span class="chat-bubble-send-status" role="status">' + escapeHtml(jt('chat.bubble.failedToSend', 'Failed to send')) + '</span>';
     }
 
     function buildUserBubbleRowMarkup(row, messages, options) {
@@ -213,7 +214,7 @@
       if (!payload || payload.truncated !== true) {
         return '';
       }
-      return '<div class="chat-truncation-marker" role="note" aria-label="Response restarted">'
+      return '<div class="chat-truncation-marker" role="note" aria-label="' + escapeHtml(jt('chat.bubble.responseRestarted', 'Response restarted')) + '">'
         + '<span class="chat-truncation-marker-rule" aria-hidden="true"></span>'
         + '<span class="chat-truncation-marker-label">restarted</span>'
         + '<span class="chat-truncation-marker-rule" aria-hidden="true"></span>'

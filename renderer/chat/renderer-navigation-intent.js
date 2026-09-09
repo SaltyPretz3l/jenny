@@ -6,6 +6,7 @@
   }
   root.rendererNavigationIntent = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createNavigationIntentOwner(state) {
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
     if (!Number.isFinite(Number(state.ui.navigationIntentEpoch))) state.ui.navigationIntentEpoch = 0;
@@ -31,14 +32,14 @@
     }
 
     function notifyDeferredNavigation(targetSessionId, navigate, options) {
-      options.showToastMessage?.(options.message || 'Background work finished in another chat.', {
-        title: options.title || 'Ready in another chat',
+    options.showToastMessage?.(options.message || jt('chat.navigation.backgroundWorkFinished', 'Background work finished in another chat.'), {
+      title: options.title || jt('chat.navigation.readyInAnotherChat', 'Ready in another chat'),
         tone: options.tone || 'info',
         source: options.source,
         dedupeKey: options.dedupeKey,
         actions: [{
           id: `open-session-${String(targetSessionId || '').slice(0, 40)}`,
-          label: 'Open',
+          label: jt('common.open', 'Open'),
           kind: 'primary',
           onClick: () => navigate(targetSessionId),
         }],

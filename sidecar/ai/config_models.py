@@ -160,6 +160,15 @@ class ToolPolicySnapshot:
 class RuntimeConfig:
     engine_type: str = "mock"
     model: str = "mock-v1"
+    # Desktop is unchanged by default.  Server mode is accepted only with the
+    # exact host execution policy version validated by sidecar.ai.host_policy.
+    host_mode: str = "desktop"
+    host_execution_policy_version: int | None = None
+    host_execution_worker_enabled: bool = False
+    # Independent desktop command-execution policy.  ``None`` preserves the
+    # ordinary desktop surface; version 1 delegates foreground commands to the
+    # Electron sandbox bridge and closes every other executable route.
+    desktop_execution_policy_version: int | None = None
     context_length: int | None = None
     # Explicit user choice, applied after model-family profile defaults.
     context_length_override: int | None = None
@@ -223,6 +232,8 @@ class RuntimeConfig:
     reasoning_effort: str = ""
     session_start_date: str = ""
     safety_mode: str = "normal"
+    ui_language: str = "en"
+    use_24_hour_time: bool = False
     tools_enabled: bool = True
     tools_glob_enabled: bool = True
     tools_grep_enabled: bool = True

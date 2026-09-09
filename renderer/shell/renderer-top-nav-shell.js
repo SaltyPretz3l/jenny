@@ -10,14 +10,15 @@
   }
   root.rendererTopNavShell = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Rail tab labels mirror staticModel.tabs (renderer-bootstrap-utils.js); the
   // rail itself filters to VIEW_TAB_ORDER, so 'artifacts' never renders here.
   var DEFAULT_VIEW_TABS = [
-    { id: 'home', label: 'Home' },
-    { id: 'chat', label: 'Chat' },
-    { id: 'ide', label: 'Workspace' },
-    { id: 'logs', label: 'Diagnostics' },
-    { id: 'settings', label: 'Settings' },
+    { id: 'home', label: jt('shell.topNav.home', 'Home') },
+    { id: 'chat', label: jt('shell.topNav.chat', 'Chat') },
+    { id: 'ide', label: jt('shell.topNav.workspace', 'Workspace') },
+    { id: 'logs', label: jt('shell.topNav.diagnostics', 'Diagnostics') },
+    { id: 'settings', label: jt('shell.topNav.settings', 'Settings') },
   ];
 
   function createTopNavShellController(deps) {
@@ -149,11 +150,11 @@
           plain: true,
           className: 'icon-button chats-panel-collapse-toggle',
           domId: 'chatsPanelCollapseToggle',
-          ariaLabel: 'Collapse chats panel',
+          ariaLabel: jt('shell.topNav.collapseChatsPanel', 'Collapse chats panel'),
           ariaControls: 'viewPanel',
           ariaExpanded: true,
-          title: 'Collapse chats panel (Ctrl+B)',
-          trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true" class="chats-tool-icon"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="M6 2.75v10.5" /></svg>',
+          title: jt('shell.topNav.collapseChatsPanelTitle', 'Collapse chats panel (Ctrl+B)'),
+          trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true" class="chats-tool-icon icon-mirror-rtl"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="M6 2.75v10.5" /></svg>',
         }));
       }
       panelToggleButton = actions.querySelector('#chatsPanelCollapseToggle');

@@ -6,6 +6,7 @@
   }
   root.rendererSettingsCoreRenderers = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function renderSetupSettingsRow(options) {
     const setupSnapshot = options?.setupSnapshot || {};
     const setupSettingsSummary = options?.setupSettingsSummary || null;
@@ -21,19 +22,19 @@
 
     if (setupSettingsSummary) {
       if (!setupSnapshot.loaded) {
-        setupSettingsSummary.textContent = 'Loading setup status...';
+        setupSettingsSummary.textContent = jt('settings.shell.setupLoading', 'Loading setup status...');
       } else if (isComplete) {
-        setupSettingsSummary.textContent = 'Setup complete. Run again to revisit any step - your progress is preserved.';
+        setupSettingsSummary.textContent = jt('settings.shell.setupComplete', 'Setup complete. Run again to revisit any step - your progress is preserved.');
       } else {
         const total = sceneUtils?.STEP_ORDER?.length || 5;
         const done = sceneUtils?.countCompletedSteps?.(setupSnapshot.steps || {}) || 0;
-        setupSettingsSummary.textContent = `${done} of ${total} setup steps complete. Resume setup to finish.`;
+        setupSettingsSummary.textContent = jt('settings.shell.setupProgress', '{done} of {total} setup steps complete. Resume setup to finish.', { done, total });
       }
     }
     if (!setupSettingsActions) {
       return;
     }
-    const nextLabel = isComplete ? 'Run setup again' : 'Resume setup';
+    const nextLabel = isComplete ? jt('settings.shell.runSetupAgain', 'Run setup again') : jt('settings.shell.resumeSetup', 'Resume setup');
     const nextSignature = [
       nextLabel,
       setupSnapshot.loaded ? 'loaded' : 'loading',
@@ -59,7 +60,7 @@
       }),
       actionButton({
         id: 'settingsOpenSetupHelp',
-        label: isComplete ? 'Setup help' : 'Help with setup',
+        label: isComplete ? jt('settings.shell.setupHelp', 'Setup help') : jt('settings.shell.helpWithSetup', 'Help with setup'),
         variant: 'secondary',
       }),
       '</div>',
@@ -67,7 +68,7 @@
         + '<div class="settings-actions">'
         + actionButton({
           id: 'settingsOpenFactoryReset',
-          label: 'Reset onboarding',
+          label: jt('settings.shell.resetOnboarding', 'Reset onboarding'),
           variant: 'danger',
           disabled: !setupSnapshot.loaded,
         })
@@ -85,7 +86,7 @@
   // trip; a removal forces a refetch.
   const APPROVAL_RULES_CACHE_MS = 5000;
   const APPROVAL_RULE_REMOVE_ACTION = 'tools-approval-rule-remove';
-  const APPROVAL_DECISION_LABELS = Object.freeze({ auto: 'Always allow', ask: 'Ask before', deny: 'Never allow' });
+  const APPROVAL_DECISION_LABELS = Object.freeze({ auto: jt('settings.shell.approvalDecisionAlways', 'Always allow'), ask: jt('settings.shell.approvalDecisionAsk', 'Ask before'), deny: jt('settings.shell.approvalDecisionNever', 'Never allow') });
   const approvalRulesCache = { fetchedAt: 0, saved: null, inFlight: null, version: 0 };
 
   function defaultEscapeHtml(value) {
@@ -102,7 +103,7 @@
       key: toolName,
       decision,
       label: `${APPROVAL_DECISION_LABELS[decision] || decision}: ${toolName}`,
-      detail: 'every call',
+      detail: jt('settings.shell.approvalRulesEveryCall', 'every call'),
     }));
     for (const rule of Array.isArray(source.rules) ? source.rules : []) {
       if (!rule || typeof rule !== 'object' || !rule.id) continue;
@@ -111,8 +112,8 @@
         kind: 'rule',
         key: String(rule.id),
         decision: rule.decision,
-        label: `${APPROVAL_DECISION_LABELS[rule.decision] || rule.decision}: ${match.tool_id || 'any tool'}`,
-        detail: match.path_prefix ? `for ${match.path_prefix}` : (match.action ? `action ${match.action}` : 'every call'),
+        label: `${APPROVAL_DECISION_LABELS[rule.decision] || rule.decision}: ${match.tool_id || jt('settings.tools.approvalRules.anyTool', 'any tool')}`,
+        detail: match.path_prefix ? jt('settings.shell.approvalRuleForPath', 'for {path}', { path: match.path_prefix }) : (match.action ? jt('settings.shell.approvalRuleForAction', 'action {action}', { action: match.action }) : jt('settings.shell.approvalRulesEveryCall', 'every call')),
       });
     }
     return rows;
@@ -128,19 +129,18 @@
 
   function renderApprovalRuleRows(container, rows, escapeHtml, actionButton) {
     if (!rows.length) {
-      container.innerHTML = '<div class="settings-note tools-approval-rules-empty">No saved approval rules yet. '
-        + 'Choose "Always allow" on an approval card and it shows up here.</div>';
+      container.innerHTML = '<div class="settings-note tools-approval-rules-empty">' + escapeHtml(jt('settings.shell.approvalRulesEmpty', 'No saved approval rules yet. Choose "Always allow" on an approval card and it shows up here.')) + '</div>';
       return;
     }
     container.innerHTML = rows.map((row) => {
       const remove = actionButton
         ? actionButton({
           id: APPROVAL_RULE_REMOVE_ACTION,
-          label: 'Remove',
+          label: jt('common.remove', 'Remove'),
           variant: 'secondary',
           size: 'sm',
-          ariaLabel: `Remove rule: ${row.label} ${row.detail}`,
-          title: 'Remove this approval rule',
+          ariaLabel: jt('settings.shell.removeApprovalRuleAria', 'Remove rule: {label} {detail}', { label: row.label, detail: row.detail }),
+          title: jt('settings.shell.removeApprovalRule', 'Remove this approval rule'),
           dataset: { 'rule-kind': row.kind, 'rule-key': row.key },
         })
         : '';
@@ -159,7 +159,7 @@
     const escapeHtml = typeof options?.escapeHtml === 'function' ? options.escapeHtml : defaultEscapeHtml;
     const actionButton = resolveActionButton(options);
     if (!api || typeof api.getPermissions !== 'function') {
-      container.innerHTML = '<div class="settings-note">Approval rules are unavailable in this window.</div>';
+      container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesUnavailable', 'Approval rules are unavailable in this window.')) + '</div>';
       return null;
     }
     const paint = () => renderApprovalRuleRows(
@@ -168,7 +168,7 @@
     const stale = !approvalRulesCache.saved
       || Date.now() - approvalRulesCache.fetchedAt >= APPROVAL_RULES_CACHE_MS;
     if (approvalRulesCache.saved) paint();
-    else container.innerHTML = '<div class="settings-note">Loading approval rules...</div>';
+    else container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesLoading', 'Loading approval rules...')) + '</div>';
     if ((!stale || approvalRulesCache.inFlight) && options?.force !== true) return approvalRulesCache.inFlight;
     const version = ++approvalRulesCache.version;
     approvalRulesCache.inFlight = Promise.resolve()
@@ -182,7 +182,7 @@
       })
       .catch(() => {
         if (version !== approvalRulesCache.version) return;
-        container.innerHTML = '<div class="settings-note">Approval rules could not be loaded.</div>';
+        container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesLoadFailed', 'Approval rules could not be loaded.')) + '</div>';
       })
       .finally(() => {
         if (version === approvalRulesCache.version) approvalRulesCache.inFlight = null;
@@ -222,7 +222,7 @@
         }))
         .catch((error) => {
           button.disabled = false;
-          if (typeof options?.onError === 'function') options.onError(error, 'Approval Rule Removal Failed');
+          if (typeof options?.onError === 'function') options.onError(error, jt('settings.shell.approvalRuleRemovalFailed', 'Approval Rule Removal Failed'));
         });
     }, options?.listenerOptions);
   }

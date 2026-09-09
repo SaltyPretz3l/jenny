@@ -15,6 +15,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var OPEN_FILE_EVENT = 'ide:open-file-at-line';
   var MAX_PATH_LENGTH = 512;
   // Workspace-relative path shape for inline code spans: word-ish segments,
@@ -124,15 +125,15 @@
     }
 
     function toastOpenFailure(relPath, error) {
-      var message = 'Couldn’t open ' + relPath + '.';
+      var message = jt('chat.pathOpen.couldNotOpen', 'Couldn’t open {path}.', { path: relPath });
       var code = String((error && (error.error_code || error.code)) || '');
       if (code === 'CMP-WORKSPACEFS-0004') {
-        message = 'Couldn’t open ' + relPath + ' — file not found.';
+        message = jt('chat.pathOpen.fileNotFound', 'Couldn’t open {path} — file not found.', { path: relPath });
       } else if (code === 'CMP-WORKSPACEFS-0003') {
-        message = 'Couldn’t open ' + relPath + ' — outside the workspace.';
+        message = jt('chat.pathOpen.outsideWorkspace', 'Couldn’t open {path} — outside the workspace.', { path: relPath });
       }
       showToastMessage(message, {
-        title: 'Open File',
+        title: jt('chat.pathOpen.openFileTitle', 'Open File'),
         tone: 'danger',
         dedupeKey: 'chat:path-open:' + relPath,
       });
@@ -447,7 +448,7 @@
       // escape hatch and takes the DIRECT route (never the panel).
       if (shouldPreferArtifactPanel()) {
         items.push({
-          label: 'Open Preview',
+          label: jt('chat.pathOpen.openPreview', 'Open Preview'),
           action: function openPreviewAction() {
             return openClaimedPath(resolved.path, resolved.line, resolved.column || null);
           },
@@ -455,7 +456,7 @@
       }
       if (openIdeFileAtLine && hasWorkspaceRoot()) {
         items.push({
-          label: 'Open in IDE',
+          label: jt('chat.pathOpen.openInIde', 'Open in IDE'),
           action: function openInIdeAction() {
             return openInIdePath(resolved.path, resolved.line, resolved.column || null);
           },

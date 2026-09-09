@@ -20,7 +20,10 @@ from sidecar.ai.feature_flags import (
     is_cloud_loop_profile_enabled,
     is_resource_discipline_enabled,
 )
+from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.routing import subagent_finalization as _subagent_finalization
+from sidecar.runtime.chat_models import TerminalChatStateError
+from sidecar.runtime.turn_state import TERMINAL_SUBCODE_TIMEOUT_TOOL, TURN_STATE_TIMEOUT
 
 AGENT_SURFACE_MAIN = "main"
 AGENT_SURFACE_SUB_AGENT = "sub_agent"
@@ -292,3 +295,39 @@ def _safe_positive_float(value: Any, default: float) -> float:
     if math.isnan(parsed) or parsed <= 0.0:
         return float(default)
     return parsed
+
+
+def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None) -> float | None:
+    configured_timeout = effective_tools_execution_timeout_seconds(
+        config
+    )
+    if call is not None and call.tool_id == "run_command":
+        hosted_worker = (
+            str(getattr(config, "host_mode", "") or "") == "server"
+            and (
+                int(getattr(config, "host_execution_policy_version", 0) or 0)
+                == HOST_EXECUTION_POLICY_VERSION
+            )
+        )
+        requested = call.arguments.get("timeout_seconds")
+        if isinstance(requested, (int, float)) and not isinstance(requested, bool):
+            # The outer transport deadline must not preempt the handler's
+            # advertised timeout before it can terminate and report the child.
+            requested_limit = 120.0 if hosted_worker else 600.0
+            settle_margin = 55.0 if hosted_worker else 5.0
+            configured_timeout = max(
+                configured_timeout,
+                min(requested_limit, float(requested)) + settle_margin,
+            )
+    if runtime is None:
+        return configured_timeout
+    remaining = runtime.remaining_wall_clock_seconds()
+    if remaining is not None and remaining <= 0:
+        raise TerminalChatStateError(
+            status=TURN_STATE_TIMEOUT,
+            terminal_subcode=TERMINAL_SUBCODE_TIMEOUT_TOOL,
+            message="Tool execution skipped because the loop wall-clock budget is exhausted.",
+        )
+    if call is not None and call.tool_id == "ask_user" and remaining is not None:
+        return remaining
+    return runtime.tool_timeout_seconds(configured_timeout)

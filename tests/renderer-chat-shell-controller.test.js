@@ -31,6 +31,8 @@ function createMinimalSlashDependencies() {
 
 test('chat shell controller binds child wiring once', async () => {
   const calls = [];
+  let eventCallbacks;
+  const messageUpdates = [];
 
   const controller = createChatShellController({
     state: { currentSessionId: 'session-1' },
@@ -72,6 +74,9 @@ test('chat shell controller binds child wiring once', async () => {
     },
     callbacks: {
       renderAll() {},
+      getSessionMessages: () => ['pending question'],
+      setSessionMessages: (...args) => { messageUpdates.push(args); return 'updated'; },
+      renderWorkspaceChrome: (options) => messageUpdates.push(options),
       appendClientLog(level, eventName, payload) {
         calls.push(`log:${level}:${eventName}:${payload?.message || ''}`);
       },
@@ -141,7 +146,8 @@ test('chat shell controller binds child wiring once', async () => {
         },
       },
       chatEventUtils: {
-        createChatEventBindings() {
+        createChatEventBindings({ callbacks }) {
+          eventCallbacks = callbacks;
           calls.push('createChatEventBindings');
           return {
             bind() { calls.push('chatEvents.bind'); },
@@ -176,6 +182,10 @@ test('chat shell controller binds child wiring once', async () => {
 
   controller.bind();
   controller.bind();
+
+  assert.deepEqual(eventCallbacks.getSessionMessages('session-1'), ['pending question']);
+  assert.equal(eventCallbacks.setSessionMessages('session-1', ['resolved question']), 'updated');
+  assert.deepEqual(messageUpdates, [['session-1', ['resolved question']], { runtimeOnly: true }]);
 
   assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note']);
   await controller.tryExecuteSlashCommand('/compact');

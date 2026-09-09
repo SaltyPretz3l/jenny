@@ -144,6 +144,7 @@ test('renderer creates and rekeys an optimistic session shell for the first send
         },
       },
       chat: {
+        persistAcceptedUserTurn: true,
         async startStream(_payload, { state }) {
           await new Promise((resolve) => setTimeout(resolve, 40));
           state.sessions = [{
@@ -228,6 +229,7 @@ test('renderer renders the first handoff delta when animation frames are throttl
         },
       },
       chat: {
+        persistAcceptedUserTurn: true,
         async startStream(_payload, { state }) {
           await new Promise((resolve) => setTimeout(resolve, 40));
           state.sessions = [{

@@ -6,19 +6,20 @@
   }
   root.rendererRuntimeHealthUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const PARSE_FAILURE_MIN_SAMPLES = 5;
   const RECENT_OBSERVATION_WINDOW = 10;
 
   const PENDING_STATE = Object.freeze({
     tone: 'pending',
-    label: 'Pending',
-    summary: 'Pending: waiting for first turn',
+    label: jt('titlebar.runtimeHealth.pending', 'Pending'),
+    summary: jt('titlebar.runtimeHealth.waitingFirstTurn', 'Pending: waiting for first turn'),
   });
 
   const HEALTHY_STATE = Object.freeze({
     tone: 'success',
-    label: 'Healthy',
-    summary: 'Healthy',
+    label: jt('titlebar.runtimeHealth.healthy', 'Healthy'),
+    summary: jt('titlebar.runtimeHealth.healthy', 'Healthy'),
   });
 
   function readRuntime(snapshot) {
@@ -41,7 +42,7 @@
 
   function readModelLabel(profile) {
     const value = profile && typeof profile.model_id === 'string' ? profile.model_id.trim() : '';
-    return value || 'unknown model';
+    return value || jt('titlebar.runtimeHealth.unknownModel', 'unknown model');
   }
 
   function findProfile(profiles, predicate) {
@@ -106,8 +107,8 @@
     if (failClosedProfile) {
       return {
         tone: 'danger',
-        label: 'Blocked',
-        summary: `Blocked: route is fail-closed for ${readModelLabel(failClosedProfile)}`,
+        label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
+        summary: jt('titlebar.runtimeHealth.routeFailClosed', 'Blocked: route is fail-closed for {model}', { model: readModelLabel(failClosedProfile) }),
       };
     }
 
@@ -115,8 +116,8 @@
     if (probeFailedProfile) {
       return {
         tone: 'danger',
-        label: 'Blocked',
-        summary: `Blocked: capability probe failed for ${readModelLabel(probeFailedProfile)}`,
+        label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
+        summary: jt('titlebar.runtimeHealth.capabilityProbeFailed', 'Blocked: capability probe failed for {model}', { model: readModelLabel(probeFailedProfile) }),
       };
     }
 
@@ -127,16 +128,16 @@
       if (llamaServer.state === 'crashed') {
         return {
           tone: 'danger',
-          label: 'Blocked',
-          summary: `Blocked: local llama-server stopped unexpectedly; it restarts on your next message${alias ? ` (${alias})` : ''}`,
+          label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
+          summary: jt('titlebar.runtimeHealth.serverStopped', 'Blocked: local llama-server stopped unexpectedly; it restarts on your next message{alias}', { alias: alias ? ` (${alias})` : '' }),
         };
       }
       // A failed (re)launch parks the manager in 'stopped' with the error.
       if (llamaServer.state === 'stopped' && lastError) {
         return {
           tone: 'danger',
-          label: 'Blocked',
-          summary: `Blocked: local llama-server failed to start${alias ? ` (${alias})` : ''}: ${lastError}`,
+          label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
+          summary: jt('titlebar.runtimeHealth.serverStartFailed', 'Blocked: local llama-server failed to start{alias}: {error}', { alias: alias ? ` (${alias})` : '', error: lastError }),
         };
       }
     }
@@ -148,8 +149,8 @@
     if (roundtripFailedProfile) {
       return {
         tone: 'warning',
-        label: 'Degraded',
-        summary: `Degraded: schema roundtrip failed for ${readModelLabel(roundtripFailedProfile)}`,
+        label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
+        summary: jt('titlebar.runtimeHealth.schemaRoundtripFailed', 'Degraded: schema roundtrip failed for {model}', { model: readModelLabel(roundtripFailedProfile) }),
       };
     }
 
@@ -157,8 +158,8 @@
     if (expiredProfile) {
       return {
         tone: 'warning',
-        label: 'Degraded',
-        summary: `Degraded: profile expired for ${readModelLabel(expiredProfile)}; re-probe pending`,
+        label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
+        summary: jt('titlebar.runtimeHealth.profileExpired', 'Degraded: profile expired for {model}; re-probe pending', { model: readModelLabel(expiredProfile) }),
       };
     }
 
@@ -166,8 +167,8 @@
     if (toolDisabledProfile) {
       return {
         tone: 'warning',
-        label: 'Degraded',
-        summary: `Degraded: tools disabled for ${readModelLabel(toolDisabledProfile)}`,
+        label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
+        summary: jt('titlebar.runtimeHealth.toolsDisabled', 'Degraded: tools disabled for {model}', { model: readModelLabel(toolDisabledProfile) }),
       };
     }
 
@@ -176,19 +177,19 @@
     if (parseTotal >= PARSE_FAILURE_MIN_SAMPLES && parseCounts.failure > parseCounts.success) {
       return {
         tone: 'warning',
-        label: 'Degraded',
-        summary: 'Degraded: tool-call parse failure rate is high',
+        label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
+        summary: jt('titlebar.runtimeHealth.toolParseFailureHigh', 'Degraded: tool-call parse failure rate is high'),
       };
     }
 
     const failedTurn = recentTurnFailure(observations);
     if (failedTurn) {
       const code = String(failedTurn.error_code || '').trim();
-      const detail = code ? code : 'no error code';
+      const detail = code ? code : jt('titlebar.runtimeHealth.noErrorCode', 'no error code');
       return {
         tone: 'warning',
-        label: 'Degraded',
-        summary: `Degraded: recent turn failed (${detail})`,
+        label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
+        summary: jt('titlebar.runtimeHealth.recentTurnFailed', 'Degraded: recent turn failed ({detail})', { detail }),
       };
     }
 

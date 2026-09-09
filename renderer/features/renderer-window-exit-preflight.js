@@ -27,6 +27,7 @@
   root.rendererWindowExitPreflight = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function basename(path) {
     const str = String(path || '');
@@ -111,7 +112,7 @@
       if (!plan || plan.ready !== true) {
         if (plan && plan.code === 'save_failed') {
           const file = basename(plan.failedPath || '');
-          showToast(`Couldn’t save “${file}”. Canceled so you don’t lose changes.`);
+          showToast(jt('ide.monaco.exitSaveFailed', 'Couldn’t save “{file}”. Canceled so you don’t lose changes.', { file }));
           return { proceed: false, reason: 'save_failed', failedPath: plan.failedPath || '' };
         }
         return {

@@ -10,6 +10,7 @@
   }
   root.rendererIdePersistence = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const PERSIST_DEBOUNCE_MS = 500;
   const ROOT_STATE_KEYS = new Set([
     'openTabs',
@@ -225,7 +226,7 @@
       ideStateUtils.applyPersistedState?.(getIde(), persisted);
       if (Number.isFinite(persisted.evictedRootCount) && persisted.evictedRootCount > 0) {
         showToastMessage(
-          "Workspace memory for an older folder was released to make room — its open tabs won't be restored there.",
+          jt('ide.persistence.evictedWorkspace', "Workspace memory for an older folder was released to make room — its open tabs won't be restored there."),
           { dedupeKey: 'ide:root-lru-evicted', sticky: false }
         );
       }

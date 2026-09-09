@@ -3,9 +3,7 @@ const { spawn } = require('child_process');
 const http = require('http');
 
 const { FileJsonStore } = require('./file-json-store');
-const {
-  pipeChildLogs,
-} = require('./child-process-logging');
+const { pipeChildLogs } = require('./child-process-logging');
 const {
   getProcessCommandLineSync,
   isProcessAlive,
@@ -18,15 +16,9 @@ const {
   forceKillAnyRemainingLocalOllamaVerifiedSync,
   listLocalOllamaProcessesSync,
 } = require('./ollama-shutdown');
-const {
-  buildSanitizedOllamaEnv,
-} = require('./ollama-env');
-const {
-  classifyOllamaCrash,
-} = require('./ollama-crash-diagnostics');
-const {
-  resolveOllamaOutputLevel,
-} = require('./ollama-stderr-level');
+const { buildSanitizedOllamaEnv } = require('./ollama-env');
+const { classifyOllamaCrash } = require('./ollama-crash-diagnostics');
+const { resolveOllamaOutputLevel } = require('./ollama-stderr-level');
 const { ollamaBinaryPath } = require('../ollama-runtime-paths');
 const {
   TRAY_CONFLICT_REMEDIATION,
@@ -220,11 +212,13 @@ class OllamaProcessManager {
     if (ownership && this._isProcessAlive(ownership.pid)) {
       // F2c: the persisted pid may have been recycled onto an unrelated
       // process; kill only what still matches the command we recorded.
-      if (!this._ownedPidIdentityConfirmed(ownership.pid, ownership)) {
+      const identityStatus = this._ownedPidIdentityStatus(ownership.pid, ownership);
+      if (identityStatus !== 'confirmed') {
         this._log('WARN', 'ollama.force_kill_identity_unconfirmed', {
           pid: ownership.pid,
           status: 'skipped',
           phase: 'start',
+          reason: identityStatus,
         });
       } else {
         this._log('INFO', 'ollama.killing_stale_owned_process', { pid: ownership.pid });
@@ -239,7 +233,9 @@ class OllamaProcessManager {
           // best effort — fall through to normal start
         }
       }
-      this._clearOwnedState();
+      if (identityStatus === 'mismatch' || !this._isProcessAlive(ownership.pid)) {
+        this._clearOwnedState();
+      }
     } else if (ownership) {
       this._clearOwnedState();
       this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownership.pid });
@@ -610,15 +606,19 @@ class OllamaProcessManager {
       return;
     }
 
-    if (!this._ownedPidIdentityConfirmed(ownedPid, ownedState)) {
-      // F2c: not ours to kill — drop the record so the next launch skips it.
+    const identityStatus = this._ownedPidIdentityStatus(ownedPid, ownedState);
+    if (identityStatus !== 'confirmed') {
       this._log('WARN', 'ollama.force_kill_identity_unconfirmed', {
         pid: ownedPid,
         status: 'skipped',
         phase: 'stop',
+        reason: identityStatus,
       });
-      this._clearOwnedState();
+      if (identityStatus === 'mismatch') this._clearOwnedState();
       this._resetLiveOwnership();
+      this._log('WARN', 'ollama.stopped', {
+        confirmed: false, pid: ownedPid, retained: identityStatus !== 'mismatch', skipped: 'identity_unconfirmed',
+      });
       return;
     }
 
@@ -632,13 +632,13 @@ class OllamaProcessManager {
   // PID-reuse guard, mirroring sidecar-shutdown.js: a pid read back from disk
   // may belong to an unrelated process by now. A live child handle needs no
   // check — that pid is ours by construction.
-  _ownedPidIdentityConfirmed(ownedPid, ownedState) {
+  _ownedPidIdentityStatus(ownedPid, ownedState) {
     const pid = Number(ownedPid) || 0;
     if (!pid) {
-      return false;
+      return 'unavailable';
     }
     if ((Number(this._process && this._process.pid) || 0) === pid) {
-      return true;
+      return 'confirmed';
     }
     let commandLine;
     try {
@@ -646,7 +646,9 @@ class OllamaProcessManager {
     } catch (_error) {
       commandLine = '';
     }
-    return processCommandMatchesStored(commandLine, ownedState && ownedState.command);
+    if (!commandLine) return 'unavailable';
+    return processCommandMatchesStored(commandLine, ownedState && ownedState.command)
+      ? 'confirmed' : 'mismatch';
   }
 
   // Clear the owned-state record only on a CONFIRMED exit; an unconfirmed one
@@ -785,12 +787,13 @@ class OllamaProcessManager {
   _readOwnedState() {
     const state = this._stateStore ? this._stateStore.read(null) : null;
     const pid = Number(state && state.pid);
-    if (!state || state.app_owned !== true || !Number.isInteger(pid) || pid <= 0) {
+    const command = typeof state?.command === 'string' ? state.command.trim() : '';
+    if (!state || state.app_owned !== true || !Number.isInteger(pid) || pid <= 0 || !command) {
       return null;
     }
     return {
       pid,
-      command: String(state.command || '').trim(),
+      command,
       startedAt: String(state.startedAt || '').trim(),
       app_owned: true,
     };
@@ -878,54 +881,46 @@ class OllamaProcessManager {
   }
 
   async _stopAnyLocal(ownedPid, isOwned, ownedState = null) {
-    let identityConfirmed = true;
-    if (isOwned && ownedPid && this._isProcessAlive(ownedPid)) {
-      identityConfirmed = this._ownedPidIdentityConfirmed(ownedPid, ownedState);
-      if (identityConfirmed) {
-        await this._stopOwnedPid(ownedPid);
-      } else {
-        this._log('WARN', 'ollama.force_kill_identity_unconfirmed', {
-          pid: ownedPid,
-          status: 'skipped',
-          phase: 'stop_any_local',
-        });
-      }
-    } else if (ownedPid && !this._isProcessAlive(ownedPid)) {
-      this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownedPid });
-    }
-
-    this._resetLiveOwnership();
-
-    // F2: the machine-wide sweep only runs when THIS install could have left a
-    // local ollama behind; otherwise quit must leave other tools' daemons alone.
-    let sweepResult = null;
-    if (!this.mightHaveLocalOllamaResidue()) {
+    if (!isOwned || !ownedPid) {
+      this._resetLiveOwnership();
       this._log('INFO', 'ollama.any_local_sweep_skipped', {
-        scope: 'any_local',
-        reason: 'no_local_ollama_residue',
+        scope: 'any_local', reason: 'no_verified_owned_pid',
       });
-    } else {
-      try {
-        this._log('INFO', 'ollama.stopping_any_local', { scope: 'any_local' });
-        sweepResult = this._forceKillAnyRemainingLocalOllamaSync({
-          platform: this._platform,
-          logger: this._log,
-          isProcessAliveImpl: this._isProcessAlive,
-          // F2(3): with the owned pid known, skip the blanket by-name kill.
-          ownedPids: identityConfirmed && ownedPid ? [ownedPid] : null,
-        });
-      } catch (error) {
-        this._log('WARN', 'ollama.any_local_sweep_failed', {
-          message: String(error && error.message || error),
-        });
-      }
-    }
-
-    // Identity-unconfirmed: the record is not ours, so drop it outright.
-    if (!identityConfirmed) {
-      this._clearOwnedState();
-      this._log('INFO', 'ollama.stopped', { confirmed: true, skipped: 'identity_unconfirmed' });
       return;
+    }
+    if (!this._isProcessAlive(ownedPid)) {
+      this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownedPid });
+      this._clearOwnedState();
+      this._resetLiveOwnership();
+      this._log('INFO', 'ollama.stopped', { confirmed: true, skipped: 'stale_owned_pid' });
+      return;
+    }
+    const identityStatus = this._ownedPidIdentityStatus(ownedPid, ownedState);
+    if (identityStatus !== 'confirmed') {
+      this._log('WARN', 'ollama.force_kill_identity_unconfirmed', {
+        pid: ownedPid, status: 'skipped', phase: 'stop_any_local', reason: identityStatus,
+      });
+      if (identityStatus === 'mismatch') this._clearOwnedState();
+      this._resetLiveOwnership();
+      this._log('WARN', 'ollama.stopped', {
+        confirmed: false, pid: ownedPid, retained: identityStatus !== 'mismatch', skipped: 'identity_unconfirmed',
+      });
+      return;
+    }
+    await this._stopOwnedPid(ownedPid);
+    let sweepResult = null;
+    try {
+      this._log('INFO', 'ollama.stopping_any_local', { scope: 'any_local' });
+      sweepResult = this._forceKillAnyRemainingLocalOllamaSync({
+        platform: this._platform,
+        logger: this._log,
+        isProcessAliveImpl: this._isProcessAlive,
+        ownedPids: [ownedPid],
+      });
+    } catch (error) {
+      this._log('WARN', 'ollama.any_local_sweep_failed', {
+        message: String(error && error.message || error),
+      });
     }
     this._finalizeOwnedStop(ownedPid, {
       ...(sweepResult ? { killedPids: sweepResult.killedPids || [] } : {}),
@@ -980,21 +975,32 @@ class OllamaProcessManager {
 
 }
 
-// Dispose-time force-kill sweep, gated on the residue probe when the manager
-// provides one — the sweep's synchronous process-list scan costs ~1s on win32,
-// pure waste when no local ollama could be left behind. Managers without the
-// probe (injected test stubs) keep the unconditional sweep.
+// Dispose-time force-kill sweep. Require a live, identity-confirmed pid before
+// invoking the low-level helper so partial fakes and stale state fail closed.
 function runOllamaDisposeForceKillSweep(manager) {
-  const mightHaveResidue = typeof manager.mightHaveLocalOllamaResidue === 'function'
-    ? manager.mightHaveLocalOllamaResidue()
-    : true;
-  if (!mightHaveResidue) {
-    return;
+  const ownedState = manager?._readOwnedState?.() || null;
+  const ownedPid = manager?._getOwnedPid?.(ownedState) || 0;
+  if (!ownedPid || !manager._isProcessAlive(ownedPid)) {
+    manager?._log?.('INFO', 'ollama.dispose_sweep_skipped', {
+      reason: ownedPid ? 'stale_owned_pid' : 'no_verified_owned_pid',
+      ...(ownedPid ? { pid: ownedPid } : {}),
+    });
+    if (ownedPid) manager._clearOwnedState();
+    return { discoveredPids: [], killedPids: [], skipped: ownedPid ? 'stale_owned_pid' : 'no_verified_owned_pid' };
   }
-  manager._forceKillAnyRemainingLocalOllamaSync({
+  const identityStatus = manager._ownedPidIdentityStatus(ownedPid, ownedState);
+  if (identityStatus !== 'confirmed') {
+    manager._log('WARN', 'ollama.force_kill_identity_unconfirmed', {
+      pid: ownedPid, status: 'skipped', phase: 'dispose', reason: identityStatus,
+    });
+    if (identityStatus === 'mismatch') manager._clearOwnedState();
+    return { discoveredPids: [], killedPids: [], skipped: 'identity_unconfirmed' };
+  }
+  return manager._forceKillAnyRemainingLocalOllamaSync({
     platform: manager._platform,
     logger: manager._log,
     isProcessAliveImpl: manager._isProcessAlive,
+    ownedPids: [ownedPid],
   });
 }
 

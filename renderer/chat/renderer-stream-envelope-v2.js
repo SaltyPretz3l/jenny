@@ -6,6 +6,7 @@
   }
   root.rendererStreamEnvelopeV2 = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const STREAM_ENVELOPE_SCHEMA_VERSION = 2;
   const STREAM_ENVELOPE_CHANNELS = new Set(['reasoning', 'response', 'tool', 'phase', 'control']);
   // 'progress' (W2-1): live tool-output batches — pass-through 1:1, never
@@ -104,13 +105,13 @@
     const toolName = normalizeString(payload.toolName || payload.tool_name || phase?.toolName || phase?.tool_name);
     const phaseKind = normalizeString(phase?.phaseKind || phase?.phase_kind);
     if (channel === 'tool' || phaseKind === 'tool_use') {
-      return toolName ? `Calling ${toolName}...` : 'Calling tool...';
+      return toolName ? jt('chat.streamEnvelope.callingNamedTool', 'Calling {tool}...', { tool: toolName }) : jt('chat.streamEnvelope.callingTool', 'Calling tool...');
     }
     if (phaseKind === 'tool_result') {
-      return 'Reading tool result...';
+      return jt('chat.streamEnvelope.readingToolResult', 'Reading tool result...');
     }
     if (channel === 'response' || phaseKind === 'text' || phaseKind === 'final_answer') {
-      return 'Writing answer...';
+      return jt('chat.streamEnvelope.writingAnswer', 'Writing answer...');
     }
     return 'Reasoning...';
   }

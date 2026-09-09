@@ -580,6 +580,7 @@ test('classic-shell adapter: canonical toolCall drives status and rawTerminal on
   const renderer = createTranscriptToolCallRenderer({
     escapeHtml: (s) => String(s || ''),
     toolCallUtils: {
+      ...require('../renderer/chat/tool-call-utils'),
       getToolIcon: () => 'icon',
       getStatusLabel: (status) => `label:${status}`,
       formatToolCallSummary: () => 'summary',

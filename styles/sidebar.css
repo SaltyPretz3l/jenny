@@ -1,5 +1,5 @@
-/* Sidebar shell scaffolding. Expanded Chats presentation lives exclusively in
-   chats-panel.css; collapsed Chats presentation lives in its companion file. */
+/* Sidebar shell scaffolding. Expanded Chats presentation lives in chats-panel.css
+   and chats-panel-selection.css; the collapsed strip has its own companion. */
 
 .sidebar-resizer {
   position: relative;
@@ -15,7 +15,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  left: 50%; /* rtl:physical */
   width: 1px;
   transform: translateX(-50%);
   background: transparent;

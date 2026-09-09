@@ -11,7 +11,7 @@
   root.rendererDashboardCalendarRuntime = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function preserveFormValues(body, form, formModule) {
     if (form && formModule && body && typeof formModule.readEventFormValues === 'function') {
       form.values = formModule.readEventFormValues(body, form.values);
@@ -118,7 +118,15 @@
       if (focusSelector) {
         const target = body.querySelector(focusSelector);
         if (target && typeof target.focus === 'function') {
-          target.focus();
+          if (target.matches('[data-cal-month-day]')) {
+            // Month cells contain buttons but are not themselves tab stops.
+            // Chat navigation targets the whole day, even when it is empty.
+            target.setAttribute('tabindex', '-1');
+            target.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+            target.focus({ preventScroll: true });
+          } else {
+            target.focus();
+          }
         }
       }
     };
@@ -129,17 +137,57 @@
     }
   }
 
+  // Navigation returns state projections so the controller stays below its cap.
+  function handleWeekNavClick(event, {
+    body, ctx, weekOffset, gridModule, monthModule, currentViewMode, nowProvider,
+  } = {}) {
+    const railNav = event?.target?.closest?.('[data-cal-rail-nav]');
+    if (railNav) {
+      const visibleWeek = gridModule.computeWeekStart(nowProvider(), weekOffset);
+      const anchor = gridModule.listWeekDays(visibleWeek)[3];
+      const delta = railNav.dataset.calRailNav === 'next' ? 1 : -1;
+      const targetMonth = new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+      return {
+        handled: true,
+        weekOffset: gridModule.computeWeekOffsetForDate(nowProvider(), targetMonth),
+        pendingFocusSelector: `[data-cal-rail-nav="${railNav.dataset.calRailNav}"]`,
+        pendingAnnounce: targetMonth.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'long', year: 'numeric' }),
+        preserveQuickAdd: true,
+      };
+    }
+    const nav = event?.target?.closest?.('[data-cal-nav]');
+    if (!nav) {
+      return null;
+    }
+    const direction = nav.dataset.calNav;
+    // Month mode is a continuous scroll, not paginated weeks: the chevrons
+    // scroll the canvas and Today re-anchors — no data change, no rebuild.
+    if (currentViewMode(ctx) === 'month' && monthModule) {
+      monthModule.navScroll(body.querySelector('[data-cal-scroll]'), direction);
+      return { handled: true, scrolled: true };
+    }
+    const nextWeekOffset = direction === 'today' ? 0 : weekOffset + (direction === 'next' ? 1 : -1);
+    const weekStart = gridModule.computeWeekStart(nowProvider(), nextWeekOffset);
+    return {
+      handled: true,
+      weekOffset: nextWeekOffset,
+      pendingFocusSelector: '',
+      pendingAnnounce: jt("dashboard.calendar.weekOf", "Week of {range}", { range: String(gridModule.formatWeekRangeLabel(weekStart)) }),
+      preserveQuickAdd: false,
+    };
+  }
+
   // ---- assistant undo affordance ----
 
   // The service refuses an undo in three cases (docs/TOOLS.md#home); each gets
   // copy that says what happened to the RECORD, not what the store did.
   // 'failed'/unknown covers a rejected round-trip or a reason we don't model.
   const UNDO_REFUSAL_COPY = {
-    entry_not_found: 'that change is no longer in the undo list',
-    already_undone: 'already undone',
-    superseded: 'jenny changed this again since — nothing to undo',
-    changed_since: "you've edited this since — nothing to undo",
-    failed: 'could not undo that change',
+    entry_not_found: jt('dashboard.calendar.undoEntryNotFound', 'that change is no longer in the undo list'),
+    already_undone: jt('dashboard.calendar.undoAlreadyUndone', 'already undone'),
+    superseded: jt('dashboard.calendar.undoSuperseded', 'jenny changed this again since — nothing to undo'),
+    changed_since: jt('dashboard.calendar.undoChangedSince', "you've edited this since — nothing to undo"),
+    failed: jt('dashboard.calendar.undoFailed', 'could not undo that change'),
   };
   const UNDO_NOTE_CLASS = 'cal-agenda__undo-note';
   const UNDO_NOTE_MS = 6000;
@@ -224,6 +272,7 @@
     applyDeferredFocusAndAnnounce,
     computeRenderKey,
     handleUndoJournalClick,
+    handleWeekNavClick,
     preserveFormValues,
     preserveQuickAdd,
     updateAgendaRelative,

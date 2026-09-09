@@ -26,6 +26,7 @@
   root.rendererArtifactFilePreview = factory(root.rendererArtifactFilePreviewRender);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (filePreviewRender) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -335,7 +336,7 @@
       if (!payload || payload.truncated !== true) return '';
       const last = (payload.startLine || 1) + (payload.lines?.length || 0) - 1;
       return '<p class="artifact-file-preview-note">'
-        + escapeHtml(`Showing lines ${payload.startLine || 1}–${last} of ${payload.totalLines || last}.`)
+        + escapeHtml(jt('artifacts.filePreview.showingLines', 'Showing lines {start}–{end} of {total}.', { start: payload.startLine || 1, end: last, total: payload.totalLines || last }))
         + '</p>';
     }
 
@@ -383,7 +384,7 @@
         path: slot.path, line: slot.line, column: slot.column, kind, view: slot.view, canToggleView, note,
       }, { escapeHtml });
       if (slot.status === 'loading') {
-        return bar + render.buildFilePreviewStateHtml('loading', 'Loading preview…', { escapeHtml, openInIde: false });
+        return bar + render.buildFilePreviewStateHtml('loading', jt('artifacts.filePreview.loading', 'Loading preview…'), { escapeHtml, openInIde: false });
       }
       if (slot.status === 'error' || !slot.payload) {
         const failure = slot.error || render.describeFilePreviewFailure(null);
@@ -455,7 +456,7 @@
       const frameHost = host.querySelector('[data-file-preview-frame-host]');
       if (!frameHost) return;
       if (!frameUtils || typeof frameUtils.createHtmlArtifactFrame !== 'function') {
-        failFrame(slot, 'The sandboxed HTML preview frame is unavailable in this build.');
+        failFrame(slot, jt('artifacts.filePreview.frameUnavailable', 'The sandboxed HTML preview frame is unavailable in this build.'));
         return;
       }
       const token = renderToken;

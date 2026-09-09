@@ -5,10 +5,11 @@
   }
   root.interactiveModeUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const INTERACTIVE_GUARDRAIL_NOTICE =
-    'Jenny kept asking structured follow-up questions, so the shell asked for a direct answer based on the information already collected.';
+    jt('chat.interactive.guardrailNotice', 'Jenny kept asking structured follow-up questions, so the shell asked for a direct answer based on the information already collected.');
   const INTERACTIVE_PROTOCOL_DRIFT_NOTICE =
-    'Jenny asked a regular follow-up instead of an interactive question for this turn, so the shell requested a direct answer based on the information already collected.';
+    jt('chat.interactive.protocolDriftNotice', 'Jenny asked a regular follow-up instead of an interactive question for this turn, so the shell requested a direct answer based on the information already collected.');
   const INTERACTIVE_OTHER_OPTION_ID = '__other__';
 
   function normalizeQuestionOptions(question) {
@@ -29,7 +30,7 @@
     }
     return options.concat({
       id: INTERACTIVE_OTHER_OPTION_ID,
-      label: 'Other',
+      label: jt('interactive.question.other', 'Other'),
       synthetic: true,
     });
   }

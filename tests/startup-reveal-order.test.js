@@ -83,7 +83,6 @@ function createPendingBootstrapHarness(t) {
       applyAppearanceToDocument: () => {},
       saveStoredAppearancePreferences: () => {},
       normalizeReasoningEffort: (value) => value,
-      renderPrompts: () => {},
       renderAll: () => {},
     },
     controllers: {},

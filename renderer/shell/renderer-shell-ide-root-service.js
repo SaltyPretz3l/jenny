@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -33,12 +34,8 @@
   // coordinator.js _prepareTarget / prepareChoose): a plain "Workspace switch
   // blocked" toast would be misleading here since this is a permanent
   // rejection, not a transient block, so it gets its own explanatory copy.
-  const STATE_DIR_ROOT_TOAST = 'This folder is Jenny\'s own internal state directory '
-    + '(.jenny) and can\'t be used as the tools workspace root. Choose the folder\'s '
-    + 'parent directory instead.';
-  const STATE_DIR_SEGMENT_TOAST = 'The selected folder is inside Jenny\'s own internal '
-    + 'state directory (.jenny) and can\'t be used as the tools workspace root. Choose '
-    + 'a folder outside .jenny.';
+  const STATE_DIR_ROOT_TOAST = jt('ide.workspaceRoot.internalStateDirectory', "This folder is Jenny's own internal state directory (.jenny) and can't be used as the tools workspace root. Choose the folder's parent directory instead.");
+  const STATE_DIR_SEGMENT_TOAST = jt('ide.workspaceRoot.insideInternalStateDirectory', "The selected folder is inside Jenny's own internal state directory (.jenny) and can't be used as the tools workspace root. Choose a folder outside .jenny.");
   const STATE_DIR_REJECTION_TOASTS = {
     workspace_root_is_state_dir: STATE_DIR_ROOT_TOAST,
     workspace_root_inside_state_dir: STATE_DIR_SEGMENT_TOAST,
@@ -147,7 +144,7 @@
       if (stateDirToast) {
         try {
           showShellErrorToast(stateDirToast, {
-            title: 'Workspace',
+            title: jt('ide.root.workspaceTitle', 'Workspace'),
             dedupeKey: 'workspace-root:state-dir-rejected',
           });
         } catch (_error) {
@@ -159,10 +156,10 @@
       try {
         showShellErrorToast(
           blocked
-            ? 'Workspace switch blocked. Finish the active workspace operation and try again.'
-            : 'Workspace switch failed. The previous workspace remains active.',
+            ? jt('ide.root.switchBlocked', 'Workspace switch blocked. Finish the active workspace operation and try again.')
+            : jt('ide.root.switchFailed', 'Workspace switch failed. The previous workspace remains active.'),
           {
-            title: 'Workspace',
+            title: jt('ide.root.workspaceTitle', 'Workspace'),
             dedupeKey: blocked ? 'workspace-root:transition-blocked' : 'workspace-root:transition-failed',
           }
         );
@@ -177,8 +174,8 @@
           mode: outcome?.mode || '', code: outcome?.code || outcome?.uiError?.code || 'ui_refresh_failed',
         });
         callbacks.showShellErrorToast?.(
-          'Workspace changed, but some editor views may be stale. Review open files before continuing.',
-          { title: 'Workspace Refresh Incomplete', dedupeKey: 'workspace-root:transition-degraded' }
+          jt('ide.root.refreshIncomplete', 'Workspace changed, but some editor views may be stale. Review open files before continuing.'),
+          { title: jt('ide.root.refreshIncompleteTitle', 'Workspace Refresh Incomplete'), dedupeKey: 'workspace-root:transition-degraded' }
         );
       } catch (_error) {
         /* diagnostics and feedback are best-effort */
@@ -252,10 +249,10 @@
           const confirmDialog = controller?.getConfirmDialog?.();
           if (typeof confirmDialog?.confirm !== 'function') return false;
           return confirmDialog.confirm({
-            title: 'Stop active workspace processes?',
-            message: 'Active terminals and test runs belong to the current workspace and must stop before switching workspaces.',
-            confirmLabel: 'Stop and Switch',
-            cancelLabel: 'Cancel',
+            title: jt('ide.root.stopProcessesTitle', 'Stop active workspace processes?'),
+            message: jt('ide.root.stopProcessesMessage', 'Active terminals and test runs belong to the current workspace and must stop before switching workspaces.'),
+            confirmLabel: jt('ide.root.stopAndSwitch', 'Stop and Switch'),
+            cancelLabel: jt('common.cancel', 'Cancel'),
             variant: 'danger',
           });
         },

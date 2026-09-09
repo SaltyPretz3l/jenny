@@ -121,8 +121,8 @@ test('the context toggle and /context row both read "Personality and notes"', ()
     'utf8'
   );
 
-  assert.match(fieldCopy, /contextIncludePersonalityToggle:[\s\S]{0,120}label: 'Personality and notes'/);
+  assert.match(fieldCopy, /contextIncludePersonalityToggle:[\s\S]{0,160}label: (?:jt\('[\w.]+', )?'Personality and notes'/);
   assert.doesNotMatch(fieldCopy, /Include advanced personality files/);
-  assert.match(slashContext, /dotRow\('Personality and notes'/);
+  assert.match(slashContext, /dotRow\((?:jt\('[\w.]+', )?'Personality and notes'/);
   assert.doesNotMatch(slashContext, /Advanced personality files/);
 });

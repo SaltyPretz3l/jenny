@@ -14,6 +14,7 @@ const {
   unauthorizedDataLifecycleResult,
 } = require('../data-lifecycle/data-lifecycle-result');
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
+const { t } = require('../i18n-main');
 const {
   createTrustedSenderAuthorizer,
 } = require('./ipc-sender-authorization');
@@ -142,7 +143,7 @@ function registerDataLifecycleIpcHandlers(ipcMainLike, {
     'dataLifecycle.getOverview': () => noThrow(() => service.getOverview()),
     'dataLifecycle.chooseArchiveDestination': () => noThrow(async () => {
       const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: 'Choose Jenny archive folder',
+        title: t('main.dialog.dataLifecycle.chooseArchiveFolder', 'Choose Jenny archive folder'),
         properties: ['openDirectory', 'createDirectory'],
       });
       if (result.canceled || !result.filePaths?.[0]) {
@@ -158,7 +159,7 @@ function registerDataLifecycleIpcHandlers(ipcMainLike, {
     'dataLifecycle.findRestoreCandidates': (_event, payload) => noThrow(async () => {
       if (payload?.chooseAnother !== true) return service.findRestoreCandidates();
       const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: 'Choose a Jenny archive',
+        title: t('main.dialog.dataLifecycle.chooseArchive', 'Choose a Jenny archive'),
         properties: ['openDirectory'],
       });
       if (result.canceled || !result.filePaths?.[0]) {
@@ -228,6 +229,7 @@ function registerDataLifecycleRuntime(ipcMainLike, {
       cleanupOptions: {
         userDataPath,
         runtimePath,
+        secureStore: backendService.secureStore,
       },
     }),
   });

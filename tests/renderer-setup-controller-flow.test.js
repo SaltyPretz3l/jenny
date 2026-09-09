@@ -21,6 +21,7 @@ function makeBackendPayload(overrides = {}) {
   return {
     setup_complete: false,
     setup_state: {
+      acknowledged_version: '1',
       seen: false,
       dismissed: false,
       setup_complete: false,
@@ -170,7 +171,7 @@ test('first-run with partial progress opens the checklist hub', async () => {
     // localModel already done from a previous partial run; first-run incomplete.
     async getState() {
       return normalizeSetupPayload(makeBackendPayload({
-        setup_state: { steps: { local_model: 'done' } },
+        setup_state: { acknowledged_version: '1', steps: { local_model: 'done' } },
       }));
     },
     async updateState() { return null; },
@@ -295,7 +296,10 @@ test('resumeSetup opens the checklist hub regardless of which step is unresolved
     // -- a Resume click must revisit it, unlike the relaunch-resume heuristic.
     async getState() {
       return normalizeSetupPayload(makeBackendPayload({
-        setup_state: { steps: { workspace_root: 'done', local_model: 'done', personality: 'skipped' } },
+        setup_state: {
+          acknowledged_version: '1',
+          steps: { workspace_root: 'done', local_model: 'done', personality: 'skipped' },
+        },
       }));
     },
     async updateState() { return null; },
@@ -340,7 +344,11 @@ test('resumeSetup is idempotent: calling it twice in a row keeps a single active
   const fakeService = {
     async getState() {
       return normalizeSetupPayload(makeBackendPayload({
-        setup_state: { first_run_completed: true, steps: { workspace_root: 'done', local_model: 'done' } },
+        setup_state: {
+          acknowledged_version: '1',
+          first_run_completed: true,
+          steps: { workspace_root: 'done', local_model: 'done' },
+        },
       }));
     },
     async updateState() { return null; },

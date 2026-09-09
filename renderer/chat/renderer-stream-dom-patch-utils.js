@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (preservationModule) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SCROLLABLE_CODE_SELECTOR = 'pre';
   const MORPH_KEY_ATTRIBUTES = Object.freeze([
     'data-thread-message-id',
@@ -98,9 +99,9 @@
       block.classList.remove('collapsed');
       const overlay = block.querySelector?.('.markdown-code-expand-overlay');
       overlay?.setAttribute('aria-expanded', 'true');
-      overlay?.setAttribute('aria-label', 'Show less code');
+      overlay?.setAttribute('aria-label', jt('chat.streamPatch.showLessCode', 'Show less code'));
       const label = overlay?.querySelector?.('span');
-      if (label) label.textContent = 'Show less';
+      if (label) label.textContent = jt('chat.streamPatch.showLess', 'Show less');
     }
   }
 

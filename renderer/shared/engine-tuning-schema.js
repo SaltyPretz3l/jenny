@@ -20,6 +20,7 @@
  *   - reset is a delete, and there is no third state between unset and set.
  */
 'use strict';
+var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   /* Which segmented pane a field renders on. `shared` fields are engine-agnostic
    * (one key, one value) and render on BOTH panes rather than being hidden on one. */
@@ -36,41 +37,38 @@
   const ENGINE_TUNING_GROUPS = Object.freeze([
     Object.freeze({
       id: 'reasoning',
-      label: 'Reasoning rounds',
-      help: 'Each round is one model generation plus the tool calls it requests. '
-        + 'Raising these lets a turn work longer before it is cut off.',
+      label: jt('engineTuning.reasoning.label', 'Reasoning rounds'),
+      help: jt('app.engineTuning.reasoningHelp', 'Each round is one model generation plus the tool calls it requests. Raising these lets a turn work longer before it is cut off.'),
       order: 0,
     }),
     Object.freeze({
       id: 'delegation',
-      label: 'Delegation',
-      help: 'Sub-agent fan-out. Tool calls within a single turn always run one at a '
-        + 'time; delegation is the only place Jenny works in parallel.',
+      label: jt('engineTuning.delegation.label', 'Delegation'),
+      help: jt('app.engineTuning.delegationHelp', 'Sub-agent fan-out. Tool calls within a single turn always run one at a time; delegation is the only place Jenny works in parallel.'),
       order: 1,
     }),
     Object.freeze({
       id: 'limits',
-      label: 'Tool budgets',
-      help: 'Caps on how much tool work a reply, or a whole conversation, may do.',
+      label: jt('engineTuning.toolBudgets.label', 'Tool budgets'),
+      help: jt('app.engineTuning.toolBudgetsHelp', 'Caps on how much tool work a reply, or a whole conversation, may do.'),
       order: 2,
     }),
     Object.freeze({
       id: 'timeouts',
-      label: 'Timeouts',
-      help: 'How long Jenny waits before giving up on a tool, a model load, or a request.',
+      label: jt('engineTuning.timeouts.label', 'Timeouts'),
+      help: jt('app.engineTuning.timeoutsHelp', 'How long Jenny waits before giving up on a tool, a model load, or a request.'),
       order: 3,
     }),
     Object.freeze({
       id: 'compaction',
-      label: 'Context compaction',
-      help: 'Applies to every engine. A per-model summarization threshold set in '
-        + 'Models -> Tune wins over the global ratio here.',
+      label: jt('engineTuning.contextCompaction.label', 'Context compaction'),
+      help: jt('app.engineTuning.contextCompactionHelp', 'Applies to every engine. A per-model summarization threshold set in Models -> Tune wins over the global ratio here.'),
       order: 4,
     }),
     Object.freeze({
       id: 'budget',
-      label: 'Spend',
-      help: 'A hard stop on what one reply may cost on a paid provider.',
+      label: jt('engineTuning.spend.label', 'Spend'),
+      help: jt('app.engineTuning.spendHelp', 'A hard stop on what one reply may cost on a paid provider.'),
       order: 5,
     }),
   ]);
@@ -83,8 +81,8 @@
     {
       key: 'maxToolsPerTurn',
       rawKey: 'max_tools_per_turn',
-      label: 'Tool calls per turn',
-      help: 'How many tool calls (file reads, web searches, and so on) Jenny may make while answering one message. Raise it for long, tool-heavy jobs; lower it to keep replies quick.',
+      label: jt('engineTuning.maxToolsPerTurn.label', 'Tool calls per turn'),
+      help: jt('app.engineTuning.maxToolsPerTurnHelp', 'How many tool calls (file reads, web searches, and so on) Jenny may make while answering one message. Raise it for long, tool-heavy jobs; lower it to keep replies quick.'),
       unit: 'calls', type: 'integer', min: 1, max: 100, step: 1, default: 20,
       presets: [10, 20, 40],
       scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 0,
@@ -92,8 +90,8 @@
     {
       key: 'maxChatLoopIterations',
       rawKey: 'max_chat_loop_iterations',
-      label: 'Reasoning rounds (chat)',
-      help: 'How many times Jenny may stop to think again after running tools during an ordinary chat reply.',
+      label: jt('engineTuning.maxChatLoopIterations.label', 'Reasoning rounds (chat)'),
+      help: jt('app.engineTuning.maxChatLoopIterationsHelp', 'How many times Jenny may stop to think again after running tools during an ordinary chat reply.'),
       unit: 'rounds', type: 'integer', min: 1, max: 32, step: 1, default: 8,
       presets: [4, 8, 16],
       scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 1,
@@ -101,8 +99,8 @@
     {
       key: 'maxTaskLoopIterations',
       rawKey: 'max_task_loop_iterations',
-      label: 'Reasoning rounds (task)',
-      help: 'The same limit for task mode, where longer multi-step work is expected.',
+      label: jt('engineTuning.maxTaskLoopIterations.label', 'Reasoning rounds (task)'),
+      help: jt('app.engineTuning.maxTaskLoopIterationsHelp', 'The same limit for task mode, where longer multi-step work is expected.'),
       unit: 'rounds', type: 'integer', min: 1, max: 32, step: 1, default: 30,
       presets: [10, 20, 30],
       scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 2,
@@ -110,8 +108,8 @@
     {
       key: 'maxLoopIterations',
       rawKey: 'max_loop_iterations',
-      label: 'Reasoning rounds (fallback)',
-      help: 'Only used when resource discipline is switched off. Also seeds the chat limit when that one is left unset.',
+      label: jt('engineTuning.maxLoopIterations.label', 'Reasoning rounds (fallback)'),
+      help: jt('app.engineTuning.maxLoopIterationsHelp', 'Only used when resource discipline is switched off. Also seeds the chat limit when that one is left unset.'),
       unit: 'rounds', type: 'integer', min: 1, max: 32, step: 1, default: 8,
       presets: [4, 8, 16],
       scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 3,
@@ -119,8 +117,8 @@
     {
       key: 'cloudMaxChatLoopIterations',
       rawKey: 'cloud_max_chat_loop_iterations',
-      label: 'Reasoning rounds (chat)',
-      help: 'Cloud models can keep working far longer than a local GPU, so this sits well above the local limit.',
+      label: jt('engineTuning.cloudMaxChatLoopIterations.label', 'Reasoning rounds (chat)'),
+      help: jt('app.engineTuning.cloudMaxChatLoopIterationsHelp', 'Cloud models can keep working far longer than a local GPU, so this sits well above the local limit.'),
       unit: 'rounds', type: 'integer', min: 1, max: 1000, step: 1, default: 40,
       presets: [20, 40, 100],
       scope: SCOPE_CLOUD, tier: 'B', group: 'reasoning', order: 1,
@@ -128,8 +126,8 @@
     {
       key: 'cloudMaxTaskLoopIterations',
       rawKey: 'cloud_max_task_loop_iterations',
-      label: 'Reasoning rounds (task)',
-      help: 'The same limit for task mode on a cloud model.',
+      label: jt('engineTuning.cloudMaxTaskLoopIterations.label', 'Reasoning rounds (task)'),
+      help: jt('app.engineTuning.cloudMaxTaskLoopIterationsHelp', 'The same limit for task mode on a cloud model.'),
       unit: 'rounds', type: 'integer', min: 1, max: 1000, step: 1, default: 300,
       presets: [100, 300, 600],
       scope: SCOPE_CLOUD, tier: 'B', group: 'reasoning', order: 2,
@@ -137,8 +135,8 @@
     {
       key: 'cloudMaxToolsPerTurn',
       rawKey: 'cloud_max_tools_per_turn',
-      label: 'Tool calls per turn',
-      help: 'How many tool calls a cloud model may make while answering one message.',
+      label: jt('engineTuning.cloudMaxToolsPerTurn.label', 'Tool calls per turn'),
+      help: jt('app.engineTuning.cloudMaxToolsPerTurnHelp', 'How many tool calls a cloud model may make while answering one message.'),
       unit: 'calls', type: 'integer', min: 1, max: 500, step: 1, default: 200,
       presets: [100, 200, 400],
       scope: SCOPE_CLOUD, tier: 'B', group: 'reasoning', order: 0,
@@ -148,8 +146,8 @@
     {
       key: 'maxSubAgentConcurrency',
       rawKey: 'max_sub_agent_concurrency',
-      label: 'Parallel sub-agents',
-      help: 'How many delegated helper tasks may run at the same time on a local model. 1 means one after another.',
+      label: jt('engineTuning.maxSubAgentConcurrency.label', 'Parallel sub-agents'),
+      help: jt('app.engineTuning.maxSubAgentConcurrencyHelp', 'How many delegated helper tasks may run at the same time on a local model. 1 means one after another.'),
       unit: 'agents', type: 'integer', min: 1, max: 8, step: 1, default: 1,
       presets: [1, 2, 4],
       scope: SCOPE_LOCAL, tier: 'A', group: 'delegation', order: 0,
@@ -157,8 +155,8 @@
     {
       key: 'maxCloudSubAgentConcurrency',
       rawKey: 'max_cloud_sub_agent_concurrency',
-      label: 'Parallel sub-agents',
-      help: 'How many delegated helper tasks may run at once on a cloud model. The scheduler caps this at 3.',
+      label: jt('engineTuning.maxCloudSubAgentConcurrency.label', 'Parallel sub-agents'),
+      help: jt('app.engineTuning.maxCloudSubAgentConcurrencyHelp', 'How many delegated helper tasks may run at once on a cloud model. The scheduler caps this at 3.'),
       unit: 'agents', type: 'integer', min: 1, max: 3, step: 1, default: 3,
       presets: [1, 2, 3],
       scope: SCOPE_CLOUD, tier: 'A', group: 'delegation', order: 0,
@@ -166,8 +164,8 @@
     {
       key: 'maxSubAgentLoopIterations',
       rawKey: 'max_sub_agent_loop_iterations',
-      label: 'Sub-agent reasoning rounds',
-      help: 'How many thinking rounds each helper task gets. Kept the same for local and cloud on purpose: a bigger job should spawn more helpers, not longer ones.',
+      label: jt('engineTuning.maxSubAgentLoopIterations.label', 'Sub-agent reasoning rounds'),
+      help: jt('app.engineTuning.maxSubAgentLoopIterationsHelp', 'How many thinking rounds each helper task gets. Kept the same for local and cloud on purpose: a bigger job should spawn more helpers, not longer ones.'),
       unit: 'rounds', type: 'integer', min: 1, max: 32, step: 1, default: 10,
       presets: [5, 10, 20],
       scope: SCOPE_SHARED, tier: 'A', group: 'delegation', order: 1,
@@ -177,8 +175,8 @@
     {
       key: 'maxToolCallsPerSession',
       rawKey: 'max_tool_calls_per_session',
-      label: 'Tool calls per session',
-      help: 'A safety cap on tool calls across a whole conversation, so a runaway loop cannot keep going forever.',
+      label: jt('engineTuning.maxToolCallsPerSession.label', 'Tool calls per session'),
+      help: jt('app.engineTuning.maxToolCallsPerSessionHelp', 'A safety cap on tool calls across a whole conversation, so a runaway loop cannot keep going forever.'),
       unit: 'calls', type: 'integer', min: 1, max: 1000, step: 10, default: 200,
       presets: [100, 200, 500],
       scope: SCOPE_LOCAL, tier: 'A', group: 'limits', order: 0,
@@ -186,8 +184,8 @@
     {
       key: 'maxWebToolCallsPerTurn',
       rawKey: 'max_web_tool_calls_per_turn',
-      label: 'Web calls per turn',
-      help: 'How many web searches or page fetches one reply may use. Only successful calls count; failures are refunded.',
+      label: jt('engineTuning.maxWebToolCallsPerTurn.label', 'Web calls per turn'),
+      help: jt('app.engineTuning.maxWebToolCallsPerTurnHelp', 'How many web searches or page fetches one reply may use. Only successful calls count; failures are refunded.'),
       unit: 'calls', type: 'integer', min: 1, max: 100, step: 1, default: 10,
       presets: [5, 10, 25],
       scope: SCOPE_LOCAL, tier: 'A', group: 'limits', order: 1,
@@ -195,8 +193,8 @@
     {
       key: 'maxCodeIntelligenceToolCallsPerTurn',
       rawKey: 'max_code_intelligence_tool_calls_per_turn',
-      label: 'Code-intelligence calls per turn',
-      help: 'How many code-analysis tool calls one reply may use.',
+      label: jt('engineTuning.maxCodeIntelligenceToolCallsPerTurn.label', 'Code-intelligence calls per turn'),
+      help: jt('app.engineTuning.maxCodeIntelligenceToolCallsPerTurnHelp', 'How many code-analysis tool calls one reply may use.'),
       unit: 'calls', type: 'integer', min: 1, max: 100, step: 1, default: 16,
       presets: [8, 16, 32],
       scope: SCOPE_LOCAL, tier: 'B', group: 'limits', order: 2,
@@ -204,19 +202,19 @@
     {
       key: 'maxInlinePayloadBytes',
       rawKey: 'max_inline_payload_bytes',
-      label: 'Inline payload cap',
-      help: 'Tool output bigger than this is saved to a file and linked, instead of being pasted into the conversation.',
+      label: jt('engineTuning.maxInlinePayloadBytes.label', 'Inline payload cap'),
+      help: jt('app.engineTuning.maxInlinePayloadBytesHelp', 'Tool output bigger than this is saved to a file and linked, instead of being pasted into the conversation.'),
       unit: 'bytes', type: 'integer', min: 4096, max: 2097152, step: 4096, default: 65536,
-      presets: [{ value: 16384, label: '16 KB' }, { value: 65536, label: '64 KB' }, { value: 262144, label: '256 KB' }],
+      presets: [{ value: 16384, label: jt('engineTuning.maxInlinePayloadBytes.preset16Kb.label', '16 KB') }, { value: 65536, label: jt('engineTuning.maxInlinePayloadBytes.preset64Kb.label', '64 KB') }, { value: 262144, label: jt('engineTuning.maxInlinePayloadBytes.preset256Kb.label', '256 KB') }],
       scope: SCOPE_SHARED, tier: 'A', group: 'limits', order: 3,
     },
     {
       key: 'cloudMaxToolCallsPerSession',
       rawKey: 'cloud_max_tool_calls_per_session',
-      label: 'Tool calls per session',
+      label: jt('engineTuning.cloudMaxToolCallsPerSession.label', 'Tool calls per session'),
       // The sidecar keeps this max in lockstep with _MAX_SESSION_TOOL_CALL_CEILING;
       // max === default, so this control can only ever be lowered.
-      help: 'A safety cap on tool calls across a whole conversation on a cloud model. It already sits at its maximum, so it can only be lowered.',
+      help: jt('app.engineTuning.cloudMaxToolCallsPerSessionHelp', 'A safety cap on tool calls across a whole conversation on a cloud model. It already sits at its maximum, so it can only be lowered.'),
       unit: 'calls', type: 'integer', min: 1, max: 2000, step: 50, default: 2000,
       presets: [500, 1000, 2000],
       scope: SCOPE_CLOUD, tier: 'B', group: 'limits', order: 0,
@@ -224,8 +222,8 @@
     {
       key: 'cloudMaxWebToolCallsPerTurn',
       rawKey: 'cloud_max_web_tool_calls_per_turn',
-      label: 'Web calls per turn',
-      help: 'How many web searches or page fetches one reply may use on a cloud model.',
+      label: jt('engineTuning.cloudMaxWebToolCallsPerTurn.label', 'Web calls per turn'),
+      help: jt('app.engineTuning.cloudMaxWebToolCallsPerTurnHelp', 'How many web searches or page fetches one reply may use on a cloud model.'),
       unit: 'calls', type: 'integer', min: 1, max: 100, step: 1, default: 30,
       presets: [10, 30, 60],
       scope: SCOPE_CLOUD, tier: 'B', group: 'limits', order: 1,
@@ -235,8 +233,8 @@
     {
       key: 'toolsExecutionTimeoutSeconds',
       rawKey: 'tools_execution_timeout_seconds',
-      label: 'Tool execution timeout',
-      help: 'How long a single tool call may run before it is stopped. The shell tool can also set its own per-call limit.',
+      label: jt('engineTuning.toolsExecutionTimeoutSeconds.label', 'Tool execution timeout'),
+      help: jt('app.engineTuning.toolsExecutionTimeoutSecondsHelp', 'How long a single tool call may run before it is stopped. The shell tool can also set its own per-call limit.'),
       unit: 'seconds', type: 'number', min: 5, max: 600, step: 5, default: 120,
       presets: [60, 120, 300],
       scope: SCOPE_LOCAL, tier: 'B', group: 'timeouts', order: 0,
@@ -244,8 +242,8 @@
     {
       key: 'cloudToolsExecutionTimeoutSeconds',
       rawKey: 'cloud_tools_execution_timeout_seconds',
-      label: 'Tool execution timeout',
-      help: 'How long a single tool call may run on a cloud model before it is stopped.',
+      label: jt('engineTuning.cloudToolsExecutionTimeoutSeconds.label', 'Tool execution timeout'),
+      help: jt('app.engineTuning.cloudToolsExecutionTimeoutSecondsHelp', 'How long a single tool call may run on a cloud model before it is stopped.'),
       unit: 'seconds', type: 'number', min: 5, max: 3600, step: 30, default: 1800,
       presets: [600, 1800, 3600],
       scope: SCOPE_CLOUD, tier: 'B', group: 'timeouts', order: 0,
@@ -253,8 +251,8 @@
     {
       key: 'maxLoopWallSeconds',
       rawKey: 'max_loop_wall_seconds',
-      label: 'Turn working-time limit',
-      help: 'How long a local turn may spend actively working. Time waiting for your approval or your answers does not count against this limit.',
+      label: jt('engineTuning.maxLoopWallSeconds.label', 'Turn working-time limit'),
+      help: jt('app.engineTuning.maxLoopWallSecondsHelp', 'How long a local turn may spend actively working. Time waiting for your approval or your answers does not count against this limit.'),
       unit: 'seconds', type: 'number', min: 30, max: 3600, step: 30, default: 1800,
       presets: [600, 1800, 3600],
       scope: SCOPE_LOCAL, tier: 'A', group: 'timeouts', order: 1,
@@ -262,8 +260,8 @@
     {
       key: 'modelLoadGraceSeconds',
       rawKey: 'model_load_grace_seconds',
-      label: 'Model load grace',
-      help: 'How long to wait for the first words while a local model is still loading into GPU memory. Raise it for very large models or slow disks.',
+      label: jt('engineTuning.modelLoadGraceSeconds.label', 'Model load grace'),
+      help: jt('app.engineTuning.modelLoadGraceSecondsHelp', 'How long to wait for the first words while a local model is still loading into GPU memory. Raise it for very large models or slow disks.'),
       unit: 'seconds', type: 'number', min: 60, max: 1800, step: 30, default: 300,
       presets: [120, 300, 600],
       scope: SCOPE_LOCAL, tier: 'A', group: 'timeouts', order: 2,
@@ -271,8 +269,8 @@
     {
       key: 'ollamaRequestTimeoutSeconds',
       rawKey: 'ollama_request_timeout_seconds',
-      label: 'Ollama request timeout',
-      help: 'How long a single request to Ollama may take before it is abandoned.',
+      label: jt('engineTuning.ollamaRequestTimeoutSeconds.label', 'Ollama request timeout'),
+      help: jt('app.engineTuning.ollamaRequestTimeoutSecondsHelp', 'How long a single request to Ollama may take before it is abandoned.'),
       unit: 'seconds', type: 'integer', min: 30, max: 3600, step: 30, default: 300,
       presets: [120, 300, 900],
       scope: SCOPE_LOCAL, tier: 'A', group: 'timeouts', order: 3,
@@ -280,8 +278,8 @@
     {
       key: 'toolsPythonRuntimeTimeoutSeconds',
       rawKey: 'tools_python_runtime_timeout_seconds',
-      label: 'Python tool timeout',
-      help: 'How long a Python snippet may run before it is stopped.',
+      label: jt('engineTuning.toolsPythonRuntimeTimeoutSeconds.label', 'Python tool timeout'),
+      help: jt('app.engineTuning.toolsPythonRuntimeTimeoutSecondsHelp', 'How long a Python snippet may run before it is stopped.'),
       unit: 'seconds', type: 'integer', min: 1, max: 600, step: 5, default: 30,
       presets: [15, 30, 120],
       scope: SCOPE_SHARED, tier: 'B', group: 'timeouts', order: 4,
@@ -289,8 +287,8 @@
     {
       key: 'toolsPythonRuntimeMaxMemoryMb',
       rawKey: 'tools_python_runtime_max_memory_mb',
-      label: 'Python tool memory cap',
-      help: 'The most memory a Python snippet may use.',
+      label: jt('engineTuning.toolsPythonRuntimeMaxMemoryMb.label', 'Python tool memory cap'),
+      help: jt('app.engineTuning.toolsPythonRuntimeMaxMemoryMbHelp', 'The most memory a Python snippet may use.'),
       unit: 'MB', type: 'integer', min: 64, max: 4096, step: 64, default: 512,
       presets: [256, 512, 1024],
       scope: SCOPE_SHARED, tier: 'B', group: 'timeouts', order: 5,
@@ -298,8 +296,8 @@
     {
       key: 'toolsGitTimeoutSeconds',
       rawKey: 'tools_git_timeout_seconds',
-      label: 'Git tool timeout',
-      help: 'How long a single git command may run before it is stopped.',
+      label: jt('engineTuning.toolsGitTimeoutSeconds.label', 'Git tool timeout'),
+      help: jt('app.engineTuning.toolsGitTimeoutSecondsHelp', 'How long a single git command may run before it is stopped.'),
       unit: 'seconds', type: 'number', min: 1, max: 120, step: 1, default: 20,
       presets: [10, 20, 60],
       scope: SCOPE_SHARED, tier: 'B', group: 'timeouts', order: 6,
@@ -312,8 +310,8 @@
     {
       key: 'tokenBudgetAutoCompactRatio',
       rawKey: 'token_budget_auto_compact_ratio',
-      label: 'Auto-compact at',
-      help: 'When the conversation fills this share of the model\'s context window, older messages are summarized automatically. Lower values summarize sooner.',
+      label: jt('engineTuning.tokenBudgetAutoCompactRatio.label', 'Auto-compact at'),
+      help: jt('app.engineTuning.tokenBudgetAutoCompactRatioHelp', 'When the conversation fills this share of the model\'s context window, older messages are summarized automatically. Lower values summarize sooner.'),
       unit: 'ratio', type: 'number', min: 0.1, max: 0.99, step: 0.01, default: null,
       presets: [{ value: 0.7, label: '70%' }, { value: 0.8, label: '80%' }, { value: 0.9, label: '90%' }],
       scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 0,
@@ -321,8 +319,8 @@
     {
       key: 'tokenBudgetWarningRatio',
       rawKey: 'token_budget_warning_ratio',
-      label: 'Warn at',
-      help: 'When the conversation fills this share of the context window, Jenny warns that summarization is coming.',
+      label: jt('engineTuning.tokenBudgetWarningRatio.label', 'Warn at'),
+      help: jt('app.engineTuning.tokenBudgetWarningRatioHelp', 'When the conversation fills this share of the context window, Jenny warns that summarization is coming.'),
       unit: 'ratio', type: 'number', min: 0.1, max: 0.99, step: 0.01, default: null,
       presets: [{ value: 0.6, label: '60%' }, { value: 0.75, label: '75%' }, { value: 0.85, label: '85%' }],
       scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 1,
@@ -330,8 +328,8 @@
     {
       key: 'tokenBudgetReservedForSummary',
       rawKey: 'token_budget_reserved_for_summary',
-      label: 'Reserved for summary',
-      help: 'Room kept free in the context window for the summary that compaction writes.',
+      label: jt('engineTuning.tokenBudgetReservedForSummary.label', 'Reserved for summary'),
+      help: jt('app.engineTuning.tokenBudgetReservedForSummaryHelp', 'Room kept free in the context window for the summary that compaction writes.'),
       unit: 'tokens', type: 'integer', min: 256, max: 200000, step: 256, default: null,
       presets: [2048, 4096, 8192],
       scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 2,
@@ -342,8 +340,8 @@
       // config.py parses this with min_value=0 but then applies `or None`, so a
       // stored 0 is indistinguishable from unset. Exposing min 1 keeps the
       // control honest instead of offering a value that silently means "unset".
-      label: 'Per-tool overhead',
-      help: 'Extra room assumed for each tool call when estimating how full the context window is.',
+      label: jt('engineTuning.tokenBudgetToolOverhead.label', 'Per-tool overhead'),
+      help: jt('app.engineTuning.tokenBudgetToolOverheadHelp', 'Extra room assumed for each tool call when estimating how full the context window is.'),
       unit: 'tokens', type: 'integer', min: 1, max: 10000, step: 50, default: null,
       presets: [100, 250, 500],
       scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 3,
@@ -353,8 +351,8 @@
     {
       key: 'maxBudgetUsd',
       rawKey: 'max_budget_usd',
-      label: 'Turn budget cap',
-      help: 'Stop a reply once the provider cost for that turn passes this amount. Leave blank for no cap.',
+      label: jt('engineTuning.maxBudgetUsd.label', 'Turn budget cap'),
+      help: jt('app.engineTuning.maxBudgetUsdHelp', 'Stop a reply once the provider cost for that turn passes this amount. Leave blank for no cap.'),
       unit: 'USD', type: 'number', min: 0.000001, max: 1000000, step: 0.5, default: null,
       presets: [{ value: 0.25, label: '$0.25' }, { value: 1, label: '$1' }, { value: 5, label: '$5' }],
       scope: SCOPE_SHARED, tier: 'C', group: 'budget', order: 0,

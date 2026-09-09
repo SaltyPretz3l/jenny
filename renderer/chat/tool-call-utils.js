@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const _stringUtils = typeof globalThis !== 'undefined' && typeof globalThis.stringUtils !== 'undefined' ? globalThis.stringUtils
     : typeof require === 'function' ? require('../shared/string-utils')
     : { normalizeString: function (v) { return String(v || '').trim(); } };
@@ -49,6 +50,16 @@
   // Both derivation seams — the hydrated projector (renderer-turn-row-projector)
   // and the live stream-event translator (renderer-turn-reducer-stream-event-utils)
   // — call this so the condition can't drift between the two paths.
+  // The plan document owns review and decision rendering; keep raw tool rows
+  // only when there is no matching document (for example, validation errors).
+  function hasPlanDocumentForTool(toolName, callId, messages) {
+    const id = normalizeString(callId);
+    return normalizeString(toolName) === 'exit_plan_mode' && Boolean(id)
+      && Array.isArray(messages) && messages.some((message) =>
+        message?.kind === 'plan_document'
+        && normalizeString(message.plan_document?.tool_call_id) === id);
+  }
+
   function deriveApprovalVariant(toolName, hasPendingPlanDocument) {
     return hasPendingPlanDocument === true && String(toolName || '').trim() === 'exit_plan_mode'
       ? 'plan'
@@ -149,58 +160,56 @@
         if (path && hasRange) {
           return 'Read ' + path + ' lines ' + offset + '-' + (offset + limit - 1);
         }
-        return path ? 'Read ' + path : 'Read file';
+        return path ? 'Read ' + path : jt('chat.toolCall.readFile', 'Read file');
       }
       case 'Write': {
         const targetPath = normalizeString(input.path || input.file_path);
-        const base = targetPath ? 'Write ' + targetPath : 'Write file';
-        if (meta.diff) return base + ' +' + (meta.diff.additions || 0) + ' / -' + (meta.diff.deletions || 0);
+        const base = targetPath ? 'Write ' + targetPath : jt('chat.toolCall.writeFile', 'Write file');
         return base;
       }
       case 'Edit': {
         const targetPath = normalizeString(input.path || input.file_path);
-        const base = targetPath ? 'Edit ' + targetPath : 'Edit file';
-        if (meta.diff) return base + ' +' + (meta.diff.additions || 0) + ' / -' + (meta.diff.deletions || 0);
+        const base = targetPath ? 'Edit ' + targetPath : jt('chat.toolCall.editFile', 'Edit file');
         return base;
       }
       case 'Move': {
         const moves = Array.isArray(input.moves) ? input.moves : [];
         if (moves.length > 1) return 'Move ' + moves.length + ' files';
         const targetPath = getToolPrimaryPath(toolName, input);
-        return targetPath ? 'Move ' + targetPath : 'Move file';
+        return targetPath ? 'Move ' + targetPath : jt('chat.toolCall.moveFile', 'Move file');
       }
       case 'Bash': {
         const cmd = normalizeString(input.command);
         const desc = input.description ? normalizeString(input.description) : '';
-        let label = desc || (cmd ? 'Run ' + (cmd.length <= 56 ? cmd : cmd.slice(0, 53) + '...') : 'Run command');
+        let label = desc || (cmd ? 'Run ' + (cmd.length <= 56 ? cmd : cmd.slice(0, 53) + '...') : jt('chat.toolCall.runCommand', 'Run command'));
         if (meta.exitCode != null) label += ' (exit ' + meta.exitCode + ')';
         return label;
       }
       case 'monitor': {
         const desc = normalizeString(input.description);
-        return desc || 'Monitor command';
+        return desc || jt('chat.toolCall.monitorCommand', 'Monitor command');
       }
       case 'Glob':
-        return input.pattern ? 'Scan ' + input.pattern : 'Scan files';
+        return input.pattern ? 'Scan ' + input.pattern : jt('chat.toolCall.scanFiles', 'Scan files');
       case 'Grep':
-        return input.pattern ? 'Search for ' + input.pattern : 'Search files';
+        return input.pattern ? jt('chat.toolCall.searchFor', 'Search for {pattern}', { pattern: input.pattern }) : jt('chat.toolCall.searchFiles', 'Search files');
       case 'python_execute': {
         const code = normalizeString(input.code);
-        if (!code) return 'Run Python';
-        return code.length <= 50 ? 'Run Python: ' + code : 'Run Python: ' + code.slice(0, 47) + '...';
+        if (!code) return jt('chat.toolCall.runPython', 'Run Python');
+        return code.length <= 50 ? jt('chat.toolCall.runPythonCode', 'Run Python: {code}', { code: code }) : jt('chat.toolCall.runPythonCode', 'Run Python: {code}', { code: code.slice(0, 47) + '...' });
       }
       case 'web_search': {
         const query = normalizeString(input.query);
-        return query ? 'Search web for ' + (query.length <= 38 ? query : query.slice(0, 35) + '...') : 'Search web';
+        return query ? jt('chat.toolCall.searchWebFor', 'Search web for {query}', { query: query.length <= 38 ? query : query.slice(0, 35) + '...' }) : jt('chat.toolCall.searchWeb', 'Search web');
       }
       case 'fetch_url': {
         const url = normalizeString(input.url);
-        return url ? 'Fetch ' + (url.length <= 50 ? url : url.slice(0, 47) + '...') : 'Fetch URL';
+        return url ? 'Fetch ' + (url.length <= 50 ? url : url.slice(0, 47) + '...') : jt('chat.toolCall.fetchUrl', 'Fetch URL');
       }
       case 'Mermaid': {
         const diagramType = normalizeString(input.diagram_type) || 'flowchart';
         const prompt = normalizeString(input.prompt);
-        if (!prompt) return 'Generate Mermaid (' + diagramType + ')';
+        if (!prompt) return jt('chat.toolCall.generateMermaidType', 'Generate Mermaid ({type})', { type: diagramType });
         const clipped = prompt.length <= 44 ? prompt : prompt.slice(0, 41) + '...';
         return 'Mermaid ' + diagramType + ': ' + clipped;
       }
@@ -226,13 +235,47 @@
   function formatToolResultMeta(toolName, metadata) {
     const meta = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : null;
     if (!meta) return '';
+    // Command sandbox execution is intentionally nested and scoped to the
+    // foreground run_command result. Other tools may carry metadata of their
+    // own, but must never inherit a Docker badge from a shared formatter.
+    if (normalizeToolKind(toolName) === 'Bash'
+      && meta.execution && typeof meta.execution === 'object' && !Array.isArray(meta.execution)
+      && normalizeString(meta.execution.backend).toLowerCase() === 'docker') {
+      const execution = meta.execution;
+      const status = normalizeString(execution.status).toLowerCase();
+      const statusLabels = {
+        completed: jt('chat.toolCall.sandboxCompleted', 'Completed'),
+        success: jt('chat.toolCall.sandboxCompleted', 'Completed'),
+        running: jt('chat.toolCall.sandboxRunning', 'Running'),
+        preparing: jt('chat.toolCall.sandboxPreparing', 'Preparing'),
+        failed: jt('chat.toolCall.sandboxFailed', 'Failed'),
+        error: jt('chat.toolCall.sandboxFailed', 'Failed'),
+        cancelled: jt('chat.toolCall.sandboxCancelled', 'Cancelled'),
+        timed_out: jt('chat.toolCall.sandboxTimedOut', 'Timed out'),
+        interrupted: jt('chat.toolCall.sandboxInterrupted', 'Interrupted'),
+        output_limit: jt('chat.toolCall.sandboxOutputLimit', 'Output limit reached'),
+      };
+      const parts = [jt('chat.toolCall.dockerSandbox', 'Docker sandbox')];
+      if (statusLabels[status]) parts.push(statusLabels[status]);
+      const exitCode = Number(execution.exit_code ?? execution.exitCode);
+      if (Number.isInteger(exitCode)) {
+        parts.push(jt('chat.toolCall.sandboxExitCode', 'exit {code}', { code: exitCode }));
+      }
+      if (execution.output_truncated === true) {
+        parts.push(jt('chat.toolCall.sandboxOutputTruncated', 'output truncated'));
+      }
+      if (execution.cleanup_confirmed === false) {
+        parts.push(jt('chat.toolCall.sandboxCleanupPending', 'cleanup pending'));
+      }
+      return parts.join(' · ');
+    }
     if (meta.result_kind === 'task_board') {
       if (normalizeString(meta.status) === 'failed') return '';
       return ({
-        add: 'task added',
-        update: 'task updated',
-        complete: 'task completed',
-        list: 'tasks listed',
+        add: jt('chat.toolCall.taskAdded', 'task added'),
+        update: jt('chat.toolCall.taskUpdated', 'task updated'),
+        complete: jt('chat.toolCall.taskCompleted', 'task completed'),
+        list: jt('chat.toolCall.tasksListed', 'tasks listed'),
       })[normalizeString(meta.action)] || '';
     }
     if (normalizeToolKind(toolName) !== 'verify' || meta.result_kind !== 'verify') return '';
@@ -248,7 +291,7 @@
     } else if (status === 'failed') {
       parts.push('Failed' + (haveCounts ? ' · ' + failed + ' of ' + (passed + failed) : ''));
     } else if (status === 'skipped') {
-      parts.push('Skipped' + (normalizeString(meta.reason) === 'already_running' ? ' · a run was in progress' : ''));
+      parts.push(normalizeString(meta.reason) === 'already_running' ? jt('chat.toolCall.skippedRunInProgress', 'Skipped · a run was in progress') : 'Skipped');
     } else {
       return '';
     }
@@ -278,13 +321,13 @@
     const summary = formatToolCallSummary(toolName, input);
     switch (normalizeToolKind(toolName)) {
       case 'Bash':
-        return 'Jenny wants to run: ' + summary;
+        return jt('chat.toolCall.approvalRun', 'Jenny wants to run: {summary}', { summary: summary });
       case 'Write':
-        return 'Jenny wants to write: ' + (input && (input.file_path || input.path) || 'a file');
+        return jt('chat.toolCall.approvalWrite', 'Jenny wants to write: {target}', { target: input && (input.file_path || input.path) || jt('chat.toolCall.aFile', 'a file') });
       case 'Edit':
-        return 'Jenny wants to edit: ' + (input && input.file_path || 'a file');
+        return jt('chat.toolCall.approvalEdit', 'Jenny wants to edit: {target}', { target: input && input.file_path || jt('chat.toolCall.aFile', 'a file') });
       default:
-        return 'Jenny wants to use ' + getToolDisplayName(toolName);
+        return jt('chat.toolCall.approvalUse', 'Jenny wants to use {tool}', { tool: getToolDisplayName(toolName) });
     }
   }
 
@@ -332,7 +375,7 @@
     switch (status) {
       case 'requested': return 'Requested';
       case 'awaiting_approval':
-      case 'pending_approval': return 'Awaiting approval';
+      case 'pending_approval': return jt('chat.toolCall.awaitingApproval', 'Awaiting approval');
       case 'approved': return 'Approved';
       case 'running': return 'Running';
       case 'completed': return 'Success';
@@ -340,9 +383,9 @@
       case 'error': return 'Error';
       case 'denied': return 'Denied';
       case 'blocked': return 'Blocked';
-      case 'timed_out': return 'Timed out';
+      case 'timed_out': return jt('chat.toolCall.timedOut', 'Timed out');
       case 'cancelled': return 'Cancelled';
-      case 'abandoned': return 'No result';
+      case 'abandoned': return jt('chat.toolCall.noResult', 'No result');
       case 'interrupted': return 'Interrupted';
       default: return status || 'Unknown';
     }
@@ -393,7 +436,7 @@
     }
     const firstOutputLine = String(r.outputText || '').split(/\r?\n/u)
       .map((line) => line.trim()).find(Boolean) || '';
-    const text = (firstOutputLine || normalizeString(r.resultSummary) || 'Tool failed')
+    const text = (firstOutputLine || normalizeString(r.resultSummary) || jt('chat.toolCall.toolFailed', 'Tool failed'))
       .replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/gu, ' ').trim();
     const characters = Array.from(text);
     return characters.length > TOOL_FAILURE_SUMMARY_MAX_CHARS
@@ -464,19 +507,17 @@
     }
   }
 
-  /*
-   * One source for the quiet one-liner tool-header anatomy:
-   * [status dot] [name + summary] [review affordance · meta · status word +
-   * duration · disclosure caret]. Both block-family header builders — the
-   * shell path (Collapsible trigger) and the generic transcript fallback
-   * (manual div) — render this fragment; only their outer wrappers differ.
-   * The status label goes screen-reader-only on plain settled success so
-   * completed rows read as [dot] name · duration without shouting "Success".
-   *
-   * helpers.escapeHtml is required. Optional renderReviewChangesAffordance,
-   * renderSummary, and renderDuration callbacks return trusted renderer-owned
-   * markup; callers remain responsible for escaping every dynamic value.
-   */
+  // Only authoritative per-operation totals; never infer missing values as zero.
+  function getToolLineCounts(toolName, metadata, status, isError) {
+    const diff = metadata && metadata.diff;
+    if (!/^(Edit|Write)$/.test(normalizeToolKind(toolName))
+      || normalizeToolStatus(status) !== 'completed' || isError
+      || !diff || diff.review_state === 'failed' || diff.status === 'unknown'
+      || ![diff.additions, diff.deletions].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+    return { additions: diff.additions, deletions: diff.deletions };
+  }
+
+  // Shared by shell and timeline headers. Callback markup must escape dynamic values.
   function buildToolHeaderInner(model, helpers) {
     const esc = helpers.escapeHtml;
     const affordance = typeof helpers.renderReviewChangesAffordance === 'function'
@@ -507,6 +548,12 @@
       + '</span>'
       + '<span class="tool-call-status-cluster">'
       + affordance(model.reviewableChange)
+      + (model.lineCounts
+        ? '<span class="tool-call-line-counts"><span class="sr-only">'
+          + esc(jt('toolCallUtils.lineChanges', '{additions} lines added, {deletions} lines removed', model.lineCounts)) + '</span>'
+          + '<span aria-hidden="true" class="tool-call-line-add' + (model.lineCounts.additions === 0 ? ' tool-call-line-zero' : '') + '">+' + esc(model.lineCounts.additions) + '</span>'
+          + '<span aria-hidden="true" class="tool-call-line-remove' + (model.lineCounts.deletions === 0 ? ' tool-call-line-zero' : '') + '">−' + esc(model.lineCounts.deletions) + '</span></span>'
+        : '')
       + (model.secondaryMeta
         ? '<span class="tool-call-meta">' + esc(model.secondaryMeta) + '</span>'
         : '')
@@ -551,6 +598,7 @@
   return {
     APPROVAL_FACT_KINDS,
     deriveApprovalVariant,
+    hasPlanDocumentForTool,
     normalizeToolKind,
     getToolDisplayName,
     formatToolCallSummary,
@@ -575,6 +623,7 @@
     buildToolRowDomToken,
     statusToneFor,
     buildToolHeaderInner,
+    getToolLineCounts,
     getTrustedToolResultImageUrls,
     resolveProjectedRowCallId,
   };

@@ -15,6 +15,8 @@
     root.rendererToolDetailBody || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (turnNormalizationUtils, transcriptToolResultUtils, subagentView, toolDetailBody) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const windowRef = globalRef.window || null;
   const _stringUtils = typeof globalThis !== 'undefined' && typeof globalThis.stringUtils !== 'undefined'
@@ -74,6 +76,9 @@
     : typeof require === 'function'
       ? require('./renderer-task-spawn-chip')
       : null;
+  const _calendarChatBlock = typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock
+    ? globalThis.rendererCalendarChatBlock
+    : typeof require === 'function' ? require('./renderer-calendar-chat-block') : null;
   const _monitorToolUtils = typeof globalThis !== 'undefined' && globalThis.rendererMonitorToolUtils
     ? globalThis.rendererMonitorToolUtils
     : typeof require === 'function'
@@ -254,32 +259,32 @@
 
     function buildToolSecondaryMeta(viewModel) {
       if (viewModel.status === 'awaiting_approval') {
-        return 'Action needed';
+        return jt('chat.toolCalls.actionNeeded', 'Action needed');
       }
       if (viewModel.status === 'errored') {
-        return 'Review failure details';
+        return jt('chat.toolCalls.reviewFailureDetails', 'Review failure details');
       }
       if (viewModel.status === 'denied') {
-        return 'Request blocked';
+        return jt('chat.toolCalls.requestBlocked', 'Request blocked');
       }
       if (viewModel.status === 'timed_out') {
-        return 'Execution timed out';
+        return jt('chat.toolCalls.executionTimedOut', 'Execution timed out');
       }
       if (viewModel.status === 'cancelled') {
-        return 'Request cancelled';
+        return jt('chat.toolCalls.requestCancelled', 'Request cancelled');
       }
       if (viewModel.status === 'interrupted') {
-        return 'Waiting to resume';
+        return jt('chat.toolCalls.waitingToResume', 'Waiting to resume');
       }
       if (viewModel.status === 'abandoned') {
-        return 'No result recorded';
+        return jt('chat.toolCalls.noResultRecorded', 'No result recorded');
       }
       if (viewModel.status === 'approved') {
-        return 'Queued to run';
+        return jt('chat.toolCalls.queuedToRun', 'Queued to run');
       }
       const artifactCount = Array.isArray(viewModel.generatedArtifacts) ? viewModel.generatedArtifacts.length : 0;
       if (artifactCount > 0) {
-        return artifactCount === 1 ? '1 artifact generated' : `${artifactCount} artifacts generated`;
+        return jtn('chat.toolCalls.artifactsGenerated', artifactCount, { count: artifactCount }, '1 artifact generated', '{count} artifacts generated');
       }
       return '';
     }
@@ -376,7 +381,7 @@
     function renderToolDetails(viewModel) {
       const body = detailBodyBuilder && typeof detailBodyBuilder.buildDetailBodyMarkup === 'function'
         ? detailBodyBuilder.buildDetailBodyMarkup(viewModel)
-        : '<div class="tool-call-empty">No input or output recorded.</div>';
+        : '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolDetail.noInputOrOutput', 'No input or output recorded.')) + '</div>';
       return renderToolDetailsShell(viewModel, body);
     }
 
@@ -385,7 +390,7 @@
       if (!_renderApprovalBlock) return '';
       const approvalLabel = toolCallUtils.getApprovalLabel
         ? toolCallUtils.getApprovalLabel(viewModel.toolName, viewModel.input)
-        : `Approve ${viewModel.displayToolName || viewModel.toolName || 'this tool'}?`;
+        : jt('chat.toolCalls.approveTool', 'Approve {tool}?', { tool: viewModel.displayToolName || viewModel.toolName || jt('chat.toolCalls.thisTool', 'this tool') });
       return _renderApprovalBlock({
         toolCallId: viewModel.callId,
         approvalId: viewModel.approvalId,
@@ -544,6 +549,7 @@
         isPending: status === 'awaiting_approval',
         durationLabel,
         summary: dedupedSummary,
+        lineCounts: toolCallUtils.getToolLineCounts(toolName, metadata, status, isError),
         secondaryMeta: buildToolSecondaryMeta({ status, generatedArtifacts })
           || (typeof toolCallUtils.formatToolResultMeta === 'function' ? toolCallUtils.formatToolResultMeta(toolName, metadata) : ''),
         defaultExpanded,
@@ -783,6 +789,7 @@
 
     function renderToolCallBlock(message, allMessages, options) {
       const viewModel = buildToolCallViewModel(message, allMessages, options);
+      if (toolCallUtils.hasPlanDocumentForTool?.(viewModel.toolName, viewModel.callId, allMessages)) return '';
       if (/^(delegate|subagent_(run|batch))$/.test(viewModel.toolName)
         && typeof subagentView.renderTerminalSummary === 'function') {
         const messageIndex = Array.isArray(allMessages) ? allMessages.indexOf(message) : -1;
@@ -800,11 +807,17 @@
       const artifactCards = viewModel.generatedArtifacts.length && _artifactCardUtils?.renderArtifactCards
         ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId)
         : '';
+      const calendarMarkup = Object.keys(viewModel.metadata).length && _calendarChatBlock
+        && typeof _calendarChatBlock.buildHomeResultBlockMarkup === 'function'
+        ? _calendarChatBlock.buildHomeResultBlockMarkup(viewModel.metadata, {
+          escapeHtml,
+          hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
+        }) : '';
       if (!viewModel.detailsMaterialized) {
         return renderToolDisclosureShell(
           viewModel,
           `${renderToolHeader(viewModel)}${renderDeferredToolDetails(viewModel)}`,
-          artifactCards
+          calendarMarkup + artifactCards
         );
       }
       // Mermaid's asynchronous preview requires its specialized shell; ordinary detail bodies use renderer-tool-detail-body.
@@ -820,7 +833,7 @@
       return renderToolDisclosureShell(
         viewModel,
         `${renderToolHeader(viewModel)}${renderToolDetails(viewModel)}`,
-        artifactCards
+        calendarMarkup + artifactCards
       );
     }
 

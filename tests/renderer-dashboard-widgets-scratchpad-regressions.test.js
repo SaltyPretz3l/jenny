@@ -7,6 +7,52 @@ const textField = require('../renderer/inventory/text-field.js');
 const actionButton = require('../renderer/inventory/action-button.js');
 const { twoNotesActive, flagOnCtx } = require('./helpers/scratchpad-fixtures.js');
 
+const SCRATCHPAD_ACTIONS_PATH = require.resolve('../renderer/features/renderer-dashboard-scratchpad-actions.js');
+const SCRATCHPAD_WIDGET_PATH = require.resolve('../renderer/features/renderer-dashboard-widgets-scratchpad.js');
+
+test.afterEach(() => {
+  delete globalThis.jennyI18n;
+  delete require.cache[SCRATCHPAD_ACTIONS_PATH];
+  delete require.cache[SCRATCHPAD_WIDGET_PATH];
+});
+
+test('generated titles persist canonical English and translate only in the tab presentation', async () => {
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  i18n.load({ tag: 'qps-ploc', strings: {
+    'dashboard.scratchpad.actions.noteNumber': 'Åçţïøñ {number}',
+    'dashboard.widgets.scratchpad.noteNumber': 'Ðïşþļåý {number}',
+  } });
+  globalThis.jennyI18n = i18n;
+  delete require.cache[SCRATCHPAD_ACTIONS_PATH];
+  delete require.cache[SCRATCHPAD_WIDGET_PATH];
+  const { createScratchpadActions } = require(SCRATCHPAD_ACTIONS_PATH);
+  const { createScratchpadWidget: createLocalizedWidget } = require(SCRATCHPAD_WIDGET_PATH);
+  let state = {
+    notes: [{ id: 'note-1', title: 'Note 1', text: '', updatedAt: '', appendLog: false }],
+    activeNoteId: 'note-1', settings: { rows: 6, font: 'prose', captureMode: 'overwrite' }, pins: [],
+  };
+  const updates = [];
+  const shell = { home: { updateConfig: async (patch) => {
+    updates.push(patch);
+    return { links: [], weather: {}, widgets: {}, calendar: {}, focusMode: false,
+      showContextualTips: true, scratchpad: { ...state, ...patch.scratchpad } };
+  } } };
+  const actions = createScratchpadActions({ shell, getScratchpad: () => state,
+    onHomeConfig: (config) => { state = config.scratchpad; } });
+
+  await actions.addNote();
+
+  assert.equal(updates[0].scratchpad.notes[1].title, 'Note 2');
+  const dom = new JSDOM('<section id="body"></section>');
+  const body = dom.window.document.getElementById('body');
+  const widget = createLocalizedWidget({ textField, actionButton, actions });
+  widget.render(body, flagOnCtx(state));
+  assert.equal(body.querySelector('[data-scratchpad-tab="note-2"]').textContent, 'Ðïşþļåý 2');
+  widget.dispose();
+  actions.dispose();
+  dom.window.close();
+});
+
 test('a throwing legacy clipboard copy always removes its temporary textarea', () => {
   const dom = new JSDOM('<section id="body"></section>');
   const documentRef = dom.window.document;

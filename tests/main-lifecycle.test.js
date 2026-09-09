@@ -205,6 +205,44 @@ test('registered shutdown tasks are awaited before runtime stop and app exit', a
   ]);
 });
 
+test('shutdown fences run synchronously before awaited tasks and isolate failures', async () => {
+  const order = [];
+  let releaseTask;
+  const taskPending = new Promise((resolve) => { releaseTask = resolve; });
+  const lifecycle = new MainLifecycleController({
+    appExit: () => order.push('exit'),
+    stopRuntime: async () => order.push('stop'),
+  });
+  lifecycle.registerShutdownFence(() => order.push('fence:first'));
+  lifecycle.registerShutdownFence(() => { order.push('fence:throw'); throw new Error('boom'); });
+  lifecycle.registerShutdownFence(() => order.push('fence:last'));
+  lifecycle.registerShutdownTask(async () => {
+    order.push('task:start');
+    await taskPending;
+    order.push('task:done');
+  });
+
+  const pending = lifecycle._beginShutdown(0);
+  assert.deepEqual(order, ['fence:first', 'fence:throw', 'fence:last']);
+  assert.equal(lifecycle.isAppQuitting(), true);
+  assert.equal(lifecycle._beginShutdown(1), pending);
+  await Promise.resolve();
+  assert.deepEqual(order, ['fence:first', 'fence:throw', 'fence:last', 'task:start']);
+  releaseTask();
+  await pending;
+  assert.deepEqual(order.slice(-3), ['task:done', 'stop', 'exit']);
+});
+
+test('unregistered shutdown fences do not run', async () => {
+  let calls = 0;
+  const lifecycle = new MainLifecycleController({});
+  const unregister = lifecycle.registerShutdownFence(() => { calls += 1; });
+  unregister();
+  unregister();
+  await lifecycle._beginShutdown();
+  assert.equal(calls, 0);
+});
+
 test('runtime shutdown stops scheduler before the backend service', async () => {
   const order = [];
   const suggestionCache = { id: 'cache' };

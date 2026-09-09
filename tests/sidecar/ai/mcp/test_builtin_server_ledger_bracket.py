@@ -10,13 +10,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from sidecar.ai.mcp import builtin_server
 from sidecar.ai.mcp.builtin_server import BuiltinTool
+from sidecar.ai.routing.mutation_change_set_lifecycle import MutationChangeSetLifecycle
+from sidecar.ai.routing.router import ToolExecutionOutcome
+from sidecar.ai.routing.tool_execution_results import tool_result_message
+from sidecar.ai.tools.builtins.edit_file import edit_file_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
+from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
+from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
 from sidecar.runtime.operation_ledger import LEDGER_OPERATIONS_DIR, OperationLedger
 
 KEY = "idem_0123456789abcdef01234567"
@@ -218,3 +226,71 @@ class TestDegradedLedgerFailOpen:
             assert response["error"]["data"]["effects"] == "none"
         finally:
             builtin_server.configure_operation_ledger(None)
+
+
+def test_journal_edit_replay_and_terminal_refusal_keep_honest_effects(
+    ledger_root: Path, tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "edit.txt"
+    target.write_bytes(b"alpha")
+    store = WorkspaceMutationJournalStore(tmp_path / "recovery")
+    journal = MutationChangeSetLifecycle(store, workspace)
+    guard = WorkspaceGuard(str(workspace), mutation_journal=journal)
+    change_set_id = "01990f9a-8c51-7ad2-a8be-41190e0e1f21"
+    invocations = []
+
+    def handler(arguments, owning_guard):
+        invocations.append(arguments["_jenny_tool_call_id"])
+        return edit_file_tool(arguments, owning_guard)
+
+    tool = _tool(handler, name="edit_file")
+    arguments = {
+        "file_path": "edit.txt", "old_string": "alpha", "new_string": "beta",
+        "_jenny_session_id": "session", "_jenny_turn_id": "turn",
+        "_jenny_tool_call_id": "edit-first", "_jenny_change_set_id": change_set_id,
+        "_jenny_idempotency_key": KEY,
+    }
+
+    def dispatch(args):
+        return builtin_server._handle_tools_call(
+            "fixture-call", {tool.name: tool}, guard,
+            {"name": tool.name, "arguments": args},
+        )
+
+    first = dispatch(arguments)
+    assert first["result"]["success"] is True
+    journal.finalize(change_set_id)
+    workspace_id = workspace_identity(workspace).workspace_id
+    journal_path = store.journal_path(workspace_id, change_set_id)
+    committed_bytes = journal_path.read_bytes()
+    replay = dispatch(arguments)
+    assert replay["result"]["success"] is True
+    assert invocations == ["edit-first"]
+    assert target.read_bytes() == b"beta"
+    assert journal_path.read_bytes() == committed_bytes
+
+    rejected_key = "idem_1123456789abcdef01234567"
+    rejected = dispatch({
+        **arguments, "_jenny_idempotency_key": rejected_key,
+        "_jenny_tool_call_id": "edit-late", "old_string": "beta", "new_string": "gamma",
+    })["result"]
+    assert rejected["success"] is False
+    assert rejected["metadata"]["effects"] == "none"
+    assert rejected["metadata"]["failure_class"] == "conflict"
+    assert _receipt(ledger_root, rejected_key)["status"] == "failed"
+    assert target.read_bytes() == b"beta"
+    assert journal_path.read_bytes() == committed_bytes
+    outcome = ToolExecutionOutcome(
+        tool_name="edit_file", call_id="edit-late", success=False,
+        output=rejected["content"][0]["text"], error_code=rejected["error_code"],
+        metadata=rejected["metadata"],
+    )
+    message = tool_result_message(
+        ToolCallRequest(tool_id="edit_file", call_id="edit-late", arguments={}),
+        outcome, config=SimpleNamespace(tool_result_envelope_enabled=True),
+    )
+    assert "effects: none" in message["content"]
+    assert "retry: after_fix" in message["content"]
+    assert "retry: same_args" not in message["content"]

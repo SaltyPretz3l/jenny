@@ -7,6 +7,12 @@ const { BrowserSessionService } = require('../browser-session-service');
 const { UsageHistoryService } = require('../usage-history-service');
 const { isFeatureEnabledByDefault } = require('../feature-flags');
 const { buildEffectiveFeatureFlags: buildEffectiveFeatureFlagsWithDeps } = require('../feature-settings-service');
+const {
+  createI18nMain,
+  mapAppLocaleToUiLanguage,
+  registerMainTranslator,
+  resolveUiLanguage,
+} = require('../i18n-main');
 const { McpDiscoveryService } = require('../mcp-discovery-service');
 const { PersonalityWorkspaceService } = require('../personality-workspace-service');
 const { ProcessLogWriter } = require('../process-log-writer');
@@ -24,6 +30,7 @@ const { WorkspacePresentationService } = require('../workspace-presentation-serv
 const { WindowStateService } = require('../window-state-service');
 const { WorktreeService } = require('../worktree-service');
 const { WorktreeRegistryService, defaultRegistryPath } = require('../worktree-registry-service');
+const { createUnattendedGuard } = require('./unattended-guard');
 
 function createRuntimeServicesWithDeps({
   app,
@@ -94,6 +101,20 @@ function createRuntimeServicesWithDeps({
     userDataPath: userDataPath,
     resourcesPath: processRef.resourcesPath,
     logger: log,
+  });
+  if (shellConfigService.isFreshInstall?.() === true) {
+    const locale = typeof app?.getLocale === 'function' ? app.getLocale() : '';
+    const mapped = mapAppLocaleToUiLanguage(locale);
+    if (mapped !== 'en') shellConfigService.updateUiLanguage(mapped);
+    log('INFO', 'i18n.first_run_locale', { locale, mapped });
+  }
+  const i18nMain = createI18nMain({ log });
+  registerMainTranslator(i18nMain);
+  i18nMain.setLocale(resolveUiLanguage({ env: processRef.env, shellConfigService }));
+  shellConfigService.on('changed', (_state, meta) => {
+    if (meta?.reason === 'ui_language_updated') {
+      i18nMain.setLocale(resolveUiLanguage({ env: processRef.env, shellConfigService }));
+    }
   });
 
   function buildEffectiveFeatureFlags() {
@@ -249,6 +270,22 @@ function createRuntimeServicesWithDeps({
     intervalMs: 2000,
     powerMonitor,
   });
+  const unattendedGuard = createUnattendedGuard({
+    powerMonitor,
+    getBackendService,
+    getThresholdMinutes: () => Number(
+      shellConfigService?.getChatUiState?.()?.unattendedGuardMinutes
+    ),
+    isEnabled: () => buildEffectiveFeatureFlags().unattended_guard === true,
+    sendBridgeEvent,
+    log,
+  });
+  // Started here rather than from main.js: the tick is inert until a backend
+  // with live streams exists, and main.js sits at its line cap. Attached to
+  // systemStats because the shutdown path only holds systemStats through a
+  // main.js accessor; runtime-stop reads it back from there.
+  unattendedGuard.start();
+  systemStats.unattendedGuard = unattendedGuard;
 
   systemStats.on('stats', (stats) => {
     sendBridgeEvent('system.onStats', getCurrentSystemStatsPayload(stats));
@@ -365,6 +402,7 @@ function createRuntimeServicesWithDeps({
     automationService,
     browserSessionService,
     buildEffectiveFeatureFlags,
+    i18nMain,
     usageHistory,
     knowledgeService,
     logStore,
@@ -377,6 +415,7 @@ function createRuntimeServicesWithDeps({
     shellConfigService,
     skillsService,
     systemStats,
+    unattendedGuard,
     toolExecutor,
     toolPermissionStore,
     updateService,
@@ -390,4 +429,5 @@ function createRuntimeServicesWithDeps({
 
 module.exports = {
   createRuntimeServicesWithDeps,
+  resolveUiLanguage,
 };

@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   /* Pure, stateless lifecycle formatting helpers. */
 
   const DEFAULT_CONTEXT_PREFERENCES = Object.freeze({
@@ -84,7 +85,7 @@
   // "available models" set can never drift between the two UIs.
   function buildModelOptionsArray(models, selectedValue, config = {}) {
     const normalizedSelected = normalizeModelToken(selectedValue);
-    const autoLabel = config.compact ? 'Use default' : 'Auto (backend default)';
+    const autoLabel = config.compact ? jt('models.library.options.useDefault', 'Use default') : jt('models.library.options.autoBackendDefault', 'Auto (backend default)');
     const optionList = Array.isArray(models) ? models : [];
     const hasSelectedModel = normalizedSelected
       ? optionList.some((model) => String(model?.id || '').trim() === normalizedSelected)
@@ -99,7 +100,7 @@
         value: normalizedSelected,
         label: config.annotateMissingSelected === false
           ? normalizedSelected
-          : `${normalizedSelected} (selected)`,
+          : jt('models.library.options.selected', '{model} (selected)', { model: normalizedSelected }),
         disabled: false,
         selected: true,
       });
@@ -111,9 +112,9 @@
       }
       const available = model.available !== false;
       const reason = String(model?.reason || '').trim();
-      const label = available
-        ? modelId
-        : `${modelId} (unavailable${reason ? `: ${reason}` : ''})`;
+      const label = available ? modelId : (reason
+        ? jt('models.library.options.unavailableReason', '{model} (unavailable: {reason})', { model: modelId, reason })
+        : jt('models.library.options.unavailable', '{model} (unavailable)', { model: modelId }));
       options.push({
         value: modelId,
         label,

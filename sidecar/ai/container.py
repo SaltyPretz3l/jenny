@@ -22,10 +22,16 @@ from sidecar.ai.container_mcp_servers import (  # noqa: F401 - _argv_safe_url is
 from sidecar.ai.context.builder import ContextBuilder, SkillScope
 from sidecar.ai.engines.base import BaseEngine
 from sidecar.ai.engines.factory import create_engine
+from sidecar.ai.execution_policy import (
+    DesktopExecutionPolicyError,
+    desktop_policy_is_enforced,
+    desktop_sandbox_engine_reason,
+)
 from sidecar.ai.feature_flags import (
     FEATURE_SKILLS_SYSTEM,
     is_feature_flag_enabled,
 )
+from sidecar.ai.host_policy import host_policy_from_config, host_policy_is_enforced
 from sidecar.ai.mcp.client import MCPClient
 from sidecar.ai.memory.service import MemoryService
 from sidecar.ai.memory.store import MemoryStore
@@ -53,6 +59,25 @@ from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
 from sidecar.runtime.worker_secrets import merge_config_secrets, split_config_secrets
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_desktop_execution_policy(config: RuntimeConfig) -> None:
+    if not desktop_policy_is_enforced(config):
+        return
+    engine_reason = desktop_sandbox_engine_reason(config.engine_type)
+    if engine_reason is not None:
+        raise DesktopExecutionPolicyError(engine_reason)
+
+
+def _parse_candidate_config(
+    raw_config: Any,
+    secrets: dict[str, Any] | None,
+) -> tuple[RuntimeConfig, dict[str, Any], dict[str, Any]]:
+    scrubbed, embedded = split_config_secrets(raw_config)
+    effective_secrets = {**embedded, **(dict(secrets) if secrets else {})}
+    config = parse_runtime_config(merge_config_secrets(scrubbed, effective_secrets))
+    _validate_desktop_execution_policy(config)
+    return config, scrubbed, effective_secrets
 
 
 def _append_system_prompt_addendum(base_prompt: str, addendum: str) -> str:
@@ -325,6 +350,10 @@ _BRAIN_CONTAINER_REQUEST_BOUNDARY_ALLOWED_ATTRS: frozenset[str] = frozenset(
     {
         "_plugin_runtime_apply_stage8",
         "_plugin_runtime_registry",
+        "_host_policy_enforced",
+        "_desktop_execution_policy_enforced",
+        "_desktop_execution_policy_invalid",
+        "_desktop_execution_policy_latched",
         "_stack",
         "_stack_generations",
         "_subprocess_manager",
@@ -348,6 +377,14 @@ class BrainContainer:
     def __init__(self, *, subprocess_manager: SubprocessManager | None = None) -> None:
         self._stack: BrainStack | None = None
         self._stack_generations = StackGenerationOwner(_close_replaced_stack)
+        # Request dispatch must not infer hosted policy from a stack that can be
+        # absent while the first initialize or a generation replacement is in
+        # progress. The hosted intent is latched before stack construction and
+        # relaxed only after a desktop candidate publishes successfully.
+        self._host_policy_enforced = False
+        self._desktop_execution_policy_enforced = False
+        self._desktop_execution_policy_invalid = False
+        self._desktop_execution_policy_latched = False
         self._subprocess_manager = subprocess_manager
         # Deliberately untyped and lazy: ordinary startup/full initialize never
         # imports sidecar.ai.plugins. The explicit Stage-4 plugin-only initialize
@@ -531,9 +568,7 @@ class BrainContainer:
         # (`runtime/headless.py`) hands `configure` a config a user may have
         # legitimately inlined a token into. That path must keep working -- the
         # token is lifted, merged back for parsing, and kept out of raw_config.
-        scrubbed, embedded = split_config_secrets(raw_config)
-        effective_secrets = {**embedded, **(dict(secrets) if secrets else {})}
-        config = parse_runtime_config(merge_config_secrets(scrubbed, effective_secrets))
+        config, scrubbed, effective_secrets = _parse_candidate_config(raw_config, secrets)
         # Built BEFORE create_engine and threaded in: create_engine runs
         # `load_model`, which is the SOLE writer of capability profiles. When
         # this store was constructed afterwards and attached to an
@@ -669,8 +704,10 @@ class BrainContainer:
         monitor_manager.recover_stale_monitors()
         sub_agent_slot_allocator = _sub_agent_slot_allocator_for_config(effective_config)
         workspace_root = _resolve_workspace_root(effective_config)
+        # Hosted tools may still use their explicitly configured filesystem
+        # root, but that root must never become prompt/bootstrap context.
         context_builder = ContextBuilder(
-            workspace_root,
+            None if host_policy_is_enforced(effective_config) else workspace_root,
             skill_scopes=_resolve_skill_scopes(effective_config),
             disabled_skill_ids=effective_config.skills_disabled_ids,
             skills_system_enabled=is_feature_flag_enabled(
@@ -782,8 +819,49 @@ class BrainContainer:
                 restore_tool_call_healing_default(previous_healing_default)
                 raise
             self._stack = candidate
+            self._host_policy_enforced = host_policy_is_enforced(candidate.config)
+            self._desktop_execution_policy_enforced = desktop_policy_is_enforced(
+                candidate.config
+            )
+            self._desktop_execution_policy_invalid = False
+            self._desktop_execution_policy_latched = True
             staged.pop_all()
             return candidate
+
+    def latch_host_policy(self, raw_config: Any) -> None:
+        """Latch a validated hosted initialize before expensive stack construction.
+
+        A desktop reconfiguration cannot relax an already-hosted process until
+        its candidate stack has published. That keeps concurrent RPC dispatch
+        closed throughout both successful and failed replacement attempts.
+        """
+
+        if host_policy_from_config(raw_config).enforced:
+            self._host_policy_enforced = True
+
+    def latch_desktop_execution_policy(self, raw_config: Any) -> None:
+        """Latch the sandbox before the replacement stack is constructed."""
+
+        from sidecar.ai.execution_policy import desktop_policy_from_config
+
+        try:
+            policy = desktop_policy_from_config(raw_config)
+        except DesktopExecutionPolicyError:
+            self._desktop_execution_policy_enforced = True
+            self._desktop_execution_policy_invalid = True
+            self._desktop_execution_policy_latched = True
+            raise
+        self._desktop_execution_policy_latched = True
+        if policy.enforced:
+            self._desktop_execution_policy_enforced = True
+
+    @property
+    def desktop_execution_policy_enforced(self) -> bool:
+        return self._desktop_execution_policy_enforced
+
+    @property
+    def host_policy_enforced(self) -> bool:
+        return self._host_policy_enforced
 
     def _stack_generation_owner(self) -> StackGenerationOwner:
         return self._stack_generations

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from sidecar.ai.config import parse_runtime_config
+from sidecar.ai.config_models import RuntimeConfig
 from sidecar.ai.context.builder import ContextBuilder
 from sidecar.ai.context.messages import (
     build_context_block_system_messages,
@@ -29,15 +31,23 @@ OTHER_BLOCKS = (
 )
 
 
-def _config(*, engine_type: str = "ollama", assistant_name: str = "Jenny") -> SimpleNamespace:
-    return SimpleNamespace(
-        engine_type=engine_type,
-        system_prompt_profile="auto",
-        assistant_name=assistant_name,
+def _config(
+    *,
+    engine_type: str = "ollama",
+    assistant_name: str = "Jenny",
+    ui_language: str = "en",
+) -> RuntimeConfig:
+    return parse_runtime_config(
+        {
+            "engine_type": engine_type,
+            "assistant_name": assistant_name,
+            "ui_language": ui_language,
+            "skills_auto_index": "on",
+        }
     )
 
 
-def _kernel(config: SimpleNamespace) -> SimpleNamespace:
+def _kernel(config: RuntimeConfig) -> SimpleNamespace:
     return SimpleNamespace(_config=config, _context_builder=ContextBuilder(None))
 
 
@@ -46,10 +56,15 @@ def _assemble(
     context_blocks: tuple[dict[str, str], ...],
     engine_type: str = "ollama",
     assistant_name: str = "Jenny",
+    ui_language: str = "en",
     runtime_system_messages: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """Mirror the routed lane's assembly in `chat_decision._prepare_request`."""
-    config = _config(engine_type=engine_type, assistant_name=assistant_name)
+    config = _config(
+        engine_type=engine_type,
+        assistant_name=assistant_name,
+        ui_language=ui_language,
+    )
     include_personality = engine_type != "chatgpt"
     personality_rendered = include_personality and has_personality_context_block(context_blocks)
     messages = build_request_system_messages(
@@ -64,6 +79,7 @@ def _assemble(
             context_blocks,
             include_personality=include_personality,
             agent_name=assistant_name,
+            ui_language=ui_language,
         )
     )
     return messages
@@ -91,6 +107,52 @@ def test_personality_block_renders_under_the_v3_heading_with_the_name_line() -> 
     assert rendered[0]["content"] == build_personality_system_message("Echo", SECTIONS)
     assert str(rendered[0]["content"]).startswith("## Personality\nYour name is Echo.")
     assert "### Voice" in str(rendered[0]["content"])
+
+
+def test_personality_block_adds_non_english_ui_language_before_compiled_body() -> None:
+    rows = _personality_rows(
+        _assemble(
+            context_blocks=({"kind": "personality", "content": SECTIONS},),
+            ui_language="ja",
+        )
+    )
+
+    assert len(rows) == 1
+    lines = rows[0].splitlines()
+    language_line = "Reply in Japanese unless the user writes in another language"
+    precedence_index = next(
+        index
+        for index, line in enumerate(lines)
+        if "take precedence over everything below" in line
+    )
+    language_index = next(index for index, line in enumerate(lines) if language_line in line)
+    assert language_index == precedence_index + 1
+    assert language_index < lines.index("### Voice")
+
+
+def test_personality_block_omits_reply_instruction_for_english_ui() -> None:
+    rows = _personality_rows(
+        _assemble(
+            context_blocks=({"kind": "personality", "content": SECTIONS},),
+            ui_language="en",
+        )
+    )
+
+    assert len(rows) == 1
+    assert "Reply in " not in rows[0]
+
+
+def test_context_block_personality_matches_shared_builder_with_ui_language() -> None:
+    content = "### Voice\n\nwarm"
+    rendered = build_context_block_system_messages(
+        [{"kind": "personality", "content": content}],
+        agent_name="Ada",
+        ui_language="es",
+    )
+
+    assert [row["content"] for row in rendered] == [
+        build_personality_system_message("Ada", content, ui_language="es")
+    ]
 
 
 def test_personality_block_with_body_that_sanitizes_away_still_emits_the_name_line() -> None:
@@ -200,6 +262,15 @@ def test_turn_without_a_personality_block_still_carries_exactly_one() -> None:
 
 def test_turn_with_no_context_blocks_at_all_still_carries_exactly_one() -> None:
     assert len(_personality_rows(_assemble(context_blocks=()))) == 1
+
+
+def test_runtime_ui_language_instruction_is_added_only_for_non_english() -> None:
+    japanese_rows = _personality_rows(_assemble(context_blocks=(), ui_language="ja"))
+    english_rows = _personality_rows(_assemble(context_blocks=(), ui_language="en"))
+
+    assert len(japanese_rows) == 1
+    assert "Reply in Japanese unless the user writes in another language" in japanese_rows[0]
+    assert "Reply in " not in english_rows[0]
 
 
 def test_chatgpt_minimal_profile_carries_zero_personality_messages() -> None:

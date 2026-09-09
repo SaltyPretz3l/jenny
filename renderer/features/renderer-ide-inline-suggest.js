@@ -16,6 +16,7 @@
   }
   root.rendererIdeInlineSuggest = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   // Wait 250 ms after typing pauses before requesting a completion.
@@ -58,13 +59,13 @@
     let degraded = false;
     let paused = false;
     let computeTarget = 'automatic';
-    let computeReason = 'Selected automatically from live runtime resources.';
+    let computeReason = jt('ide.inlineSuggest.automaticSelection', 'Selected automatically from live runtime resources.');
 
     function setComputeState(result) {
       if (fence.isDisposed()) return;
       const nextTarget = String(result?.computeTarget || 'automatic').trim().slice(0, 40) || 'automatic';
       const nextReason = String(result?.computeReason || '').trim().slice(0, 160)
-        || 'Selected automatically from live runtime resources.';
+      || jt('ide.inlineSuggest.automaticSelection', 'Selected automatically from live runtime resources.');
       if (nextTarget === computeTarget && nextReason === computeReason) return;
       computeTarget = nextTarget;
       computeReason = nextReason;

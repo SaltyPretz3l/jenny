@@ -35,7 +35,7 @@
 
 .ide-map-content {
   position: absolute;
-  left: 0;
+  left: 0; /* rtl:physical */
   top: 0;
   transform-origin: 0 0;
   will-change: transform;
@@ -85,8 +85,8 @@
 .ide-atlas-district-header {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   height: auto;
   min-height: 28px;
   display: flex;
@@ -98,7 +98,7 @@
   border: 0;
   border-radius: 12px 12px 0 0;
   background: transparent;
-  text-align: left;
+  text-align: start;
   font: inherit;
   font-size: clamp(9px, calc(12px / var(--atlas-zoom, 1)), 64px);
 }
@@ -212,7 +212,7 @@
 
 /* ---- Tiles (viewport-culled cards) -------------------------------------- */
 
-.ide-atlas-tiles { position: absolute; left: 0; top: 0; }
+.ide-atlas-tiles { position: absolute; left: 0; /* rtl:physical */ top: 0; }
 
 .ide-atlas-tile {
   position: absolute;
@@ -363,13 +363,13 @@
 }
 
 /* Pulse rings + trail markers. */
-.ide-atlas-activity { position: absolute; left: 0; top: 0; pointer-events: none; }
+.ide-atlas-activity { position: absolute; left: 0; /* rtl:physical */ top: 0; pointer-events: none; }
 
 .ide-atlas-pulse {
   position: absolute;
   width: 14px;
   height: 14px;
-  margin: -7px 0 0 -7px;
+  margin: -7px 0 0 -7px; /* rtl:physical */
   border: 2px solid var(--state-warning);
   border-radius: 50%;
   opacity: 0;
@@ -385,7 +385,7 @@
   position: absolute;
   width: 18px;
   height: 18px;
-  margin: -9px 0 0 -9px;
+  margin: -9px 0 0 -9px; /* rtl:physical */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -408,7 +408,7 @@
 .ide-map-activity-rail {
   position: absolute;
   top: 56px;
-  right: 12px;
+  inset-inline-end: 12px;
   bottom: 52px;
   width: 216px;
   z-index: 5;
@@ -468,7 +468,7 @@
   color: var(--text-secondary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
   font-size: 11px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -502,7 +502,7 @@
 
 .ide-atlas-bucket-strip {
   position: absolute;
-  right: 12px;
+  inset-inline-end: 12px;
   bottom: 12px;
   z-index: 5;
   display: flex;
@@ -547,8 +547,8 @@
 .ide-map-controls {
   position: absolute;
   top: 10px;
-  left: 12px;
-  right: 12px;
+  inset-inline-start: 12px;
+  inset-inline-end: 12px;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -595,7 +595,7 @@
 
 .ide-map-findings {
   position: absolute;
-  left: 12px;
+  inset-inline-start: 12px;
   bottom: 12px;
   z-index: 5;
   display: flex;
@@ -615,7 +615,7 @@
 .ide-map-overview {
   position: absolute;
   top: 56px;
-  right: 12px;
+  inset-inline-end: 12px;
   width: 280px;
   max-height: calc(100% - 190px);
   z-index: 6;

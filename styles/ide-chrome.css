@@ -183,7 +183,7 @@
 }
 
 .ide-tab--pinned .ide-tab-label {
-  padding-left: 8px;
+  padding-inline-start: 8px;
 }
 
 .ide-tab--pinned.ide-tab--active .ide-tab-pin {
@@ -207,7 +207,7 @@
 .ide-tabstrip-overflow {
   display: none;
   position: sticky;
-  right: 0;
+  inset-inline-end: 0;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -216,7 +216,7 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
   background: var(--bg-surface-2);
   color: var(--text-secondary);
   cursor: pointer;
@@ -446,7 +446,7 @@
 }
 
 .ide-image-meta {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -529,7 +529,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .ide-terminal-button {

@@ -238,7 +238,7 @@ test('any_local stop skips the machine-wide sweep with no residue and no owned s
   assert.deepEqual(sweeps, [], 'no sweep may run when this install never owned a local ollama');
   const skip = logs.find((e) => e.event === 'ollama.any_local_sweep_skipped');
   assert.ok(skip, 'expected the ollama.any_local_sweep_skipped observability log');
-  assert.equal(skip.details.reason, 'no_local_ollama_residue');
+  assert.equal(skip.details.reason, 'no_verified_owned_pid');
   assert.equal(
     logs.some((e) => e.event === 'ollama.stopping_any_local'),
     false,

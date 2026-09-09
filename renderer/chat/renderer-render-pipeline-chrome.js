@@ -13,6 +13,7 @@
     root.rendererTurnElapsedClock
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, composerV2Render, turnElapsedClock) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const windowRef = globalRef.window || globalRef;
   const documentRef = windowRef.document || null;
@@ -67,7 +68,6 @@
     } = controllers;
     const {
       renderHeader = () => {},
-      renderPrompts = () => {},
       renderMessages = () => {},
       applySurfaceEffect = () => {},
       syncBackendNotice = () => {},
@@ -117,7 +117,6 @@
       getLatestUserMessageId = () => '',
       isSendPreflightPending = () => false,
       syncTurnElapsedClock = () => {},
-      stopFallbackRotation = () => {},
       // Chat-dock host reconcile (ide_chat_dock): re-homes the chat subtree
       // between #chatView and the Workspace dock; returns true on a real move.
       reconcileChatDockHost = () => false,
@@ -372,10 +371,10 @@
         if (heroStage) heroStage.classList.remove('hidden');
         heroAvatar.textContent = 'J';
         heroAvatar.classList.toggle('hidden', !hasMessages);
-        heroTitle.textContent = activeSession?.title || 'Plugin session';
+      heroTitle.textContent = activeSession?.title || jt('chat.chrome.pluginSession', 'Plugin session');
         heroSubtitle.textContent = hasMessages
-          ? 'This saved plugin transcript is read-only in Jenny.'
-          : 'Open the provider workspace to begin.';
+          ? jt('chat.pipelineChrome.pluginTranscriptReadOnly', 'This saved plugin transcript is read-only in Jenny.')
+          : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.');
         if (heroRuntimeHint) {
           heroRuntimeHint.textContent = '';
           heroRuntimeHint.classList.add('hidden');
@@ -389,14 +388,14 @@
       const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
       let showRuntimeHint = false;
       if (hasMessages) {
-        heroTitle.textContent = activeSession?.title || 'New Chat';
-        heroSubtitle.textContent = 'Continue the active conversation or begin a fresh branch.';
+        heroTitle.textContent = activeSession?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!activeSession?.title || activeSession.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : activeSession.title);
+        heroSubtitle.textContent = jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.');
       } else if (setupIncomplete) {
-        heroTitle.textContent = 'Welcome — let’s set Jenny up';
-        heroSubtitle.textContent = 'A few quick steps on Companion Home make Jenny yours. Pick up where you left off below.';
+        heroTitle.textContent = jt('chat.pipelineChrome.setupWelcome', 'Welcome — let’s set Jenny up');
+        heroSubtitle.textContent = jt('chat.pipelineChrome.setupHint', 'A few quick steps on Companion Home make Jenny yours. Pick up where you left off below.');
       } else {
-        heroTitle.textContent = 'New session';
-        heroSubtitle.textContent = 'Ask Jenny anything to begin';
+        heroTitle.textContent = jt('chat.pipelineChrome.newSession', 'New session');
+        heroSubtitle.textContent = jt('chat.pipelineChrome.askToBegin', 'Ask Jenny anything to begin');
         /* Empty chat, backend ready, model not yet warmed: surface the
          * "loads on first message" hint here in the hero instead of the
          * floating backend banner. */
@@ -404,7 +403,7 @@
       }
       if (heroRuntimeHint) {
         if (showRuntimeHint) {
-          heroRuntimeHint.textContent = 'Model loads with your first message';
+          heroRuntimeHint.textContent = jt('chat.pipelineChrome.modelLoadsOnFirstMessage', 'Model loads with your first message');
           heroRuntimeHint.classList.remove('hidden');
         } else {
           heroRuntimeHint.textContent = '';
@@ -562,14 +561,14 @@
       }) || null;
       if (queueEligible) {
         const queued = !hasComposerDraft && currentQueuedSend;
-        sendButton.textContent = `${queued ? 'Queued' : 'Queue'} — runs in ${runModeLabel}`;
+        sendButton.textContent = queued ? jt('chat.pipelineChrome.queuedRunsIn', 'Queued — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueRunsIn', 'Queue — runs in {runMode}', { runMode: runModeLabel });
         sendButton.setAttribute(
           'aria-label',
-          `${queued ? 'Queued follow-up' : 'Queue follow-up prompt'} — runs in ${runModeLabel}`
+          queued ? jt('chat.pipelineChrome.queuedFollowUpRunsIn', 'Queued follow-up — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueFollowUpRunsIn', 'Queue follow-up prompt — runs in {runMode}', { runMode: runModeLabel })
         );
       } else {
         sendButton.textContent = '\u2191';
-        sendButton.setAttribute('aria-label', 'Send');
+        sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.send', 'Send'));
       }
       sendButton.classList.toggle('composer-send-queue', queueEligible);
       sendButton.classList.toggle('composer-stop', false);
@@ -584,7 +583,7 @@
       }
       if (composerWrap) composerWrap.classList.toggle('composer-plugin-read-only', pluginSessionReadOnly);
       if (pluginSessionReadOnly) {
-        sendButton.setAttribute('aria-label', 'Chat sending is unavailable in a plugin transcript');
+        sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.pluginSendingUnavailable', 'Chat sending is unavailable in a plugin transcript'));
         if (stopStreamButton) stopStreamButton.classList.add('hidden');
       }
       globalThis.rendererPluginSessions?.instance?.syncFallbackNotice?.();
@@ -622,23 +621,23 @@
         }
       }
       const sharedConfigReason = pluginSessionReadOnly
-        ? 'Session controls are unavailable in a plugin transcript.'
+        ? jt('chat.chrome.controlsUnavailablePlugin', 'Session controls are unavailable in a plugin transcript.')
         : !state.auth.authenticated
-          ? 'Sign in to change session controls.'
+          ? jt('chat.chrome.signInForControls', 'Sign in to change session controls.')
           : backendComposerOffline
-            ? 'Session controls are unavailable while the local backend is offline.'
+            ? jt('chat.chrome.controlsUnavailableOffline', 'Session controls are unavailable while the local backend is offline.')
             : '';
       syncDisabledReason(
         composerModelSelect,
         documentRef?.getElementById?.('composerModelDisabledReason'),
-        isActivityBusy(composerPreferredModelActivity) ? 'The model selection is being saved.' : sharedConfigReason
+      isActivityBusy(composerPreferredModelActivity) ? jt('chat.chrome.modelSelectionSaving', 'The model selection is being saved.') : sharedConfigReason
       );
       syncDisabledReason(
         composerEffortSelect,
         documentRef?.getElementById?.('composerEffortDisabledReason'),
         reasoningEffortUnsupported
-          ? 'Reasoning effort is not supported by the selected model.'
-          : isActivityBusy(composerReasoningEffortActivity) ? 'The reasoning effort is being saved.' : sharedConfigReason
+        ? jt('chat.chrome.reasoningUnsupported', 'Reasoning effort is not supported by the selected model.')
+        : isActivityBusy(composerReasoningEffortActivity) ? jt('chat.chrome.reasoningEffortSaving', 'The reasoning effort is being saved.') : sharedConfigReason
       );
       syncDisabledReason(
         composerSettingsButton,
@@ -666,7 +665,7 @@
       globalRef.rendererSendOutboxRender?.renderSendOutbox?.({
         state,
         host: documentRef?.getElementById('sendOutbox'),
-        actions: controllers.sendOutboxActions,
+        actions: controllers.getSendOutboxActions?.(),
       });
       syncComposerAccessoryVisibility();
       renderComposerEnhancements?.();
@@ -692,7 +691,6 @@
         renderHomePanel();
       }
       renderHero();
-      renderPrompts();
       renderSessions();
       renderMessages(options);
       if (state.ui.activeView === 'chat') {
@@ -731,7 +729,6 @@
     return {
       renderLayout,
       renderHeader,
-      renderPrompts,
       syncSurfaceStates,
       setSessionOrigin,
       setPendingOrigin,
@@ -745,7 +742,6 @@
       renderComposerJumpControls,
       renderComposerState,
       renderAll,
-      stopFallbackRotation,
     };
   }
 

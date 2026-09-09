@@ -14,6 +14,7 @@ const {
   deleteSession,
   getSessionMessages,
   MAX_INITIAL_PROMPT_CHARS,
+  pauseSessionAutoRun,
   setSessionPreferences,
   sweepEmptySessions,
 } = require('../services/backend/backend-sessions');
@@ -165,6 +166,115 @@ test('managed plan mode write logs a skipped push for an inactive session', asyn
       changedKeys: ['plan_mode'],
     },
   }]);
+});
+
+function autoRunPauseService({
+  session = { id: 'session-auto', run_mode: 'auto', plan_mode: false },
+  activeTurn = { stream_id: 'stream-auto' },
+  active = true,
+  transport = true,
+} = {}) {
+  const notifications = [];
+  const preferenceWrites = [];
+  const logs = [];
+  const service = {
+    activeStreams: new Map(active ? [['stream-auto', {}]] : []),
+    sessionStore: {
+      getSession: () => session,
+      getActiveTurn: () => activeTurn,
+      setSessionPreferences(...args) {
+        preferenceWrites.push(args);
+      },
+    },
+    sidecarClient: transport ? {
+      notifySessionRunModeUpdated(params) {
+        notifications.push(params);
+      },
+    } : {},
+    _emitServiceLog(level, event, details) {
+      logs.push({ level, event, details });
+    },
+  };
+  return { logs, notifications, preferenceWrites, service };
+}
+
+test('pauseSessionAutoRun rejects missing sessions and missing live streams', () => {
+  const missing = autoRunPauseService({ session: null });
+  assert.deepEqual(pauseSessionAutoRun(missing.service, 'missing', {
+    streamId: 'stream-auto',
+  }), { requested: false, reason: 'no_session' });
+
+  const inactive = autoRunPauseService({ active: false });
+  assert.deepEqual(pauseSessionAutoRun(inactive.service, 'session-auto', {
+    streamId: 'stream-auto',
+  }), { requested: false, reason: 'no_live_stream' });
+});
+
+test('pauseSessionAutoRun rejects a live ask-mode session', () => {
+  const harness = autoRunPauseService({
+    session: { id: 'session-auto', run_mode: 'ask', plan_mode: false },
+  });
+
+  assert.deepEqual(pauseSessionAutoRun(harness.service, 'session-auto', {
+    streamId: 'stream-auto',
+  }), { requested: false, reason: 'not_auto' });
+  assert.deepEqual(harness.notifications, []);
+});
+
+test('pauseSessionAutoRun pushes prompt mode without persisting', () => {
+  const harness = autoRunPauseService();
+
+  const result = pauseSessionAutoRun(harness.service, 'session-auto', {
+    streamId: 'stream-auto',
+    reason: 'unattended_idle',
+    idleSeconds: 300,
+  });
+
+  assert.deepEqual(result, {
+    requested: true,
+    sessionId: 'session-auto',
+    streamId: 'stream-auto',
+    approvalMode: 'prompt',
+    readOnly: false,
+  });
+  assert.deepEqual(harness.notifications, [{
+    sessionId: 'session-auto',
+    approvalMode: 'prompt',
+    readOnly: false,
+  }]);
+  assert.deepEqual(harness.preferenceWrites, []);
+  assert.deepEqual(harness.logs, [{
+    level: 'INFO',
+    event: 'session.auto_run_pause_requested',
+    details: {
+      sessionId: 'session-auto',
+      streamId: 'stream-auto',
+      reason: 'unattended_idle',
+      idleSeconds: 300,
+    },
+  }]);
+});
+
+test('pauseSessionAutoRun preserves plan-mode read-only policy', () => {
+  const harness = autoRunPauseService({
+    session: { id: 'session-auto', run_mode: 'auto', plan_mode: true },
+  });
+
+  const result = pauseSessionAutoRun(harness.service, 'session-auto', {
+    streamId: 'stream-auto',
+  });
+
+  assert.equal(result.readOnly, true);
+  assert.equal(harness.notifications[0].readOnly, true);
+});
+
+test('pauseSessionAutoRun reports an unavailable transport', () => {
+  const harness = autoRunPauseService({ transport: false });
+
+  assert.deepEqual(pauseSessionAutoRun(harness.service, 'session-auto', {
+    streamId: 'stream-auto',
+  }), { requested: false, reason: 'transport_unavailable' });
+  assert.deepEqual(harness.notifications, []);
 });
 
 test('managed createSession rejects when the session store refuses the write', async () => {

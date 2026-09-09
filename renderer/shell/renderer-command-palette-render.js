@@ -19,6 +19,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   /* 16x16 stroke glyphs, hand-written constants — never interpolated. Inline
      SVG (stroke: currentColor) keeps them CSP-proof on file:// with no
      @font-face and no fetched asset, same rationale as renderer-ide-icons.js. */
@@ -42,8 +44,8 @@
     return GLYPH_OPEN + body + '</svg>';
   }
 
-  const LEGEND_DEFAULT = '↑↓ move · ↵ open · tab scope · esc close';
-  const LEGEND_SCOPED = '↑↓ move · ↵ open · ⌫ clear scope · esc close';
+  const LEGEND_DEFAULT = jt('commandPalette.legend.default', '↑↓ move · ↵ open · tab scope · esc close');
+  const LEGEND_SCOPED = jt('commandPalette.legend.scoped', '↑↓ move · ↵ open · ⌫ clear scope · esc close');
 
   function createPaletteRenderer(deps) {
     const {
@@ -163,7 +165,7 @@
       clearEmpty();
       emptyEl = el('div', 'command-palette-empty');
       const claim = el('p', 'empty-state-claim');
-      claim.textContent = query ? 'No matches for “' + String(query) + '”' : 'Nothing to show yet.';
+      claim.textContent = query ? jt('commandPalette.empty.noMatches', 'No matches for “{query}”', { query: String(query) }) : jt('commandPalette.empty.nothingToShow', 'Nothing to show yet.');
       emptyEl.append(claim);
       listEl.append(emptyEl);
       activeEl = null;
@@ -230,9 +232,7 @@
 
     function writeChrome(model) {
       const total = Number(model.totalCount) || 0;
-      if (countEl) {
-        countEl.textContent = total === 1 ? '1 result' : String(total) + ' results';
-      }
+      if (countEl) countEl.textContent = jtn('commandPalette.results.count', total, { count: total }, '1 result', '{count} results');
       if (legendEl) {
         legendEl.textContent = model.scopeLabel ? LEGEND_SCOPED : LEGEND_DEFAULT;
       }
@@ -243,7 +243,7 @@
       // The count, not the list, is what changes meaningfully per keystroke —
       // aria-live on the listbox itself re-announced every row every time.
       if (statusEl) {
-        statusEl.textContent = total === 1 ? '1 result' : String(total) + ' results';
+        statusEl.textContent = jtn('commandPalette.results.count', total, { count: total }, '1 result', '{count} results');
       }
     }
 

@@ -105,6 +105,9 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_PLUGIN_ADVISORY_BLOCKED: "denied",
     error_codes.CMP_WEB_SSRF_BLOCKED: "denied",
     error_codes.CMP_WEB_REDIRECT_BLOCKED: "denied",
+    # The unattended guard paused Auto run before this call started; the same
+    # call is re-issued through the approval scan, which now asks.
+    error_codes.CMP_TOOL_PAUSED_UNATTENDED: "transient",
     # User and stop-policy interruptions.
     error_codes.CMP_TOOL_COMMAND_ABORTED: "cancelled",
     error_codes.CMP_TOOL_APPROVAL_WINDOW_DROPPED: "cancelled",

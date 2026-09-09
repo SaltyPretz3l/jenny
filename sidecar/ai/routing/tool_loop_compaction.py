@@ -22,8 +22,11 @@ logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
     """Compact an expanded tool-loop history and return its current token count."""
     tracker = loop.budget_tracker
+    preview_tokens = loop.runtime._preview_context_tokens(loop.working_messages)
     budget = getattr(tracker, "budget", None)
     backend = getattr(tracker, "backend", None)
+    if budget is not None and preview_tokens:
+        budget = budget.with_reserved_tokens(preview_tokens)
     tokens_before = estimate_messages_tokens(loop.working_messages, backend)
     if budget is None or not is_feature_flag_enabled(
         loop.feature_flags,
@@ -99,6 +102,7 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         return tokens_before
 
     loop.working_messages[:] = list(result.messages)
+    loop.runtime._preview_context_tokens(loop.working_messages)
     log_event(
         logger,
         logging.INFO if result.error is None else logging.WARNING,

@@ -29,6 +29,7 @@
   }
   root.rendererIdeQuickOpen = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -454,9 +455,9 @@
       panelClass: 'ide-quick-open-panel',
       fieldClass: 'ide-quick-open-field',
       resultsClass: 'ide-quick-open-results',
-      placeholder: 'Go to file…',
-      ariaLabel: 'Go to file',
-      resultsAriaLabel: 'Matching files',
+      placeholder: jt('ide.quickOpen.filePlaceholder', 'Go to file…'),
+      ariaLabel: jt('ide.quickOpen.fileLabel', 'Go to file'),
+      resultsAriaLabel: jt('ide.quickOpen.matchingFiles', 'Matching files'),
       inputDataset: { 'ide-quick-open-input': '1' },
       inputSelector: '[data-ide-quick-open-input]',
       rowSelector: '[data-ide-quick-open-path]',
@@ -475,25 +476,25 @@
           ? (symbolsFetching || symbolsForPath !== activeEditorPath())
           : workspaceResult === null),
         renderLoadingStatus: (query) => status(isSymbolQuery(query)
-          ? 'Indexing symbols…'
-          : 'Indexing workspace files…'),
+          ? jt('ide.quickOpen.indexingSymbols', 'Indexing symbols…')
+          : jt('ide.quickOpen.indexingWorkspace', 'Indexing workspace files…')),
         renderEmptyStatus: (query) => {
           if (isSymbolQuery(query)) {
             // A non-empty post-"@" query over a populated cache means "no match";
             // anything else (empty query, non-TS/JS, no symbols) is "no symbols".
             return status(query.slice(1) && activeSymbols && activeSymbols.length
-              ? 'No matching symbols in this file.'
-              : 'No symbols - open a TS/JS file.');
+              ? jt('ide.quickOpen.noMatchingSymbols', 'No matching symbols in this file.')
+              : jt('ide.quickOpen.noSymbols', 'No symbols - open a TS/JS file.'));
           }
           if (workspaceResult?.failed) {
-            return status('Could not load workspace files - reopen Quick Open to retry.');
+            return status(jt('ide.quickOpen.workspaceFilesLoadFailed', 'Could not load workspace files - reopen Quick Open to retry.'));
           }
           return isBareLineQuery()
-            ? status(`Press Enter to go to line ${lastParsed.line} in the current file.`)
-            : status('No matching files.');
+            ? status(jt('ide.quickOpen.pressEnterGoToLine', 'Press Enter to go to line {line} in the current file.', { line: lastParsed.line }))
+            : status(jt('ide.quickOpen.noMatchingFiles', 'No matching files.'));
         },
         renderTrailingStatus: (matches, query) => (workspaceResult?.truncated && !isSymbolQuery(query)
-          ? status('File list truncated - narrow your search.')
+          ? status(jt('ide.quickOpen.fileListTruncated', 'File list truncated - narrow your search.'))
           : ''),
         onSubmit: (match, { close }) => {
           // A symbol row (only produced in @-mode) jumps to its line/col. Keying
@@ -541,9 +542,9 @@
       panelClass: 'ide-recent-files-panel',
       fieldClass: 'ide-recent-files-field',
       resultsClass: 'ide-recent-files-results',
-      placeholder: 'Recently edited files…',
-      ariaLabel: 'Recently edited files',
-      resultsAriaLabel: 'Recently edited files',
+      placeholder: jt('ide.quickOpen.recentPlaceholder', 'Recently edited files…'),
+      ariaLabel: jt('ide.quickOpen.recentLabel', 'Recently edited files'),
+      resultsAriaLabel: jt('ide.quickOpen.recentLabel', 'Recently edited files'),
       inputDataset: { 'ide-recent-files-input': '1' },
       inputSelector: '[data-ide-recent-files-input]',
       rowSelector: '[data-ide-recent-files-path]',
@@ -551,7 +552,7 @@
         computeMatches: computeRecentMatches,
         buildRowMarkup: buildRecentRowMarkup,
         isLoading: () => false,
-        renderEmptyStatus: () => status('No recently-edited files.'),
+        renderEmptyStatus: () => status(jt('ide.quickOpen.noRecentFiles', 'No recently-edited files.')),
         onSubmit: (match, { close }) => {
           if (match) {
             onOpenFile(match.path);

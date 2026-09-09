@@ -11,6 +11,7 @@
   root.rendererIdeExplodeStates = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -94,7 +95,7 @@
       spinner.className = 'ide-explode-state-spinner';
       spinner.setAttribute('aria-hidden', 'true');
       panel.appendChild(spinner);
-      addTitle('Building exploded view…');
+      addTitle(jt('ide.explode.building', 'Building exploded view…'));
       show();
     }
 
@@ -102,8 +103,8 @@
       if (disposed || !ensurePanel()) return;
       clear();
       setPoliteness(false);
-      addTitle('Nothing to explode');
-      addDetail('No functions or module data were found in this file.');
+      addTitle(jt('ide.explode.nothingToExplode', 'Nothing to explode'));
+      addDetail(jt('ide.explode.noFunctions', 'No functions or module data were found in this file.'));
       show();
     }
 
@@ -111,12 +112,12 @@
       if (disposed || !ensurePanel()) return;
       clear();
       setPoliteness(true);
-      addTitle('Couldn’t parse this file');
-      addDetail(detail || 'The editor’s language service could not analyze this file.');
+      addTitle(jt('ide.explode.parseFailed', 'Couldn’t parse this file'));
+      addDetail(detail || jt('ide.explode.analysisFailed', 'The editor’s language service could not analyze this file.'));
       if (onRetry && typeof actionButton === 'function') {
         // Button from the inventory action-button primitive (no raw element).
         const holder = documentRef.createElement('div');
-        holder.innerHTML = actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: 'Retry', ariaLabel: 'Retry building the exploded view', title: 'Retry building the exploded view' });
+        holder.innerHTML = actionButton({ plain: true, className: 'ide-viewmode-seg-btn', label: jt('common.retry', 'Retry'), ariaLabel: jt('ide.explode.retryBuild', 'Retry building the exploded view'), title: jt('ide.explode.retryBuild', 'Retry building the exploded view') });
         const btn = holder.firstElementChild;
         if (btn) {
           btn.addEventListener('click', () => { if (!disposed) onRetry(); });

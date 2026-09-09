@@ -1,0 +1,68 @@
+[
+  {
+    "name": "session-default-titles",
+    "file": "renderer/shell/renderer-lifecycle-utils.js",
+    "text": "New Chat",
+    "reason": "persisted session title; translated at display time"
+  },
+  {
+    "name": "session-default-titles",
+    "file": "renderer/shell/renderer-lifecycle-utils.js",
+    "text": "New Plugin Session",
+    "reason": "persisted session title; translated at display time"
+  },
+  {
+    "name": "session-default-titles",
+    "file": "renderer/chat/renderer-send-flow-helpers.js",
+    "text": "New Chat",
+    "reason": "persisted session title; translated at display time"
+  },
+  {
+    "name": "scratchpad-default-titles",
+    "file": "renderer/features/renderer-dashboard-scratchpad-actions.js",
+    "text": "Note {expr}",
+    "reason": "persisted generated scratchpad title; translated at display time"
+  },
+  {
+    "name": "scratchpad-default-titles",
+    "file": "renderer/features/renderer-dashboard-scratchpad-actions.js",
+    "text": "Note 1",
+    "reason": "persisted generated scratchpad title; translated at display time"
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "index.html",
+    "text": "npm --prefix remote/relay ci",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "index.html",
+    "text": "npm --prefix remote/relay exec wrangler login",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "index.html",
+    "text": "npm run remote:relay:deploy",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "renderer/shell/renderer-settings-remote-section.js",
+    "text": "npm --prefix remote/relay ci",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "renderer/shell/renderer-settings-remote-section.js",
+    "text": "npm --prefix remote/relay exec wrangler login",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  },
+  {
+    "name": "remote-terminal-commands",
+    "file": "renderer/shell/renderer-settings-remote-section.js",
+    "text": "npm run remote:relay:deploy",
+    "reason": "Exact executable command copied to the terminal; translation would change its behavior."
+  }
+]

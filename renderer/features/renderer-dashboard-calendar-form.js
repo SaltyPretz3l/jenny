@@ -12,6 +12,7 @@
   }
   root.rendererDashboardCalendarForm = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const { pad2 } = windowRef.rendererDashboardWidgetsCore
     || (typeof require === 'function' ? require('./renderer-dashboard-widgets-core') : {});
@@ -46,13 +47,13 @@
   }
 
   const RECURRENCE_OPTIONS = [
-    { value: 'none', label: 'Does not repeat' },
-    { value: 'daily', label: 'Daily' },
-    { value: 'weekdays', label: 'Weekdays (Mon–Fri)' },
-    { value: 'weekly', label: 'Weekly' },
-    { value: 'biweekly', label: 'Every two weeks' },
-    { value: 'monthly', label: 'Monthly' },
-    { value: 'yearly', label: 'Yearly' },
+    { value: 'none', label: jt('dashboard.calendar.form.doesNotRepeat', 'Does not repeat') },
+    { value: 'daily', label: jt('dashboard.calendar.form.daily', 'Daily') },
+    { value: 'weekdays', label: jt('dashboard.calendar.form.weekdays', 'Weekdays (Mon–Fri)') },
+    { value: 'weekly', label: jt('dashboard.calendar.form.weekly', 'Weekly') },
+    { value: 'biweekly', label: jt('dashboard.calendar.form.everyTwoWeeks', 'Every two weeks') },
+    { value: 'monthly', label: jt('dashboard.calendar.form.monthly', 'Monthly') },
+    { value: 'yearly', label: jt('dashboard.calendar.form.yearly', 'Yearly') },
   ];
 
   // Default create values: the next half-hour slot (or an explicit slot the
@@ -110,71 +111,71 @@
     const occScope = isEdit && v.recurrence !== 'none' && Boolean(v.occurrenceStart);
     const categoryOptions = (Array.isArray(categories) && categories.length
       ? categories
-      : [{ id: 'default', label: 'Default' }]
+      : [{ id: 'default', label: jt('dashboard.calendar.form.defaultCategory', 'Default') }]
     ).map((category) => ({ value: category.id, label: category.label }));
 
     const timeFields = v.allDay ? '' : ''
       + p.timeField({
-        id: 'calFormStart', label: 'Start', value: v.start, step: '300',
+        id: 'calFormStart', label: jt('dashboard.calendar.form.start', 'Start'), value: v.start, step: '300',
         dataset: { 'cal-form-field': 'start' },
       })
       + p.timeField({
-        id: 'calFormEnd', label: 'End', value: v.end, step: '300',
+        id: 'calFormEnd', label: jt('dashboard.calendar.form.end', 'End'), value: v.end, step: '300',
         dataset: { 'cal-form-field': 'end' },
       });
 
     return ''
       + '<div class="cal-form" data-cal-form="1" role="dialog" aria-labelledby="calFormHeading">'
-      + `<div class="cal-form__heading" id="calFormHeading">${isEdit ? 'Edit event' : 'New event'}`
+      + `<div class="cal-form__heading" id="calFormHeading">${escapeHtml(isEdit ? jt('dashboard.calendar.form.editEvent', 'Edit event') : jt('dashboard.calendar.form.newEvent', 'New event'))}`
       + (isEdit && v.recurrence !== 'none'
         ? `<span class="cal-form__series-note">${occScope
-          ? 'recurring event — choose a scope when saving'
-          : 'edits apply to the whole series'}</span>`
+          ? escapeHtml(jt('dashboard.calendar.form.recurringScopeHint', 'recurring event — choose a scope when saving'))
+          : escapeHtml(jt('dashboard.calendar.form.wholeSeriesHint', 'edits apply to the whole series'))}</span>`
         : '')
       + '</div>'
       + (error ? `<div class="cal-form__error" role="alert">${escapeHtml(error)}</div>` : '')
       + '<div class="cal-form__row cal-form__row--title">'
       + p.textField({
-        id: 'calFormTitle', label: 'Title', value: v.title, maxLength: 200,
-        placeholder: 'Event title', spellcheck: true, dataset: { 'cal-form-field': 'title' },
+        id: 'calFormTitle', label: jt('dashboard.calendar.form.title', 'Title'), value: v.title, maxLength: 200,
+        placeholder: jt('dashboard.calendar.form.eventTitle', 'Event title'), spellcheck: true, dataset: { 'cal-form-field': 'title' },
       })
       + '</div>'
       + '<div class="cal-form__row">'
       + p.dateField({
-        id: 'calFormDate', label: 'Date', value: v.date,
+        id: 'calFormDate', label: jt('dashboard.calendar.form.date', 'Date'), value: v.date,
         dataset: { 'cal-form-field': 'date' },
       })
       + timeFields
       + `<div class="cal-form__toggle">${p.toggleSwitch.toggleSwitch({
-        id: 'calFormAllDay', label: 'All day', checked: v.allDay === true,
+        id: 'calFormAllDay', label: jt('dashboard.calendar.form.allDay', 'All day'), checked: v.allDay === true,
       })}</div>`
       + '</div>'
       + '<div class="cal-form__row">'
       + p.selectField({
-        id: 'calFormCategory', label: 'Category', value: v.categoryId,
+        id: 'calFormCategory', label: jt('dashboard.calendar.form.category', 'Category'), value: v.categoryId,
         options: categoryOptions, dataset: { 'cal-form-field': 'category' },
       })
       + p.selectField({
-        id: 'calFormRecurrence', label: 'Repeats', value: v.recurrence,
+        id: 'calFormRecurrence', label: jt('dashboard.calendar.form.repeats', 'Repeats'), value: v.recurrence,
         options: RECURRENCE_OPTIONS, dataset: { 'cal-form-field': 'recurrence' },
       })
       + '</div>'
       + '<div class="cal-form__row cal-form__row--notes">'
       + p.textField({
-        id: 'calFormNotes', label: 'Notes', value: v.notes, multiline: true, maxLength: 2000,
+        id: 'calFormNotes', label: jt('dashboard.calendar.form.notes', 'Notes'), value: v.notes, multiline: true, maxLength: 2000,
         spellcheck: true,
         dataset: { 'cal-form-field': 'notes' },
       })
       + '</div>'
       + '<div class="cal-form__actions">'
       + (occScope
-        ? p.actionButton({ variant: 'primary', label: 'Save this event', dataset: { 'cal-form-action': 'save-occurrence' } })
-          + p.actionButton({ variant: 'secondary', label: 'Save all events', dataset: { 'cal-form-action': 'save' } })
-        : p.actionButton({ variant: 'primary', label: isEdit ? 'Save' : 'Create', dataset: { 'cal-form-action': 'save' } }))
-      + p.actionButton({ variant: 'ghost', label: 'Cancel', dataset: { 'cal-form-action': 'cancel' } })
+        ? p.actionButton({ variant: 'primary', label: jt('dashboard.calendar.form.saveThisEvent', 'Save this event'), dataset: { 'cal-form-action': 'save-occurrence' } })
+          + p.actionButton({ variant: 'secondary', label: jt('dashboard.calendar.form.saveAllEvents', 'Save all events'), dataset: { 'cal-form-action': 'save' } })
+        : p.actionButton({ variant: 'primary', label: isEdit ? jt('common.save', 'Save') : jt('dashboard.calendar.form.create', 'Create'), dataset: { 'cal-form-action': 'save' } }))
+      + p.actionButton({ variant: 'ghost', label: jt('common.cancel', 'Cancel'), dataset: { 'cal-form-action': 'cancel' } })
       + (isEdit
         ? p.actionButton({
-          variant: 'danger', label: occScope ? 'Delete series' : 'Delete',
+          variant: 'danger', label: occScope ? jt('dashboard.calendar.form.deleteSeries', 'Delete series') : jt('common.delete', 'Delete'),
           dataset: { 'cal-form-action': 'delete' },
         })
         : '')
@@ -211,20 +212,20 @@
   function buildEventPayload(values) {
     const v = values || {};
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v.date || ''))) {
-      return { error: 'Pick a date for the event.' };
+      return { error: jt('dashboard.calendar.form.pickDateError', 'Pick a date for the event.') };
     }
     if (v.allDay !== true) {
       if (!/^\d{2}:\d{2}$/.test(String(v.start || ''))) {
-        return { error: 'Pick a start time (or mark the event all-day).' };
+        return { error: jt('dashboard.calendar.form.pickStartTimeError', 'Pick a start time (or mark the event all-day).') };
       }
       if (!/^\d{2}:\d{2}$/.test(String(v.end || ''))) {
-        return { error: 'Pick an end time (or mark the event all-day).' };
+        return { error: jt('dashboard.calendar.form.pickEndTimeError', 'Pick an end time (or mark the event all-day).') };
       }
       // The form is single-date, so end must follow start on the same day.
       // Without this the schema silently self-heals end -> start+30min, which
       // looks to the user like their chosen end time was ignored.
       if (String(v.end) <= String(v.start)) {
-        return { error: 'End time must be after start time.' };
+        return { error: jt('dashboard.calendar.form.endAfterStartError', 'End time must be after start time.') };
       }
     }
     const start = v.allDay === true ? `${v.date}T00:00` : `${v.date}T${v.start}`;
@@ -248,16 +249,16 @@
     const status = meta
       ? (meta.ok ? 'ok' : 'error')
       : 'pending';
-    const statusText = meta?.warning || (status === 'ok' ? 'OK' : 'waiting for first fetch');
+    const statusText = meta?.warning || (status === 'ok' ? 'OK' : jt('dashboard.calendar.feeds.waitingForFirstFetch', 'waiting for first fetch'));
     return ''
       + `<div class="cal-feeds__row" data-state="${status}">`
       + `<span class="cal-feeds__name">${escapeHtml(feed.name || feed.id)}</span>`
       + `<span class="cal-feeds__url">${escapeHtml(feed.url || '')}</span>`
       + `<span class="cal-feeds__status">${escapeHtml(statusText)}</span>`
       + p.actionButton({
-        variant: 'ghost', size: 'sm', label: 'Remove',
-        ariaLabel: `Remove feed ${feed.name || feed.id}`,
-        title: `Remove feed ${feed.name || feed.id}`,
+        variant: 'ghost', size: 'sm', label: jt('common.remove', 'Remove'),
+        ariaLabel: jt('dashboard.calendar.form.removeFeed', 'Remove feed {name}', { name: feed.name || feed.id }),
+        title: jt('dashboard.calendar.form.removeFeed', 'Remove feed {name}', { name: feed.name || feed.id }),
         dataset: { 'cal-feed-remove': String(feed.id || '') },
       })
       + '</div>';
@@ -277,34 +278,34 @@
     const metaById = new Map((Array.isArray(feedsMeta) ? feedsMeta : []).map((meta) => [meta.id, meta]));
     const colorOptions = (Array.isArray(categories) && categories.length
       ? categories
-      : [{ id: 'default', label: 'Default' }]
+      : [{ id: 'default', label: jt('dashboard.calendar.form.defaultCategory', 'Default') }]
     ).map((category) => ({ value: category.id, label: category.label }));
     return ''
       + '<div class="cal-feeds" data-cal-feeds="1">'
-      + '<div class="cal-form__heading">Calendar feeds'
-      + '<span class="cal-form__series-note">read-only ICS subscriptions (Outlook/Google publish links)</span>'
+      + '<div class="cal-form__heading">' + escapeHtml(jt('dashboard.calendar.form.calendarFeeds', 'Calendar feeds'))
+      + '<span class="cal-form__series-note">' + escapeHtml(jt('dashboard.calendar.form.feedSubscriptionHint', 'read-only ICS subscriptions (Outlook/Google publish links)')) + '</span>'
       + '</div>'
       + (error ? `<div class="cal-form__error" role="alert">${escapeHtml(error)}</div>` : '')
       + (configured.length
         ? configured.map((feed) => buildFeedRowMarkup(p, feed, metaById.get(feed.id))).join('')
-        : '<div class="cal-feeds__empty">No feeds yet.</div>')
+        : '<div class="cal-feeds__empty">' + escapeHtml(jt('dashboard.calendar.form.noFeeds', 'No feeds yet.')) + '</div>')
       + '<div class="cal-feeds__add">'
       + p.textField({
-        id: 'calFeedName', label: 'Name', placeholder: 'Team calendar', maxLength: 80,
+        id: 'calFeedName', label: jt('dashboard.calendar.form.feedName', 'Name'), placeholder: jt('dashboard.calendar.form.teamCalendarPlaceholder', 'Team calendar'), maxLength: 80,
         dataset: { 'cal-feed-field': 'name' },
       })
       + p.urlField({
-        id: 'calFeedUrl', label: 'ICS URL', placeholder: 'https://…/calendar.ics',
+        id: 'calFeedUrl', label: jt('dashboard.calendar.form.icsUrl', 'ICS URL'), placeholder: jt('dashboard.calendar.form.icsUrlPlaceholder', 'https://…/calendar.ics'),
         dataset: { 'cal-feed-field': 'url' },
       })
       + p.selectField({
-        id: 'calFeedColor', label: 'Color', value: 'default', options: colorOptions,
+        id: 'calFeedColor', label: jt('dashboard.calendar.form.color', 'Color'), value: 'default', options: colorOptions,
         dataset: { 'cal-feed-field': 'color' },
       })
-      + p.actionButton({ variant: 'secondary', size: 'sm', label: 'Add feed', dataset: { 'cal-feed-add': '1' } })
+      + p.actionButton({ variant: 'secondary', size: 'sm', label: jt('dashboard.calendar.form.addFeed', 'Add feed'), dataset: { 'cal-feed-add': '1' } })
       + '</div>'
       + `<div class="cal-form__actions">${p.actionButton({
-        variant: 'ghost', label: 'Done', dataset: { 'cal-feeds-close': '1' },
+        variant: 'ghost', label: jt('common.done', 'Done'), dataset: { 'cal-feeds-close': '1' },
       })}</div>`
       + '</div>';
   }

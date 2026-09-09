@@ -52,6 +52,6 @@
 }
 
 .view-shell.panel-dock-right .view-panel {
-  border-right: 0;
-  border-left: 1px solid var(--view-panel-border);
+  border-inline-end: 0;
+  border-inline-start: 1px solid var(--view-panel-border);
 }

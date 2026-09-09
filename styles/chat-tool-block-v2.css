@@ -61,7 +61,7 @@
 /* ── Combined tool card: paired tool_result folded into the call card ── */
 
 .tool-call-row .tool-result-duration {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: calc(12px * var(--chat-zoom-factor, 1));
   color: var(--text-secondary);
 }
@@ -131,10 +131,10 @@
 }
 
 /* The combined-card rule above pushes the duration right with
-   margin-left:auto; in the minimal row the summary already absorbs the
+   margin-inline-start:auto; in the minimal row the summary already absorbs the
    slack, so the right cluster packs naturally. */
 .tool-call-row--minimal .tool-result-duration {
-  margin-left: 0;
+  margin-inline-start: 0;
 }
 
 .tool-call-row--minimal .tool-call-row-body {
@@ -171,7 +171,7 @@
   display: grid;
   gap: var(--tl-detail-gap);
   margin-top: var(--space-3);
-  margin-left: var(--tl-detail-indent);
+  margin-inline-start: var(--tl-detail-indent);
 }
 
 .tool-call-section-caption {
@@ -252,7 +252,7 @@
   margin: 0;
   /* top padding matches .inv-codeblock so line 1 aligns with the gutter */
   padding: var(--space-5) var(--space-3);
-  text-align: right;
+  text-align: right; /* rtl:physical */
   -webkit-user-select: none;
   user-select: none;
   color: var(--text-muted);

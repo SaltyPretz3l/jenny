@@ -18,15 +18,12 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_STALE_READ_SNAPSHOT,
 )
 from sidecar.ai.tools.builtins import edit_hints, pre_change_snapshot, structured_diff
-from sidecar.ai.tools.builtins.file_atomic_write import (
-    write_bytes_atomic,  # noqa: F401 - compatibility re-export.
-    write_bytes_atomic_if_matches,  # noqa: F401 - compatibility re-export.
-)
 from sidecar.ai.tools.builtins.markdown_sections import (
     extract_markdown_sections,  # noqa: F401 - filesystem compatibility re-export.
     parse_requested_headings,  # noqa: F401 - filesystem compatibility re-export.
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_regular_file
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity
 
 MAX_BINARY_SCAN_BYTES = 8_192
@@ -207,7 +204,8 @@ def is_binary_file(path: Path) -> bool:
     if is_binary_extension(path):
         return True
     try:
-        with path.open("rb") as handle:
+        context = open_regular_file(path, "rb") if hosted_file_io_enabled() else path.open("rb")
+        with context as handle:
             return is_binary_content(handle.read(MAX_BINARY_SCAN_BYTES))
     except OSError as error:
         raise ToolExecutionFailure(
@@ -414,7 +412,7 @@ def read_capped_bytes(
     """
     try:
         pre_stat = resolved.stat()
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
             message=f"failed to stat file: {error}",
@@ -422,7 +420,7 @@ def read_capped_bytes(
         ) from error
     pre_identity = NodeIdentity.from_stat(pre_stat)
     try:
-        with open(resolved, "rb") as fh:
+        with open_regular_file(resolved, "rb") as fh:
             open_stat = os.fstat(fh.fileno())
             if not NodeIdentity.from_stat(open_stat).same_object(pre_identity):
                 raise ToolExecutionFailure(
@@ -432,7 +430,7 @@ def read_capped_bytes(
                 )
             raw_bytes = fh.read(max_bytes + 1)
             post_stat = os.fstat(fh.fileno())
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
             message=f"failed to read file: {error}",
@@ -609,22 +607,11 @@ def load_existing_text_state_for_mutation(  # noqa: PLR0913 - shared mutation se
     metadata only) may pass ``strict_decode=False`` explicitly. Read views that
     authorize later writes and every existing-file text mutator remain strict.
     """
-    try:
-        with open(path, "rb") as handle:
-            stat_result = os.fstat(handle.fileno())
-            if stat_result.st_size > max_bytes:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_IO_FAILED,
-                    message=f"file exceeds {max_bytes} byte limit: {path.name}",
-                    retryable=False,
-                )
-            raw_bytes = handle.read()
-    except OSError as error:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message=f"failed to read file: {error}",
-            retryable=True,
-        ) from error
+    stat_result, raw_bytes = read_capped_bytes(
+        path,
+        max_bytes=max_bytes,
+        relative_path=relative_path,
+    )
 
     if is_binary_extension(path) or is_binary_content(raw_bytes):
         raise ToolExecutionFailure(

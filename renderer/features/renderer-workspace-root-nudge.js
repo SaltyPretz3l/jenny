@@ -28,6 +28,7 @@
   root.rendererWorkspaceRootNudge = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var asyncFence = (root && root.rendererAsyncFence)
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
@@ -45,19 +46,19 @@
     return ''
       + '<div class="workspace-root-nudge" id="' + CHIP_ID + '" role="status" data-workspace-root-nudge>'
       + '<span class="workspace-root-nudge-icon" aria-hidden="true">⚠</span>'
-      + '<span class="workspace-root-nudge-text">No workspace root set &mdash; file tools are off for this chat.</span>'
+      + '<span class="workspace-root-nudge-text">' + String(jt('workspace.rootNudge.message', 'No workspace root set — file tools are off for this chat.')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</span>'
       + actionButton({
         plain: true,
         className: 'workspace-root-nudge-action',
-        label: 'Set workspace root',
+        label: jt('workspace.rootNudge.setRoot', 'Set workspace root'),
         dataset: { 'workspace-root-nudge-action': 'set-root' },
       })
       + actionButton({
         plain: true,
         className: 'workspace-root-nudge-dismiss',
         label: '✕',
-        ariaLabel: 'Dismiss workspace root hint',
-        title: 'Dismiss workspace root hint',
+        ariaLabel: jt('workspace.rootNudge.dismiss', 'Dismiss workspace root hint'),
+        title: jt('workspace.rootNudge.dismiss', 'Dismiss workspace root hint'),
         dataset: { 'workspace-root-nudge-action': 'dismiss' },
       })
       + '</div>';

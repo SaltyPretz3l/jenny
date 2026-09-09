@@ -14,6 +14,7 @@
   root.rendererIdeWatchController = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function noop() {}
 
@@ -67,7 +68,7 @@
       if (change.kind === 'deleted') {
         if (editorHost.isDirty(path)) {
           ideStateUtils.setTabStale?.(ide, path, true);
-          showToastMessage(`${path} was deleted on disk. Its unsaved editor remains open so you can copy the changes.`, {
+          showToastMessage(jt('ide.watch.deletedWithUnsavedEdits', '{path} was deleted on disk. Its unsaved editor remains open so you can copy the changes.', { path }), {
             dedupeKey: `ide:stale:${path}`,
           });
           renderTabs();
@@ -78,7 +79,7 @@
       }
       if (editorHost.isDirty(path)) {
         ideStateUtils.setTabStale?.(ide, path, true);
-        showToastMessage(`${path} changed on disk. Your unsaved edits now differ from the file.`, {
+        showToastMessage(jt('ide.watch.changedWithUnsavedEdits', '{path} changed on disk. Your unsaved edits now differ from the file.', { path }), {
           dedupeKey: `ide:stale:${path}`,
         });
         renderTabs();
@@ -186,7 +187,7 @@
           reason: String(reason || ''),
           attempts: retryAttempt,
         });
-        showToastMessage('Workspace file watching is unavailable — external file changes may not appear until you reopen the workspace.', {
+        showToastMessage(jt('ide.watch.unavailable', 'Workspace file watching is unavailable — external file changes may not appear until you reopen the workspace.'), {
           dedupeKey: 'ide:watch:degraded',
         });
         return;

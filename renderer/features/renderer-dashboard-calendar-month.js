@@ -18,6 +18,8 @@
   }
   root.rendererDashboardCalendarMonth = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const {
     addLocalDays, formatLocalDate, formatTimeShort, parseLocalDateTime, startOfLocalDay,
@@ -30,7 +32,6 @@
   const resolveScrollBehavior = typeof motionPreferenceUtils.resolveScrollBehavior === 'function'
     ? motionPreferenceUtils.resolveScrollBehavior
     : function fallbackResolveScrollBehavior() { return 'smooth'; };
-
   const DEFAULT_MAX_CHIPS = 3;
   // Sunday-first, matching grid.js's computeWeekStart anchor. The weekend test
   // below is POSITIONAL against this array, so the two must move together.
@@ -170,9 +171,9 @@
   // week views emit, so the controller's shared click handler opens the form.
   function buildMonthEvent(button, instance) {
     const readonly = instance.readonly === true;
-    const title = String(instance.title || '').trim() || '(no title)';
+    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
     const start = parseLocalDateTime(instance.start);
-    const timeLabel = instance.allDay ? 'All day' : (start ? formatTimeShort(start) : '');
+    const timeLabel = instance.allDay ? jt('dashboard.calendar.agenda.allDay', 'All day') : (start ? formatTimeShort(start) : '');
     const dataset = { 'cal-instance': '1' };
     if (instance.instanceId) {
       dataset['cal-instance-id'] = String(instance.instanceId);
@@ -186,13 +187,13 @@
     const markerGlyphs = `${instance.recurrenceUnsupported === true ? '↻' : ''}`
       + `${instance.tzApprox === true ? '~' : ''}`;
     const markerTitle = [
-      instance.recurrenceUnsupported === true ? 'Recurrence only partially supported' : '',
-      instance.tzApprox === true ? 'Approximate time (unrecognized feed time zone)' : '',
+      instance.recurrenceUnsupported === true ? jt('dashboard.calendar.agenda.partialRecurrence', 'Recurrence only partially supported') : '',
+      instance.tzApprox === true ? jt('dashboard.calendar.agenda.approximateFeedTime', 'Approximate time (unrecognized feed time zone)') : '',
     ].filter(Boolean).join('; ');
     const marker = markerGlyphs
       ? `<span class="cal-event__marker" title="${escapeHtml(markerTitle)}">${markerGlyphs}</span>`
       : '';
-    const labelBits = [title, timeLabel].filter(Boolean).join(', ') + (readonly ? ', read-only' : '');
+    const labelBits = [title, timeLabel].filter(Boolean).join(', ') + (readonly ? jt('dashboard.calendar.agenda.readOnlySuffix', ', read-only') : '');
     return button({
       plain: true,
       className: `cal-month__event ${categoryClass(instance)}${readonly ? ' cal-event--readonly' : ''}`,
@@ -219,12 +220,12 @@
     const isOutside = day.getTime() < windowStartMs || day.getTime() >= windowEndMs;
     const isFirstOfMonth = day.getDate() === 1;
     const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-    const fullLabel = day.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    const fullLabel = day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long', month: 'long', day: 'numeric' });
     const count = sorted.length;
 
     const numHtml = `<span class="cal-month__daynum">`
       + (isFirstOfMonth
-        ? `<span class="cal-month__daynum-mon">${escapeHtml(day.toLocaleDateString(undefined, { month: 'short' }))}</span> `
+        ? `<span class="cal-month__daynum-mon">${escapeHtml(day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short' }))}</span> `
         : '')
       + `${day.getDate()}</span>`;
 
@@ -232,16 +233,16 @@
     if (overflow.length && chip && popover) {
       const popDomId = `calMonthPop-${dayKey}`;
       eventsHtml += chip({
-        label: `+${overflow.length} more`,
+        label: jt('dashboard.calendar.month.moreCount', '+{count} more', { count: overflow.length }),
         hasPopup: true,
         ariaControls: popDomId,
-        ariaLabel: `${overflow.length} more event${overflow.length === 1 ? '' : 's'} on ${fullLabel}`,
-        title: `${overflow.length} more event${overflow.length === 1 ? '' : 's'} on ${fullLabel}`,
+        ariaLabel: jtn('dashboard.calendar.month.moreEvents', overflow.length, { count: overflow.length, date: fullLabel }, '{count} more event on {date}', '{count} more events on {date}'),
+        title: jtn('dashboard.calendar.month.moreEvents', overflow.length, { count: overflow.length, date: fullLabel }, '{count} more event on {date}', '{count} more events on {date}'),
         className: 'cal-month__more',
       });
       eventsHtml += popover({
         domId: popDomId,
-        ariaLabel: `Events on ${fullLabel}`,
+        ariaLabel: jt('dashboard.calendar.month.eventsOn', 'Events on {date}', { date: fullLabel }),
         className: 'cal-month__pop',
         trustedHtml: sorted.map((instance) => buildMonthEvent(button, instance)).join(''),
       });
@@ -253,7 +254,7 @@
       + (isWeekend ? ' cal-month__cell--weekend' : '');
     return `<div class="${className}" role="gridcell"`
       + ` data-cal-month-day="${escapeHtml(dayKey)}"`
-      + ` aria-label="${escapeHtml(`${fullLabel}, ${count} event${count === 1 ? '' : 's'}`)}"`
+      + ` aria-label="${escapeHtml(jtn('dashboard.calendar.month.dateEventCount', count, { date: fullLabel, count }, '{date}, {count} event', '{date}, {count} events'))}"`
       + (isToday ? ' data-today="true"' : '')
       + '>'
       + numHtml
@@ -320,7 +321,7 @@
     // shares the cells' width context (columns align exactly, no scrollbar-width
     // drift) and stays pinned while the weeks scroll under it.
     return '<div class="cal-month">'
-      + '<div class="cal-month__scroll" data-cal-scroll="1" role="grid" aria-label="Month calendar, scroll for more weeks">'
+      + '<div class="cal-month__scroll" data-cal-scroll="1" role="grid" aria-label="' + escapeHtml(jt('dashboard.calendar.month.label', 'Month calendar, scroll for more weeks')) + '">'
       + `<div class="cal-month__weekdays" role="row">${headerCells}</div>`
       + rows.join('')
       + '</div>'
@@ -386,7 +387,7 @@
 
   function formatRangeLabel(date) {
     const value = date instanceof Date ? date : new Date();
-    return value.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    return value.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'long', year: 'numeric' });
   }
 
   return {

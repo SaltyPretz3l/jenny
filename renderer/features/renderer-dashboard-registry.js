@@ -14,6 +14,7 @@
   }
   root.rendererDashboardRegistry = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const WIDGET_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
 
   function createDashboardRegistry(deps = {}) {
@@ -208,7 +209,7 @@
         } catch (error) {
           card.dataset.widgetState = 'error';
           if (body) {
-            body.textContent = 'This widget hit an error; it will retry on the next refresh.';
+            body.textContent = jt('dashboard.widgets.renderError', 'This widget hit an error; it will retry on the next refresh.');
             // Widgets store render-key skips on the body; a surviving key would
             // make an identical next paint skip the promised retry.
             for (const key of Object.keys(body.dataset)) {

@@ -39,7 +39,13 @@ async function flushSessionStoresAsync(service) {
         }
         return undefined;
       })
-      .catch(() => null);
+      .then(() => {
+        if (service?.hostMode === 'server' && store.hasPendingWrites?.()) throw new Error('host_store_flush_incomplete');
+      })
+      .catch((error) => {
+        if (service?.hostMode === 'server') throw error;
+        return null;
+      });
   });
   await Promise.all(drains);
 }

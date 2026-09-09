@@ -56,6 +56,12 @@ function createHarness({
   const sprite = documentRef.getElementById('sprite');
   const column = documentRef.getElementById('column');
   let layerDisplay = 'block';
+  const resizeObservers = [];
+  dom.window.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; this.targets = new Set(); resizeObservers.push(this); }
+    observe(target) { this.targets.add(target); }
+    disconnect() { this.targets.clear(); }
+  };
 
   global.window = dom.window;
   global.document = documentRef;
@@ -136,6 +142,7 @@ function createHarness({
 
   return {
     dom,
+    resizeObservers,
     holoCalls,
     layer,
     messages,
@@ -146,6 +153,67 @@ function createHarness({
     state,
     setLayerDisplay: (value) => { layerDisplay = value; },
   };
+}
+
+test('layout notifications remeasure the anchor and stop after disposal', async () => {
+  const h = createHarness({ messages: [{ id: 'a1', role: 'assistant', content: 'Done', status: 'complete' }] });
+  const target = h.dom.window.document.querySelector('[data-message-id="a1"]');
+  h.pipeline.updateAssistantSpritePosition();
+  h.scheduler.flushAll();
+  target.getBoundingClientRect = () => ({ top: 280, bottom: 340, height: 60 });
+  assert.equal(h.resizeObservers[0].targets.size, 2);
+  h.resizeObservers[0].callback();
+  h.scheduler.flushAll();
+  assert.equal(h.spriteRuntime.targetY, 280);
+  target.getBoundingClientRect = () => ({ top: 340, bottom: 400, height: 60 });
+  target.setAttribute('open', '');
+  await Promise.resolve();
+  h.scheduler.flushAll();
+  assert.equal(h.spriteRuntime.targetY, 340);
+  target.getBoundingClientRect = () => ({ top: 420, bottom: 480, height: 60 });
+  h.dom.window.dispatchEvent(new h.dom.window.Event('resize'));
+  h.scheduler.flushAll();
+  assert.equal(h.sprite.style.transform, 'translate3d(0, 420px, 0)');
+  h.pipeline.dispose();
+  assert.equal(h.resizeObservers[0].targets.size, 0);
+  h.resizeObservers[0].callback();
+  h.dom.window.dispatchEvent(new h.dom.window.Event('resize'));
+  assert.equal(h.scheduler.size, 0);
+  h.dom.window.close();
+});
+
+test('session changes clear visible identity immediately and fence queued old geometry', () => {
+  const h = createHarness({ messages: [{ id: 'a1', role: 'assistant', content: 'Done', status: 'complete' }], cancelFrames: false });
+  h.pipeline.updateAssistantSpritePosition();
+  h.scheduler.flushAll();
+  h.pipeline.updateAssistantSpritePosition();
+  h.state.currentSessionId = 'session-2';
+  h.scheduler.flushAll();
+  assert.equal(h.layer.classList.contains('visible'), false);
+  h.pipeline.updateAssistantSpritePosition([]);
+  assert.equal(h.spriteRuntime.targetMessageId, '');
+  h.scheduler.flushAll();
+  assert.equal(h.layer.dataset.suppressionReason, 'empty_thread');
+  h.pipeline.dispose();
+  h.dom.window.close();
+});
+
+for (const status of ['error', 'cancelled', 'complete']) {
+  test(`tool-only ending uses ${status} outcome without moving off prose`, () => {
+    const h = createHarness({ messages: [
+      { id: 'u1', role: 'user', content: 'Run' },
+      { id: 'a1', role: 'assistant', content: 'Working', status: 'complete' },
+      { id: 'tool1', role: 'assistant', kind: 'tool_use', status },
+    ] });
+    if (status !== 'complete') setLiveThinkingState(h);
+    h.pipeline.updateAssistantSpritePosition();
+    h.scheduler.flushAll();
+    assert.equal(h.spriteRuntime.targetMessageId, 'a1');
+    assert.equal(h.sprite.dataset.spriteState, status);
+    assert.equal(h.sprite.classList.contains('is-streaming'), false);
+    h.pipeline.dispose();
+    h.dom.window.close();
+  });
 }
 
 function appendReasoningRow(article, {
@@ -453,16 +521,29 @@ test('stale positioning callbacks are fenced when frame cancellation is unavaila
   assert.equal(harness.holoCalls.length, holoCallCount + 1, 'only disposal disables holo');
 });
 
-test('missing targets retry only within the bound', () => {
+test('missing targets recover on a later mount without polling', async () => {
   const harness = createHarness({
     messages: [{ id: 'a1', role: 'assistant', status: 'complete', content: 'Done' }],
   });
-  harness.dom.window.document.querySelector('[data-message-id="a1"]').remove();
+  const target = harness.dom.window.document.querySelector('[data-message-id="a1"]');
+  const parent = target.parentNode;
+  target.remove();
 
   harness.pipeline.updateAssistantSpritePosition();
-  assert.equal(harness.scheduler.flushAll(), 5, 'initial frame plus two bounded reanchor attempts');
+  assert.equal(harness.scheduler.flushAll(), 1, 'no polling or retry deadline');
   assert.equal(harness.layer.dataset.suppressionReason, 'missing_target');
   assert.equal(harness.scheduler.size, 0);
-
+  await Promise.resolve();
+  harness.scheduler.flushAll();
+  parent.appendChild(target);
+  await Promise.resolve();
+  harness.scheduler.flushAll();
+  assert.equal(harness.layer.classList.contains('visible'), true);
+  assert.equal(harness.spriteRuntime.targetMessageId, 'a1');
   harness.pipeline.dispose();
+  assert.equal(harness.layer.classList.contains('visible'), false);
+  parent.removeChild(target);
+  await Promise.resolve();
+  assert.equal(harness.scheduler.size, 0, 'disposed observer cannot schedule work');
+  harness.dom.window.close();
 });

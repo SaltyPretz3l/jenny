@@ -16,6 +16,9 @@ export default [
     ignores: [
       "archive/**",
       "dist/**",
+      // Generated hosted browser bundle; lint its server/browser sources.
+      "build/browser/**",
+      "locales/**",
       "node_modules/**",
       // Generated sandboxed preload bundle (gitignored; rebuilt by
       // scripts/build/build-preload.js on every dev launch) — minified
@@ -53,7 +56,7 @@ export default [
     },
   },
   {
-    files: ["*.js", "services/**/*.js", "scripts/**/*.js", "tests/**/*.js", "build/**/*.js"],
+    files: ["*.js", "services/**/*.js", "server/**/*.js", "scripts/**/*.js", "tests/**/*.js", "build/**/*.js"],
     ignores: browserShellFiles,
     languageOptions: {
       ecmaVersion: "latest",
@@ -77,6 +80,44 @@ export default [
     },
     rules: {
       "no-redeclare": "off",
+    },
+  },
+  {
+    files: ["remote/portal/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: globals.browser,
+    },
+  },
+  {
+    files: ["remote/relay/src/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.browser,
+        WebSocketPair: "readonly",
+      },
+    },
+  },
+  {
+    files: ["remote/relay/test/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+      },
+    },
+  },
+  {
+    files: ["scripts/build-remote-portal.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: globals.node,
     },
   },
   {

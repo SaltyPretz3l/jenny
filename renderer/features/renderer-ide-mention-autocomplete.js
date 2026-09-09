@@ -27,6 +27,7 @@
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var MAX_RESULTS = 8; // popover rows
   var MAX_MENTIONS = 8; // cap @-mentions resolved per turn (matches attachment cap)
@@ -259,7 +260,7 @@
       popoverEl = doc.createElement('div');
       popoverEl.className = 'ide-mention-popover hidden';
       popoverEl.setAttribute('role', 'listbox');
-      popoverEl.setAttribute('aria-label', 'Mention a workspace file');
+      popoverEl.setAttribute('aria-label', jt('ide.mentionAutocomplete.label', 'Mention a workspace file'));
       resultsEl = doc.createElement('div');
       resultsEl.className = 'ide-mention-results';
       popoverEl.appendChild(resultsEl);
@@ -288,9 +289,9 @@
         return;
       }
       if (allFiles === null) {
-        resultsEl.innerHTML = '<div class="ide-mention-status">Indexing workspace files…</div>';
+        resultsEl.innerHTML = '<div class="ide-mention-status">' + escapeHtml(jt('ide.mentionAutocomplete.indexing', 'Indexing workspace files…')) + '</div>';
       } else if (!matches.length) {
-        resultsEl.innerHTML = '<div class="ide-mention-status">No matching files.</div>';
+        resultsEl.innerHTML = '<div class="ide-mention-status">' + escapeHtml(jt('ide.mentionAutocomplete.noMatches', 'No matching files.')) + '</div>';
       } else {
         resultsEl.innerHTML = matches.map(buildRowMarkup).join('');
       }

@@ -13,6 +13,7 @@
   }
   root.rendererSettingsSectionRegistry = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SETTINGS_STORAGE_KEY = 'jenny.settings.activeSection';
   const DEFAULT_SETTINGS_SECTION = 'models';
   const SETTINGS_SECTION_ALIASES = Object.freeze({ cost: 'usage' });
@@ -20,10 +21,10 @@
   /* Top-level nav groups, in render order. `disclosure: true` renders the group
    * behind the collapsible "Developer" chevron instead of as an always-visible block. */
   const SETTINGS_GROUP_DEFINITIONS = Object.freeze([
-    { id: 'session', label: 'Session', order: 0 },
-    { id: 'companion', label: 'Companion', order: 1 },
-    { id: 'app', label: 'App', order: 2 },
-    { id: 'developer', label: 'Developer', order: 3, disclosure: true },
+    { id: 'session', label: jt('settings.sections.session.title', 'Session'), order: 0 },
+    { id: 'companion', label: jt('settings.sections.companion.title', 'Companion'), order: 1 },
+    { id: 'app', label: jt('settings.sections.app.title', 'App'), order: 2 },
+    { id: 'developer', label: jt('settings.sections.developer.title', 'Developer'), order: 3, disclosure: true },
   ].map((group) => Object.freeze(group)));
 
   const SETTINGS_SECTION_DEFINITIONS = Object.freeze([
@@ -34,7 +35,7 @@
       id: 'readiness',
       group: 'session',
       order: -1,
-      label: 'Readiness',
+      label: jt('settings.sections.readiness.title', 'Readiness'),
       domKey: 'readiness',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -43,7 +44,7 @@
     {
       id: 'models',
       group: 'session',
-      label: 'Models',
+      label: jt('settings.sections.models.title', 'Models'),
       domKey: 'models',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -52,7 +53,7 @@
     {
       id: 'modelLibrary',
       group: 'session',
-      label: 'Model library',
+      label: jt('settings.sections.modelLibrary.title', 'Model library'),
       domKey: 'modelLibrary',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -60,7 +61,7 @@
     {
       id: 'context',
       group: 'session',
-      label: 'Context',
+      label: jt('settings.sections.context.title', 'Context'),
       domKey: 'context',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -68,7 +69,7 @@
     {
       id: 'tools',
       group: 'session',
-      label: 'Tools',
+      label: jt('settings.sections.tools.title', 'Tools'),
       domKey: 'tools',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -76,7 +77,7 @@
     {
       id: 'skills',
       group: 'session',
-      label: 'Skills',
+      label: jt('settings.sections.skills.title', 'Skills'),
       domKey: 'skills',
       navItemId: 'skillsSettingsNavItem',
       lazy: true,
@@ -92,7 +93,7 @@
     {
       id: 'personality',
       group: 'companion',
-      label: 'Personality',
+      label: jt('settings.sections.personality.title', 'Personality'),
       domKey: 'personality',
       lazy: true,
       refreshPolicy: 'personality',
@@ -101,7 +102,7 @@
     {
       id: 'appearance',
       group: 'companion',
-      label: 'Appearance',
+      label: jt('settings.sections.appearance.title', 'Appearance'),
       domKey: 'appearance',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -109,7 +110,7 @@
     {
       id: 'memories',
       group: 'companion',
-      label: 'Memory',
+      label: jt('settings.sections.memories.title', 'Memory'),
       domKey: 'memories',
       lazy: true,
       refreshPolicy: 'memories',
@@ -119,7 +120,7 @@
     {
       id: 'editor',
       group: 'app',
-      label: 'Editor',
+      label: jt('settings.sections.editor.title', 'Editor'),
       domKey: 'editor',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -127,7 +128,7 @@
     {
       id: 'home',
       group: 'app',
-      label: 'Home',
+      label: jt('settings.sections.home.title', 'Home'),
       domKey: 'home',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -135,7 +136,7 @@
     {
       id: 'offline',
       group: 'app',
-      label: 'Offline',
+      label: jt('settings.sections.offline.title', 'Offline'),
       domKey: 'offline',
       lazy: true,
       refreshPolicy: 'offline',
@@ -144,7 +145,7 @@
     {
       id: 'usage',
       group: 'app',
-      label: 'Usage',
+      label: jt('settings.sections.usage.title', 'Usage'),
       domKey: 'usage',
       navItemId: 'usageSettingsNavItem',
       lazy: true,
@@ -166,15 +167,24 @@
       // anchored to an item that is not on screen.
       id: 'plugins',
       group: 'app',
-      label: 'Plugins & Extensions',
+      label: jt('settings.sections.plugins.title', 'Plugins & Extensions'),
       domKey: 'plugins',
+      refreshPolicy: 'render',
+      diagnosticsLifecycle: 'none',
+    },
+    {
+      id: 'remote',
+      group: 'app',
+      label: jt('settings.sections.remote.title', 'Remote Control'),
+      domKey: 'remote',
+      lazy: true,
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
     },
     {
       id: 'account',
       group: 'app',
-      label: 'Profile & Setup',
+      label: jt('settings.sections.account.title', 'Profile & Setup'),
       domKey: 'account',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -182,7 +192,7 @@
     {
       id: 'dataPrivacy',
       group: 'app',
-      label: 'Data & Privacy',
+      label: jt('settings.sections.dataPrivacy.title', 'Data & Privacy'),
       domKey: 'dataPrivacy',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -190,7 +200,7 @@
     {
       id: 'aboutUpdates',
       group: 'app',
-      label: 'About & Updates',
+      label: jt('settings.sections.aboutUpdates.title', 'About & Updates'),
       domKey: 'aboutUpdates',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
@@ -204,7 +214,7 @@
       // last also leaves LAST_NONADVANCED_SECTION correctly at `aboutUpdates`.
       id: 'advanced',
       group: 'developer',
-      label: 'Advanced',
+      label: jt('settings.sections.advanced.title', 'Advanced'),
       domKey: 'advanced',
       advanced: true,
       // ~28 numeric fields have no business on the boot path.

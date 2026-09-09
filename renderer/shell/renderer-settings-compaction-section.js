@@ -10,6 +10,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MAX_SESSION_ACTIVITIES = 32;
 
   function getActivityMap(state) {
@@ -28,21 +29,21 @@
     const status = String(result?.status || '').trim();
     if (status === 'ok') {
       if (result?.compacted === false) {
-        return { state: 'success', message: 'Nothing to compact.', tone: 'default', reason: 'not_needed' };
+        return { state: 'success', message: jt('settings.compaction.nothingToCompact', 'Nothing to compact.'), tone: 'default', reason: 'not_needed' };
       }
       if (result?.compacted !== true) {
-        return { state: 'error', message: 'Compaction returned an invalid result.', tone: 'danger', reason: 'malformed_result' };
+        return { state: 'error', message: jt('settings.compaction.invalidResult', 'Compaction returned an invalid result.'), tone: 'danger', reason: 'malformed_result' };
       }
       const before = Number.isFinite(Number(result?.tokens_before)) ? Number(result.tokens_before) : null;
       const after = Number.isFinite(Number(result?.tokens_after)) ? Number(result.tokens_after) : null;
-      const base = before != null && after != null ? `Compacted: ${before} -> ${after} tokens.` : 'Compacted.';
+      const base = before != null && after != null ? jt('settings.compaction.completedWithTokenCounts', 'Compacted: {before} -> {after} tokens.', { before, after }) : 'Compacted.';
       if (result?.snapshot_persisted === true) {
-        return { state: 'success', message: `${base} Future turns use the compact context.`, tone: 'success', reason: 'persisted' };
+        return { state: 'success', message: jt('settings.compaction.persisted', '{result} Future turns use the compact context.', { result: base }), tone: 'success', reason: 'persisted' };
       }
       if (result?.snapshot_persisted === false) {
-        return { state: 'error', message: `${base} Could not save it for future turns.`, tone: 'warning', reason: 'snapshot_not_persisted' };
+        return { state: 'error', message: jt('settings.compaction.notPersisted', '{result} Could not save it for future turns.', { result: base }), tone: 'warning', reason: 'snapshot_not_persisted' };
       }
-      return { state: 'error', message: `${base} Could not confirm it was saved for future turns.`, tone: 'warning', reason: 'snapshot_persistence_unknown' };
+      return { state: 'error', message: jt('settings.compaction.persistenceUnknown', '{result} Could not confirm it was saved for future turns.', { result: base }), tone: 'warning', reason: 'snapshot_persistence_unknown' };
     }
 
     const reason = String(result?.reason || '').trim();
@@ -50,21 +51,21 @@
       const retryAfter = Number(result?.retry_after_seconds);
       return {
         state: 'error',
-        message: Number.isFinite(retryAfter) ? `Compaction cooling down, retry in ${Math.max(0, retryAfter)}s.` : 'Compaction cooling down, try again shortly.',
+        message: Number.isFinite(retryAfter) ? jt('settings.compaction.cooldownSeconds', 'Compaction cooling down, retry in {seconds}s.', { seconds: Math.max(0, retryAfter) }) : jt('settings.compaction.cooldownShortly', 'Compaction cooling down, try again shortly.'),
         tone: 'warning', reason,
       };
     }
     const known = {
-      no_active_turn: ['No conversation to compact.', 'default'],
-      session_busy: ['Wait for the current reply to finish, then compact.', 'warning'],
-      feature_disabled: ['Compaction is turned off for this session.', 'warning'],
-      sidecar_unavailable: ['Compaction is unavailable right now (backend not ready).', 'warning'],
-      session_offline_lockdown: ['This session is locked to local engines; switch to a local engine to compact.', 'warning'],
-      compaction_failed: ['Compaction failed.', 'danger'],
-      request_failed: ['Compaction request failed.', 'danger'],
+      no_active_turn: [jt('settings.compaction.noConversation', 'No conversation to compact.'), 'default'],
+      session_busy: [jt('settings.compaction.waitForReply', 'Wait for the current reply to finish, then compact.'), 'warning'],
+      feature_disabled: [jt('settings.compaction.turnedOff', 'Compaction is turned off for this session.'), 'warning'],
+      sidecar_unavailable: [jt('settings.compaction.backendUnavailable', 'Compaction is unavailable right now (backend not ready).'), 'warning'],
+      session_offline_lockdown: [jt('settings.compaction.localEngineRequired', 'This session is locked to local engines; switch to a local engine to compact.'), 'warning'],
+      compaction_failed: [jt('settings.compaction.failed', 'Compaction failed.'), 'danger'],
+      request_failed: [jt('settings.compaction.requestFailed', 'Compaction request failed.'), 'danger'],
     };
     if (known[reason]) return { state: 'error', message: known[reason][0], tone: known[reason][1], reason };
-    return { state: 'error', message: 'Compaction failed for an unknown reason.', tone: 'danger', reason: reason ? 'unknown_reason' : 'malformed_result' };
+    return { state: 'error', message: jt('settings.compaction.unknownFailure', 'Compaction failed for an unknown reason.'), tone: 'danger', reason: reason ? 'unknown_reason' : 'malformed_result' };
   }
 
   function createCompactionCoordinator(options = {}) {
@@ -115,7 +116,7 @@
 
       const startedAt = Date.now();
       setActivity(normalizedSessionId, {
-        state: 'pending', pending: true, message: 'Compacting context…', tone: 'pending',
+        state: 'pending', pending: true, message: jt('settings.compaction.compacting', 'Compacting context…'), tone: 'pending',
         reason: '', source, startedAt, updatedAt: startedAt, scope: 'session.compaction', emphasis: 'subtle',
       });
       log('INFO', 'chat.compaction_started', { sessionId: normalizedSessionId, source });
@@ -237,10 +238,10 @@
       }).catch((error) => {
         if (disposed) return;
         state.compactionTuningActivity = {
-          pending: false, message: 'Summarization guidance is unavailable.', tone: 'warning',
+          pending: false, message: jt('settings.compaction.guidanceUnavailable', 'Summarization guidance is unavailable.'), tone: 'warning',
         };
         rerender();
-        reportError(error, 'Compaction Tuning Load Failed');
+        reportError(error, jt('settings.compaction.tuningLoadFailed', 'Compaction Tuning Load Failed'));
       });
     }
     ensureCompactionTuning();
@@ -250,7 +251,7 @@
         return Promise.resolve({ status: 'rejected', reason: 'update_in_progress' });
       }
       state.compactionTuningActivity = {
-        pending: true, message: 'Applying summarization guidance…', tone: 'pending',
+        pending: true, message: jt('settings.compaction.applyingGuidance', 'Applying summarization guidance…'), tone: 'pending',
       };
       rerender();
       return Promise.resolve().then(() => api.setTuning(payload)).then((result) => {
@@ -258,17 +259,17 @@
         const applied = result?.status === 'applied';
         const tuning = result?.state;
         state.compactionTuningActivity = !applied
-          ? { pending: false, message: `Not applied: ${String(result?.reason || result?.status || 'invalid response').replaceAll('_', ' ')}.`, tone: 'warning' }
-          : { pending: false, message: 'Summarization guidance applied.', tone: 'success' };
+          ? { pending: false, message: jt('settings.compaction.guidanceNotAppliedReason', 'Not applied: {reason}.', { reason: String(result?.reason || result?.status || 'invalid response').replaceAll('_', ' ') }), tone: 'warning' }
+          : { pending: false, message: jt('settings.compaction.guidanceApplied', 'Summarization guidance applied.'), tone: 'success' };
         state.compactionTuning = tuning || null;
         rerender();
       }).catch((error) => {
         if (disposed) return { status: 'rejected', reason: 'disposed' };
         state.compactionTuningActivity = {
-          pending: false, message: 'Summarization guidance was not applied.', tone: 'warning',
+          pending: false, message: jt('settings.compaction.guidanceNotApplied', 'Summarization guidance was not applied.'), tone: 'warning',
         };
         rerender();
-        reportError(error, 'Compaction Tuning Update Failed');
+        reportError(error, jt('settings.compaction.tuningUpdateFailed', 'Compaction Tuning Update Failed'));
         return { status: 'rejected', reason: 'request_failed' };
       });
     }

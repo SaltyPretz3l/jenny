@@ -26,9 +26,12 @@
   root.rendererPersonalityCounters = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   var PERSONALITY_HEADING = '## Personality';
-  var PERSONALITY_PRECEDENCE_TEMPLATE = 'Your name is {name}. Personality shapes tone, not facts; '
+  var PERSONALITY_PRECEDENCE_TEMPLATE = 'Your name is {name}. You are software, not a living being: '
+    + 'you have no body, feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; '
     + 'the current request and the runtime, workspace, and tool instructions take precedence over everything below.';
   var DEFAULT_AGENT_NAME = 'Jenny';
 
@@ -45,8 +48,8 @@
   };
   var SECTION_BUDGETS = { personality: 1500, user: 1000, memory: 1500 };
 
-  var LINT_MESSAGE = '{{…}} placeholders aren’t expanded — the app already tells the model the date.';
-  var OVERSIZED_MESSAGE = 'This file is larger than 64 KiB. Open the folder to edit it.';
+  var LINT_MESSAGE = jt('personality.lint.unexpandedPlaceholders', '{{…}} placeholders aren’t expanded — the app already tells the model the date.');
+  var OVERSIZED_MESSAGE = jt('personality.errors.fileTooLarge', 'This file is larger than 64 KiB. Open the folder to edit it.');
 
   var FRONTMATTER_PATTERN = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
   var H1_PATTERN = /^#[ \t]+[^\r\n]*(?:\r?\n|$)/;
@@ -283,7 +286,7 @@
   /* ── Presentation models ──────────────────────────────────────────────── */
 
   function formatNumber(value) {
-    return Number(value || 0).toLocaleString('en-US');
+    return Number(value || 0).toLocaleString(globalThis.jennyI18n?.tag?.());
   }
 
   /**
@@ -300,8 +303,7 @@
       budget: limit,
       over: over,
       overflow: overflow,
-      text: formatNumber(chars) + ' / ' + formatNumber(limit)
-        + (over ? ' — the last ' + formatNumber(overflow) + ' characters won’t be sent' : ''),
+      text: over ? jt('personality.counter.overflow', '{used} / {limit} — the last {overflow} characters won’t be sent', { used: formatNumber(chars), limit: formatNumber(limit), overflow: formatNumber(overflow) }) : formatNumber(chars) + ' / ' + formatNumber(limit),
     };
   }
 
@@ -310,16 +312,16 @@
   }
 
   function buildTokenLine(tokens) {
-    return 'Sent with every message · about ' + formatNumber(Math.max(Number(tokens) || 0, 0)) + ' tokens';
+    return jt('personality.counter.tokenEstimate', 'Sent with every message · about {count} tokens', { count: formatNumber(Math.max(Number(tokens) || 0, 0)) });
   }
 
   function formatSavedAgo(deltaMs) {
     var delta = Number(deltaMs);
     if (!Number.isFinite(delta) || delta < 0) delta = 0;
-    if (delta < 45000) return 'just now';
-    if (delta < 3600000) return Math.max(Math.round(delta / 60000), 1) + ' min ago';
-    if (delta < 86400000) return Math.max(Math.round(delta / 3600000), 1) + ' hr ago';
-    return 'a while ago';
+    if (delta < 45000) return jt('personality.status.justNow', 'just now');
+    if (delta < 3600000) return jtn('personality.status.minutesAgo', Math.max(Math.round(delta / 60000), 1), { count: Math.max(Math.round(delta / 60000), 1) }, '{count} min ago', '{count} min ago');
+    if (delta < 86400000) return jtn('personality.status.hoursAgo', Math.max(Math.round(delta / 3600000), 1), { count: Math.max(Math.round(delta / 3600000), 1) }, '{count} hr ago', '{count} hr ago');
+    return jt('personality.status.aWhileAgo', 'a while ago');
   }
 
   /**
@@ -333,7 +335,7 @@
     var loadStatus = String(source.loadStatus || '').trim();
     if (loadStatus) return loadStatus;
     if (source.loading === true) return 'Loading…';
-    if (source.dirty === true) return 'Unsaved changes';
+    if (source.dirty === true) return jt('personality.status.unsavedChangesShort', 'Unsaved changes');
     var savedAt = Number(source.savedAt || 0);
     if (savedAt > 0) {
       var now = Number(source.now || 0) || Date.now();
@@ -355,8 +357,8 @@
     var failed = Array.isArray(source.failed)
       ? source.failed.map(function (entry) { return String(entry || ''); }).filter(Boolean)
       : [];
-    if (failed.length) return prefix + 'could not write ' + failed.join(', ') + '.';
-    return prefix + 'the change was not acknowledged.';
+    if (failed.length) return jt('personality.errors.writeFailed', '{prefix}could not write {files}.', { prefix: prefix, files: failed.join(', ') });
+    return jt('personality.errors.changeNotAcknowledged', '{prefix}the change was not acknowledged.', { prefix: prefix });
   }
 
   return {

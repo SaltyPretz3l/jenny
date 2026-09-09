@@ -21,11 +21,10 @@ SEMVER_RE = re.compile(
 
 RELEASE_WORKFLOWS = (
     Path(".github") / "workflows" / "release.yml",
-    Path(".github") / "workflows" / "release-attestation.yml",
     Path(".github") / "workflows" / "ci-linux-package.yml",
 )
 # Source-repo-only lanes; the public source export ships release.yml alone.
-PRIVATE_RELEASE_WORKFLOWS = frozenset({"release-attestation.yml", "ci-linux-package.yml"})
+PRIVATE_RELEASE_WORKFLOWS = frozenset({"ci-linux-package.yml"})
 # Any one of these in an earlier ``run:`` step satisfies the preload
 # requirement: the dedicated builder, or a pack/release npm script that
 # already embeds it.
@@ -34,6 +33,9 @@ PRELOAD_BUILD_MARKERS = (
     "npm run pack:",
     "npm run release:windows",
 )
+NATIVE_RELEASE_BUILD_COMMANDS = {
+    "build:restricted-host:release", "build:full-host-supervisor:release",
+}
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -77,7 +79,7 @@ REQUIRED_SCRIPTS = {
         "npm run build:sidecar && npm run build:restricted-host:release && "
         "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "
-        "--config electron-builder.yml --publish always"
+        "--config electron-builder.yml --publish never"
     ),
     "release:smoke": "python scripts/packaging/smoke_packaged_flow.py",
 }
@@ -235,6 +237,105 @@ def _is_distribution_package(root: Path) -> bool:
     return isinstance(package, dict) and package.get("distribution") is True
 
 
+def _validate_draft_upload_step(
+    run: str, guard: str, platforms: set[str], mac_verified: bool, linux_verified: bool
+) -> list[str]:
+    violations: list[str] = []
+    if "release_assets.py prepare" in run or "release_assets.py upload" in run:
+        if ("github.event_name == 'push'" not in guard
+                or "github.repository == 'SaltyPretz3l/jenny'" not in guard):
+            violations.append(
+                "release.yml publishing must be restricted to public-repository pushes"
+            )
+    if "release_assets.py upload" in run:
+        if not platforms:
+            violations.append("release.yml upload platform must be explicitly validated")
+        if "mac" in platforms and not mac_verified:
+            violations.append("release.yml uploads before mandatory macOS verification")
+        if "linux" in platforms and not linux_verified:
+            violations.append("release.yml Linux uploads require mandatory package smoke")
+    if "gh release upload" in run or "gh release create" in run or "--clobber" in run:
+        violations.append("release.yml writes must use the draft-only release_assets helper")
+    return violations
+
+
+def _upload_platforms(run: str, job: dict[str, object]) -> set[str]:
+    platforms = {value for value in ("linux", "mac", "windows")
+                 if _has_cli_option(run, "--platform", value)}
+    if re.search(r"--platform(?:\s+|=)\$\{\{\s*matrix\.release_platform\s*\}\}", run):
+        matrix = job.get("strategy", {}).get("matrix", {})
+        platforms.update(row.get("release_platform") for row in matrix.get("include", []))
+    return platforms if platforms <= {"linux", "mac", "windows"} else set()
+
+
+def _validate_prepare_dependency(job: dict[str, object], name: str) -> list[str]:
+    needs = job.get("needs", [])
+    if needs == "prepare" or isinstance(needs, list) and "prepare" in needs:
+        guard = str(job.get("if", ""))
+        if not all(part in guard for part in (
+            "always()", "!cancelled()", "github.event_name == 'workflow_dispatch'",
+            "needs.prepare.result == 'success'",
+        )):
+            return [f"release.yml {name} must run after skipped prepare on manual dispatch"]
+    return []
+
+
+def _validate_public_release_safety(workflow: dict[str, object]) -> list[str]:
+    """Manual runs cannot publish; Mac upload follows native package verification."""
+    violations: list[str] = []
+    concurrency = workflow.get("concurrency", {})
+    if (not isinstance(concurrency, dict) or concurrency.get("cancel-in-progress") is not False
+            or "github.ref" not in str(concurrency.get("group", ""))):
+        violations.append("release.yml must serialize release runs by ref without cancellation")
+    jobs = workflow.get("jobs", {})
+    for name, steps in _workflow_jobs(workflow):
+        job = jobs[name]
+        violations.extend(_validate_prepare_dependency(job, name))
+        verified = False
+        linux_verified = False
+        upload_platforms = set().union(*(
+            _upload_platforms(str(step.get("run") or ""), job) for step in steps
+            if "release_assets.py upload" in str(step.get("run") or "")
+        ))
+        native_builds = set()
+        for step in steps:
+            run = str(step.get("run") or "")
+            guard = f"{job.get('if', '')} {step.get('if', '')}"
+            violations.extend(_validate_draft_upload_step(
+                run, guard, _upload_platforms(run, job), verified, linux_verified
+            ))
+            if "electron-builder" in run and not _has_cli_option(run, "--publish", "never"):
+                violations.append("release.yml must build with --publish never before verification")
+            if ("mac" in upload_platforms and "electron-builder" in run
+                    and native_builds != NATIVE_RELEASE_BUILD_COMMANDS):
+                violations.append(
+                    "release.yml must build both native plugin hosts before packaging"
+                )
+            if step.get("continue-on-error") is not True and not step.get("if"):
+                for command in NATIVE_RELEASE_BUILD_COMMANDS:
+                    if f"npm run {command}" in run:
+                        native_builds.add(command)
+            if ("scripts/packaging/smoke_packaged_flow.py" in run
+                    and _has_cli_option(run, "--existing-artifacts")
+                    and _has_cli_option(run, "--composition", "release")
+                    and step.get("continue-on-error") is not True and not step.get("if")):
+                linux_verified = True
+            if "verify_macos_release.py" in run:
+                verified = (step.get("continue-on-error") is not True
+                            and step.get("if") in (None, "runner.os == 'macOS'"))
+    if "release_assets.py prepare" not in str(jobs.get("prepare", {})):
+        violations.append("release.yml must require an unpublished draft before building")
+    return violations
+
+
+def _has_cli_option(run: str, option: str, value: str | None = None) -> bool:
+    """Recognize separate or equals-form flags without depending on ordering."""
+    pattern = r"(?<!\S)" + re.escape(option)
+    if value is not None:
+        pattern += r"(?:[ \t]+|=)[\"']?" + re.escape(value) + r"[\"']?"
+    return re.search(pattern + r"(?=\s|$)", run) is not None
+
+
 def _validate_release_workflows(root: Path) -> list[str]:
     """Every electron-builder invocation needs an earlier preload build.
 
@@ -254,7 +355,7 @@ def _validate_release_workflows(root: Path) -> list[str]:
     required = RELEASE_WORKFLOWS
     if _is_distribution_package(root):
         # The public source export deliberately ships only release.yml; the
-        # attestation and private Linux-package workflows are source-repo lanes
+        # private Linux-package workflow is a source-repo lane
         # (and depend on source-repo state). release.yml itself stays fully
         # validated in the distribution.
         required = tuple(
@@ -270,6 +371,8 @@ def _validate_release_workflows(root: Path) -> list[str]:
         if not isinstance(workflow, dict):
             violations.append(f"{relative.as_posix()} is not a YAML mapping")
             continue
+        if relative.name == 'release.yml':
+            violations.extend(_validate_public_release_safety(workflow))
         for job_name, steps in _workflow_jobs(workflow):
             preload_built = False
             for step in steps:
@@ -335,9 +438,8 @@ def validate_release_version_policy(
     additionally enforces the contract-version policy shared with the
     release cut (Q24): if ``API_VERSION`` or the
     diagnostics ``SCHEMA_VERSION`` moved since the previous release tag,
-    ``RELEASE_NOTES.md`` must document the change. The release-attestation
-    workflow runs this in strict mode so dev iteration does not get blocked
-    while features are still landing.
+    ``RELEASE_NOTES.md`` must document the change. Owners run strict mode
+    before publication; the retired private attestation job no longer runs it.
     """
     violations: list[str] = []
     package = _load_json(root / "package.json")

@@ -7,6 +7,7 @@
   root.rendererArtifactPanelSwitcher = factory(root.inventoryAnchoredListbox, root.rendererArtifactsProjection, root.rendererArtifactPanelChromeRender);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (anchoredListbox, projection, chromeRender) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var OVERLAY_ID = 'artifact-panel-switcher';
 
@@ -92,9 +93,9 @@
         id: 'artifactPanelSwitcher',
         documentRef: doc,
         className: 'artifact-panel-switcher',
-        ariaLabel: 'Select an artifact',
-        filterPlaceholder: 'Search artifacts',
-        filterAriaLabel: 'Search artifacts',
+        ariaLabel: jt('artifacts.panelSwitcher.selectLabel', 'Select an artifact'),
+        filterPlaceholder: jt('artifacts.panelSwitcher.search', 'Search artifacts'),
+        filterAriaLabel: jt('artifacts.panelSwitcher.search', 'Search artifacts'),
         items: items,
         width: Math.max(240, panelRect.width - 16),
         anchorEl: anchorEl,

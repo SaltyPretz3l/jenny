@@ -10,6 +10,7 @@
   }
   root.rendererChatEventSettingsBindings = factory(root.modelCapabilityUtils, root.rendererAsyncFence, root.rendererComposerV2State, root.reasoningEffortProfiles);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (modelCapabilityUtils, asyncFence, composerState, reasoningEffortProfiles) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSettingsEventBindings(deps) {
     const {
       // DOM
@@ -24,6 +25,7 @@
       ACTIVITY_SCOPE,
       // callbacks
       dismissToast,
+      appendClientLog,
       showShellErrorToast,
       showToastMessage,
       toErrorMessage,
@@ -46,11 +48,14 @@
     const PLAN_MODE_HINT_OWNER = 'plan-mode-hint';
     const runModeActivityGate = asyncFence.createGenerationGate();
     const RUN_MODE_TOAST_COPY = Object.freeze({
-      ask: 'Run mode: Ask — Jenny asks before acting',
-      auto: 'Run mode: Auto — tools run without asking',
-      plan: 'Run mode: Plan — read-only planning',
+      ask: jt('composer.runMode.askToast', 'Run mode: Ask — Jenny asks before acting'),
+      auto: jt('composer.runMode.autoToast', 'Run mode: Auto — tools run without asking'),
+      plan: jt('composer.runMode.planToast', 'Run mode: Plan — read-only planning'),
     });
     let runModeControlRegistered = false;
+    let autoRunConfirmed = false;
+    let autoRunConfirmInFlight = null;
+    let autoRunConfirmDialog = null;
     // Effective model the next send will use, mirroring backend-chat-stream's
     // resolveModel precedence: session preferred model first, then the
     // runtime's current/active model.
@@ -95,10 +100,9 @@
       state.ui.planModeHintShownModels.add(dedupeKey);
       const label = typeof formatModelLabel === 'function'
         ? formatModelLabel(modelName)
-        : (modelName || 'the current model');
+        : (modelName || jt('composer.runMode.currentModel', 'the current model'));
       setComposerStatusNotice(
-        `Heads up — ${label} may not follow a multi-step plan reliably. `
-          + 'Plan mode works best with larger models.',
+        jt('composer.runMode.modelCapabilityWarning', 'Heads up — {model} may not follow a multi-step plan reliably. Plan mode works best with larger models.', { model: label }),
         { owner: PLAN_MODE_HINT_OWNER, tone: 'warning' }
       );
     }
@@ -122,8 +126,8 @@
         const handler = handlers ? handlers.get(actionId) : null;
         if (typeof handler === 'function') {
           Promise.resolve(handler()).catch((error) => {
-            showShellErrorToast(toErrorMessage(error, 'Toast action failed.'), {
-              title: 'Action Failed',
+            showShellErrorToast(toErrorMessage(error, jt('toast.actionFailedMessage', 'Toast action failed.')), {
+              title: jt('chat.settings.actionFailedTitle', 'Action Failed'),
               source: TOAST_SOURCE.memory,
               dedupeKey: `${TOAST_SOURCE.memory}:action:error`,
             });
@@ -170,10 +174,10 @@
             ? [ACTIVITY_SCOPE.composerPreferredModel, ACTIVITY_SCOPE.composerReasoningEffort]
             : [ACTIVITY_SCOPE.composerPreferredModel],
           previousValue,
-          failureMessage: () => 'Could not save preferred model.',
+          failureMessage: () => jt('composer.settings.preferredModelSaveFailed', 'Could not save preferred model.'),
           successMessage: '',
         }).catch((error) => {
-          showComposerActionError(error, 'Preference Save Failed');
+          showComposerActionError(error, jt('composer.settings.preferenceSaveFailedTitle', 'Preference Save Failed'));
         });
       }, listenerOptions);
 
@@ -184,10 +188,10 @@
           patch: { reasoningEffort: composerEffortSelect.value },
           scopes: [ACTIVITY_SCOPE.composerReasoningEffort],
           previousValue,
-          failureMessage: () => 'Could not save reasoning effort.',
+          failureMessage: () => jt('composer.settings.reasoningEffortSaveFailed', 'Could not save reasoning effort.'),
           successMessage: '',
         }).catch((error) => {
-          showComposerActionError(error, 'Preference Save Failed');
+          showComposerActionError(error, jt('composer.settings.preferenceSaveFailedTitle', 'Preference Save Failed'));
         });
       }, listenerOptions);
 
@@ -211,6 +215,7 @@
       // composer chip renderer must not matter (per-call isRunModeAvailable guards).
       globalThis.rendererRunModeControl = runModeControl;
       runModeControlRegistered = true;
+      globalThis.rendererHealthPillController?.refreshRunModeFacet?.();
       listenerOptions?.signal?.addEventListener?.('abort', dispose, { once: true });
 
       registerListener(openComposerSettingsViewButton, 'click', () => {
@@ -231,19 +236,55 @@
       return Boolean(chip && !chip.disabled);
     }
 
-    function setRunMode(mode, { source = 'control' } = {}) {
-      if (!isRunModeAvailable()) return false;
-      const previousRunMode = currentRunMode();
-      const next = composerState.normalizeRunMode(mode);
-      if (next === previousRunMode) return Promise.resolve(false);
+    async function confirmAutoRun() {
+      if (autoRunConfirmed) return Promise.resolve(true);
+      if (autoRunConfirmInFlight) return autoRunConfirmInFlight;
+      const confirmDialogFactory = globalThis.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+      const helpOverlayFactory = globalThis.inventoryHelpOverlay?.createHelpOverlay;
+      if (typeof confirmDialogFactory !== 'function' || typeof helpOverlayFactory !== 'function') {
+        if (autoRunConfirmDialog !== false) {
+          appendClientLog?.('WARN', 'run_mode.auto_confirm_unavailable', {
+            confirmDialogAvailable: typeof confirmDialogFactory === 'function',
+            helpOverlayAvailable: typeof helpOverlayFactory === 'function',
+          });
+          autoRunConfirmDialog?.dispose?.();
+          autoRunConfirmDialog = false;
+        }
+        return Promise.resolve(false);
+      }
+      if (!autoRunConfirmDialog) {
+        autoRunConfirmDialog = confirmDialogFactory({
+          document,
+          actionButton: globalThis.inventoryActionButton,
+          helpOverlayFactory,
+          hostId: 'composerAutoRunConfirmOverlay',
+        });
+      }
+      let pending;
+      pending = Promise.resolve(autoRunConfirmDialog.confirm({
+        title: jt('runMode.autoConfirm.title', 'Turn on Auto run?'),
+        message: jt('runMode.autoConfirm.body', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused. Do not leave Jenny running unattended.'),
+        confirmLabel: jt('runMode.autoConfirm.confirm', 'Turn on Auto'),
+        cancelLabel: jt('common.cancel', 'Cancel'),
+        variant: 'danger',
+      })).then((confirmed) => {
+        if (autoRunConfirmInFlight !== pending) return false;
+        if (confirmed === true) autoRunConfirmed = true;
+        return confirmed === true;
+      }, () => false).finally(() => {
+        if (autoRunConfirmInFlight === pending) autoRunConfirmInFlight = null;
+      });
+      autoRunConfirmInFlight = pending;
+      return pending;
+    }
+
+    function persistRunMode(next, source, activityToken) {
       const previousValue = getRuntimePreferenceSnapshot();
-      runModeActivityGate.bump();
-      const activityToken = runModeActivityGate.capture();
       return runRuntimePreferenceActivity({
         patch: { runMode: next },
         scopes: [ACTIVITY_SCOPE.composerRunMode],
         previousValue,
-        failureMessage: () => 'Could not save run mode.',
+        failureMessage: () => jt('composer.settings.runModeSaveFailed', 'Could not save run mode.'),
         successMessage: '',
       }).then((result) => {
         if (!runModeActivityGate.isCurrent(activityToken)) return false;
@@ -255,17 +296,35 @@
         const announcer = document.getElementById('composerModeChipsAnnouncer');
         if (announcer) announcer.textContent = toastCopy;
         showToastMessage?.(toastCopy, {
-          title: 'Run mode',
+          title: jt('composer.runMode.title', 'Run mode'),
           tone: 'info',
           source: TOAST_SOURCE.composerAction,
           dedupeKey: `${TOAST_SOURCE.composerAction}:run-mode:${source}`,
         });
+        globalThis.rendererHealthPillController?.refreshRunModeFacet?.();
         return true;
       }).catch((error) => {
         if (!runModeActivityGate.isCurrent(activityToken)) return false;
         maybeShowPlanModeModelHint(currentRunMode() === 'plan');
-        showComposerActionError(error, 'Run Mode Update Failed');
+        showComposerActionError(error, jt('composer.settings.runModeUpdateFailedTitle', 'Run Mode Update Failed'));
         return false;
+      });
+    }
+
+    function setRunMode(mode, { source = 'control' } = {}) {
+      if (!isRunModeAvailable()) return false;
+      const previousRunMode = currentRunMode();
+      const next = composerState.normalizeRunMode(mode);
+      if (next === previousRunMode) return Promise.resolve(false);
+      runModeActivityGate.bump();
+      const activityToken = runModeActivityGate.capture();
+      // Leaving Plan mode restores the session's pre-plan mode; that is a
+      // restore, not a fresh choice of Auto, so it skips the switch-time
+      // confirmation. The first Auto send is still gated by the composer.
+      if (next !== 'auto' || source === 'shortcut-plan') return persistRunMode(next, source, activityToken);
+      return confirmAutoRun().then((confirmed) => {
+        if (!confirmed || !runModeActivityGate.isCurrent(activityToken)) return false;
+        return persistRunMode(next, source, activityToken);
       });
     }
 
@@ -285,10 +344,20 @@
       return setRunMode(current === 'plan' ? restore : 'plan', { source: 'shortcut-plan' });
     }
 
-    const runModeControl = { cycleRunMode, togglePlanMode, setRunMode };
+    const runModeControl = {
+      cycleRunMode,
+      togglePlanMode,
+      setRunMode,
+      confirmAutoRun,
+      currentRunMode,
+    };
 
     function dispose() {
       runModeActivityGate.bump();
+      autoRunConfirmed = false;
+      autoRunConfirmInFlight = null;
+      autoRunConfirmDialog?.dispose?.();
+      autoRunConfirmDialog = null;
       if (runModeControlRegistered && globalThis.rendererRunModeControl === runModeControl) {
         delete globalThis.rendererRunModeControl;
       }

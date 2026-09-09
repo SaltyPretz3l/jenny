@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (toolCallUtils) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const FALLBACK_LOG_WINDOW_MS = 2000;
 
   function normalizeId(value) {
@@ -287,10 +288,10 @@
      (renderer/chat/renderer-approval-block.js), and duplicating it here is exactly the
      "conflicting and nested announcements" UIUX-029 flags. */
   const TERMINAL_ANNOUNCE_SPECS = {
-    completed: { politeness: 'polite', phrase: (name) => `${name} finished` },
-    errored: { politeness: 'assertive', phrase: (name) => `${name} failed` },
-    denied: { politeness: 'assertive', phrase: (name) => `${name} was denied` },
-    timed_out: { politeness: 'assertive', phrase: (name) => `${name} timed out` },
+    completed: { politeness: 'polite', phrase: (name) => jt('chat.toolCall.finishedAnnouncement', '{tool} finished', { tool: name }) },
+    errored: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.failedAnnouncement', '{tool} failed', { tool: name }) },
+    denied: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.deniedAnnouncement', '{tool} was denied', { tool: name }) },
+    timed_out: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.timedOutAnnouncement', '{tool} timed out', { tool: name }) },
   };
 
   function announceTerminalStatusChange(announcer, callId, previousStatus, nextStatus, toolName) {

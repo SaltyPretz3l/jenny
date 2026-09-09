@@ -11,10 +11,12 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const { createScene, FIELDS } = require('../renderer/features/setup-scenes/scene-capabilities');
+const { initToggleHandlers } = require('../renderer/inventory/toggle-switch');
 
 function mountScene(deps) {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
   const rootEl = dom.window.document.getElementById('root');
+  initToggleHandlers(dom.window.document);
   const scene = createScene(deps || {});
   scene.mount(rootEl);
   return { dom, rootEl, scene };
@@ -41,7 +43,7 @@ test('capabilities scene defaults only local non-mutating tools on', (t) => {
 test('capabilities scene Save persists a batched patch, marks the step done, and closes', async (t) => {
   const calls = { patch: null, marks: [], closed: 0 };
   const { rootEl, scene } = mountScene({
-    persistFeatureSettings: async (patch) => { calls.patch = patch; return { ok: true }; },
+    persistFeatureSettings: async (patch) => { calls.patch = patch; return patch; },
     markStep: async (step, status) => { calls.marks.push([step, status]); },
     closeModal: () => { calls.closed += 1; },
     showToastMessage: () => {},
@@ -74,9 +76,9 @@ test('capabilities scene claims Save synchronously and ignores rapid duplicate c
   let releasePersist;
   const calls = { persisted: 0, marked: 0, closed: 0 };
   const { rootEl, scene } = mountScene({
-    persistFeatureSettings: () => {
+    persistFeatureSettings: (patch) => {
       calls.persisted += 1;
-      return new Promise((resolve) => { releasePersist = resolve; });
+      return new Promise((resolve) => { releasePersist = () => resolve(patch); });
     },
     markStep: async () => { calls.marked += 1; },
     closeModal: () => { calls.closed += 1; },
@@ -94,7 +96,7 @@ test('capabilities scene claims Save synchronously and ignores rapid duplicate c
   rootEl.querySelector('[data-step-modal-action="save"]').click();
   assert.equal(calls.persisted, 1);
 
-  releasePersist({ ok: true });
+  releasePersist();
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(calls.marked, 1);

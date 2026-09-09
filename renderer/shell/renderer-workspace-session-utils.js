@@ -6,6 +6,7 @@
   }
   root.rendererWorkspaceSessionUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function normalizeSessionId(value) {
     return String(value || '').trim();
@@ -42,6 +43,8 @@
     const getApprovalSessionIds = () => getMultiStreamController()?.getApprovalPendingSessionIds?.()
       || [...state.pendingToolApprovals.values()].map((approval) => normalizeSessionId(approval?.sessionId)).filter(Boolean);
 
+    const getAttentionStates = (ids) => getMultiStreamController()?.getSessionAttentionStates?.(ids);
+
     const getStreamingSessionIds = () => getMultiStreamController()?.getStreamingSessionIds?.()
       || (normalizeSessionId(state.activeStreamSessionId) ? [normalizeSessionId(state.activeStreamSessionId)] : []);
 
@@ -62,11 +65,11 @@
       return state.workspace;
     }
 
-    async function syncWorkspaceFromStore({ silent = true, renderAfter = false } = {}) {
+    async function syncWorkspaceFromStore({ silent = true, renderAfter = false, preserveCurrentSession = false } = {}) {
       const wsc = getWorkspaceStateController();
       if (!wsc) return state.workspace;
       const previousSessionId = normalizeSessionId(state.currentSessionId);
-      const nextWorkspace = applyWorkspaceSnapshot(await wsc.restore(state.sessions.map((s) => normalizeSessionId(s?.id)).filter(Boolean)));
+      const nextWorkspace = applyWorkspaceSnapshot(await wsc.restore(state.sessions.map((s) => normalizeSessionId(s?.id)).filter(Boolean), { preserveCurrentSession }));
       if (nextWorkspace.activeSessionId && (nextWorkspace.activeSessionId !== previousSessionId || !state.messagesBySession.has(nextWorkspace.activeSessionId))) {
         await openSession(nextWorkspace.activeSessionId, { silent });
       } else if (!nextWorkspace.activeSessionId) {
@@ -108,8 +111,8 @@
       applyWorkspaceSnapshot(nextWorkspace);
       const resolvedActiveId = normalizeSessionId(state.workspace.activeSessionId);
       if (requestedId && resolvedActiveId !== requestedId) {
-        showToastMessage('Close or finish a busy session before opening another tab.', {
-          title: 'Session Rail Full',
+        showToastMessage(jt('shell.sessions.railFull', 'Close or finish a busy session before opening another tab.'), {
+          title: jt('shell.sessions.railFullTitle', 'Session Rail Full'),
           tone: 'info',
           source: TOAST_SOURCE.sessionAction,
           dedupeKey: 'workspace:cap-busy',
@@ -155,8 +158,8 @@
       const id = normalizeSessionId(sessionId);
       if (!id || !wsc) return false;
       if (!await wsc.closeSession(id)) {
-        showToastMessage('Finish the current response or approval before closing this session.', {
-          title: 'Session Busy', tone: 'info', source: TOAST_SOURCE.sessionAction, dedupeKey: 'workspace:busy-close',
+        showToastMessage(jt('shell.sessions.busyClose', 'Finish the current response or approval before closing this session.'), {
+          title: jt('shell.sessions.busyTitle', 'Session Busy'), tone: 'info', source: TOAST_SOURCE.sessionAction, dedupeKey: 'workspace:busy-close',
         });
         return false;
       }
@@ -181,8 +184,8 @@
       if (typeof wsc?.[method] !== 'function') return;
       const { closed, skipped } = await wsc[method](arg);
       if (skipped > 0) {
-        showToastMessage(`${skipped} busy session(s) kept open.`, {
-          title: 'Sessions Closed', tone: 'info', source: TOAST_SOURCE.sessionAction, dedupeKey: 'workspace:batch-close',
+        showToastMessage(jt('shell.sessions.busyKeptOpen', '{count} busy session(s) kept open.', { count: skipped }), {
+          title: jt('shell.sessions.closedTitle', 'Sessions Closed'), tone: 'info', source: TOAST_SOURCE.sessionAction, dedupeKey: 'workspace:batch-close',
         });
       }
       const previousSessionId = normalizeSessionId(state.currentSessionId);
@@ -217,7 +220,8 @@
           if (id) m[id] = Math.max(Number(element?.dataset?.sessionLinkedCount || 0), 0);
           return m;
         }, {});
-      getWorkspaceChromeController()?.renderSidebarBadges(sessionElements, (state.workspace?.openSessionIds || []).filter((id) => !approvalIds.includes(normalizeSessionId(id))), getStreamingSessionIds().filter((id) => !approvalIds.includes(normalizeSessionId(id))), approvalIds, linkedCounts);
+      getWorkspaceChromeController()?.renderSidebarBadges(sessionElements, state.workspace?.openSessionIds || [], getStreamingSessionIds(), approvalIds, linkedCounts,
+        getAttentionStates(Array.from(sessionElements || [], (element) => element.dataset?.sessionId)));
     };
 
     async function handleLinkedSessionsChanged(sessionId, linkedSessionIds) {
@@ -235,7 +239,7 @@
         renderSessions();
         callbacks.renderWorkspaceChrome();
         renderSettings();
-        showSessionActionError(error, 'Linked Sessions Failed');
+        showSessionActionError(error, jt('shell.workspaceSessions.linkedSessionsFailed', 'Linked Sessions Failed'));
       }
     }
 
@@ -262,7 +266,8 @@
         return getWorkspaceChromeController()?.patchRailRuntime(
           state.workspace?.activeSessionId || state.currentSessionId,
           getStreamingSessionIds(),
-          getApprovalSessionIds()
+          getApprovalSessionIds(),
+          getAttentionStates(state.workspace?.openSessionIds || [])
         );
       }
       getWorkspaceChromeController()?.renderRail(
@@ -270,7 +275,8 @@
         state.workspace?.activeSessionId || state.currentSessionId,
         state.sessions,
         getStreamingSessionIds(),
-        getApprovalSessionIds()
+        getApprovalSessionIds(),
+        getAttentionStates(state.workspace?.openSessionIds || [])
       );
     }
 

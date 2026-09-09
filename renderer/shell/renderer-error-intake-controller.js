@@ -12,6 +12,7 @@
   root.rendererErrorIntakeControllerUtils = factory(root.rendererErrorIntake);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (injectedIntake) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function resolveIntake(provided) {
     if (provided && typeof provided.routeError === 'function') return provided;
@@ -42,7 +43,7 @@
       ? toast.toErrorMessage
       : function fallbackToErrorMessage(error, fallback) {
         var direct = normalizeText(String((error && error.message) || error || ''));
-        return direct || normalizeText(String(fallback || 'Something went wrong.'));
+        return direct || normalizeText(String(fallback || jt('toast.errors.somethingWentWrong', 'Something went wrong.')));
       };
     var sinks = settings.sinks || {};
     /* Banner/auth/startup surfaces own their rendering, so absent sinks
@@ -65,7 +66,7 @@
     function reportError(input, context) {
       if (!intake) {
         /* Core unavailable — never lose an error; fall back raw. */
-        var fallbackId = rawShowShellErrorToast(toErrorMessage(input, 'Something went wrong.'), {});
+        var fallbackId = rawShowShellErrorToast(toErrorMessage(input, jt('toast.errors.somethingWentWrong', 'Something went wrong.')), {});
         return { route: null, toastId: fallbackId };
       }
       var route = intake.routeError(input, context);
@@ -125,7 +126,7 @@
       return reportError({
         message: String(message == null ? '' : message),
         options: {
-          title: normalizeText(opts.title) || 'Action Failed',
+          title: normalizeText(opts.title) || jt('toast.errors.actionFailedTitle', 'Action Failed'),
           source: source,
           dedupeKey: normalizeText(opts.dedupeKey) || (source + ':error'),
           tone: 'danger',
@@ -156,14 +157,14 @@
     function showSessionActionError(error, title) {
       return reportShellActionError(
         rawShowSessionActionError, error, title,
-        normalizeText(TOAST_SOURCE.sessionAction), 'Session action failed.', 'Session Action Failed'
+        normalizeText(TOAST_SOURCE.sessionAction), jt('toast.errors.sessionActionFailed', 'Session action failed.'), jt('toast.errors.sessionActionFailedTitle', 'Session Action Failed')
       );
     }
 
     function showComposerActionError(error, title) {
       return reportShellActionError(
         rawShowComposerActionError, error, title,
-        normalizeText(TOAST_SOURCE.composerAction), 'Composer action failed.', 'Composer Action Failed'
+        normalizeText(TOAST_SOURCE.composerAction), jt('toast.errors.composerActionFailed', 'Composer action failed.'), jt('toast.errors.composerActionFailedTitle', 'Composer Action Failed')
       );
     }
 

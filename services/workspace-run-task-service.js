@@ -4,6 +4,7 @@
 
 const { startRunTask } = require('./backend/workspace-run-task-runner');
 const { RUN_TASK_ERROR_CODES } = require('./backend/error-codes');
+const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
 
 const MAX_CHUNK_BYTES = 64 * 1024; // per onData event, mirrors workspace-terminal-service.js
@@ -125,13 +126,13 @@ class WorkspaceRunTaskService {
     }
     const cmd = String(command || '').trim();
     if (!cmd) {
-      return { ok: false, code: RUN_TASK_ERROR_CODES.SPAWN_FAILED, message: 'No command to run.' };
+      return { ok: false, code: RUN_TASK_ERROR_CODES.SPAWN_FAILED, message: t('main.workspaceTask.noCommand', 'No command to run.') };
     }
     if (this._task) {
       return {
         ok: false,
         code: RUN_TASK_ERROR_CODES.ALREADY_RUNNING,
-        message: 'A task is already running.',
+        message: t('main.workspaceTask.alreadyRunning', 'A task is already running.'),
       };
     }
     let cwd;

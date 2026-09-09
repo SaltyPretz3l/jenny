@@ -24,7 +24,7 @@
   root.rendererDashboardScratchpadMarkdown = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // A Markdown task-list line: optional indent, a -/* bullet, then [ ] or [x].
   // The trailing \r? tolerates a CRLF-stored line (split('\n') leaves the \r),
   // so a checkbox toggle works on imported notes instead of silently no-op'ing.
@@ -110,7 +110,7 @@
     const items = parseLines(text);
     const allBlank = items.every((item) => item.type === 'blank');
     if (allBlank) {
-      return '<div class="dashboard-scratchpad__preview-empty">Nothing to preview yet.</div>';
+      return '<div class="dashboard-scratchpad__preview-empty">' + fallbackEscape(jt('dashboard.widgets.scratchpad.nothingToPreview', 'Nothing to preview yet.')) + '</div>';
     }
     const parts = items.map((item) => {
       if (item.type === 'check') {
@@ -122,8 +122,8 @@
             plain: true,
             className: 'dashboard-scratchpad__check' + (item.checked ? ' is-checked' : ''),
             ariaPressed: item.checked === true,
-            ariaLabel: item.label || 'Checklist item',
-            title: `Mark ${item.label || 'checklist item'} ${item.checked ? 'not done' : 'done'}`,
+            ariaLabel: item.label || jt('dashboard.scratchpad.markdown.checklistItem', 'Checklist item'),
+            title: jt('dashboard.scratchpad.markdown.markState', 'Mark {label} {state}', { label: item.label || jt('dashboard.scratchpad.markdown.checklistItemGeneric', 'checklist item'), state: item.checked ? 'not done' : 'done' }),
             dataset: { 'scratchpad-check': String(item.lineIndex) },
             trustedHtml: inner,
           });

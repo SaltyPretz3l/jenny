@@ -1,0 +1,39 @@
+.composer-remote-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card-background);
+  color: var(--text-primary);
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+.composer-remote-banner[hidden] {
+  display: none;
+  opacity: 0;
+}
+
+.composer-remote-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .composer-remote-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-remote-banner {
+    transition: none;
+  }
+}

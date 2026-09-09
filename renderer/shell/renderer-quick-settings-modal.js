@@ -47,6 +47,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function resolveModule(deps, depKey, globalKey, modulePath) {
     return (deps && deps[depKey])
       || (root && root[globalKey])
@@ -66,7 +67,7 @@
     if (error && typeof error.message === 'string' && error.message) {
       return error.message;
     }
-    return String(error == null ? 'unknown error' : error);
+    return String(error == null ? jt('quickSettings.unknownError', 'unknown error') : error);
   }
 
   function noop() {}
@@ -208,7 +209,7 @@
       slotRoot.dataset.slot = 'appearance';
       const title = documentRef.createElement('h3');
       title.className = 'quick-settings-slot-title';
-      title.textContent = 'Theme';
+      title.textContent = jt('quickSettings.theme', 'Theme');
       const { row, control } = buildRow('Palette');
       slotRoot.appendChild(title);
       slotRoot.appendChild(row);
@@ -220,7 +221,7 @@
         const current = readAppearance();
         buildInventoryHtml(control, inventory && inventory.selectField ? inventory.selectField({
           id: 'quickSettingsPalette',
-          ariaLabel: 'Palette',
+          ariaLabel: jt('quickSettings.palette', 'Palette'),
           value: current.paletteId,
           options: presets.map((p) => ({ value: p.id, label: p.label })),
         }) : '');
@@ -246,16 +247,16 @@
       slotRoot.dataset.slot = 'model';
       const title = documentRef.createElement('h3');
       title.className = 'quick-settings-slot-title';
-      title.textContent = 'Model runtime';
+      title.textContent = jt('quickSettings.modelRuntime', 'Model runtime');
       slotRoot.appendChild(title);
 
-      const contextRow = buildRow('Model profile');
+      const contextRow = buildRow(jt('quickSettings.modelProfile', 'Model profile'));
       slotRoot.appendChild(contextRow.row);
       const contextNote = documentRef.createElement('div');
       contextNote.className = 'quick-settings-row-note';
       slotRoot.appendChild(contextNote);
 
-      const localOnlyRow = buildRow('Force local inference');
+      const localOnlyRow = buildRow(jt('quickSettings.forceLocalInference', 'Force local inference'));
       slotRoot.appendChild(localOnlyRow.row);
       // Do NOT install initToggleHandlers on this host: production's
       // renderer/inventory/index.js already delegates on `document`, and the
@@ -292,15 +293,15 @@
         ).trim().toLowerCase();
         const tuningSupported = !engineType || ['ollama', 'vllm', 'openai-compatible'].includes(engineType);
         buildInventoryHtml(contextRow.control, tuningSupported && inventory && inventory.actionButton ? inventory.actionButton({
-          id: 'open-model-tuning', label: 'Tune current model', variant: 'secondary',
-          disabled: !modelKnown, ariaLabel: 'Open current model tuning',
-          title: 'Open per-model tuning for the current model',
+          id: 'open-model-tuning', label: jt('quickSettings.tuneCurrentModel', 'Tune current model'), variant: 'secondary',
+          disabled: !modelKnown, ariaLabel: jt('quickSettings.openCurrentModelTuning', 'Open current model tuning'),
+          title: jt('quickSettings.openCurrentModelTuningTitle', 'Open per-model tuning for the current model'),
         }) : '');
         contextNote.textContent = !tuningSupported
-          ? 'This engine owns its generation controls.'
+          ? jt('quickSettings.engineOwnsGenerationControls', 'This engine owns its generation controls.')
           : modelKnown
-          ? 'Opens the authoritative per-model profile in Model Library.'
-          : 'Select a model first.';
+          ? jt('quickSettings.opensModelLibraryProfile', 'Opens the authoritative per-model profile in Model Library.')
+          : jt('quickSettings.selectModelFirst', 'Select a model first.');
       }
 
       contextRow.control.addEventListener('click', (event) => {
@@ -315,7 +316,7 @@
         const offlineState = state && state.offline && typeof state.offline === 'object' ? state.offline : {};
         buildInventoryHtml(localOnlyRow.control, inventory && inventory.toggleSwitch ? inventory.toggleSwitch({
            id: 'quickSettingsLocalOnly',
-           label: 'Force local inference',
+           label: jt('quickSettings.forceLocalInference', 'Force local inference'),
           checked: offlineState.mode === 'local_only',
         }) : '');
         renderReadinessNote(offlineState);
@@ -329,8 +330,8 @@
         const ok = offlineState.localChatReady === true;
         const chipState = !resolved ? 'loading' : (ok ? 'live' : 'error');
         const label = !resolved
-          ? 'Checking local inference...'
-          : (ok ? 'Local inference ready' : 'Local inference blocked');
+          ? jt('quickSettings.checkingLocalInference', 'Checking local inference...')
+          : (ok ? jt('quickSettings.localInferenceReady', 'Local inference ready') : jt('quickSettings.localInferenceBlocked', 'Local inference blocked'));
         const title = !resolved || ok ? '' : String(offlineState.summary || offlineState.unavailableReason || '');
         statusChipUtils.applyStatusChip(noteChip, { state: chipState, label, title });
       }
@@ -363,14 +364,14 @@
       slotRoot.dataset.slot = 'zoom';
       const title = documentRef.createElement('h3');
       title.className = 'quick-settings-slot-title';
-      title.textContent = 'Display';
+      title.textContent = jt('quickSettings.display', 'Display');
       slotRoot.appendChild(title);
 
-      const fontScaleRow = buildRow('Font scale');
+      const fontScaleRow = buildRow(jt('quickSettings.fontScale', 'Font scale'));
       slotRoot.appendChild(fontScaleRow.row);
-      const chatZoomRow = buildRow('Chat zoom');
+      const chatZoomRow = buildRow(jt('quickSettings.chatZoom', 'Chat zoom'));
       slotRoot.appendChild(chatZoomRow.row);
-      const sessionOpenRow = buildRow('Session opening');
+      const sessionOpenRow = buildRow(jt('quickSettings.sessionOpening', 'Session opening'));
       slotRoot.appendChild(sessionOpenRow.row);
 
       const fontScalePresets = appearanceUtils && typeof appearanceUtils.getFontScalePresets === 'function'
@@ -389,13 +390,13 @@
         const html = useSegmentedFontScale
           ? (inventory && inventory.segmentedControl ? inventory.segmentedControl({
             id: 'quickSettingsFontScale',
-            ariaLabel: 'Font scale',
+            ariaLabel: jt('quickSettings.fontScale', 'Font scale'),
             value: current.fontScaleId,
             options,
           }) : '')
           : (inventory && inventory.selectField ? inventory.selectField({
             id: 'quickSettingsFontScale',
-            ariaLabel: 'Font scale',
+            ariaLabel: jt('quickSettings.fontScale', 'Font scale'),
             value: current.fontScaleId,
             options,
           }) : '');
@@ -436,7 +437,7 @@
             : 100);
         buildInventoryHtml(chatZoomRow.control, inventory && inventory.selectField ? inventory.selectField({
           id: 'quickSettingsChatZoom',
-          ariaLabel: 'Chat zoom',
+          ariaLabel: jt('quickSettings.chatZoom', 'Chat zoom'),
           value: String(currentZoom),
           options: zoomOptions,
         }) : '');
@@ -452,7 +453,7 @@
         const checked = adapters.sessionOpen?.read?.() === true;
         buildInventoryHtml(sessionOpenRow.control, inventory?.toggleSwitch ? inventory.toggleSwitch({
           id: 'quickSettingsSessionsOpenInNewTab',
-          label: 'Open sessions in a new tab',
+          label: jt('quickSettings.openSessionsInNewTab', 'Open sessions in a new tab'),
           checked,
         }) : '');
       }
@@ -489,12 +490,12 @@
       header.className = 'quick-settings-header';
       const heading = documentRef.createElement('h2');
       heading.id = 'quickSettingsTitle';
-      heading.textContent = 'Quick settings';
+      heading.textContent = jt('quickSettings.title', 'Quick settings');
       const closeHost = documentRef.createElement('div');
       buildInventoryHtml(closeHost, inventory && inventory.actionButton ? inventory.actionButton({
         id: 'quick-settings-close',
-        ariaLabel: 'Close',
-        title: 'Close quick settings',
+        ariaLabel: jt('common.close', 'Close'),
+        title: jt('quickSettings.close', 'Close quick settings'),
         plain: true,
         className: 'quick-settings-close',
       }) : '');
@@ -516,7 +517,7 @@
       const allSettingsHost = documentRef.createElement('div');
       buildInventoryHtml(allSettingsHost, inventory && inventory.actionButton ? inventory.actionButton({
         id: 'quick-settings-all',
-        label: 'All settings',
+        label: jt('quickSettings.allSettings', 'All settings'),
         plain: true,
         className: 'quick-settings-all',
       }) : '');

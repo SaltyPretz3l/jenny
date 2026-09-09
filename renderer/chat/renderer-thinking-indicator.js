@@ -6,6 +6,7 @@
   }
   root.rendererThinkingIndicatorUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const SHIMMER_DELAY_MS = 400;
   const MIN_DISPLAY_MS = 2000;
@@ -137,7 +138,7 @@
       return {
         mode,
         shimmerActive: shimmerActive && !displayComplete,
-        durationText: showDurationFeedback ? `thought for ${durationSeconds}s` : '',
+        durationText: showDurationFeedback ? jt('chat.thinkingIndicator.duration', 'thought for {seconds}s', { seconds: durationSeconds }) : '',
         shouldShow: active || (completePending) || showDurationFeedback,
         shouldAutoHide,
         durationSeconds,

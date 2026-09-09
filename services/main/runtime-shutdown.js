@@ -104,6 +104,8 @@ function createRuntimeShutdownController({
     },
   });
   let emergencyRuntimeShutdownTriggered = false;
+  let workspaceDisposalStarted = false;
+  let workspaceDisposalConfirmed = false;
 
   function getLlamaServerManager() {
     return managedLlamaServer;
@@ -126,10 +128,12 @@ function createRuntimeShutdownController({
     });
   }
 
-  async function runShutdownStage(stage, operation) {
+  async function runShutdownStage(stage, operation, signal) {
+    if (signal?.aborted) return;
     const startedAt = Date.now();
     try {
       const value = await operation();
+      if (signal?.aborted) return;
       log('INFO', 'runtime.shutdown_stage', {
         stage,
         status: 'ok',
@@ -140,6 +144,7 @@ function createRuntimeShutdownController({
       });
       return value;
     } catch (error) {
+      if (signal?.aborted) return;
       log('WARN', 'runtime.shutdown_stage', {
         stage,
         status: 'failed',
@@ -164,16 +169,24 @@ function createRuntimeShutdownController({
   // a will-quit listener cannot delay quit for async work, so an un-awaited
   // tree kill races process exit and can orphan the piped shell children.
   // Isolate each disposer so one failure cannot block shutdown.
-  async function disposeWorkspaceProcesses() {
-    const disposers = [
+  function workspaceProcessDisposers() {
+    return [
       ['workspaceTerminal', getWorkspaceTerminalService()],
       ['workspacePty', getWorkspacePtyService()],
       ['workspaceRunTask', getWorkspaceRunTaskService()],
       ['workspaceTestRunner', getWorkspaceTestRunnerService()],
     ];
+  }
+
+  async function disposeWorkspaceProcesses(signal) {
+    workspaceDisposalStarted = true;
+    const disposers = workspaceProcessDisposers();
     const results = await Promise.allSettled(
       disposers.map(([, service]) => Promise.resolve().then(() => service?.dispose?.()))
     );
+    if (signal?.aborted) return;
+    workspaceDisposalConfirmed = results.every((result) =>
+      result.status === 'fulfilled' && result.value?.terminationConfirmed !== false);
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         log('WARN', 'workspace.process.dispose_failed', {
@@ -184,6 +197,27 @@ function createRuntimeShutdownController({
     });
   }
 
+  function signalWorkspaceChildrenSync() {
+    if (workspaceDisposalStarted) return { signalled: 0, confirmed: workspaceDisposalConfirmed };
+    workspaceDisposalStarted = true;
+    let signalled = 0;
+    let failed = false;
+    for (const [name, service] of workspaceProcessDisposers()) {
+      if (typeof service?.dispose !== 'function') continue;
+      try {
+        // Initiate each owner's idempotent cancellation before exiting. The
+        // emergency path cannot await it and must not claim confirmed cleanup.
+        signalled += 1;
+        Promise.resolve(service.dispose()).catch(() => {
+          log('WARN', 'workspace.process.emergency_dispose_failed', { service: name });
+        });
+      } catch (_error) {
+        failed = true;
+        log('WARN', 'workspace.process.emergency_dispose_failed', { service: name });
+      }
+    }
+    return { signalled, confirmed: !failed && signalled === 0 };
+  }
   function signalSetupChildrenSync() {
     let signalled = 0;
     let failed = false;
@@ -225,9 +259,11 @@ function createRuntimeShutdownController({
     });
   }
 
-  async function stopRuntimeBeforeQuit() {
+  async function stopRuntimeBeforeQuit({ signal } = {}) {
+    if (signal?.aborted) return;
     const shutdownStartedAt = Date.now();
-    await runShutdownStage('setup_operations', () => drainSetupChildren());
+    await runShutdownStage('setup_operations', () => drainSetupChildren(), signal);
+    if (signal?.aborted) return;
     const packagedSmokeController = getPackagedSmokeController();
     if (packagedSmokeController) {
       packagedSmokeController.dispose();
@@ -243,17 +279,18 @@ function createRuntimeShutdownController({
       setWindowStateDisplayUnsubscribe(null);
     }
     try {
-      await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown());
+      await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown(), signal);
     } catch (_error) {
       // stopLlamaServerOnShutdown already logs on failure
     }
     // disposeWorkspaceProcesses isolates + logs per-service failures internally
     // (Promise.allSettled), so it never rejects — no try/catch needed here.
-    await runShutdownStage('workspace_processes', () => disposeWorkspaceProcesses());
+    await runShutdownStage('workspace_processes', () => disposeWorkspaceProcesses(signal), signal);
     try {
       return await runShutdownStage(
         'backend_runtime',
         () => stopRuntimeWithDependencies({
+          signal,
           shellConfigService: getShellConfigService(),
           systemStats: getSystemStats(),
           schedulerService: getSchedulerService(),
@@ -266,36 +303,44 @@ function createRuntimeShutdownController({
           shutdownStepCount: SHUTDOWN_STEP_COUNT,
           shutdownDoneStepIndex: 6,
           shutdownStepIndexByPhase: SHUTDOWN_STEP_INDEX,
-        })
+        }),
+        signal
       );
     } finally {
-      const flushStartedAt = Date.now();
-      let flushStatus = 'ok';
-      try {
-        await getProcessLogWriter()?.flush?.({ timeoutMs: 2000 });
-      } catch (error) {
-        flushStatus = 'failed';
-        log('WARN', 'logs.process_log_flush_failed', {
-          message: String(error && error.message || error).slice(0, 240),
-        });
-      }
-      log(flushStatus === 'ok' ? 'INFO' : 'WARN', 'runtime.shutdown_stage', {
-        stage: 'process_log_flush',
-        status: flushStatus,
-        durationMs: Math.max(Date.now() - flushStartedAt, 0),
-        remainingBudgetMs: null,
-        forced: false,
-        confirmed: flushStatus === 'ok',
-      });
-      log('INFO', 'runtime.shutdown_stage', {
-        stage: 'total',
-        status: flushStatus === 'ok' ? 'ok' : 'bounded',
-        durationMs: Math.max(Date.now() - shutdownStartedAt, 0),
-        remainingBudgetMs: null,
-        forced: false,
-        confirmed: flushStatus === 'ok',
+      await flushShutdownLog(shutdownStartedAt, signal);
+    }
+  }
+
+  async function flushShutdownLog(shutdownStartedAt, signal) {
+    if (signal?.aborted) return;
+    const flushStartedAt = Date.now();
+    let flushStatus = 'ok';
+    try {
+      await getProcessLogWriter()?.flush?.({ timeoutMs: 2000 });
+    } catch (error) {
+      if (signal?.aborted) return;
+      flushStatus = 'failed';
+      log('WARN', 'logs.process_log_flush_failed', {
+        message: String(error && error.message || error).slice(0, 240),
       });
     }
+    if (signal?.aborted) return;
+    log(flushStatus === 'ok' ? 'INFO' : 'WARN', 'runtime.shutdown_stage', {
+      stage: 'process_log_flush',
+      status: flushStatus,
+      durationMs: Math.max(Date.now() - flushStartedAt, 0),
+      remainingBudgetMs: null,
+      forced: false,
+      confirmed: flushStatus === 'ok',
+    });
+    log('INFO', 'runtime.shutdown_stage', {
+      stage: 'total',
+      status: flushStatus === 'ok' ? 'ok' : 'bounded',
+      durationMs: Math.max(Date.now() - shutdownStartedAt, 0),
+      remainingBudgetMs: null,
+      forced: false,
+      confirmed: flushStatus === 'ok',
+    });
   }
 
   function runEmergencyRuntimeShutdownSync() {
@@ -306,6 +351,7 @@ function createRuntimeShutdownController({
     const startedAt = Date.now();
     let sidecarExitConfirmed;
     let llamaExitConfirmed;
+    let ollamaExitConfirmed = false;
     let ollamaSweepSkipped = '';
     try {
       // Drain debounced session-store writes FIRST: every step below only
@@ -317,6 +363,7 @@ function createRuntimeShutdownController({
       // best effort only
     }
     const setupSignals = signalSetupChildrenSync();
+    const workspaceSignals = signalWorkspaceChildrenSync();
     try {
       managedLlamaServer.stopSync();
     } catch (_error) {
@@ -356,11 +403,14 @@ function createRuntimeShutdownController({
         logger: log,
       });
       ollamaSweepSkipped = String(ollamaResult?.skipped || '');
+      ollamaExitConfirmed = ollamaResult?.verifiedAllKilled === true
+        || ['no_owned_state', 'stale_owned_pid'].includes(ollamaSweepSkipped);
     } catch (_error) {
       // best effort only
     }
-    const emergencyConfirmed = sidecarExitConfirmed && llamaExitConfirmed
-      && setupSignals.failed !== true && setupSignals.signalled === 0;
+    const emergencyConfirmed = sidecarExitConfirmed && llamaExitConfirmed && ollamaExitConfirmed
+      && setupSignals.failed !== true && setupSignals.signalled === 0
+      && workspaceSignals.confirmed === true;
     log(emergencyConfirmed ? 'INFO' : 'WARN', 'runtime.shutdown_stage', {
       stage: 'emergency_fallback',
       status: emergencyConfirmed ? 'ok' : 'unconfirmed',
@@ -369,6 +419,7 @@ function createRuntimeShutdownController({
       forced: true,
       confirmed: emergencyConfirmed,
       setupSignals: setupSignals.signalled,
+      workspaceSignals: workspaceSignals.signalled,
       ...(ollamaSweepSkipped ? { ollamaSweepSkipped } : {}),
     });
   }

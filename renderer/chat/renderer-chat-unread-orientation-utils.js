@@ -323,7 +323,9 @@
         }));
       }
       if (!didScroll) {
-        clearSession(sessionId);
+        // A mount/reveal failure is recoverable: retain the Wayfinder retry.
+        // Normal validation still clears a confirmed removed destination.
+        syncAffordance();
         return false;
       }
       focusEntry(messageId);

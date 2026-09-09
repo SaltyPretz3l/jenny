@@ -16,7 +16,9 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-4) var(--space-4) 0 0;
+  margin-block: var(--space-4) 0;
+  margin-inline-start: 0;
+  margin-inline-end: var(--space-4);
   pointer-events: none;
 }
 
@@ -179,7 +181,7 @@
 
 @media (max-width: 719px) {
   .chat-timeline-utility-cluster {
-    margin-right: var(--space-3);
+    margin-inline-end: var(--space-3);
   }
 
   .chat-timeline-utility-cluster #timelineCollapseExpandToggle {

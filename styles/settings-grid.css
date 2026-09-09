@@ -108,7 +108,7 @@
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-  text-align: left;
+  text-align: start;
 }
 
 .settings-toggle-list .inv-toggle-label {
@@ -134,7 +134,7 @@
 
 /* Tools capability rows (.tools-config-field-row, settings-controls.css)
    drop their bordered-card chrome and adopt the same open row idiom: label
-   left, switch right, hairline between rows, hover tint only. */
+   label inline-start, switch inline-end, hairline between rows, hover tint only. */
 .tools-config-field-row {
   padding: var(--space-5) var(--space-2);
   border: none;

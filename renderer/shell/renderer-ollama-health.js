@@ -15,6 +15,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var GROUP_ID = 'ollamaHealthGroup';
   // Card-scoped selector — see renderer-model-library.js's identical comment:
   // the settings NAV items carry the same data-settings-section attribute and
@@ -54,7 +56,7 @@
   function describeTrayProcesses(trayProcesses) {
     var list = Array.isArray(trayProcesses) ? trayProcesses : [];
     if (!list.length) {
-      return 'Not running';
+      return jt('models.ollama.health.notRunning', 'Not running');
     }
     return list
       .map(function (proc) {
@@ -76,24 +78,24 @@
     var busy = view.busyAction !== '';
 
     var platformNoteHtml = disabledForPlatform
-      ? '<p class="settings-note ollama-health-platform-note">Not applicable on this platform.</p>'
+      ? '<p class="settings-note ollama-health-platform-note">' + escapeHtml(jt('models.ollama.health.notApplicable', 'Not applicable on this platform.')) + '</p>'
       : '';
 
     var trayLabel = view.status.detected || (view.status.trayProcesses || []).length
       ? describeTrayProcesses(view.status.trayProcesses)
-      : 'Not running';
+      : jt('models.ollama.health.notRunning', 'Not running');
     var shortcutsLabel = describeStartupShortcuts(view.status.startupShortcuts);
 
     var rowsHtml = ''
       + '<div class="settings-field-row ollama-health-row">'
       + '<div class="settings-field-row-text">'
-      + '<span class="settings-field-label">Tray app</span>'
+      + '<span class="settings-field-label">' + escapeHtml(jt('models.ollama.health.trayApp', 'Tray app')) + '</span>'
       + '<p class="settings-field-description">' + escapeHtml(trayLabel) + '</p>'
       + '</div>'
       + '</div>'
       + '<div class="settings-field-row ollama-health-row">'
       + '<div class="settings-field-row-text">'
-      + '<span class="settings-field-label">Startup shortcut(s)</span>'
+      + '<span class="settings-field-label">' + escapeHtml(jt('models.ollama.health.startupShortcuts', 'Startup shortcut(s)')) + '</span>'
       + '<p class="settings-field-description">' + escapeHtml(shortcutsLabel) + '</p>'
       + '</div>'
       + '</div>';
@@ -102,43 +104,43 @@
       + actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: view.busyAction === 'recheck' ? 'Checking…' : 'Re-check',
+        label: view.busyAction === 'recheck' ? jt('models.ollama.health.checking', 'Checking…') : jt('models.ollama.health.recheck', 'Re-check'),
         disabled: busy,
         dataset: { 'ollama-health-action': 'recheck' },
       })
       + actionButton({
         plain: true,
         className: 'settings-primary',
-        label: view.busyAction === 'quit' ? 'Quitting…' : 'Quit tray app',
+        label: view.busyAction === 'quit' ? jt('models.ollama.health.quitting', 'Quitting…') : jt('models.ollama.health.quitTrayApp', 'Quit tray app'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'quit' },
       })
       + actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: view.busyAction === 'disable' ? 'Disabling…' : 'Disable Startup shortcut',
+        label: view.busyAction === 'disable' ? jt('models.ollama.health.disabling', 'Disabling…') : jt('models.ollama.health.disableStartupShortcut', 'Disable Startup shortcut'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'disable' },
       })
       + actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: view.busyAction === 'restart' ? 'Restarting…' : 'Restart engine',
+        label: view.busyAction === 'restart' ? jt('models.ollama.health.restarting', 'Restarting…') : jt('models.ollama.health.restartEngine', 'Restart engine'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'restart' },
       })
       + actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: 'Open Diagnostics',
+        label: jt('models.ollama.health.openDiagnostics', 'Open Diagnostics'),
         disabled: busy,
         dataset: { 'ollama-health-action': 'diagnostics' },
       });
 
     return ''
       + '<div class="settings-group ollama-health-group" role="group" aria-labelledby="ollamaHealthHeading" id="' + GROUP_ID + '">'
-      + '<h4 class="settings-group-heading" id="ollamaHealthHeading">Ollama engine health</h4>'
-      + '<p class="settings-group-copy">Check for the Ollama tray app, which can silently kill Jenny\'s managed engine.</p>'
+      + '<h4 class="settings-group-heading" id="ollamaHealthHeading">' + escapeHtml(jt('models.ollama.health.heading', 'Ollama engine health')) + '</h4>'
+      + '<p class="settings-group-copy">' + escapeHtml(jt('models.ollama.health.description', 'Check for the Ollama tray app, which can silently kill Jenny\'s managed engine.')) + '</p>'
       + platformNoteHtml
       + rowsHtml
       + '<div class="settings-actions">' + buttonsHtml + '</div>'
@@ -221,7 +223,7 @@
       }
       var bridge = getBridge();
       if (!bridge || typeof bridge.status !== 'function') {
-        view.statusMessage = 'Ollama engine health is unavailable right now.';
+        view.statusMessage = jt('models.ollama.health.unavailable', 'Ollama engine health is unavailable right now.');
         render();
         return Promise.resolve();
       }
@@ -238,13 +240,13 @@
               startupShortcuts: Array.isArray(result.startupShortcuts) ? result.startupShortcuts : [],
             };
           } else {
-            view.statusMessage = boundedStatusMessage(result && result.reason, 'Could not read Ollama engine health.');
+            view.statusMessage = boundedStatusMessage(result && result.reason, jt('models.ollama.health.readFailed', 'Could not read Ollama engine health.'));
           }
           render();
         })
         .catch(function (error) {
           if (disposed || generation !== requestGeneration) return;
-          view.statusMessage = boundedStatusMessage(error, 'Could not read Ollama engine health.');
+          view.statusMessage = boundedStatusMessage(error, jt('models.ollama.health.readFailed', 'Could not read Ollama engine health.'));
           appendClientLog('WARN', 'ollama_health.status_failed', { message: view.statusMessage });
           render();
         });
@@ -257,7 +259,7 @@
       var bridge = getBridge();
       var fn = bridge && bridge[methodName];
       if (typeof fn !== 'function') {
-        view.statusMessage = 'That action is unavailable right now.';
+        view.statusMessage = jt('models.ollama.health.actionUnavailable', 'That action is unavailable right now.');
         render();
         return Promise.resolve();
       }
@@ -273,7 +275,7 @@
           if (result && result.ok) {
             view.statusMessage = typeof successMessage === 'function' ? successMessage(result) : successMessage;
           } else {
-            view.statusMessage = boundedStatusMessage(result && result.reason, 'That action did not complete.');
+            view.statusMessage = boundedStatusMessage(result && result.reason, jt('models.ollama.health.actionIncomplete', 'That action did not complete.'));
             appendClientLog('WARN', 'ollama_health.' + actionKey + '_failed', { message: view.statusMessage });
           }
           return refresh();
@@ -281,7 +283,7 @@
         .catch(function (error) {
           if (disposed || generation !== requestGeneration) return;
           view.busyAction = '';
-          view.statusMessage = boundedStatusMessage(error, 'That action failed.');
+          view.statusMessage = boundedStatusMessage(error, jt('models.ollama.health.actionFailed', 'That action failed.'));
           appendClientLog('WARN', 'ollama_health.' + actionKey + '_failed', { message: view.statusMessage });
           render();
         });
@@ -296,21 +298,21 @@
       return runAction('quit', 'quitTrayApp', function (result) {
         var killed = Array.isArray(result.killedPids) ? result.killedPids : [];
         return killed.length
-          ? 'Quit the tray app (' + killed.length + ' process' + (killed.length === 1 ? '' : 'es') + ' removed).'
-          : 'Tray app was not running.';
+          ? jtn('models.ollama.health.trayProcessesRemoved', killed.length, { count: killed.length }, 'Quit the tray app ({count} process removed).', 'Quit the tray app ({count} processes removed).')
+          : jt('models.ollama.health.trayNotRunning', 'Tray app was not running.');
       });
     }
 
     function handleDisable() {
       return runAction('disable', 'disableStartupShortcut', function (result) {
         var disabled = Array.isArray(result.disabled) ? result.disabled : [];
-        return disabled.length ? 'Disabled: ' + disabled.join(', ') + '.' : 'No Startup shortcut was found.';
+        return disabled.length ? 'Disabled: ' + disabled.join(', ') + '.' : jt('models.ollama.health.noStartupShortcut', 'No Startup shortcut was found.');
       });
     }
 
     function handleRestart() {
       return runAction('restart', 'restartEngine', function (result) {
-        return result.running ? 'Engine restarted and is running.' : 'Engine restart requested.';
+        return result.running ? jt('models.ollama.health.restartedRunning', 'Engine restarted and is running.') : jt('models.ollama.health.restartRequested', 'Engine restart requested.');
       });
     }
 

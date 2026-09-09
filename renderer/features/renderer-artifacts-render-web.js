@@ -16,6 +16,7 @@
   }
   root.rendererArtifactsRenderWeb = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function resolveDOMPurify() {
     if (typeof globalThis !== 'undefined' && typeof globalThis.DOMPurify !== 'undefined') return globalThis.DOMPurify;
@@ -73,16 +74,16 @@
     if (state.artifacts.lastError) {
       setDetailNote(surface, state.artifacts.lastError, true);
     } else if (state.artifacts.loading) {
-      setDetailNote(surface, 'Loading artifact...');
+      setDetailNote(surface, jt('artifacts.web.loading', 'Loading artifact...'));
     } else if (editable) {
       setDetailNote(
         surface,
         editMode
-          ? `Editing ${kindLabel} source. Save writes back to the session scratch file.`
-          : `Sanitized ${kindLabel} preview with source and edit access below.`
+          ? jt('artifacts.web.editingSourceNote', 'Editing {kind} source. Save writes back to the session scratch file.', { kind: kindLabel })
+          : jt('artifacts.web.sanitizedPreviewNote', 'Sanitized {kind} preview with source and edit access below.', { kind: kindLabel })
       );
     } else {
-      setDetailNote(surface, `Read-only ${kindLabel} artifact. You can inspect the source below.`);
+      setDetailNote(surface, jt('artifacts.web.readOnlyNote', 'Read-only {kind} artifact. You can inspect the source below.', { kind: kindLabel }));
     }
   }
 
@@ -101,7 +102,7 @@
     if (state.features?.featureFlags?.artifact_panel_v3 === true || typeof renderArtifactViewModeButton !== 'function') return '';
     return '<div class="artifact-preview-mermaid-toolbar">'
       + renderArtifactViewModeButton(kind, 'preview', !editMode, 'Preview', state.artifacts.loading, escapeHtml)
-      + renderArtifactViewModeButton(kind, 'edit', editMode, editable ? 'Edit Source' : 'View Source', state.artifacts.loading, escapeHtml)
+      + renderArtifactViewModeButton(kind, 'edit', editMode, editable ? jt('artifacts.web.editSource', 'Edit Source') : jt('artifacts.web.viewSource', 'View Source'), state.artifacts.loading, escapeHtml)
       + '</div>';
   }
 
@@ -115,20 +116,20 @@
 
     surface.previewContent.classList.remove('hidden');
     if (editMode) {
-      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">Editing ${escapeHtml(kindLabel)} source below. Switch back to Preview to re-render.</div>`;
+      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.editingSource', 'Editing {kind} source below. Switch back to Preview to re-render.', { kind: kindLabel }))}</div>`;
       enterEditMode(surface, file, editable, deps, fallbackLanguage);
       return;
     }
 
     surface.editorShell.classList.add('hidden');
     if (!source.trim()) {
-      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">Preview unavailable. ${escapeHtml(kindLabel)} source is empty.</div>`;
+      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.emptySource', 'Preview unavailable. {kind} source is empty.', { kind: kindLabel }))}</div>`;
       return;
     }
     const sanitized = sanitizeMarkup(source);
     if (!String(sanitized || '').trim()) {
       surface.previewContent.innerHTML = (
-        toolbar + `<div class="artifacts-empty">Preview unavailable. ${escapeHtml(kindLabel)} source is shown below.</div>`
+        toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.sourceShown', 'Preview unavailable. {kind} source is shown below.', { kind: kindLabel }))}</div>`
         + `<pre class="artifact-preview-pre">${escapeHtml(source)}</pre>`
       );
       return;

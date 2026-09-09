@@ -7,7 +7,7 @@
 
 .ide-gutter-change {
   width: 3px !important;
-  margin-left: 2px;
+  margin-left: 2px; /* rtl:physical */
   pointer-events: none;
   border-radius: 1px;
 }
@@ -27,7 +27,7 @@
   height: 0 !important;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--state-danger);
+  border-left: 5px solid var(--state-danger); /* rtl:physical */
   border-radius: 0;
 }
 
@@ -39,7 +39,7 @@
   background: var(--accent);
   width: 10px !important;
   height: 13px;
-  margin-left: 3px;
+  margin-left: 3px; /* rtl:physical */
   clip-path: polygon(15% 0, 85% 0, 85% 100%, 50% 68%, 15% 100%);
   cursor: pointer;
 }

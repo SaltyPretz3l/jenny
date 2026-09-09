@@ -24,6 +24,7 @@
 
 const fsPromises = require('fs/promises');
 const { WORKSPACE_GIT_ERROR_CODES } = require('./backend/error-codes');
+const { t } = require('./i18n-main');
 
 // WIDE-008 stopgap (Q1 fail-closed default): the soft-failure shape for a
 // selected workspace root that is inside a work tree but is not that work
@@ -41,7 +42,7 @@ function notRepoToplevelResult(op) {
     op,
     error_code: WORKSPACE_GIT_ERROR_CODES.GIT_NOT_TOPLEVEL,
     reason: 'not_repo_toplevel',
-    message: 'The selected workspace root must be the git repository toplevel; both Git status reads and destructive operations are refused otherwise.',
+      message: t('main.workspaceGit.rootMustBeToplevel', 'The selected workspace root must be the git repository toplevel; both Git status reads and destructive operations are refused otherwise.'),
   };
 }
 

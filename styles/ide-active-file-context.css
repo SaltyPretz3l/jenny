@@ -30,7 +30,9 @@
   align-self: flex-start;
   max-width: 100%;
   margin: 0 0 6px;
-  padding: 3px 4px 3px 8px;
+  padding-block: 3px;
+  padding-inline-end: 4px;
+  padding-inline-start: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -71,7 +73,7 @@
 .ide-large-file-notice {
   position: absolute;
   top: 8px;
-  right: 16px;
+  inset-inline-end: 16px;
   z-index: 30;
   display: inline-flex;
   align-items: center;

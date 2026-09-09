@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function resolveActionButton() {
     return (root && root.inventoryActionButton)
       || (typeof require === 'function' ? require('../inventory/action-button') : null);
@@ -48,7 +49,7 @@
       return '<div class="model-library-folders-row">'
         + '<code class="model-library-folders-path">' + escapeHtml(path) + '</code>'
         + actionButton({
-          label: 'Remove',
+          label: jt('common.remove', 'Remove'),
           variant: 'ghost',
           size: 'sm',
           dataset: { 'model-library-folder-remove': String(index) },
@@ -63,12 +64,12 @@
       var currentRoots = roots();
       var rowsHtml = currentRoots.length
         ? currentRoots.map(rowHtml).join('')
-        : '<span class="model-library-folders-empty">No folders yet · llama-server finds mtp-*.gguf drafters beside the models in these folders</span>';
+        : '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.folders.empty', 'No folders yet · llama-server finds mtp-*.gguf drafters beside the models in these folders')) + '</span>';
       target.innerHTML = '<div class="model-library-folders">'
-        + '<span class="model-library-folders-title">GGUF folders</span>'
+        + '<span class="model-library-folders-title">' + escapeHtml(jt('models.library.folders.title', 'GGUF folders')) + '</span>'
         + '<div class="model-library-folders-list">' + rowsHtml + '</div>'
         + actionButton({
-          label: 'Add folder…',
+          label: jt('models.library.folders.add', 'Add folder…'),
           variant: 'secondary',
           size: 'sm',
           dataset: { 'model-library-folder-action': 'add' },
@@ -93,7 +94,7 @@
         })
         .catch(function () {
           if (!isCurrent(token)) return null;
-          statusText = 'Could not update GGUF folders.';
+          statusText = jt('models.library.folders.updateFailed', 'Could not update GGUF folders.');
           render();
           return null;
         });
@@ -104,7 +105,7 @@
       var llamaServer = windowRef.jennyShell && windowRef.jennyShell.llamaServer;
       var choose = llamaServer && llamaServer.chooseLibraryFolder;
       if (typeof choose !== 'function') {
-        statusText = 'Could not open the folder picker.';
+        statusText = jt('models.library.folders.pickerFailed', 'Could not open the folder picker.');
         render();
         return Promise.resolve(null);
       }
@@ -117,13 +118,13 @@
           return updateRoots(roots().concat([result.path]), token);
         }
         if (result && result.ok === false) {
-          statusText = 'Could not open the folder picker.';
+          statusText = jt('models.library.folders.pickerFailed', 'Could not open the folder picker.');
           render();
         }
         return null;
       }).catch(function () {
         if (!isCurrent(token)) return null;
-        statusText = 'Could not open the folder picker.';
+        statusText = jt('models.library.folders.pickerFailed', 'Could not open the folder picker.');
         render();
         return null;
       });

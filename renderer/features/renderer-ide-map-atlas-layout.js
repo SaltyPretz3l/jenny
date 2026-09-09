@@ -27,6 +27,7 @@
   root.rendererIdeMapAtlasLayout = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // File slot spacing inside a district grid. TILE_W/H is the tiles-tier DOM
   // footprint (CSS keeps in sync); CELL adds breathing room around a tile.
@@ -92,7 +93,7 @@
   function makeDistrict(key, depth, parentKey) {
     return {
       key,
-      label: key === '.' ? '(root)' : lastSegment(key),
+      label: key === '.' ? jt('ide.map.atlas.root', '(root)') : lastSegment(key),
       depth,
       parentKey,
       files: [],

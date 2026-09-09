@@ -126,7 +126,6 @@ def _is_unknown_tool_call(
         if exc.code == CMP_LOOP_INVALID_TOOL_CALL:
             return exc.message
         raise
-
     if call.tool_id in _SYNTHETIC_TOOL_IDS:
         return None
     if call.tool_id in request_disabled_tools:
@@ -981,3 +980,5 @@ def run_tool_loop(  # noqa: C901, PLR0912, PLR0915
                 extra={"reason": type(settle_error).__name__},
             )
         raise
+    finally:
+        runtime.preview_images.clear()

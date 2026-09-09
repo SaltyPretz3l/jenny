@@ -19,10 +19,11 @@
   root.rendererChatMessageEditUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  var EDIT_STREAM_BUSY_REASON = 'Wait for the current response to finish before editing.';
-  var EDIT_EMPTY_CONTENT_REASON = 'Edited message cannot be empty.';
-  var EDIT_TEXT_ATTACHMENT_NOTICE = 'Text attachments will not be replayed for this edit.';
+  var EDIT_STREAM_BUSY_REASON = jt('chat.edit.waitForCurrentResponse', 'Wait for the current response to finish before editing.');
+  var EDIT_EMPTY_CONTENT_REASON = jt('chat.edit.emptyMessage', 'Edited message cannot be empty.');
+  var EDIT_TEXT_ATTACHMENT_NOTICE = jt('chat.edit.textAttachmentsNotReplayed', 'Text attachments will not be replayed for this edit.');
 
   function noopFn() { /* no-op */ }
   function noopAsync() { return Promise.resolve(null); }
@@ -275,7 +276,7 @@
       if (block && block.blocked) {
         showComposerActionError(
           new Error(String(block.reason || EDIT_STREAM_BUSY_REASON)),
-          'Edit Unavailable'
+          jt('chat.edit.unavailableTitle', 'Edit Unavailable')
         );
         appendClientLog('INFO', 'chat.edit_blocked', {
           messageId: id,
@@ -362,7 +363,7 @@
       if (block && block.blocked) {
         showComposerActionError(
           new Error(String(block.reason || EDIT_STREAM_BUSY_REASON)),
-          'Edit Blocked'
+          jt('chat.edit.blockedTitle', 'Edit Blocked')
         );
         appendClientLog('WARN', 'chat.edit_commit_blocked_by_stream', {
           messageId: msgId,
@@ -383,7 +384,7 @@
       var replayImageAttachments = message ? buildReplayableImageAttachments(message) : [];
       var hasReplayImages = Array.isArray(replayImageAttachments) && replayImageAttachments.length > 0;
       if (!trimmedDraft && !hasReplayImages) {
-        showComposerActionError(new Error(EDIT_EMPTY_CONTENT_REASON), 'Edit Unavailable');
+        showComposerActionError(new Error(EDIT_EMPTY_CONTENT_REASON), jt('chat.edit.unavailableTitle', 'Edit Unavailable'));
         return Promise.resolve(null);
       }
       var hadTextAttachments = message ? hasTextAttachmentMetadata(message) === true : false;
@@ -490,7 +491,7 @@
           renderAll();
         } catch (_) { /* ignore */ }
         syncFromState();
-        showComposerActionError(error, 'Edit Failed');
+        showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed'));
         return null;
       });
     }

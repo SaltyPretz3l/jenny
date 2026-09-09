@@ -1,6 +1,6 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-09
 ---
 
 # 02 — Adding an MCP server
@@ -10,6 +10,11 @@ This walkthrough adds an MCP (Model Context Protocol) server to Jenny so her too
 [MCP](https://modelcontextprotocol.io/) is an open protocol for tool servers. Jenny implements an MCP client; this tutorial registers an external server so its tools become Jenny's tools.
 
 ## Prerequisites
+
+This tutorial covers the ordinary desktop execution mode. Third-party MCP tools
+remain unavailable in hosted mode and when the desktop Docker command sandbox
+is enabled; adding a connection does not bypass that boundary. See the
+[desktop sandbox guide](../operations/DESKTOP_COMMAND_SANDBOX.md).
 
 - Jenny installed and at least one chat completed (see [01 — First chat](01-first-chat.md)).
 - An MCP server you want to use. Common choices are the [reference servers](https://github.com/modelcontextprotocol/servers) (filesystem, git, and others). Most of them run through `npx`, so Node.js must be on your `PATH`.

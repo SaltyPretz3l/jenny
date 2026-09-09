@@ -30,7 +30,7 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-function createBackendWiringFixture({ packaged = false, appOverrides = {}, processOverrides = {}, log = () => {} } = {}) {
+function createBackendWiringFixture({ packaged = false, argv = [], appOverrides = {}, processOverrides = {}, log = () => {} } = {}) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-backend-wiring-'));
   trackDirectory(userDataPath);
   const developmentRepoRoot = path.join(userDataPath, 'repo');
@@ -47,7 +47,7 @@ function createBackendWiringFixture({ packaged = false, appOverrides = {}, proce
       isPackaged: packaged,
       ...appOverrides,
     },
-    processRef: { env: {}, platform: process.platform, resourcesPath, cwd: () => developmentRepoRoot, ...processOverrides },
+    processRef: { env: {}, argv, platform: process.platform, resourcesPath, cwd: () => developmentRepoRoot, ...processOverrides },
     safeStorage: createFakeSafeStorage(),
     dialog: {},
     shellConfigService,
@@ -69,6 +69,17 @@ function createBackendWiringFixture({ packaged = false, appOverrides = {}, proce
     shouldUsePackagedSidecarRuntime: () => packaged,
   });
   return { created, developmentRepoRoot, resourcesPath, worktreeService, userDataPath };
+}
+
+for (const existingServer of [false, true]) {
+  test(`backend wiring preserves the existing-server startup flag (${existingServer})`, () => {
+    const { created } = createBackendWiringFixture({ argv: existingServer ? ['--existing-server'] : [] });
+    try {
+      assert.equal(created.backendService.options.skipOllamaAutoStart, existingServer);
+    } finally {
+      created.backendService.dispose();
+    }
+  });
 }
 
 test('backend wiring starts the workspace active-use tracker before any chat send and disposes it', () => {

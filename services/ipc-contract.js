@@ -33,6 +33,9 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'sessions.list': invokeMethod('sessions:list'),
   'sessions.create': invokeMethod('sessions:create'),
   'sessions.rename': invokeMethod('sessions:rename'),
+  // Optional second argument: { onlyIfIdle: true, expectedUpdatedAt: string }.
+  // Refuses busy/plugin-owned/changed sessions without cancelling work; omitted
+  // options retain the existing single-chat cancellation/deletion behavior.
   'sessions.delete': invokeMethod('sessions:delete'),
   'sessions.getMessages': invokeMethod('sessions:get-messages'),
   'sessions.setPreferences': invokeMethod('sessions:set-preferences'),
@@ -64,6 +67,7 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // so this does not introduce renderer polling.
   'system.refreshStats': invokeMethod('system:refresh-stats'),
   'system.onStats': subscribeMethod('system:stats'),
+  'safety.onUnattendedPause': subscribeMethod('safety:unattended-pause'),
   // displayMediaPicker.*: main-process getDisplayMedia source picker. onRequest
   // pushes the enumerated screen/window sources for the renderer picker UI;
   // onCancel fires if the request is superseded/aborted before a pick is made;
@@ -263,6 +267,17 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'features.getWebSearchSecretStatus': invokeMethod('features:get-web-search-secret-status'),
   'features.setWebSearchSecret': invokeMethod('features:set-web-search-secret'),
   'features.onChanged': subscribeMethod('features:changed'),
+  'remote.getState': invokeMethod('remote:get-state'),
+  'remote.enable': invokeMethod('remote:enable'),
+  'remote.disable': invokeMethod('remote:disable'),
+  'remote.openPairing': invokeMethod('remote:open-pairing'),
+  'remote.revokeDevice': invokeMethod('remote:revoke-device'),
+  'remote.forgetAll': invokeMethod('remote:forget-all'),
+  'remote.setRelay': invokeMethod('remote:set-relay'),
+  'remote.shareSession': invokeMethod('remote:share-session'),
+  'remote.unshareSession': invokeMethod('remote:unshare-session'),
+  'remote.takeControl': invokeMethod('remote:take-control'),
+  'remote.onStateChanged': subscribeMethod('remote:state-changed'),
   'updates.getState': invokeMethod('updates:get-state'),
   'updates.check': invokeMethod('updates:check'),
   'updates.download': invokeMethod('updates:download'),
@@ -391,6 +406,10 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
   'backgroundJobs.onChanged': subscribeMethod('background-jobs:changed'),
+  'commandSandbox.getState': invokeMethod('command-sandbox:get-state'),
+  'commandSandbox.setEnabled': invokeMethod('command-sandbox:set-enabled'),
+  'commandSandbox.retry': invokeMethod('command-sandbox:retry'),
+  'commandSandbox.onChanged': subscribeMethod('command-sandbox:changed'),
   'tools.list': invokeMethod('tools:list'),
   'tools.approve': invokeMethod('tools:approve'),
   'tools.deny': invokeMethod('tools:deny'),

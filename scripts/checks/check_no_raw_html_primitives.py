@@ -41,7 +41,6 @@ LEGACY_RAW_PRIMITIVE_ALLOWLIST = {
     # the total numeric allowlist budget measures 114 after the wizard scene exits.
     "renderer/features/setup-scenes/ollama-engine-gate.js": {"html_tag": 1},
     "renderer/features/renderer-skills-utils.js": {"html_tag": 1},
-    "renderer/features/renderer-suggestion-utils.js": {"html_tag": 2},
     # renderer/shell/renderer-toast-utils.js held {"html_tag": 2} for the
     # dismiss and action <button> string templates. The redesign builds both
     # with createElement + textContent instead of hand-escaped markup, so the

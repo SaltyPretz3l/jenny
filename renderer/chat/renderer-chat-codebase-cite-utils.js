@@ -36,6 +36,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var CITE_HREF_PREFIX = '#codebase:';
   var CITE_LINK_CLASS = 'codebase-cite-link';
   var ENHANCED_ATTR = 'data-codebase-cite-enhanced';
@@ -259,7 +260,7 @@
       anchor.setAttribute('href', buildCodebaseCiteHref(citation.path, citation.line, citation.column));
       anchor.setAttribute(
         'title',
-        'Open ' + citation.path + ' at line ' + citation.line
+        jt('chat.codebaseCite.openAtLine', 'Open {path} at line {line}', { path: citation.path, line: citation.line })
       );
       anchor.textContent = matchText;
       return anchor;
@@ -410,13 +411,13 @@
     function friendlyOpenError(relPath, error) {
       var code = String((error && (error.error_code || error.code)) || '');
       if (code === 'CMP-WORKSPACEFS-0004') { // NOT_FOUND
-        return 'Couldn’t open ' + relPath + ' — file not found.';
+        return jt('chat.codebaseCite.fileNotFound', 'Couldn’t open {path} — file not found.', { path: relPath });
       }
       if (code === 'CMP-WORKSPACEFS-0003') { // PATH_OUTSIDE_ROOT
-        return 'Couldn’t open ' + relPath + ' — outside the workspace.';
+        return jt('chat.codebaseCite.outsideWorkspace', 'Couldn’t open {path} — outside the workspace.', { path: relPath });
       }
       if (code === 'CMP-WORKSPACEFS-0061') { // OPEN_UNAVAILABLE
-        return 'Couldn’t open ' + relPath + ' from here.';
+        return jt('chat.codebaseCite.openUnavailable', 'Couldn’t open {path} from here.', { path: relPath });
       }
       return 'Couldn’t open ' + relPath + '.';
     }
@@ -472,7 +473,7 @@
       var fsApi = getWorkspaceFs();
       if (!fsApi || typeof fsApi.openInDefaultApp !== 'function') {
         appendClientLog('WARN', 'chat.codebase_cite_open_unavailable', { path: citation.path });
-        markCiteError(anchor, 'Couldn’t open ' + citation.path + ' from here.');
+        markCiteError(anchor, jt('chat.codebaseCite.openUnavailable', 'Couldn’t open {path} from here.', { path: citation.path }));
         return;
       }
       // One failure handler for both a rejected promise and a synchronous throw

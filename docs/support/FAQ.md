@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-09
 status: active
 ---
 
@@ -19,37 +19,80 @@ The installer is not code-signed (a deliberate cost decision for a free
 hobby project), so SmartScreen shows *"Windows protected your PC"* on first
 run. Click **More info → Run anyway**. Integrity is still verifiable: each
 release publishes SHA-256 hashes of its assets in `RELEASE_NOTES.md`, and
-auto-updates are validated against the release's SHA512 manifest over HTTPS
-before they install.
+update downloads are validated against the release's SHA512 metadata over
+HTTPS before you explicitly install them.
 
 ### How do updates work?
 
 Jenny never checks for updates on its own. Open **Settings → About &
-Updates → Check for Updates**. If a newer release exists it is downloaded,
-verified, and installed when you press **Restart and Install**. On macOS
-auto-update is disabled (it needs a signed build); download the new dmg from
-the [releases page](https://github.com/SaltyPretz3l/jenny/releases). AppImage
-builds replace the AppImage in place, so keep the file in a folder you can
-write to. The `.deb` build shows a prompt to download the latest package
-instead of updating itself.
+Updates → Check for Updates**. This contacts GitHub and requires internet access;
+it checks published stable releases, not source commits or bare tags. Local
+model inference can keep working offline. Force local inference does not block
+update traffic. Checks send no chat history, credentials, or per-install staging
+identifier; GitHub still receives ordinary connection information such as your IP.
+
+Review the notes, choose **Download Update**, then explicitly choose **Restart
+and Install** when ready. Ordinary quit does not install an update. Settings
+reopens a download already running or ready to install. Errors offer the relevant
+retry action. A check after relaunch can reuse the library's verified download
+cache; offline cached installation is not promised.
+
+Development installs, unsigned macOS and Linux .deb installs can check versions
+and open the fixed [releases page](https://github.com/SaltyPretz3l/jenny/releases)
+for manual installation. The UI names releases that have no package for your
+platform. AppImage self-updates require a writable file location. For a fully
+disconnected machine, transfer an installer obtained on another machine.
 
 ### Can I run Jenny on macOS or Linux?
 
-Windows is the supported platform. Each release also publishes a
-**best-effort macOS build** (`Jenny-arm64.dmg`, Apple Silicon): unsigned,
-built on CI, and never run by the maintainer. Gatekeeper blocks the first
-launch; approve it under **System Settings → Privacy & Security → Open
-Anyway** (or right-click the app → **Open** on older macOS).
+Windows is the supported desktop platform. The published 1.0.0 release contains
+Windows assets only. Experimental Linux x64 AppImage/deb and Apple Silicon
+dmg/zip builds are candidates for 1.1.0; check the actual
+[release assets](https://github.com/SaltyPretz3l/jenny/releases) before downloading.
 
-Experimental x64 Linux packages (`Jenny-x86_64.AppImage` and
-`Jenny-amd64.deb`) start with the next 1.0.x release; 1.0.0 has no Linux
-package. They target Ubuntu 22.04+, Debian 12+, and compatible
-distributions with glibc 2.35 or newer. The packages are built on CI and
-have been verified by the maintainer under WSLg only, not on a bare-metal
-desktop, so reports are welcome. The sandboxed Python tool (`python_execute`)
-works on Windows and Linux but is not available on macOS. One-click Ollama
-install works on Windows and Linux. Source runs still work on all three
-platforms.
+Linux targets glibc 2.35 or newer (Ubuntu 22.04+, with compatible distributions
+as candidates). Installed-format, upgrade and bare-metal checks remain separate
+from CI/WSL evidence. The managed Python tool and one-click Ollama install have
+Windows/Linux implementations; managed Python is unavailable on macOS.
+Mac signing and hardware qualification remain outstanding; use source setup
+until a release supplies a qualified artifact.
+
+### What is new in the 1.1 interface?
+
+Settings > Appearance selects one of 19 interface languages and an optional
+24-hour clock. Restart for language/direction changes; the 24-hour preference
+refreshes displayed times. Arabic mirrors the shell while code and paths remain
+left-to-right. The translations are model-authored; missing/new copy falls back
+to English. Report wording problems with the language and screen name.
+
+The chat sidebar supports multiselect, bulk archive/restore, and confirmed
+deletion with Undo. Waiting indicators distinguish approvals, plan review and
+questions that need your input. See the [unreleased changelog](../../RELEASE_NOTES.md).
+
+### Does Auto run mean Jenny can work unsupervised?
+
+No. Auto asks for confirmation once per session and displays an Auto indicator.
+The unattended guard defaults to 10 minutes of system inactivity before the next
+side-effecting call needs approval; user-pre-granted calls remain an exception.
+An unanswered approval ends the turn after the existing 10-minute timeout.
+Settings > Tools controls the guard (0 disables it) and safety mode. Review
+results and supervise tool use.
+
+### Which Docker workflow should I choose?
+
+Use the [browser quick start](../operations/HOSTED_QUICKSTART.md) for a
+persistent browser host, or the
+[desktop command sandbox](../operations/DESKTOP_COMMAND_SANDBOX.md) to keep
+Electron and isolate foreground commands. Docker is optional for ordinary
+desktop chat. In either sandbox, command-written files are discarded; typed
+file tools make durable edits. Capabilities and qualification differ by mode.
+
+### Can I use Remote Control from this public checkout?
+
+The core is integrated, but the current export excludes its signed plugin and
+relay/portal distribution. Do not run private signing instructions or assume
+that the Settings entry means it is installed. See
+[Remote Control availability](../operations/REMOTE_CONTROL.md).
 
 ### How do I uninstall Jenny without losing my chats?
 
@@ -79,9 +122,11 @@ Workspace `.jenny` removal is a separate option and is off by default. See
 
 ### Is my data sent anywhere?
 
-No. There is no telemetry or analytics; crash reporting is **opt-in and off
-by default**. Conversations, memory, and settings stay on your machine. The
-only background network calls are the ones you would expect: model downloads
+With a local model, inference and desktop conversation storage stay on your
+computer. A configured remote model or approved network tool sends the data
+needed for that request to its endpoint. Browser hosting keeps canonical data
+on the host you configure. There is no telemetry or analytics; crash reporting
+is **opt-in and off by default**. Other network activity includes: model downloads
 you start, tools you enable and approve (web search, web browsing, remote
 MCP servers), an update check you trigger from Settings, and a throttled
 refresh of the bundled model-recommendation catalog (a plain file download
@@ -126,7 +171,7 @@ Jenny is local-first. The engines that ship are [Ollama](https://ollama.com/),
 a managed `llama-server`, and any OpenAI-compatible local server you point
 her at (vLLM, LM Studio, a hand-run llama.cpp). None needs a hosted key.
 Cloud engines are not configured out of the box; the ChatGPT subscription
-connector is a separately distributed signed plugin, not a Settings toggle.
+connector requires a separately supplied signed plugin; availability must be confirmed in the release notes.
 
 ### Which model should I use?
 
@@ -167,7 +212,7 @@ remove the image or switch to a vision model such as Gemma 4 E4B.
 
 The model is loaded into memory on the first turn after the engine starts.
 Later turns reuse the loaded weights and start much faster. If every turn
-is slow, see [TROUBLESHOOTING.md § First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
+is slow, see [TROUBLESHOOTING.md ` First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
 
 ## Using Jenny
 

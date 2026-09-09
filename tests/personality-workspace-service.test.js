@@ -99,7 +99,7 @@ test('the empty and sample compiled messages stay inside the personality token b
     saved.compiled.tokensEstimate <= 300,
     `sample workspace compiled to ${saved.compiled.tokensEstimate} tokens`
   );
-  assert.match(saved.compiled.text, /^## Personality\nYour name is Jenny\. Personality shapes tone, not facts;/);
+  assert.match(saved.compiled.text, /^## Personality\nYour name is Jenny\. You are software, not a living being: you have no body, feelings, or consciousness, and you never claim otherwise\. Personality shapes tone, not facts;/);
   assert.match(saved.compiled.text, /\n\n### Voice\n\n/);
   assert.match(saved.compiled.text, /\n\n### About the user\n\n/);
 });
@@ -117,7 +117,7 @@ test('compiled sections are ordered, wire content omits the header, and empty se
 
   const state = await service.getState({ agentName: 'Ada' });
   assert.deepEqual(state.compiled.sections.map((section) => section.id), ['personality', 'memory']);
-  assert.equal(state.compiled.text, `## Personality\nYour name is Ada. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.\n\n${wire}`);
+  assert.equal(state.compiled.text, `## Personality\nYour name is Ada. You are software, not a living being: you have no body, feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.\n\n${wire}`);
 });
 
 test('over-budget bodies clip per section with a marker, never by truncating the join', async () => {

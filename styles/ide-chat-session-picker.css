@@ -28,7 +28,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
 }
 
 .ide-chat-dock-session-trigger:hover,
@@ -48,7 +48,7 @@
 
 .ide-chat-dock-session-picker.inv-popover {
   top: calc(100% + var(--space-2));
-  left: 0;
+  inset-inline-start: 0;
   width: min(320px, calc(var(--ide-chat-dock-width, 380px) - 20px));
   max-width: calc(var(--ide-chat-dock-width, 380px) - 20px);
   padding: var(--space-3);
@@ -97,7 +97,7 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
 }
 
 .ide-chat-dock-session-option:hover,
@@ -140,5 +140,5 @@
 
 .ide-chat-dock-session-status {
   padding-bottom: 0;
-  text-align: right;
+  text-align: end;
 }

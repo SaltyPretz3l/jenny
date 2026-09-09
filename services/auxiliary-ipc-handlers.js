@@ -3,6 +3,7 @@ const { createEmptyCalendarSnapshot } = require('./calendar-service');
 const path = require('path');
 
 const { registerIpcInvokeHandlers } = require('./ipc-contract');
+const { t } = require('./i18n-main');
 const { registerWorkspaceRecoveryIpcHandlers } = require('./workspace-recovery-ipc-handlers');
 const { resolveTimeZone } = require('./proactive/briefing');
 const { createUnavailableSetupState } = require('./setup-service');
@@ -75,11 +76,11 @@ function unavailableUsageSnapshot() {
 }
 
 function setupUnavailableValidation() {
-  return { ok: false, code: 'setup_unavailable', message: 'Setup service is unavailable.' };
+    return { ok: false, code: 'setup_unavailable', message: t('main.setup.unavailable', 'Setup service is unavailable.') };
 }
 
 function setupUnavailablePull() {
-  return { requestId: '', model: '', status: 'failed', summary: 'Setup service is unavailable.' };
+  return { requestId: '', model: '', status: 'failed', summary: t('main.setup.unavailable', 'Setup service is unavailable.') };
 }
 
 function setupUnavailableCancel(payload = {}) {
@@ -109,7 +110,7 @@ function codexCliUnavailable() {
     ok: false,
     status: 'unavailable',
     code: 'codex_cli_unavailable',
-    message: 'Codex CLI runtime service is unavailable.',
+      message: t('main.codexCli.runtimeUnavailable', 'Codex CLI runtime service is unavailable.'),
   };
 }
 
@@ -731,11 +732,11 @@ function registerAuxiliaryIpcHandlers({
     },
     'attachments.pick': async () => {
       const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: 'Select attachments',
+        title: t('main.dialog.attachments.title', 'Select attachments'),
         properties: ['openFile', 'multiSelections'],
         filters: [
           {
-            name: 'Supported attachments',
+            name: t('main.dialog.attachments.supportedFiles', 'Supported attachments'),
             extensions: [
               'txt', 'md', 'markdown', 'js', 'cjs', 'mjs', 'ts', 'tsx', 'jsx', 'json', 'css', 'html',
               'htm', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'py', 'rb', 'go', 'rs', 'java', 'kt',
@@ -743,7 +744,7 @@ function registerAuxiliaryIpcHandlers({
               'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
             ],
           },
-          { name: 'All files', extensions: ['*'] },
+          { name: t('main.dialog.attachments.allFiles', 'All files'), extensions: ['*'] },
         ],
       });
       if (result.canceled) {
@@ -831,7 +832,7 @@ function registerAuxiliaryIpcHandlers({
     // ingested into the managed asset store from a live sidecar tool.result.
     'attachments.readToolResultAsset': (_, attachmentId) => {
       if (!backendService) {
-        return { ok: false, reason: 'backend service unavailable' };
+      return { ok: false, reason: t('main.backend.serviceUnavailable', 'backend service unavailable') };
       }
       return readToolResultAttachment(backendService, attachmentId);
     },

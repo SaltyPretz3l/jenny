@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -25,22 +26,22 @@
     var statusBadge = '';
     if (badge) {
       statusBadge = viewState.mcpToolsDiscovered
-        ? badge({ tone: 'success', text: 'MCP tools discovered', size: 'sm' })
-        : badge({ tone: 'muted', text: 'No MCP servers configured', size: 'sm' });
+        ? badge({ tone: 'success', text: jt('setup.skills.toolsDiscovered', 'MCP tools discovered'), size: 'sm' })
+        : badge({ tone: 'muted', text: jt('setup.skills.noServersConfigured', 'No MCP servers configured'), size: 'sm' });
     }
     var copy = viewState.mcpToolsDiscovered
-      ? 'Jenny is talking to your MCP servers. Type / in the composer to run a skill.'
-      : 'No MCP servers are configured yet. You can add servers later in Settings; this is fine to skip for now.';
+      ? jt('setup.skills.connectedCopy', 'Jenny is talking to your MCP servers. Type / in the composer to run a skill.')
+      : jt('setup.skills.noServersCopy', 'No MCP servers are configured yet. You can add servers later in Settings; this is fine to skip for now.');
     var actions = '';
     if (actionButton) {
       actions = actionButton({
         id: 'gotIt',
-        label: 'Got it',
+        label: jt('setup.skills.gotIt', 'Got it'),
         variant: 'primary',
       })
       + actionButton({
         id: 'skip',
-        label: 'Skip for now',
+        label: jt('setup.skills.skipForNow', 'Skip for now'),
         variant: 'ghost',
       });
     }
@@ -71,12 +72,12 @@
       if (!rootEl) return;
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Review skills & MCP',
+        title: jt('setup.skills.title', 'Review skills & MCP'),
         eyebrow: sceneUtils.setupStepEyebrow('skills'),
-        summary: 'A quick glance at the skills and MCP tools Jenny will use.',
+        summary: jt('setup.skills.summary', 'A quick glance at the skills and MCP tools Jenny will use.'),
         bodyHtml: buildBodyHtml(viewState),
         actions: [
-          { id: 'cancel', label: 'Close', variant: 'secondary' },
+          { id: 'cancel', label: jt('common.close', 'Close'), variant: 'secondary' },
         ],
       }) : '';
       rootEl.innerHTML = html;

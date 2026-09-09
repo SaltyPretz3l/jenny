@@ -6,7 +6,7 @@
   root.inventoryDrawer = factory(root, root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var escapeHtml = stringUtils.escapeHtml;
   var FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
@@ -92,8 +92,8 @@
         + '<section class="inv-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="'
         + escapeHtml(id + 'Title') + '" tabindex="-1">'
         + '<header class="inv-drawer-header"><h2 id="' + escapeHtml(id + 'Title') + '">'
-        + escapeHtml(conf.title || 'Details') + '</h2>'
-        + '<button type="button" class="inv-drawer-close" data-drawer-close title="Close details" aria-label="Close details">&times;</button></header>'
+        + escapeHtml(conf.title || jt('inventory.drawer.detailsTitle', 'Details')) + '</h2>'
+        + '<button type="button" class="inv-drawer-close" data-drawer-close title="' + escapeHtml(jt('inventory.drawer.closeDetails', 'Close details')) + '" aria-label="' + escapeHtml(jt('inventory.drawer.closeDetails', 'Close details')) + '">&times;</button></header>'
         + '<div class="inv-drawer-body">' + String(conf.bodyHtml || '') + '</div></section>';
       target.hidden = false;
       panel = target.querySelector('.inv-drawer-panel');

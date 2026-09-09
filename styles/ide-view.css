@@ -48,12 +48,12 @@
   background: var(--bg-sidebar);
   /* On the right (rail left) the divider faces the editor on the sidebar's left
    * edge; on the left (rail right) it faces the editor on the right edge. */
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
 }
 
 .ide-shell[data-rail-side="right"] .ide-secondary-sidebar {
-  border-left: 0;
-  border-right: 1px solid var(--line);
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--line);
 }
 
 .ide-secondary-sidebar.hidden {
@@ -96,7 +96,7 @@
   align-items: center;
   flex-shrink: 0;
   max-width: 220px;
-  border-right: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
   background: transparent;
   color: var(--text-secondary);
 }
@@ -112,7 +112,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  padding: 8px 4px 8px 12px;
+  padding-block: 8px; padding-inline-end: 4px; padding-inline-start: 12px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -150,7 +150,7 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  margin: 0 6px 0 2px;
+  margin-block: 0; margin-inline-end: 6px; margin-inline-start: 2px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -272,27 +272,27 @@
   min-width: 0;
   min-height: 0;
   background: var(--bg-sidebar);
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
 }
 
 .ide-shell[data-rail-side="left"] .ide-rail {
-  border-left: 0;
-  border-right: 1px solid var(--line);
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--line);
 }
 
 .ide-rail-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
+  inset-inline-start: -3px;
   width: 6px;
   cursor: col-resize;
   z-index: 2;
 }
 
 .ide-shell[data-rail-side="left"] .ide-rail-resizer {
-  left: auto;
-  right: -3px;
+  left: auto; /* rtl:physical */
+  right: -3px; /* rtl:physical */
 }
 
 .ide-rail-resizer:focus-visible {
@@ -338,9 +338,9 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid var(--line);
+  margin-inline-start: 4px;
+  padding-inline-start: 8px;
+  border-inline-start: 1px solid var(--line);
 }
 
 .ide-rail-panel {
@@ -390,7 +390,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 3px 8px 3px calc(10px + var(--ide-tree-depth, 0) * 14px);
+  padding-block: 3px; padding-inline-end: 8px; padding-inline-start: calc(10px + var(--ide-tree-depth, 0) * 14px);
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
@@ -456,7 +456,7 @@
 }
 
 .ide-tree-status {
-  padding: 4px 8px 4px calc(22px + var(--ide-tree-depth, 0) * 14px);
+  padding-block: 4px; padding-inline-end: 8px; padding-inline-start: calc(22px + var(--ide-tree-depth, 0) * 14px);
   color: var(--text-muted);
   font-size: 11px;
   font-style: italic;
@@ -535,7 +535,7 @@
 
 .ide-rail-flip {
   flex-shrink: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 4px 6px;
   border: 0;
   border-radius: 4px;
@@ -728,7 +728,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 3px 4px 3px 20px;
+  padding-block: 3px; padding-inline-end: 4px; padding-inline-start: 20px;
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -754,7 +754,7 @@
 }
 
 .ide-changes-row--unsaved {
-  padding-left: 4px;
+  padding-inline-start: 4px;
 }
 
 .ide-changes-row-name {
@@ -776,7 +776,7 @@
 
 .ide-changes-row-hint {
   flex-shrink: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-muted);
   font-size: 10px;
 }
@@ -812,7 +812,7 @@
   gap: 4px;
 }
 
-.ide-changes-batch-actions { margin-left: auto; }
+.ide-changes-batch-actions { margin-inline-start: auto; }
 
 .ide-changes-batch-actions .btn,
 .ide-changes-op-row .btn,
@@ -822,7 +822,7 @@
 
 .ide-changes-batch-detail {
   display: flex; flex-direction: column; gap: 4px;
-  margin: 0 4px 6px 20px; padding: 6px 8px;
+  margin-block: 0 6px; margin-inline-end: 4px; margin-inline-start: 20px; padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 6px; font-size: 11px; color: var(--text-secondary);
 }
@@ -839,7 +839,7 @@
 
 .ide-changes-outside-undo summary { cursor: pointer; }
 .ide-changes-outside-undo-list {
-  margin: 4px 0 0; padding-left: 18px;
+  margin: 4px 0 0; padding-inline-start: 18px;
 }
 .ide-recovery-conflict { margin-bottom: 12px; }
 
@@ -877,16 +877,16 @@
 
   .ide-rail,
   .ide-shell[data-rail-side="left"] .ide-rail {
-    border-left: 0;
-    border-right: 0;
+    border-inline-start: 0;
+    border-inline-end: 0;
     border-top: 1px solid var(--line);
     max-height: 40%;
   }
 
   .ide-secondary-sidebar,
   .ide-shell[data-rail-side="right"] .ide-secondary-sidebar {
-    border-left: 0;
-    border-right: 0;
+    border-inline-start: 0;
+    border-inline-end: 0;
     border-top: 1px solid var(--line);
     max-height: 40%;
   }
@@ -909,7 +909,7 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  text-align: left;
+  text-align: start;
 }
 
 .ide-welcome-section {
@@ -953,7 +953,7 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   font: inherit;
 }
 
@@ -997,7 +997,7 @@
 
 .ide-confirm-list {
   margin: 0 0 12px;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   max-height: 160px;
   overflow: auto;
   font-size: 12px;

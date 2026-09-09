@@ -5,6 +5,7 @@
   }
   root.rendererStreamHandlerTerminal = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function resolveTerminalMergeModule() {
     if (typeof globalThis !== 'undefined' && globalThis.rendererStreamHandlerTerminalMerge) {
       return globalThis.rendererStreamHandlerTerminalMerge;
@@ -408,7 +409,7 @@
           restoreQueuedSendDraft(payload.sessionId);
         }
         clearInteractiveDraft(payload.sessionId);
-        setSessionComposerNotice(payload.sessionId, 'Questions are unsaved. Retry save or discard them before answering.', {
+        setSessionComposerNotice(payload.sessionId, jt('chat.questions.unsavedNotice', 'Questions are unsaved. Retry save or discard them before answering.'), {
           owner: 'interactive:unsaved', tone: 'warning',
         });
         queueSessionRender(payload.sessionId, {
@@ -531,9 +532,9 @@
           scope: String(patch.durability.scope || '').slice(0, 20),
         });
         showToastMessage(
-          "This reply couldn't be saved to your session history and will be lost when the app closes. Copy anything you need to keep.",
+          jt('chat.streamTerminal.replyNotSavedToast', "This reply couldn't be saved to your session history and will be lost when the app closes. Copy anything you need to keep."),
           {
-            title: 'Reply not saved',
+            title: jt('chat.streamTerminal.replyNotSavedTitle', 'Reply not saved'),
             tone: 'warning',
             sticky: true,
             source: TOAST_SOURCE.chatStream,
@@ -807,7 +808,7 @@
       });
       let index = ensurePendingStreamEntry(payload);
       let activeMessages = [...getSessionMessages(payload.sessionId)];
-      const streamErrorMessage = String(payload.message || 'Unknown streaming error.');
+      const streamErrorMessage = String(payload.message || jt('error.chat.unknownStreaming', 'Unknown streaming error.'));
       const explicitTerminalStatus = String(payload.terminal_status || payload.terminalStatus || '').trim();
       const statusClassification = String(payload.status || '').trim().toLowerCase();
       const rawTerminalStatus = explicitTerminalStatus
@@ -911,7 +912,7 @@
         );
         if (!isUserIntentTerminal) {
           showToastMessage(streamErrorMessage, {
-            title: 'Streaming Error',
+            title: jt('chat.streamTerminal.streamingErrorTitle', 'Streaming Error'),
             tone: 'danger',
             sticky: true,
             source: TOAST_SOURCE.chatStream,
@@ -943,7 +944,7 @@
           );
           if (continuationGuard.isCurrent() && !isUserIntentTerminal) {
             showToastMessage(streamErrorMessage, {
-              title: 'Streaming Error',
+              title: jt('chat.streamTerminal.streamingErrorTitle', 'Streaming Error'),
               tone: 'danger',
               sticky: true,
               source: TOAST_SOURCE.chatStream,

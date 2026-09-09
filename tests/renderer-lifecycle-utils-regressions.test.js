@@ -21,7 +21,7 @@ function createHarness(t, options = {}) {
   };
   global.window = dom.window;
   global.document = dom.window.document;
-  global.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+  global.requestAnimationFrame = options.requestAnimationFrame || ((callback) => setTimeout(callback, 0));
   global.jennyShell = options.jennyShell;
   dom.window.jennyShell = options.jennyShell;
   global.rendererPluginSessions = options.rendererPluginSessions;
@@ -58,7 +58,41 @@ function createHarness(t, options = {}) {
     global.rendererPluginSessions = previous.rendererPluginSessions;
     dom.window.close();
   });
-  return { controller, state };
+  return { controller, state, dom };
+}
+
+test('chat activation never borrows sprite opacity or creates a timed duplicate', (t) => {
+  const frames = [];
+  let positions = 0;
+  const h = createHarness(t, {
+    requestAnimationFrame: (callback) => frames.push(callback),
+    callbacks: { updateAssistantSpritePosition: () => { positions += 1; } },
+  });
+  h.dom.window.document.body.innerHTML = '<div id="chatAssistantSprite" style="opacity:0.84"></div>';
+  h.state.ui.morphStartRect = { top: 10, left: 10, width: 30, height: 30 };
+  h.controller.setActiveView('chat');
+  while (frames.length) frames.shift()();
+  assert.equal(positions, 1);
+  assert.equal(h.state.ui.morphStartRect, undefined);
+  assert.equal(h.dom.window.document.querySelector('.presence-morph-overlay'), null);
+  assert.equal(h.dom.window.document.getElementById('chatAssistantSprite').style.opacity, '0.84');
+});
+
+for (const interruption of ['view', 'session', 'dispose']) {
+  test(`chat activation ignores a queued frame after ${interruption} interruption`, (t) => {
+    const frames = [];
+    let positions = 0;
+    const h = createHarness(t, {
+      requestAnimationFrame: (callback) => frames.push(callback),
+      callbacks: { updateAssistantSpritePosition: () => { positions += 1; } },
+    });
+    h.controller.setActiveView('chat');
+    if (interruption === 'view') h.controller.setActiveView('settings');
+    if (interruption === 'session') h.state.currentSessionId = 'another-session';
+    if (interruption === 'dispose') h.controller.disposeLifecycleController();
+    while (frames.length) frames.shift()();
+    assert.equal(positions, 0);
+  });
 }
 
 test('runtime preferences expose the session pre-plan run mode for the plan toggle', (t) => {

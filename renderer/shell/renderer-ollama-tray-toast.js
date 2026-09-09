@@ -17,6 +17,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, logContractUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var TRAY_CONFLICT_EVENT = 'ollama.tray_app_conflict_detected';
   var TOAST_SOURCE = 'ollama_tray_remediation';
 
@@ -40,22 +42,22 @@
     if (result && result.ok === true) {
       var killed = Array.isArray(result.killedPids) ? result.killedPids : [];
       return killed.length
-        ? 'Quit the Ollama tray app (' + killed.length + ' process' + (killed.length === 1 ? '' : 'es') + ').'
-        : 'Ollama tray app was not running.';
+        ? jtn('models.ollama.tray.quitResult', killed.length, { count: killed.length }, 'Quit the Ollama tray app ({count} process).', 'Quit the Ollama tray app ({count} processes).')
+        : jt('models.ollama.tray.notRunning', 'Ollama tray app was not running.');
     }
     var reason = normalizeFailureReason(result && result.reason);
-    return reason ? 'Could not quit the tray app: ' + reason : 'Could not quit the tray app.';
+    return reason ? jt('models.ollama.tray.quitFailedReason', 'Could not quit the tray app: {reason}', { reason: reason }) : jt('models.ollama.tray.quitFailed', 'Could not quit the tray app.');
   }
 
   function summarizeDisableResult(result) {
     if (result && result.ok === true) {
       var disabled = Array.isArray(result.disabled) ? result.disabled : [];
       return disabled.length
-        ? 'Disabled Startup shortcut: ' + disabled.join(', ') + '.'
-        : 'No Startup shortcut was found.';
+        ? jt('models.ollama.tray.startupDisabled', 'Disabled Startup shortcut: {shortcuts}.', { shortcuts: disabled.join(', ') })
+        : jt('models.ollama.tray.noStartupShortcut', 'No Startup shortcut was found.');
     }
     var reason = normalizeFailureReason(result && result.reason);
-    return reason ? 'Could not disable the Startup shortcut: ' + reason : 'Could not disable the Startup shortcut.';
+    return reason ? jt('models.ollama.tray.disableStartupFailedReason', 'Could not disable the Startup shortcut: {reason}', { reason: reason }) : jt('models.ollama.tray.disableStartupFailed', 'Could not disable the Startup shortcut.');
   }
 
   function safeCall(fn, appendClientLog, logEvent) {
@@ -86,7 +88,7 @@
     return [
       {
         id: 'quit',
-        label: 'Quit tray app',
+        label: jt('models.ollama.tray.quitApp', 'Quit tray app'),
         kind: 'primary',
         onClick: function onQuitClick() {
           return safeCall(
@@ -96,7 +98,7 @@
           ).then(function (result) {
             if (showToast) {
               showToast(summarizeQuitResult(result), {
-                title: 'Ollama Tray App',
+                title: jt('models.ollama.tray.title', 'Ollama Tray App'),
                 tone: result && result.ok ? 'success' : 'warning',
                 source: TOAST_SOURCE,
               });
@@ -107,7 +109,7 @@
       },
       {
         id: 'disable',
-        label: 'Disable Startup shortcut',
+        label: jt('models.ollama.tray.disableStartupShortcut', 'Disable Startup shortcut'),
         kind: 'default',
         onClick: function onDisableClick() {
           return safeCall(
@@ -117,7 +119,7 @@
           ).then(function (result) {
             if (showToast) {
               showToast(summarizeDisableResult(result), {
-                title: 'Ollama Tray App',
+                title: jt('models.ollama.tray.title', 'Ollama Tray App'),
                 tone: result && result.ok ? 'success' : 'warning',
                 source: TOAST_SOURCE,
               });
@@ -128,7 +130,7 @@
       },
       {
         id: 'settings',
-        label: 'Open Settings',
+        label: jt('models.ollama.tray.openSettings', 'Open Settings'),
         kind: 'default',
         onClick: function onSettingsClick() {
           navigate('models');
@@ -170,9 +172,9 @@
 
     var actions = buildActions(d);
     d.showToast(
-      "The Ollama tray app can silently kill Jenny's engine. Quit it or disable its Startup shortcut to prevent unexpected restarts.",
+      jt('models.ollama.tray.conflictMessage', "The Ollama tray app can silently kill Jenny's engine. Quit it or disable its Startup shortcut to prevent unexpected restarts."),
       {
-        title: 'Ollama Tray App Conflict',
+        title: jt('models.ollama.tray.conflictTitle', 'Ollama Tray App Conflict'),
         tone: 'warning',
         sticky: true,
         source: TOAST_SOURCE,

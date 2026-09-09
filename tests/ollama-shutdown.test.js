@@ -16,6 +16,7 @@ function ownedStateFs(record) {
   return {
     existsSync: () => Boolean(record),
     readFileSync: () => JSON.stringify(record || {}),
+    unlinkSync: () => {},
   };
 }
 
@@ -265,6 +266,7 @@ test('shutdownAnyLocalOllamaSync runs NO wsl shutdown and NO graceful model stop
         return { status: 0, stdout: '' };
       },
       isProcessAliveImpl: () => true,
+      getProcessCommandLineSyncImpl: () => 'C:\\Ollama\\ollama.exe serve',
     });
   }, 'the taskkill failure must be contained, not propagated');
 
@@ -311,6 +313,7 @@ test('shutdownAnyLocalOllamaSync kills only the owned pid and its verified desce
     },
     logger: (level, event, details) => logs.push({ level, event, details }),
     isProcessAliveImpl: () => true,
+    getProcessCommandLineSyncImpl: () => 'ollama.exe serve',
   });
 
   assert.ok(
@@ -341,9 +344,9 @@ test('shutdownAnyLocalOllamaSync full sequence verifies no processes remain', ()
   const logs = [];
   const spawnCalls = [];
   let discoveryCallCount = 0;
-  let aliveCallCount = 0;
+  const alivePids = new Set([7001, 7002]);
 
-  shutdownAnyLocalOllamaSync({
+  const result = shutdownAnyLocalOllamaSync({
     userDataPath: FAKE_USER_DATA_PATH,
     platform: 'win32',
     fsImpl: ownedStateFs({ pid: 7001, command: 'ollama.exe serve', app_owned: true }),
@@ -360,16 +363,16 @@ test('shutdownAnyLocalOllamaSync full sequence verifies no processes remain', ()
     },
     spawnSyncImpl: (cmd, args) => {
       spawnCalls.push({ cmd, args: [...args] });
+      if (cmd === 'taskkill' && args[0] === '/PID') alivePids.delete(Number(args[1]));
       return { status: 0, stdout: '' };
     },
     logger: (level, event, details) => logs.push({ level, event, details }),
-    isProcessAliveImpl: () => {
-      aliveCallCount += 1;
-      return aliveCallCount <= 2;
-    },
+    isProcessAliveImpl: (pid) => alivePids.has(pid),
+    getProcessCommandLineSyncImpl: () => 'ollama.exe serve',
   });
 
-  assert.ok(discoveryCallCount >= 2, `expected >= 2 discovery calls, got ${discoveryCallCount}`);
+  assert.equal(result.verifiedAllKilled, true);
+  assert.equal(alivePids.size, 0, 'every known process must be confirmed dead');
 
   const pidKills = spawnCalls.filter(
     (c) => c.cmd === 'taskkill' && c.args.includes('/PID'),
@@ -442,7 +445,7 @@ test('shutdownAnyLocalOllamaSync retains owned state when the PID survives verif
   const logs = [];
   const fsImpl = {
     existsSync: () => true,
-    readFileSync: () => JSON.stringify({ pid: 505, command: 'ollama.exe serve' }),
+    readFileSync: () => JSON.stringify({ pid: 505, command: 'ollama.exe serve', app_owned: true }),
     unlinkSync: () => calls.push(['unlink']),
   };
 
@@ -456,6 +459,7 @@ test('shutdownAnyLocalOllamaSync retains owned state when the PID survives verif
     spawnSyncImpl: () => ({ status: 5, stderr: 'access denied' }),
     isProcessAliveImpl: () => true,
     logger: (level, event, details) => logs.push({ level, event, details }),
+    getProcessCommandLineSyncImpl: () => 'ollama.exe serve',
   });
 
   assert.equal(result.verifiedAllKilled, false);
@@ -495,3 +499,92 @@ test('shutdownAnyLocalOllamaSync fails closed on a malformed owned-state record'
   assert.deepEqual(spawnCalls, [], 'a malformed record must not authorize any taskkill');
   assert.ok(logs.some((entry) => entry.level === 'WARN' && entry.event === 'ollama.owned_state_malformed'));
 });
+
+test('shutdownAnyLocalOllamaSync clears a stale pid without discovering unrelated processes', () => {
+  let statePresent = true;
+  let discoveryCalls = 0;
+  const result = shutdownAnyLocalOllamaSync({
+    userDataPath: FAKE_USER_DATA_PATH,
+    platform: 'win32',
+    fsImpl: {
+      existsSync: () => statePresent,
+      readFileSync: () => JSON.stringify({ pid: 606, command: 'ollama.exe serve', app_owned: true }),
+      unlinkSync: () => { statePresent = false; },
+    },
+    execFileSyncImpl: () => { discoveryCalls += 1; return '[]'; },
+    spawnSyncImpl: () => { throw new Error('no subprocess expected'); },
+    isProcessAliveImpl: () => false,
+  });
+
+  assert.equal(result.skipped, 'stale_owned_pid');
+  assert.equal(discoveryCalls, 0);
+  assert.equal(statePresent, false);
+});
+
+test('shutdownAnyLocalOllamaSync never kills a reused pid with a mismatched command', () => {
+  const spawnCalls = [];
+  let statePresent = true;
+  const result = shutdownAnyLocalOllamaSync({
+    userDataPath: FAKE_USER_DATA_PATH,
+    platform: 'win32',
+    fsImpl: {
+      existsSync: () => statePresent,
+      readFileSync: () => JSON.stringify({ pid: 707, command: 'ollama.exe serve', app_owned: true }),
+      unlinkSync: () => { statePresent = false; },
+    },
+    execFileSyncImpl: () => JSON.stringify([
+      { ProcessId: 707, ParentProcessId: 0, Name: 'ollama.exe' },
+      { ProcessId: 808, ParentProcessId: 0, Name: 'ollama.exe' },
+    ]),
+    spawnSyncImpl: (cmd, args) => { spawnCalls.push({ cmd, args }); return { status: 0 }; },
+    isProcessAliveImpl: () => true,
+    getProcessCommandLineSyncImpl: () => 'C:\\Windows\\System32\\notepad.exe',
+  });
+
+  assert.equal(result.skipped, 'identity_mismatch');
+  assert.deepEqual(spawnCalls, []);
+  assert.equal(statePresent, false, 'a positively mismatched stale record is cleared');
+});
+
+test('shutdownAnyLocalOllamaSync retains state when identity lookup is unavailable', () => {
+  let statePresent = true;
+  let discoveryCalls = 0;
+  const logs = [];
+  const result = shutdownAnyLocalOllamaSync({
+    userDataPath: FAKE_USER_DATA_PATH,
+    platform: 'win32',
+    fsImpl: {
+      existsSync: () => statePresent,
+      readFileSync: () => JSON.stringify({ pid: 909, command: 'ollama.exe serve', app_owned: true }),
+      unlinkSync: () => { statePresent = false; },
+    },
+    execFileSyncImpl: () => { discoveryCalls += 1; return '[]'; },
+    spawnSyncImpl: () => { throw new Error('no subprocess expected'); },
+    isProcessAliveImpl: () => true,
+    getProcessCommandLineSyncImpl: () => '',
+    logger: (level, event, details) => logs.push({ level, event, details }),
+  });
+
+  assert.equal(result.skipped, 'identity_unconfirmed');
+  assert.equal(discoveryCalls, 0);
+  assert.equal(statePresent, true, 'an unavailable probe keeps ownership for a later retry');
+  assert.ok(logs.some((entry) => entry.event === 'ollama.state_retained'));
+});
+
+for (const fields of [{ command: 123 }, { command: {} }, { command: '' }, { app_owned: false }, { pid: 0 }]) {
+  test(`incomplete ownership cannot authorize emergency cleanup: ${JSON.stringify(fields)}`, () => {
+    let discoveries = 0;
+    const spawns = [];
+    const result = shutdownAnyLocalOllamaSync({
+      userDataPath: FAKE_USER_DATA_PATH,
+      fsImpl: ownedStateFs({ pid: 7001, command: 'ollama.exe serve', app_owned: true, ...fields }),
+      execFileSyncImpl: () => { discoveries += 1; return '[]'; },
+      spawnSyncImpl: (...args) => { spawns.push(args); return { status: 0 }; },
+      isProcessAliveImpl: () => true,
+      getProcessCommandLineSyncImpl: () => 'ollama.exe serve',
+    });
+    assert.equal(result.skipped, 'malformed_owned_state');
+    assert.equal(discoveries, 0);
+    assert.deepEqual(spawns, []);
+  });
+}

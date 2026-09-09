@@ -13,7 +13,7 @@
 }
 
 #pluginsHeaderActionsHost {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .plugins-drop-zone {
@@ -65,7 +65,7 @@
 
 .skills-folders-disclosure {
   margin-top: var(--space-2);
-  padding-left: var(--space-5);
+  padding-inline-start: var(--space-5);
 }
 
 .skills-folder-row-controls {

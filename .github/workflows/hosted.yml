@@ -1,0 +1,72 @@
+name: Hosted qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'services/host/**'
+      - 'services/backend/**'
+      - 'renderer/browser/**'
+      - 'renderer/shared/**'
+      - 'renderer/chat/**'
+      - 'renderer/inventory/**'
+      - 'renderer/features/renderer-plan-document.js'
+      - 'locales/**'
+      - 'sidecar/**'
+      - 'tests/server/**'
+      - 'tests/worker/**'
+      - 'tests/host-sandbox-bridge.test.js'
+      - 'tests/sidecar/test_host*.py'
+      - 'scripts/build-browser.js'
+      - 'scripts/packaging/**'
+      - 'package*.json'
+      - 'Dockerfile'
+      - 'compose.host*.yml'
+      - 'docker-setup.*'
+      - '.dockerignore'
+      - '.github/workflows/hosted.yml'
+permissions:
+  contents: read
+jobs:
+  linux-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r server/requirements-lock.txt
+          .venv/bin/python -m pip install pytest pytest-asyncio pytest-mock pytest-cov pytest-xdist
+      - run: npm run build:browser
+      - run: npm run test:host
+      - run: node node_modules/playwright-core/cli.js install --with-deps chromium
+      - run: npm run test:host:browser
+      - run: node scripts/run-node-tests-safe.js tests/server/localhost-browser.integration.js --no-default-test-flags --timeout-ms=180000
+      - run: node scripts/run-node-tests-safe.js tests/host-sandbox-bridge.test.js
+      - run: .venv/bin/python -m pytest tests/sidecar/test_hosted_file_io.py tests/sidecar/test_host_execution_policy.py tests/sidecar/test_host_execution_worker_policy.py tests/sidecar/test_host_policy_dispatch.py -q
+      - run: docker compose -f compose.host.yml config --quiet
+      - name: Build local image (no publication)
+        run: docker build --platform linux/amd64 -t jenny-host:ci .
+      - name: Fresh-volume owner, entrypoint, readiness, login and SSE smoke
+        run: bash scripts/packaging/smoke-host-container.sh jenny-host:ci
+      - name: Guided setup, hidden input, repeat setup and durable restart
+        run: node scripts/packaging/smoke-host-setup.js jenny-host:ci
+      - name: Localhost browser and offline command sandbox qualification
+        run: node scripts/packaging/smoke-host-setup.js jenny-host:ci --localhost
+      - name: Real image runtime, persistence and cancellation contracts
+        run: >-
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true
+          --pids-limit 256 --memory 2g --cpus 2
+          --tmpfs /tmp:size=268435456,mode=1777
+          --mount type=bind,src=${{ github.workspace }}/tests,target=/app/tests,readonly
+          --env JENNY_TEST_PYTHON=/opt/jenny-venv/bin/python
+          --entrypoint node jenny-host:ci
+          --test tests/server/stdio-persistence.test.js tests/server/stdio-decisions.test.js

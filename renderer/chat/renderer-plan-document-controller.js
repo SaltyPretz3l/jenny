@@ -13,7 +13,8 @@
   root.addEventListener?.('beforeunload', () => root.__rendererPlanDocumentController?.dispose?.(), { once: true });
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function createPlanDocumentController({ windowRef, documentRef, actionButton, textField } = {}) {
     const win = windowRef || (typeof window !== 'undefined' ? window : null);
     const doc = documentRef || win?.document;
@@ -50,14 +51,14 @@
     function updateStepMeta(host, state) {
       const meta = host.querySelector('.plan-document__meta');
       if (!meta) return;
-      const suffix = state.metaSuffix || '';
-      meta.textContent = `${state.working.steps.length} steps${suffix}`;
+      const suffix = state.filesReadCount ? ` · ${jt('artifacts.plan.filesRead', '{count} files read', { count: state.filesReadCount })}` : '';
+      meta.textContent = jtn('chat.planDocument.stepCount', state.working.steps.length, { count: state.working.steps.length, suffix }, '{count} steps{suffix}', '{count} steps{suffix}').replace('{count}', () => String(state.working.steps.length)).replace('{suffix}', () => String(suffix));
     }
 
     function beginInputEdit(target, value, maxLength, onFinish) {
       if (!target || target.querySelector('input')) return;
       target.innerHTML = field({ id: `plan-edit-${++editSequence}`, label: '', value, maxLength,
-        ariaLabel: maxLength === 120 ? 'Edit plan title' : 'Edit plan step',
+        ariaLabel: maxLength === 120 ? jt('chat.planDocument.editTitle', 'Edit plan title') : jt('chat.planDocument.editStep', 'Edit plan step'),
         className: 'plan-document__inline-field', dataset: { 'plan-edit-input': '' } });
       const input = target.querySelector('[data-plan-edit-input]');
       if (!input) return;
@@ -94,10 +95,10 @@
     }
 
     function renderStepControls(container) {
-      container.innerHTML = button({ label: '', trustedHtml: '&#10239;', ariaLabel: 'Reorder step', title: 'Drag to reorder step', plain: true,
+      container.innerHTML = button({ label: '', trustedHtml: '&#10239;', ariaLabel: jt('chat.planDocument.reorderStep', 'Reorder step'), title: jt('chat.planDocument.dragToReorderStep', 'Drag to reorder step'), plain: true,
         className: 'plan-document__step-control plan-document__drag-handle',
         dataset: { 'plan-drag-handle': '' } })
-        + button({ label: '', trustedHtml: '&times;', ariaLabel: 'Remove step', title: 'Remove this step', plain: true,
+        + button({ label: '', trustedHtml: '&times;', ariaLabel: jt('chat.planDocument.removeStep', 'Remove step'), title: jt('chat.planDocument.removeThisStep', 'Remove this step'), plain: true,
           className: 'plan-document__step-control plan-document__remove-step',
           dataset: { 'plan-remove-step': '' } });
     }
@@ -126,7 +127,7 @@
         text.dataset.planStepText = '';
         text.tabIndex = 0;
         text.setAttribute('role', 'button');
-        text.setAttribute('aria-label', `Edit step ${index + 1}`);
+        text.setAttribute('aria-label', jt('chat.planDocument.editStepNumber', 'Edit step {number}', { number: index + 1 }).replace('{number}', () => String(index + 1)));
         renderText(text, step);
         const controls = doc.createElement('span');
         controls.className = 'plan-document__step-controls';
@@ -156,7 +157,7 @@
 
     function installPlanEditing(host, state) {
       const addHost = host.querySelector('[data-plan-add-step]');
-      if (addHost) addHost.innerHTML = button({ label: '+ Add step', variant: 'ghost', size: 'sm',
+      if (addHost) addHost.innerHTML = button({ label: jt('chat.planDocument.addStep', '+ Add step'), variant: 'ghost', size: 'sm',
         className: 'plan-document__add-step-button', dataset: { 'plan-add-step-button': '' } });
       renderSteps(host, state);
       let dragIndex = -1;
@@ -260,28 +261,28 @@
       if (disposed || cleanups.has(host) || host.dataset.planState !== 'pending') return;
       const actions = host.querySelector('[data-plan-actions]');
       if (!actions || typeof button !== 'function' || typeof field !== 'function') return;
-      const title = host.querySelector('[data-plan-title]')?.textContent?.trim() || 'Implementation plan';
+      const title = host.querySelector('[data-plan-title]')?.textContent?.trim() || jt('chat.planDocument.defaultTitle', 'Implementation plan');
       const steps = [...host.querySelectorAll('[data-plan-step-text]')]
         .map((step) => step.textContent.trim()).filter(Boolean);
-      const metaText = host.querySelector('.plan-document__meta')?.textContent || '';
+      const filesReadCount = Number(host.querySelector('.plan-document__meta')?.dataset.planFilesReadCount);
       const state = {
         original: { title, steps: [...steps] }, working: { title, steps: [...steps] },
-        edited: false, metaSuffix: metaText.replace(/^\d+ steps/, ''),
+        edited: false, filesReadCount: Number.isInteger(filesReadCount) && filesReadCount > 0 ? filesReadCount : 0,
       };
       planStates.set(host, state);
       const removeEditing = installPlanEditing(host, state);
-      actions.innerHTML = button({ label: 'Keep planning', variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'feedback' } })
-        + button({ label: 'Build it', variant: 'primary', size: 'sm', dataset: { 'plan-decision': 'approved' } })
-        + button({ label: "Build it, don't ask again", variant: 'secondary', size: 'sm', dataset: { 'plan-decision': 'approved_auto' } });
+      actions.innerHTML = button({ label: jt('chat.planDocument.keepPlanning', 'Keep planning'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'feedback' } })
+        + button({ label: jt('chat.planDocument.buildIt', 'Build it'), variant: 'primary', size: 'sm', dataset: { 'plan-decision': 'approved' } })
+        + button({ label: jt('chat.planDocument.buildWithoutAsking', 'Build it, auto mode'), variant: 'secondary', size: 'sm', dataset: { 'plan-decision': 'approved_auto' } });
       const onClick = (event) => {
         const target = event.target.closest('[data-plan-decision]');
         if (!target || !actions.contains(target) || host.dataset.planSubmitting === 'true') return;
         const decision = target.dataset.planDecision;
         if (decision === 'feedback') {
           actions.innerHTML = field({ id: `plan-feedback-${String(host.dataset.approvalRef || 'plan').replace(/[^A-Za-z0-9_-]/g, '-')}`,
-            label: 'What should change?', placeholder: 'Optional feedback', maxLength: 800,
+            label: jt('chat.planDocument.feedbackLabel', 'What should change?'), placeholder: jt('chat.planDocument.feedbackPlaceholder', 'Optional feedback'), maxLength: 800,
             dataset: { 'plan-feedback': '' } })
-            + button({ label: 'Keep planning', variant: 'primary', size: 'sm', dataset: { 'plan-decision': 'rejected' } });
+            + button({ label: jt('chat.planDocument.keepPlanning', 'Keep planning'), variant: 'primary', size: 'sm', dataset: { 'plan-decision': 'rejected' } });
           actions.querySelector('[data-plan-feedback]')?.focus();
           return;
         }

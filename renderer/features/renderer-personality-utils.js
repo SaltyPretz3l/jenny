@@ -35,6 +35,7 @@
   asyncFence
 ) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var actionButton = typeof actionButtonModule === 'function'
     ? actionButtonModule
@@ -46,7 +47,7 @@
 
   function toMessage(error, fallback) {
     var text = error && error.message ? String(error.message) : String(error || '');
-    return text.trim() || String(fallback || 'Something went wrong.');
+    return text.trim() || String(fallback || jt('personality.errors.somethingWentWrong', 'Something went wrong.'));
   }
 
   function setText(node, text) {
@@ -188,19 +189,19 @@
       dom.personalityActions.innerHTML = ''
         + actionButton({
           id: 'personality-open-folder',
-          label: 'Open folder',
+          label: jt('common.openFolder', 'Open folder'),
           variant: 'ghost',
           disabled: personalityState.loading === true,
         })
         + actionButton({
           id: 'personality-clear',
-          label: 'Clear',
+          label: jt('common.clear', 'Clear'),
           variant: 'secondary',
           disabled: busy,
         })
         + actionButton({
           id: 'personality-save',
-          label: personalityState.saving === true ? 'Saving…' : 'Save',
+          label: personalityState.saving === true ? jt('common.saving', 'Saving…') : jt('common.save', 'Save'),
           variant: 'primary',
           disabled: saveDisabled,
         });
@@ -212,7 +213,7 @@
         id: EXACT_PANEL_ID,
         open: false,
         className: 'personality-exact-trigger',
-        children: '<span>Show exact text</span>',
+        children: '<span>' + escapeHtml(jt('personality.exactText.show', 'Show exact text')) + '</span>',
       });
       dom.personalityExactPanelHost.innerHTML = collapsible.content({
         id: EXACT_PANEL_ID,
@@ -452,7 +453,7 @@
       if (disposalFence.isDisposed()) return;
       var api = shell();
       if (!api || typeof api.getState !== 'function') {
-        personalityState.loadStatus = 'Personality settings are unavailable.';
+        personalityState.loadStatus = jt('personality.errors.settingsUnavailable', 'Personality settings are unavailable.');
         renderPersonalityEditor();
         return;
       }
@@ -476,7 +477,7 @@
         formRendered = false;
       } catch (error) {
         if (disposalFence.isDisposed()) return;
-        personalityState.loadStatus = 'Unable to load personality: ' + toMessage(error, 'unknown error');
+        personalityState.loadStatus = jt('personality.errors.loadFailed', 'Unable to load personality: {error}', { error: toMessage(error, 'unknown error') });
       } finally {
         if (!disposalFence.isDisposed()) {
           personalityState.loading = false;
@@ -490,7 +491,7 @@
       if (disposalFence.isDisposed()) return;
       var api = shell();
       if (!api || typeof api.save !== 'function') {
-        personalityState.actionStatus = 'Saving personality is unavailable.';
+        personalityState.actionStatus = jt('personality.errors.savingUnavailable', 'Saving personality is unavailable.');
         renderMeta();
         return;
       }
@@ -520,7 +521,7 @@
             if (personalityState.agentName === payload.agentName) personalityState.agentName = storedName;
             markDirty();
             personalityState.savedAt = nowFn();
-            personalityState.actionStatus = 'Name could not be saved; note saved.';
+            personalityState.actionStatus = jt('personality.status.nameSaveFailedNoteSaved', 'Name could not be saved; note saved.');
             renderForm();
             return;
           }
@@ -541,7 +542,7 @@
         if (typeof d.renderSettings === 'function') d.renderSettings();
       } catch (error) {
         if (disposalFence.isDisposed()) return;
-        personalityState.actionStatus = 'Save failed: ' + toMessage(error, 'unknown error');
+        personalityState.actionStatus = jt('personality.errors.saveFailed', 'Save failed: {error}', { error: toMessage(error, 'unknown error') });
       } finally {
         if (!disposalFence.isDisposed()) {
           personalityState.saving = false;
@@ -554,7 +555,7 @@
     async function handlePersonalityReset() {
       var api = shell();
       if (!api || typeof api.clear !== 'function') {
-        personalityState.actionStatus = 'Clearing personality is unavailable.';
+        personalityState.actionStatus = jt('personality.errors.clearingUnavailable', 'Clearing personality is unavailable.');
         renderMeta();
         return;
       }
@@ -584,7 +585,7 @@
         clearPresetPrompt();
         renderForm();
       } catch (error) {
-        personalityState.actionStatus = 'Clear failed: ' + toMessage(error, 'unknown error');
+        personalityState.actionStatus = jt('personality.errors.clearFailed', 'Clear failed: {error}', { error: toMessage(error, 'unknown error') });
       } finally {
         personalityState.saving = false;
         renderMeta();
@@ -594,7 +595,7 @@
     async function handlePersonalityOpenFolder() {
       var api = shell();
       if (!api || typeof api.openWorkspaceFolder !== 'function') {
-        personalityState.actionStatus = 'Opening the personality folder is unavailable.';
+        personalityState.actionStatus = jt('personality.errors.openFolderUnavailable', 'Opening the personality folder is unavailable.');
         renderMeta();
         return;
       }
@@ -602,9 +603,9 @@
         var result = await api.openWorkspaceFolder();
         personalityState.actionStatus = result && result.ok === true
           ? ''
-          : 'Could not open the personality folder.';
+          : jt('personality.errors.openFolderFailed', 'Could not open the personality folder.');
       } catch (error) {
-        personalityState.actionStatus = 'Could not open the personality folder.';
+        personalityState.actionStatus = jt('personality.errors.openFolderFailed', 'Could not open the personality folder.');
       }
       renderMeta();
     }

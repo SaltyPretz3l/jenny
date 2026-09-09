@@ -82,7 +82,7 @@
 }
 
 .ide-scm-group-head .ide-scm-action--stage-all {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .ide-scm-row {
@@ -108,7 +108,7 @@
   padding: 2px 2px;
   color: var(--text-secondary);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   background: none;
   border: none;
 }
@@ -227,7 +227,7 @@
 }
 
 .ide-scm-write-message {
-  margin-right: auto;
+  margin-inline-end: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -260,8 +260,8 @@
 
 .ide-tree-git-badge {
   flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 6px;
+  margin-inline-start: auto;
+  padding-inline-start: 6px;
   font-size: 10px;
   font-weight: 700;
   color: var(--text-muted);
@@ -278,7 +278,7 @@
 /* Folder roll-up dot (a directory with dirty descendants). */
 .ide-tree-git-dot {
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-inline-start: auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -292,7 +292,7 @@
 
 /* ── Statusbar branch dirty-count chip (lit up in the statusbar commit) ── */
 .ide-statusbar-branch-count {
-  margin-left: 4px;
+  margin-inline-start: 4px;
   color: var(--state-warning);
   font-weight: 600;
 }
@@ -435,7 +435,7 @@
 
 .ide-scm-card-hash {
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-inline-start: auto;
   font-family: var(--font-family-mono);
   font-size: 10px;
   color: var(--text-muted);

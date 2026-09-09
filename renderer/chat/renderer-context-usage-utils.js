@@ -11,6 +11,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (model) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   if (!model || typeof model.createContextUsageStore !== 'function') {
     throw new Error('renderer-context-usage-utils requires renderer-context-usage-model');
   }
@@ -40,8 +41,9 @@
     var messageTokens = model.normalizePositiveInteger(data.messageTokens);
     var cumulativeTokens = model.normalizePositiveInteger(data.cumulativeTokens);
     var parts = [];
-    if (messageTokens > 0) parts.push('~' + formatTokenCount(messageTokens) + ' tokens est.');
-    if (cumulativeTokens > 0) parts.push('~' + formatTokenCount(cumulativeTokens) + ' cumulative');
+    if (data.wholeTurn) return jt('chat.contextUsage.visibleTurnTokenEstimate', '~{count} visible-reply tokens est. (whole turn)', { count: formatTokenCount(messageTokens) });
+    if (messageTokens > 0) parts.push(jt('chat.contextUsage.messageTokenEstimate', '~{count} tokens est.', { count: formatTokenCount(messageTokens) }));
+    if (cumulativeTokens > 0) parts.push(jt('chat.contextUsage.cumulativeTextEstimate', '~{count} cumulative text tokens est.', { count: formatTokenCount(cumulativeTokens) }));
     return parts.join(' · ');
   }
 
@@ -161,9 +163,9 @@
   }
 
   function sourceLabel(source) {
-    if (source === 'provider') return 'last request';
-    if (source === 'context') return 'est. last request';
-    if (source === 'compaction') return 'est. compacted history';
+    if (source === 'provider') return jt('chat.contextUsage.lastRequest', 'last request');
+    if (source === 'context') return jt('chat.contextUsage.estimatedLastRequest', 'est. last request');
+    if (source === 'compaction') return jt('chat.contextUsage.estimatedCompactedHistory', 'est. compacted history');
     return 'est. context';
   }
 
@@ -195,18 +197,18 @@
     var lines = ['Context: ' + summary.percentLabel];
     if (summary.targetType === 'auto_compact') {
       lines.push(
-        usedLabel + ' of ' + limitLabel + ' tokens before auto-compact (' + summary.sourceLabel + ')'
+        jt('chat.contextUsage.tokensBeforeAutoCompact', '{used} of {limit} tokens before auto-compact ({source})', { used: usedLabel, limit: limitLabel, source: summary.sourceLabel })
       );
       lines.push(remainingLabel + ' remaining');
-      if (summary.severity === 'danger') lines.push('Nearly full — auto-compaction is imminent.');
-      else if (summary.severity === 'warning') lines.push('Approaching auto-compaction.');
+      if (summary.severity === 'danger') lines.push(jt('chat.contextUsage.autoCompactionImminent', 'Nearly full — auto-compaction is imminent.'));
+      else if (summary.severity === 'warning') lines.push(jt('chat.contextUsage.approachingAutoCompaction', 'Approaching auto-compaction.'));
     } else {
       lines.push(
-        usedLabel + ' of ' + limitLabel + ' token context window (' + summary.sourceLabel + ')'
+        jt('chat.contextUsage.tokenContextWindow', '{used} of {limit} token context window ({source})', { used: usedLabel, limit: limitLabel, source: summary.sourceLabel })
       );
-      lines.push(remainingLabel + ' remaining in window');
-      if (summary.severity === 'danger') lines.push('Context window is nearly full.');
-      else if (summary.severity === 'warning') lines.push('Context window is filling up.');
+      lines.push(jt('chat.contextUsage.remainingInWindow', '{count} remaining in window', { count: remainingLabel }));
+      if (summary.severity === 'danger') lines.push(jt('chat.contextUsage.windowNearlyFull', 'Context window is nearly full.'));
+      else if (summary.severity === 'warning') lines.push(jt('chat.contextUsage.windowFillingUp', 'Context window is filling up.'));
     }
     return lines.join('\n');
   }
@@ -248,7 +250,7 @@
         id: 'composer-context-ring',
         domId: 'composerContextRing',
         iconHtml: svg,
-        ariaLabel: 'Context usage: ' + displayText,
+        ariaLabel: jt('chat.contextUsage.ariaLabel', 'Context usage: {usage}', { usage: displayText }),
         title: buildDetailText(summary),
         hasPopup: Boolean(popover && actionButton),
         ariaControls: popover && actionButton ? 'composerContextDetailsPopover' : '',
@@ -258,19 +260,19 @@
       + (popover && actionButton ? popover({
         id: 'composer-context-details',
         domId: 'composerContextDetailsPopover',
-        ariaLabel: 'Context details',
+        ariaLabel: jt('chat.contextUsage.detailsAriaLabel', 'Context details'),
         className: 'inv-context-details-popover',
-        trustedHtml: '<h3>Next turn context summary</h3>'
-          + '<p data-next-turn-context-summary>Open to calculate from the canonical session.</p>'
-          + '<h3>Last completed request</h3>'
+        trustedHtml: '<h3>' + escapeHtml(jt('chat.contextUsage.nextTurnSummary', 'Next turn context summary')) + '</h3>'
+          + '<p data-next-turn-context-summary>' + escapeHtml(jt('chat.contextUsage.openToCalculate', 'Open to calculate from the canonical session.')) + '</p>'
+          + '<h3>' + escapeHtml(jt('chat.contextUsage.lastCompletedRequest', 'Last completed request')) + '</h3>'
           + '<p>' + escapeHtml(buildDetailText(summary)).replace(/\n/g, '<br>') + '</p>'
           + (opts.manualCompactionEnabled === true
             ? '<div class="inv-context-details-actions">' + actionButton({
               id: 'context-meter-compact',
-              label: opts.compactionActivity?.pending ? 'Compacting…' : 'Compact now',
+              label: opts.compactionActivity?.pending ? jt('chat.contextUsage.compacting', 'Compacting…') : jt('chat.contextUsage.compactNow', 'Compact now'),
               variant: 'secondary',
               disabled: opts.compactionActivity?.pending === true,
-              title: 'Compact the conversation now to free context',
+              title: jt('chat.contextUsage.compactTitle', 'Compact the conversation now to free context'),
             }) + '</div>'
             : '')
           + '<p class="inv-context-details-status" aria-live="polite">'

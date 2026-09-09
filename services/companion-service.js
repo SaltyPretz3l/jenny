@@ -1,4 +1,5 @@
 const { clipText, normalizeString } = require('./backend/path-utils');
+const { t } = require('./i18n-main');
 const {
   createDailyBriefingCache,
 } = require('./companion-briefing-cache');
@@ -734,7 +735,7 @@ class CompanionService {
     }
     return {
       id: 'ready-to-resume',
-      title: 'Ready to Resume',
+      title: t('main.companion.readyToResume', 'Ready to Resume'),
       items: candidates,
     };
   }

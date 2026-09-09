@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -22,19 +23,20 @@
   function buildBodyHtml(currentPath, status, inlineError) {
     var path = String(currentPath || '').trim();
     var workspaceStatus = status && typeof status === 'object' && !Array.isArray(status) ? status : {};
-    var statusMessage = String(workspaceStatus.message || 'This is where Jenny treats files as your project.');
+    var statusMessage = String(workspaceStatus.message || jt('setup.workspaceRoot.projectLocationHint', 'This is where Jenny treats files as your project.'));
     var inputHtml = textField ? textField({
       id: 'setup-workspace-root-path',
-      label: 'Current workspace root',
+      label: jt('setup.workspaceRoot.currentLabel', 'Current workspace root'),
       value: path,
-      placeholder: 'No workspace root chosen yet.',
+      placeholder: jt('setup.workspaceRoot.noneChosen', 'No workspace root chosen yet.'),
       readonly: true,
+      dataset: { ltr: 'true' },
       hint: statusMessage,
-    }) : '<p>No inventory text field available.</p>';
+    }) : '<p>' + sceneUtils.escapeHtml(jt('setup.workspaceRoot.textFieldUnavailable', 'No inventory text field available.')) + '</p>';
     return ''
       + '<div class="setup-scene-body">'
       + inputHtml
-      + '<p class="setup-scene-note">Pick a folder. You can change this later in Settings.</p>'
+      + '<p class="setup-scene-note">' + sceneUtils.escapeHtml(jt('setup.workspaceRoot.pickFolderNote', 'Pick a folder. You can change this later in Settings.')) + '</p>'
       + (inlineError
         ? '<p class="setup-workspace-inline-error" role="alert">' + sceneUtils.escapeHtml(inlineError) + '</p>'
         : '')
@@ -64,8 +66,8 @@
     var status = workspaceRoot.workspaceRootStatus || workspaceRoot.status || null;
     if (!status || typeof status !== 'object' || Array.isArray(status) || contextOwnsPath) {
       status = path
-        ? { state: 'ready', message: 'Workspace root is configured.' }
-        : { state: 'missing', message: 'No workspace root is configured yet.' };
+        ? { state: 'ready', message: jt('setup.workspaceRoot.configured', 'Workspace root is configured.') }
+        : { state: 'missing', message: jt('setup.workspaceRoot.notConfigured', 'No workspace root is configured yet.') };
     }
     return { path: path, status: status };
   }
@@ -106,18 +108,18 @@
     function render() {
       if (!rootEl) return;
       var actions = [
-        { id: 'cancel', label: 'Cancel', variant: 'secondary', disabled: actionInFlight },
+        { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary', disabled: actionInFlight },
         setupState.toolsWorkspaceRoot
-          ? { id: 'clear', label: 'Clear', variant: 'secondary', disabled: actionInFlight }
+          ? { id: 'clear', label: jt('common.clear', 'Clear'), variant: 'secondary', disabled: actionInFlight }
           : null,
-        { id: 'browse', label: actionInFlight ? 'Working…' : 'Choose folder…', variant: 'primary', disabled: actionInFlight },
-        { id: 'skip', label: 'Skip for now', variant: 'ghost', disabled: actionInFlight },
+        { id: 'browse', label: actionInFlight ? jt('setup.workspaceRoot.working', 'Working…') : jt('setup.workspaceRoot.chooseFolder', 'Choose folder…'), variant: 'primary', disabled: actionInFlight },
+        { id: 'skip', label: jt('setup.workspaceRoot.skipForNow', 'Skip for now'), variant: 'ghost', disabled: actionInFlight },
       ].filter(Boolean);
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Choose workspace root',
+        title: jt('setup.workspaceRoot.title', 'Choose workspace root'),
         eyebrow: sceneUtils.setupStepEyebrow('workspaceRoot'),
-        summary: 'Tell Jenny where your project lives.',
+        summary: jt('setup.workspaceRoot.summary', 'Tell Jenny where your project lives.'),
         bodyHtml: buildBodyHtml(setupState.toolsWorkspaceRoot || '', setupState.workspaceRootStatus, inlineError),
         actions: actions,
       }) : '';
@@ -153,7 +155,7 @@
       inlineError = '';
       render();
       if (typeof chooseWorkspaceRoot !== 'function') {
-        inlineError = 'Workspace picker is unavailable.';
+        inlineError = jt('setup.workspaceRoot.pickerUnavailable', 'Workspace picker is unavailable.');
         actionInFlight = false;
         render();
         return;
@@ -168,19 +170,19 @@
           return;
         }
         if (result?.blocked === true) {
-          inlineError = String(result.message || result.error || 'The workspace root change is already in progress.');
+          inlineError = String(result.message || result.error || jt('setup.workspaceRoot.changeInProgress', 'The workspace root change is already in progress.'));
           render();
           return;
         }
         var transition = result?.transition || result;
         if (transition?.committed === false && transition?.noop !== true) {
-          inlineError = String(transition.message || transition.error || 'The workspace root was not changed.');
+          inlineError = String(transition.message || transition.error || jt('setup.workspaceRoot.notChanged', 'The workspace root was not changed.'));
           render();
           return;
         }
         var nextStatus = applyWorkspaceRootPayload(result);
         if (!nextStatus || nextStatus.state !== 'ready') {
-          inlineError = String(nextStatus?.message || 'Choose an existing folder before completing setup.');
+          inlineError = String(nextStatus?.message || jt('setup.workspaceRoot.chooseExistingFolder', 'Choose an existing folder before completing setup.'));
           render();
           return;
         }
@@ -188,7 +190,7 @@
         if (staleGeneration(myGeneration)) {
           return;
         }
-        showToastMessage('Workspace root saved.');
+        showToastMessage(jt('setup.workspaceRoot.saved', 'Workspace root saved.'));
         closeModal();
       } catch (error) {
         if (staleGeneration(myGeneration)) {
@@ -197,7 +199,7 @@
         appendClientLog('WARN', 'setup.workspace_root_choose_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        inlineError = String(error && error.message ? error.message : 'Could not save workspace root.');
+        inlineError = String(error && error.message ? error.message : jt('setup.workspaceRoot.saveFailed', 'Could not save workspace root.'));
       } finally {
         if (!staleGeneration(myGeneration)) {
           actionInFlight = false;
@@ -222,7 +224,7 @@
         if (staleGeneration(myGeneration)) {
           return;
         }
-        inlineError = String(error && error.message ? error.message : 'Could not skip this setup step.');
+        inlineError = String(error && error.message ? error.message : jt('setup.workspaceRoot.skipFailed', 'Could not skip this setup step.'));
       } finally {
         if (!staleGeneration(myGeneration)) {
           actionInFlight = false;
@@ -238,7 +240,7 @@
       inlineError = '';
       render();
       if (!workspaceRootService || typeof workspaceRootService.clear !== 'function') {
-        inlineError = 'Workspace clearing is unavailable.';
+        inlineError = jt('setup.workspaceRoot.clearingUnavailable', 'Workspace clearing is unavailable.');
         actionInFlight = false;
         render();
         return;
@@ -251,13 +253,13 @@
         var canceled = result && (result.canceled === true || result.cancelled === true);
         if (canceled || result?.blocked === true) {
           if (result?.blocked === true) {
-            inlineError = String(result.message || result.error || 'The workspace root change is already in progress.');
+            inlineError = String(result.message || result.error || jt('setup.workspaceRoot.changeInProgress', 'The workspace root change is already in progress.'));
           }
           return;
         }
         var transition = result?.transition || result;
         if (transition?.committed === false && transition?.noop !== true) {
-          inlineError = String(transition.message || transition.error || 'The workspace root was not cleared.');
+          inlineError = String(transition.message || transition.error || jt('setup.workspaceRoot.notCleared', 'The workspace root was not cleared.'));
           return;
         }
         applyWorkspaceRootPayload(result);
@@ -268,7 +270,7 @@
         if (staleGeneration(myGeneration)) {
           return;
         }
-        showToastMessage('Workspace root cleared.');
+        showToastMessage(jt('setup.workspaceRoot.cleared', 'Workspace root cleared.'));
       } catch (error) {
         if (staleGeneration(myGeneration)) {
           return;
@@ -276,7 +278,7 @@
         appendClientLog('WARN', 'setup.workspace_root_clear_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        inlineError = String(error && error.message ? error.message : 'Could not clear workspace root.');
+        inlineError = String(error && error.message ? error.message : jt('setup.workspaceRoot.clearFailed', 'Could not clear workspace root.'));
       } finally {
         if (!staleGeneration(myGeneration)) {
           actionInFlight = false;

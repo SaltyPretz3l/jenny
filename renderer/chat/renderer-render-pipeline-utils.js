@@ -10,7 +10,7 @@
   function formatDate(value, opts, fallback) {
     const parsed = value ? new Date(value) : null;
     if (!parsed || Number.isNaN(parsed.valueOf())) return fallback;
-    return parsed.toLocaleString(undefined, opts);
+    return parsed.toLocaleString(globalThis.jennyI18n?.tag?.(), { ...opts, ...globalThis.jennyI18n?.timeOptions?.() });
   }
   function formatSessionDate(value) {
     return formatDate(value, { month: 'short', day: '2-digit' }, 'Recent');
@@ -19,7 +19,7 @@
     return formatDate(value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }, '--');
   }
   function formatMessageTerminalTimestamp(value) {
-    return formatDate(value, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }, '');
+    return formatDate(value, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }, '');
   }
   function resolveModule(globalName, requirePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
@@ -105,8 +105,6 @@
       refreshActiveSurfaceEffect: _refreshActiveSurfaceEffect,
       appendClientLog: _appendClientLog,
       renderHeader: _renderHeader,
-      renderPrompts: _renderPrompts,
-      stopFallbackRotation: _stopFallbackRotation,
     } = deps.callbacks;
     const appendClientLog = typeof _appendClientLog === 'function' ? _appendClientLog : function noop() {};
     const timelineVisibilityTracker = typeof timelineVisibilityUtils?.getTimelineVisibilityTracker === 'function'
@@ -114,8 +112,6 @@
       : null;
     const refreshActiveSurfaceEffect = typeof _refreshActiveSurfaceEffect === 'function' ? _refreshActiveSurfaceEffect : function noop() {};
     const renderHeader = typeof _renderHeader === 'function' ? _renderHeader : function noop() {};
-    const renderPrompts = typeof _renderPrompts === 'function' ? _renderPrompts : function noop() {};
-    const stopFallbackRotation = typeof _stopFallbackRotation === 'function' ? _stopFallbackRotation : function noop() {};
     const syncBackendNotice = typeof _syncBackendNotice === 'function' ? _syncBackendNotice : function noop() {};
     const projectTurnTree = typeof turnTreeProjectorUtils?.projectTurnTree === 'function'
       ? turnTreeProjectorUtils.projectTurnTree
@@ -339,10 +335,12 @@
         composerModelSelectShell,
         composerEffortSelectShell,
       },
-      controllers: { logRenderer: deps.controllers?.logRenderer || null },
+      controllers: {
+        logRenderer: deps.controllers?.logRenderer || null,
+        getSendOutboxActions: () => deps.controllers?.getSendOutboxActions?.(),
+      },
       callbacks: {
         renderHeader: (...a) => renderHeader(...a),
-        renderPrompts: (...a) => renderPrompts(...a),
         renderMessages: (...a) => renderMessages(...a),
         applySurfaceEffect: (...a) => applySurfaceEffect(...a),
         syncBackendNotice: (...a) => syncBackendNotice(...a),
@@ -392,7 +390,6 @@
         getLatestUserMessageId,
         isSendPreflightPending,
         syncTurnElapsedClock,
-        stopFallbackRotation,
       },
     }) || {};
 
@@ -857,7 +854,6 @@
       updateAssistantSpritePosition,
       renderLayout,
       renderHeader,
-      renderPrompts,
       renderMessages,
       renderHero,
       syncBackendNotice,
@@ -868,7 +864,6 @@
       renderAll,
       applySurfaceEffect,
       syncBackendActivityFromStatus,
-      stopFallbackRotation,
       renderLiveThinkingChip,
       setSessionOrigin,
       setPendingOrigin,

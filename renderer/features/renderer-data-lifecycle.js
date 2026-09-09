@@ -1,6 +1,8 @@
 (function initializeDataLifecycleSettings(root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var RESTORE_SUPPRESSION_KEY = 'jenny.restore.suppressedFingerprint.v1';
 
   function start() {
@@ -46,20 +48,20 @@
 
     function renderSettings() {
       mount.innerHTML = '<div class="settings-setup-row data-lifecycle-settings-row">'
-        + '<div><h4 class="settings-setup-row-title">Data &amp; removal</h4>'
-        + '<p class="settings-group-copy">Archive, restore, or remove Jenny without touching shared models or ordinary project files.</p>'
-        + '<p class="settings-group-copy">Chats, attachments, preferences, personality, calendar, and memory remain local until you delete or remove them. Usage diagnostics retain at most 30 days and 500 turns. Optional workspace archives include only reviewed portable data under the current .jenny folder.</p>'
+        + '<div><h4 class="settings-setup-row-title">' + jt('dataLifecycle.settings.title', 'Data & removal') + '</h4>'
+        + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.description', 'Archive, restore, or remove Jenny without touching shared models or ordinary project files.') + '</p>'
+        + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.localDataDescription', 'Chats, attachments, preferences, personality, calendar, and memory remain local until you delete or remove them. Usage diagnostics retain at most 30 days and 500 turns. Optional workspace archives include only reviewed portable data under the current .jenny folder.') + '</p>'
         + '<div class="data-lifecycle-settings-counts">'
         + '<span>' + escapeHtml(utils.formatCount(overview.chats, 'chat', 'chats')) + '</span>'
         + '<span>' + escapeHtml(utils.formatCount(overview.attachments, 'attachment', 'attachments')) + '</span>'
-        + '<span>Preferences included · ' + escapeHtml(utils.formatCount(overview.memory, 'memory store', 'memory stores')) + '</span>'
-        + '<span>' + escapeHtml(overview.workspaceAvailable ? utils.formatCount(overview.workspace, 'workspace item', 'workspace items') : 'No current workspace') + '</span>'
-        + '</div><div class="settings-note" id="dataLifecycleSettingsStatus" aria-live="polite">Data summary is ready.</div></div>'
+        + '<span>' + escapeHtml(jt('dataLifecycle.settings.preferencesIncluded', 'Preferences included · {memory}', { memory: utils.formatCount(overview.memory, 'memory store', 'memory stores') })) + '</span>'
+        + '<span>' + escapeHtml(overview.workspaceAvailable ? jtn('dataLifecycle.settings.workspaceItemCount', Math.max(0, Math.floor(Number(overview.workspace) || 0)), { count: Math.max(0, Math.floor(Number(overview.workspace) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} workspace item', '{count} workspace items') : jt('dataLifecycle.settings.noCurrentWorkspace', 'No current workspace')) + '</span>'
+        + '</div><div class="settings-note" id="dataLifecycleSettingsStatus" aria-live="polite">' + jt('dataLifecycle.settings.summaryReady', 'Data summary is ready.') + '</div></div>'
         + '<div class="settings-actions data-lifecycle-settings-actions">'
-        + button('settings-create-archive', 'Create archive', 'secondary')
-        + button('settings-restore-archive', 'Restore profile', 'secondary')
-        + (overview.workspaceAvailable ? button('settings-restore-workspace', 'Restore workspace data', 'secondary') : '')
-        + button('settings-uninstall', 'Uninstall Jenny', 'danger')
+        + button('settings-create-archive', jt('dataLifecycle.actions.createArchive', 'Create archive'), 'secondary')
+        + button('settings-restore-archive', jt('dataLifecycle.actions.restoreProfile', 'Restore profile'), 'secondary')
+        + (overview.workspaceAvailable ? button('settings-restore-workspace', jt('dataLifecycle.actions.restoreWorkspaceData', 'Restore workspace data'), 'secondary') : '')
+        + button('settings-uninstall', jt('dataLifecycle.actions.uninstallJenny', 'Uninstall Jenny'), 'danger')
         + '</div></div>';
     }
 
@@ -107,23 +109,23 @@
     function openArchiveModal() {
       modalBusy = false;
       previousFocus = root.document.activeElement;
-      var body = '<div class="data-lifecycle-mode-options" role="group" aria-label="Archive privacy">'
+      var body = '<div class="data-lifecycle-mode-options" role="group" aria-label="' + escapeHtml(jt('dataLifecycle.archive.privacyLabel', 'Archive privacy')) + '">'
         + button('modal-mode-encrypted', 'Encrypted (recommended)', 'secondary', { ariaPressed: true })
         + '</div><details class="data-lifecycle-advanced"><summary>Advanced</summary>'
-        + '<p class="data-lifecycle-privacy-warning">Plain archives have no password protection. Anyone with folder access can read them.</p>'
-        + button('modal-mode-plain', 'Use readable plain archive', 'danger', { ariaPressed: false })
+        + '<p class="data-lifecycle-privacy-warning">' + escapeHtml(jt('dataLifecycle.archive.plainPrivacyWarning', 'Plain archives have no password protection. Anyone with folder access can read them.')) + '</p>'
+        + button('modal-mode-plain', jt('dataLifecycle.archive.useReadablePlain', 'Use readable plain archive'), 'danger', { ariaPressed: false })
         + '</details>'
-        + '<p class="data-lifecycle-privacy-warning" id="settingsArchivePrivacy">Your archive is protected by a passphrase that Jenny never stores.</p>'
+        + '<p class="data-lifecycle-privacy-warning" id="settingsArchivePrivacy">' + escapeHtml(jt('dataLifecycle.archive.protectedByPassphrase', 'Your archive is protected by a passphrase that Jenny never stores.')) + '</p>'
         + '<div class="data-lifecycle-destination"><span id="settingsArchiveDestination">' + escapeHtml(overview.defaultArchiveRoot) + '</span>'
         + button('modal-change-destination', 'Change', 'secondary', { size: 'sm' }) + '</div>'
         + '<div class="data-lifecycle-fields" id="settingsArchivePassphraseFields">'
-        + textField({ id: 'settingsArchivePassphrase', type: 'password', label: 'Passphrase', maxLength: 1024, hint: '12–1024 characters.' })
-        + textField({ id: 'settingsArchiveConfirmation', type: 'password', label: 'Confirm passphrase', maxLength: 1024 })
+        + textField({ id: 'settingsArchivePassphrase', type: 'password', label: jt('dataLifecycle.archive.passphraseLabel', 'Passphrase'), maxLength: 1024, hint: jt('dataLifecycle.archive.passphraseHint', '12–1024 characters.') })
+        + textField({ id: 'settingsArchiveConfirmation', type: 'password', label: jt('dataLifecycle.archive.confirmPassphraseLabel', 'Confirm passphrase'), maxLength: 1024 })
         + '</div>'
-        + (overview.workspaceAvailable ? toggle.toggleSwitch({ id: 'settings-archive-workspace', label: 'Include current workspace .jenny data', checked: false }) : '');
+        + (overview.workspaceAvailable ? toggle.toggleSwitch({ id: 'settings-archive-workspace', label: jt('dataLifecycle.archive.includeWorkspace', 'Include current workspace .jenny data'), checked: false }) : '');
       var wrapper = root.document.createElement('div');
-      wrapper.innerHTML = modalShell('Create a Jenny archive', 'This makes a verified encrypted copy and does not remove anything.', body,
-        button('modal-close', 'Cancel', 'secondary') + button('modal-create-archive', 'Create archive', 'primary'));
+      wrapper.innerHTML = modalShell(jt('dataLifecycle.archive.createTitle', 'Create a Jenny archive'), jt('dataLifecycle.archive.createDescription', 'This makes a verified encrypted copy and does not remove anything.'), body,
+        button('modal-close', 'Cancel', 'secondary') + button('modal-create-archive', jt('dataLifecycle.actions.createArchive', 'Create archive'), 'primary'));
       modal = wrapper.firstElementChild;
       modalEpoch += 1;
       modal.dataset.destinationRoot = overview.defaultArchiveRoot;
@@ -137,21 +139,21 @@
       modalBusy = false;
       selectedArchive = candidate;
       previousFocus = root.document.activeElement;
-      var details = '<div class="data-lifecycle-review-card"><h3>Recoverable archive</h3><dl><dt>Created</dt><dd>'
+      var details = '<div class="data-lifecycle-review-card"><h3>' + escapeHtml(jt('dataLifecycle.restore.recoverableArchive', 'Recoverable archive')) + '</h3><dl><dt>Created</dt><dd>'
         + escapeHtml(candidate.createdAt || 'Unknown') + '</dd><dt>Contents</dt><dd>'
         + escapeHtml(utils.formatCount(candidate.counts && candidate.counts.entries, 'item', 'items')) + ', '
         + escapeHtml(utils.formatBytes(candidate.counts && candidate.counts.bytes)) + '</dd></dl></div>'
-        + (candidate.encrypted ? textField({ id: 'settingsRestorePassphrase', type: 'password', label: 'Archive passphrase', maxLength: 1024 }) : '')
-        + (workspaceOnly ? '<div id="settingsWorkspaceRestoreReview" class="data-lifecycle-review-card"><p>Review the exact .jenny target and conflicts before any workspace file changes.</p></div>' : '');
-      var footer = button(automatic ? 'modal-not-now' : 'modal-close', automatic ? 'Not now' : 'Cancel', 'secondary')
-        + button('modal-choose-archive', 'Choose another', 'secondary')
-        + button(workspaceOnly ? 'modal-review-workspace-restore' : 'modal-restore', workspaceOnly ? 'Review workspace restore' : 'Stage profile restore', 'primary');
+        + (candidate.encrypted ? textField({ id: 'settingsRestorePassphrase', type: 'password', label: jt('dataLifecycle.restore.passphraseLabel', 'Archive passphrase'), maxLength: 1024 }) : '')
+        + (workspaceOnly ? '<div id="settingsWorkspaceRestoreReview" class="data-lifecycle-review-card"><p>' + escapeHtml(jt('dataLifecycle.restore.reviewExactWorkspaceTarget', 'Review the exact .jenny target and conflicts before any workspace file changes.')) + '</p></div>' : '');
+      var footer = button(automatic ? 'modal-not-now' : 'modal-close', automatic ? jt('dataLifecycle.actions.notNow', 'Not now') : 'Cancel', 'secondary')
+        + button('modal-choose-archive', jt('dataLifecycle.actions.chooseAnother', 'Choose another'), 'secondary')
+        + button(workspaceOnly ? 'modal-review-workspace-restore' : 'modal-restore', workspaceOnly ? jt('dataLifecycle.actions.reviewWorkspaceRestore', 'Review workspace restore') : jt('dataLifecycle.actions.stageProfileRestore', 'Stage profile restore'), 'primary');
       var wrapper = root.document.createElement('div');
       wrapper.innerHTML = modalShell(
-        workspaceOnly ? 'Restore workspace data' : 'Restore Jenny profile',
+        workspaceOnly ? jt('dataLifecycle.actions.restoreWorkspaceData', 'Restore workspace data') : jt('dataLifecycle.restore.profileTitle', 'Restore Jenny profile'),
         workspaceOnly
-          ? 'Only the current workspace .jenny data can change, after target and conflict review.'
-          : 'Profile restore is staged now and promoted safely on restart. It never changes workspace files.',
+          ? jt('dataLifecycle.restore.workspaceScopeDescription', 'Only the current workspace .jenny data can change, after target and conflict review.')
+          : jt('dataLifecycle.restore.profileDescription', 'Profile restore is staged now and promoted safely on restart. It never changes workspace files.'),
         details,
         footer
       );
@@ -177,7 +179,7 @@
       try {
         var result = await api.chooseArchiveDestination();
       } catch (_error) {
-        if (isCurrentModal(context)) setModalStatus('Archive destination selection is unavailable.', 'danger');
+        if (isCurrentModal(context)) setModalStatus(jt('dataLifecycle.archive.destinationUnavailable', 'Archive destination selection is unavailable.'), 'danger');
         return;
       }
       if (isCurrentModal(context) && result && result.ok && result.destinationRoot) {
@@ -197,34 +199,33 @@
       var includeWorkspace = workspaceToggle ? workspaceToggle.getAttribute('aria-checked') === 'true' : false;
       if (includeWorkspace && !context.element.dataset.workspaceReviewId) {
         if (typeof api.previewWorkspaceArchive !== 'function') {
-          setModalStatus('Workspace archive review is unavailable in this build.', 'danger');
+          setModalStatus(jt('dataLifecycle.archive.workspaceReviewUnavailable', 'Workspace archive review is unavailable in this build.'), 'danger');
           return;
         }
         modalBusy = true;
-        setModalStatus('Reviewing bounded workspace scope…', 'pending');
+        setModalStatus(jt('dataLifecycle.archive.reviewingWorkspaceScope', 'Reviewing bounded workspace scope…'), 'pending');
         try {
           var preview = await api.previewWorkspaceArchive();
         } catch (_error) {
-          if (isCurrentModal(context)) setModalStatus('Workspace review failed safely: bridge_unavailable', 'danger');
+          if (isCurrentModal(context)) setModalStatus(jt('dataLifecycle.archive.workspaceReviewBridgeUnavailable', 'Workspace review failed safely: bridge_unavailable'), 'danger');
           return;
         } finally {
           if (isCurrentModal(context)) modalBusy = false;
         }
         if (!isCurrentModal(context)) return;
         if (!preview || !preview.ok) {
-          setModalStatus('Workspace review failed safely: ' + String(preview?.error?.reason || 'review_failed'), 'danger');
+          setModalStatus(jt('dataLifecycle.archive.workspaceReviewFailed', 'Workspace review failed safely: {reason}', { reason: String(preview?.error?.reason || 'review_failed') }), 'danger');
           return;
         }
         context.element.dataset.workspaceReviewId = preview.reviewId;
-        setModalStatus('Approve ' + preview.workspace.name + ' (' + preview.workspace.id + '): '
-          + utils.formatCount(preview.itemCount, 'item', 'items') + ', ' + utils.formatBytes(preview.totalBytes)
-          + ', scope: ' + preview.scope + '. Click Create archive again to approve this exact scope.', 'warning');
+        setModalStatus(jt('dataLifecycle.archive.scopeApprovalPrompt', 'Approve {workspaceName} ({workspaceId}): {itemCount}, {totalBytes}, scope: {scope}. Click Create archive again to approve this exact scope.', { workspaceName: preview.workspace.name, workspaceId: preview.workspace.id, itemCount: utils.formatCount(preview.itemCount, 'item', 'items'), totalBytes: utils.formatBytes(preview.totalBytes), scope: preview.scope }),
+          'warning');
         return;
       }
       var workspaceReviewId = context.element.dataset.workspaceReviewId || '';
       delete context.element.dataset.workspaceReviewId;
       modalBusy = true;
-      setModalStatus('Preparing archive…', 'pending');
+      setModalStatus(jt('dataLifecycle.archive.preparing', 'Preparing archive…'), 'pending');
       try {
         var result = await api.createArchive({
           destinationRoot: context.element.dataset.destinationRoot,
@@ -235,17 +236,17 @@
           workspaceReviewId: workspaceReviewId,
         });
       } catch (_error) {
-        if (isCurrentModal(context)) setModalStatus('Archive failed safely: bridge_unavailable', 'danger');
+        if (isCurrentModal(context)) setModalStatus(jt('dataLifecycle.archive.failedBridgeUnavailable', 'Archive failed safely: bridge_unavailable'), 'danger');
         return;
       } finally {
         if (isCurrentModal(context)) modalBusy = false;
       }
       if (!isCurrentModal(context)) return;
       if (!result || !result.ok) {
-        setModalStatus('Archive failed safely: ' + String(result && result.error && result.error.reason || 'operation_failed'), 'danger');
+        setModalStatus(jt('dataLifecycle.archive.failed', 'Archive failed safely: {reason}', { reason: String(result && result.error && result.error.reason || 'operation_failed') }), 'danger');
         return;
       }
-      setStatus('Archive created and verified.', 'success');
+      setStatus(jt('dataLifecycle.archive.createdVerified', 'Archive created and verified.'), 'success');
       closeModal();
     }
 
@@ -254,14 +255,14 @@
       if (!context.element) return;
       var passphrase = context.element.querySelector('#settingsRestorePassphrase');
       modalBusy = true;
-      setModalStatus('Validating archive…', 'pending');
+      setModalStatus(jt('dataLifecycle.restore.validatingArchive', 'Validating archive…'), 'pending');
       try {
         var result = await api.stageRestore({
           archivePath: selectedArchive.archivePath,
           passphrase: passphrase ? passphrase.value : '',
         });
       } catch (_error) {
-        if (isCurrentModal(context)) setModalStatus('Restore stopped safely: bridge_unavailable', 'danger');
+        if (isCurrentModal(context)) setModalStatus(jt('dataLifecycle.restore.stoppedBridgeUnavailable', 'Restore stopped safely: bridge_unavailable'), 'danger');
         return;
       } finally {
         if (isCurrentModal(context)) modalBusy = false;
@@ -270,11 +271,11 @@
       if (!result || !result.ok) {
         var reason = String(result && result.error && result.error.reason || 'restore_failed');
         setModalStatus(reason === 'profile_not_fresh'
-          ? 'This profile already contains data. Use the existing session importer for individual chats.'
-          : 'Restore stopped safely: ' + reason, 'danger');
+          ? jt('dataLifecycle.restore.profileNotFresh', 'This profile already contains data. Use the existing session importer for individual chats.')
+          : jt('dataLifecycle.restore.stopped', 'Restore stopped safely: {reason}', { reason: reason }), 'danger');
         return;
       }
-      setStatus('Restore staged. Restart Jenny to finish restoring your data.', 'success');
+      setStatus(jt('dataLifecycle.restore.stagedRestart', 'Restore staged. Restart Jenny to finish restoring your data.'), 'success');
       closeModal();
     }
 
@@ -290,11 +291,11 @@
       var isRestore = Boolean(reviewId);
       if (isRestore) delete context.element.dataset.workspaceReviewId;
       modalBusy = true;
-      setModalStatus(isRestore ? 'Restoring reviewed workspace data…' : 'Reviewing workspace target and conflicts…', 'pending');
+      setModalStatus(isRestore ? jt('dataLifecycle.restore.restoringWorkspace', 'Restoring reviewed workspace data…') : jt('dataLifecycle.restore.reviewingWorkspace', 'Reviewing workspace target and conflicts…'), 'pending');
       var operation = isRestore ? api.restoreWorkspace : api.previewWorkspaceRestore;
       if (typeof operation !== 'function') {
         modalBusy = false;
-        setModalStatus('Workspace restore review is unavailable in this build.', 'danger');
+        setModalStatus(jt('dataLifecycle.restore.workspaceReviewUnavailable', 'Workspace restore review is unavailable in this build.'), 'danger');
         return;
       }
       try {
@@ -302,34 +303,34 @@
           ? Object.assign({}, payload, { reviewId: reviewId })
           : payload);
       } catch (_error) {
-        if (isCurrentModal(context)) setModalStatus('Workspace restore stopped safely: bridge_unavailable', 'danger');
+        if (isCurrentModal(context)) setModalStatus(jt('dataLifecycle.restore.workspaceStoppedBridgeUnavailable', 'Workspace restore stopped safely: bridge_unavailable'), 'danger');
         return;
       } finally {
         if (isCurrentModal(context)) modalBusy = false;
       }
       if (!isCurrentModal(context)) return;
       if (!result || !result.ok) {
-        setModalStatus('Workspace restore stopped safely: ' + String(result?.error?.reason || 'restore_failed'), 'danger');
+        setModalStatus(jt('dataLifecycle.restore.workspaceStopped', 'Workspace restore stopped safely: {reason}', { reason: String(result?.error?.reason || 'restore_failed') }), 'danger');
         return;
       }
       if (!isRestore) {
         context.element.dataset.workspaceReviewId = result.reviewId;
         var review = context.element.querySelector('#settingsWorkspaceRestoreReview');
         if (review) {
-          review.innerHTML = '<h3>Exact workspace scope</h3><dl><dt>Target</dt><dd>'
+          review.innerHTML = '<h3>' + jt('dataLifecycle.restore.exactWorkspaceScope', 'Exact workspace scope') + '</h3><dl><dt>' + jt('dataLifecycle.restore.target', 'Target') + '</dt><dd>'
             + escapeHtml(result.workspace.name + ' (' + result.workspace.id + ')')
-            + '</dd><dt>Scope</dt><dd>' + escapeHtml(result.scope)
-            + '</dd><dt>Contents</dt><dd>' + escapeHtml(utils.formatCount(result.itemCount, 'item', 'items') + ', ' + utils.formatBytes(result.totalBytes))
-            + '</dd><dt>Conflicts</dt><dd>' + escapeHtml(utils.formatCount(result.conflictCount, 'existing file', 'existing files'))
+            + '</dd><dt>' + jt('dataLifecycle.restore.scope', 'Scope') + '</dt><dd>' + escapeHtml(result.scope)
+            + '</dd><dt>' + jt('dataLifecycle.restore.contents', 'Contents') + '</dt><dd>' + escapeHtml(utils.formatCount(result.itemCount, 'item', 'items') + ', ' + utils.formatBytes(result.totalBytes))
+            + '</dd><dt>' + jt('dataLifecycle.restore.conflicts', 'Conflicts') + '</dt><dd>' + escapeHtml(jtn('dataLifecycle.restore.existingFileCount', Math.max(0, Math.floor(Number(result.conflictCount) || 0)), { count: Math.max(0, Math.floor(Number(result.conflictCount) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} existing file', '{count} existing files'))
             + (result.conflicts?.length ? ': ' + escapeHtml(result.conflicts.join(', ')) : '')
             + '</dd></dl>';
         }
         var confirm = context.element.querySelector('[data-action="modal-review-workspace-restore"]');
-        if (confirm) confirm.textContent = 'Approve and restore workspace';
-        setModalStatus('Review the exact target and conflicts, then approve the workspace mutation.', 'warning');
+        if (confirm) confirm.textContent = jt('dataLifecycle.restore.approveWorkspace', 'Approve and restore workspace');
+        setModalStatus(jt('dataLifecycle.restore.approveReviewedTarget', 'Review the exact target and conflicts, then approve the workspace mutation.'), 'warning');
         return;
       }
-      setStatus('Workspace data restored with rollback protection.', 'success');
+      setStatus(jt('dataLifecycle.restore.workspaceRestored', 'Workspace data restored with rollback protection.'), 'success');
       closeModal();
     }
 
@@ -348,9 +349,9 @@
         openRestoreModal(result.candidates[0], false, workspaceOnly);
         previousFocus = restoreFocus;
       } else if (!result || !result.ok) {
-        setModalStatus('That folder is not a complete compatible Jenny archive.', 'danger');
+        setModalStatus(jt('dataLifecycle.restore.incompatibleFolder', 'That folder is not a complete compatible Jenny archive.'), 'danger');
       } else {
-        setModalStatus('No archive was selected.', 'muted');
+        setModalStatus(jt('dataLifecycle.restore.noArchiveSelected', 'No archive was selected.'), 'muted');
       }
     }
 
@@ -365,8 +366,8 @@
       if (plainButton) plainButton.setAttribute('aria-pressed', encrypted ? 'false' : 'true');
       if (fields) fields.hidden = !encrypted;
       if (warning) warning.textContent = encrypted
-        ? 'Your archive is protected by a passphrase that Jenny never stores.'
-        : 'Plain archives are readable by anyone with access to the folder. Store this archive privately.';
+        ? jt('dataLifecycle.archive.encryptedWarning', 'Your archive is protected by a passphrase that Jenny never stores.')
+        : jt('dataLifecycle.archive.plainWarning', 'Plain archives are readable by anyone with access to the folder. Store this archive privately.');
     }
 
     async function handleSettingsClick(event) {
@@ -376,15 +377,15 @@
       if (target.dataset.action === 'settings-restore-archive') {
         var result = await api.findRestoreCandidates();
         if (!result || !result.ok) {
-          setStatus('Restore is temporarily unavailable.', 'danger');
+          setStatus(jt('dataLifecycle.restore.temporarilyUnavailable', 'Restore is temporarily unavailable.'), 'danger');
         } else if (!result.freshProfile) {
-          setStatus('Full restore requires a fresh profile. Use the session importer for individual chats.', 'warning');
+          setStatus(jt('dataLifecycle.restore.requiresFreshProfile', 'Full restore requires a fresh profile. Use the session importer for individual chats.'), 'warning');
         } else if (result.candidates && result.candidates[0]) {
           openRestoreModal(result.candidates[0], false, false);
         } else {
           var chosen = await api.findRestoreCandidates({ chooseAnother: true });
           if (chosen.ok && chosen.candidates && chosen.candidates[0]) openRestoreModal(chosen.candidates[0], false, false);
-          else setStatus('No complete compatible Jenny archive was selected.', 'warning');
+          else setStatus(jt('dataLifecycle.restore.noCompatibleArchive', 'No complete compatible Jenny archive was selected.'), 'warning');
         }
       }
       if (target.dataset.action === 'settings-restore-workspace') {
@@ -395,18 +396,18 @@
           workspaceCandidate = selected?.candidates?.[0];
         }
         if (workspaceCandidate) openRestoreModal(workspaceCandidate, false, true);
-        else setStatus('No complete compatible Jenny archive was selected.', 'warning');
+        else setStatus(jt('dataLifecycle.restore.noCompatibleArchive', 'No complete compatible Jenny archive was selected.'), 'warning');
       }
       if (target.dataset.action === 'settings-uninstall') {
         var launch = await api.launchUninstallAssistant();
         setStatus(launch && launch.instructions
           ? launch.instructions
-          : 'Use your platform uninstall helper to continue.', launch && launch.ok ? 'warning' : 'danger');
+          : jt('dataLifecycle.uninstall.usePlatformHelper', 'Use your platform uninstall helper to continue.'), launch && launch.ok ? 'warning' : 'danger');
       }
     }
     mount.addEventListener('click', function (event) {
       void handleSettingsClick(event).catch(function () {
-        if (!disposed) setStatus('Data action is temporarily unavailable.', 'danger');
+        if (!disposed) setStatus(jt('dataLifecycle.errors.actionUnavailable', 'Data action is temporarily unavailable.'), 'danger');
       });
     });
 
@@ -431,7 +432,7 @@
       void handleModalClick(event).catch(function () {
         if (!disposed && modal) {
           modalBusy = false;
-          setModalStatus('This action stopped safely because the app bridge became unavailable.', 'danger');
+          setModalStatus(jt('dataLifecycle.errors.bridgeUnavailable', 'This action stopped safely because the app bridge became unavailable.'), 'danger');
         }
       });
     });
@@ -488,7 +489,7 @@
       if (disposed) return;
       if (!result || !result.ok) {
         renderSettings();
-        setStatus('Data summary is temporarily unavailable.', 'danger');
+        setStatus(jt('dataLifecycle.settings.summaryUnavailable', 'Data summary is temporarily unavailable.'), 'danger');
         return;
       }
       overview = utils.normalizeOverview(result);
@@ -503,7 +504,7 @@
     }).catch(function () {
       if (disposed) return;
       renderSettings();
-      setStatus('Data summary is temporarily unavailable.', 'danger');
+      setStatus(jt('dataLifecycle.settings.summaryUnavailable', 'Data summary is temporarily unavailable.'), 'danger');
     });
   }
 

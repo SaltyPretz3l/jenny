@@ -15,16 +15,17 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var DEFAULT_ARM_TIMEOUT_MS = 5000;
 
   // Appearance-preference-backed selects eligible for per-field reset. See
   // the module header for what is excluded and why.
   var APPEARANCE_FIELD_MAP = [
-    { id: 'appearancePaletteSelect', key: 'paletteId', label: 'Palette' },
-    { id: 'appearanceTypographySelect', key: 'typographyId', label: 'Typography' },
-    { id: 'appearanceFontScaleSelect', key: 'fontScaleId', label: 'Text size' },
-    { id: 'appearanceChatWidthSelect', key: 'chatWidthId', label: 'Chat width' },
-    { id: 'appearanceSurfaceEffectSelect', key: 'surfaceEffectId', label: 'Background effect' },
+    { id: 'appearancePaletteSelect', key: 'paletteId', label: jt('settings.fieldReset.palette', 'Palette') },
+    { id: 'appearanceTypographySelect', key: 'typographyId', label: jt('settings.fieldReset.typography', 'Typography') },
+    { id: 'appearanceFontScaleSelect', key: 'fontScaleId', label: jt('settings.fieldReset.textSize', 'Text size') },
+    { id: 'appearanceChatWidthSelect', key: 'chatWidthId', label: jt('settings.fieldReset.chatWidth', 'Chat width') },
+    { id: 'appearanceSurfaceEffectSelect', key: 'surfaceEffectId', label: jt('settings.fieldReset.backgroundEffect', 'Background effect') },
   ];
 
   // Not reset-eligible itself (see header), but its change can shift several
@@ -38,7 +39,7 @@
     if (error && typeof error.message === 'string' && error.message) {
       return error.message;
     }
-    return String(error == null ? 'Unknown error' : error);
+    return String(error == null ? jt('settings.fieldReset.unknownError', 'Unknown error') : error);
   }
 
   function resolveActionButton(deps) {
@@ -133,11 +134,11 @@
       if (!actionButton) return '';
       return actionButton({
         id: fieldDef.id + 'Reset',
-        label: '↺ Reset',
+        label: jt('settings.fieldReset.resetButton', '↺ Reset'),
         plain: true,
         className: 'settings-field-reset',
-        ariaLabel: 'Reset ' + fieldDef.label + ' to default',
-        title: 'Reset to default',
+        ariaLabel: jt('settings.fieldReset.resetFieldAria', 'Reset {label} to default', { label: fieldDef.label }),
+        title: jt('settings.fieldReset.resetToDefault', 'Reset to default'),
       });
     }
 
@@ -288,9 +289,9 @@
       entry.container.setAttribute('data-armed', 'true');
       entry.trigger.hidden = true;
       var html = actionButton
-        ? '<span class="settings-reset-confirm-label">Reset all?</span>'
-          + actionButton({ id: 'confirm', label: 'Confirm', variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
-          + actionButton({ id: 'cancel', label: 'Cancel', variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' })
+        ? '<span class="settings-reset-confirm-label">' + String(jt('settings.fieldReset.resetAll', 'Reset all?')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</span>'
+          + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
+          + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' })
         : '';
       entry.confirmNodes = childElementsFromHtml(documentRef, html);
       entry.confirmNodes.forEach(function (node) { entry.container.appendChild(node); });

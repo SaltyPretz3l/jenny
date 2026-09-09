@@ -112,6 +112,27 @@ test('resolveRequestedEngineType falls back to the heuristic for absent or non-l
   assert.equal(resolveRequestedEngineType(null, 'llama3.2:latest'), 'ollama');
 });
 
+test('loadModel routes Astra through ChatGPT without a catalog hint, including repeated lazy loads', async () => {
+  for (const preferredEngineType of ['', 'chatgpt', 'vllm', 'openai-compatible']) {
+    const service = makeLoadModelService({ preferredEngineType });
+    await loadModel(service, 'gpt-6-astra');
+    service.currentModel = '';
+    await loadModel(service, 'gpt-6-astra');
+    assert.equal(service.initCalls.length, 2);
+    assert.ok(service.initCalls.every((call) => call.requestedEngineType === 'chatgpt'));
+  }
+});
+
+test('Astra explicit engine provenance still wins over inference and cached hints', async () => {
+  const service = makeLoadModelService({ preferredEngineType: 'vllm' });
+  service._modelEngineHints = new Map([['gpt-6-astra', 'ollama']]);
+  await loadModel(service, { model: 'gpt-6-astra', engine_type: 'chatgpt' });
+  assert.equal(service.initCalls[0].requestedEngineType, 'chatgpt');
+  service.currentModel = '';
+  await loadModel(service, { model: 'gpt-6-astra', engine_type: 'openai-compatible' });
+  assert.equal(service.initCalls[1].requestedEngineType, 'openai-compatible');
+});
+
 test('loadModel forwards the pinned engine instead of the model-derived fallback', async () => {
   const service = makeLoadModelService({ preferredEngineType: 'vllm' });
 

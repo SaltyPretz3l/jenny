@@ -5,7 +5,8 @@
   }
   root.rendererComposerV2Status = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function createComposerV2StatusController(deps) {
     const { state } = deps;
     const {
@@ -59,14 +60,14 @@
         if (!text) {
           skipped.push({
             ...entry,
-            skippedReason: 'Attachment content is empty.',
+            skippedReason: jt('composer.attachments.contentEmpty', 'Attachment content is empty.'),
           });
           continue;
         }
         if (remaining <= 0) {
           skipped.push({
             ...entry,
-            skippedReason: 'Total attachment budget exhausted.',
+            skippedReason: jt('composer.attachments.totalBudgetExhausted', 'Total attachment budget exhausted.'),
           });
           continue;
         }
@@ -99,10 +100,10 @@
       const accepted = Array.isArray(payload && payload.accepted) ? payload.accepted : [];
       const rejected = Array.isArray(payload && payload.rejected) ? payload.rejected : [];
       if (accepted.some((entry) => entry.truncated)) {
-        parts.push('Some attachments were truncated to fit the per-file limit.');
+        parts.push(jt('composer.attachments.someTruncated', 'Some attachments were truncated to fit the per-file limit.'));
       }
       if (rejected.length) {
-        parts.push(rejected[0].reason || 'Some attachments could not be added.');
+        parts.push(rejected[0].reason || jt('composer.attachments.someNotAdded', 'Some attachments could not be added.'));
       }
       return parts.join(' ');
     }
@@ -113,7 +114,7 @@
       const resolvedAdded = Number(addedCount) || 0;
 
       if (resolvedAdded > 0) {
-        parts.push(`Added ${resolvedAdded} attachment${resolvedAdded === 1 ? '' : 's'}.`);
+        parts.push(jtn('composer.attachments.addedCount', resolvedAdded, { count: resolvedAdded }, 'Added {count} attachment.', 'Added {count} attachments.'));
       }
 
       const summary = summarizeAttachmentPreparation(payload);
@@ -123,7 +124,7 @@
 
       if (resolvedDropped > 0) {
         parts.push(
-          `${resolvedDropped} attachment${resolvedDropped === 1 ? '' : 's'} skipped because the queue is full.`
+          jtn('composer.attachments.skippedQueueFull', resolvedDropped, { count: resolvedDropped }, '{count} attachment skipped because the queue is full.', '{count} attachments skipped because the queue is full.')
         );
       }
 

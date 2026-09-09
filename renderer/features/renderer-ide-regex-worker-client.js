@@ -7,6 +7,7 @@
   }
   root.rendererIdeRegexWorkerClient = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const DEFAULT_DEADLINE_MS = 250;
   const MAX_DEADLINE_MS = 5_000;
@@ -82,14 +83,14 @@
         return;
       }
       request.reject(regexError(
-        String(message?.error?.message || 'Regex evaluation failed.'),
+          String(message?.error?.message || jt('ide.regexWorker.evaluationFailed', 'Regex evaluation failed.')),
         String(message?.error?.code || 'REGEX_EVALUATION_FAILED')
       ));
     }
 
     function handleWorkerFailure(error) {
       rejectPending(regexError(
-        String(error?.message || 'Regex worker failed.'),
+        String(error?.message || jt('ide.regexWorker.workerFailed', 'Regex worker failed.')),
         'REGEX_WORKER_FAILED'
       ), { terminate: true });
     }
@@ -127,10 +128,10 @@
     }
 
     function evaluate(task, evaluateOptions) {
-      if (disposed) return Promise.reject(regexError('Regex evaluator is disposed.', 'REGEX_CANCELLED'));
-      if (pending) return Promise.reject(regexError('Regex evaluator is busy.', 'REGEX_BUSY'));
+      if (disposed) return Promise.reject(regexError(jt('ide.regexWorker.disposed', 'Regex evaluator is disposed.'), 'REGEX_CANCELLED'));
+      if (pending) return Promise.reject(regexError(jt('ide.regexWorker.busy', 'Regex evaluator is busy.'), 'REGEX_BUSY'));
       const signal = evaluateOptions?.signal;
-      if (signal?.aborted) return Promise.reject(regexError('Regex evaluation was cancelled.', 'REGEX_CANCELLED'));
+      if (signal?.aborted) return Promise.reject(regexError(jt('ide.regexWorker.cancelled', 'Regex evaluation was cancelled.'), 'REGEX_CANCELLED'));
       const requestedDeadline = Number(evaluateOptions?.deadlineMs);
       const deadlineMs = Number.isSafeInteger(requestedDeadline) && requestedDeadline > 0
         ? Math.min(requestedDeadline, MAX_DEADLINE_MS)
@@ -146,11 +147,11 @@
         const id = nextId;
         nextId += 1;
         const onAbort = () => rejectPending(
-          regexError('Regex evaluation was cancelled.', 'REGEX_CANCELLED'),
+          regexError(jt('ide.regexWorker.cancelled', 'Regex evaluation was cancelled.'), 'REGEX_CANCELLED'),
           { terminate: true }
         );
         const timerId = setTimeoutImpl(() => rejectPending(
-          regexError(`Regex evaluation exceeded ${deadlineMs} ms.`, 'REGEX_TIMEOUT'),
+          regexError(jt('ide.regexWorker.timedOut', 'Regex evaluation exceeded {deadlineMs} ms.', { deadlineMs }), 'REGEX_TIMEOUT'),
           { terminate: true }
         ), deadlineMs);
         pending = { id, resolve, reject, signal, onAbort, timerId };
@@ -158,7 +159,7 @@
         try {
           activeWorker.postMessage({ id, task });
         } catch (error) {
-          rejectPending(regexError(error?.message || 'Regex worker post failed.', 'REGEX_WORKER_FAILED'), {
+        rejectPending(regexError(error?.message || jt('ide.regexWorker.postFailed', 'Regex worker post failed.'), 'REGEX_WORKER_FAILED'), {
             terminate: true,
           });
         }
@@ -166,7 +167,7 @@
     }
 
     function cancel() {
-      rejectPending(regexError('Regex evaluation was cancelled.', 'REGEX_CANCELLED'), { terminate: true });
+      rejectPending(regexError(jt('ide.regexWorker.cancelled', 'Regex evaluation was cancelled.'), 'REGEX_CANCELLED'), { terminate: true });
     }
 
     function dispose() {

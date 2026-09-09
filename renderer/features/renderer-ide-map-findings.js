@@ -37,6 +37,7 @@
   root.rendererIdeMapFindings = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -63,14 +64,14 @@
     {
       id: 'hubs',
       kind: 'hub',
-      label: 'hubs',
+      label: jt('ide.map.findings.hubs', 'hubs'),
       singular: 'hub',
       idsOf: (findings) => (Array.isArray(findings.hubs) ? findings.hubs.slice() : []),
     },
     {
       id: 'cycles',
       kind: 'cycle',
-      label: 'cycles',
+      label: jt('ide.map.findings.cycles', 'cycles'),
       singular: 'cycle',
       // cycles is an array of arrays (one per distinct cycle); the chip count
       // is the number of distinct cycles, but the highlight/bounds ids are the
@@ -89,7 +90,7 @@
     {
       id: 'orphans',
       kind: 'orphan',
-      label: 'orphans',
+      label: jt('ide.map.findings.orphans', 'orphans'),
       singular: 'orphan',
       idsOf: (findings) => (Array.isArray(findings.orphans) ? findings.orphans.slice() : []),
     },

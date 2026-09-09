@@ -6,6 +6,7 @@
   }
   root.lifecycleProgressUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function lifecycleProgressUtilsFactory() {
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var PILL_SOURCES = (typeof globalThis !== 'undefined'
     && globalThis.rendererTurnStatusPill
@@ -17,10 +18,10 @@
     };
 
   var MODEL_SWITCH_STEPS = [
-    { key: 'reinitialize',  label: 'Re-initializing engine...' },
-    { key: 'model_acquiring', label: 'Downloading model...' },
-    { key: 'model_loading', label: 'Loading model...' },
-    { key: 'ready',         label: 'Model loaded' },
+    { key: 'reinitialize',  label: jt('shell.progress.reinitializingEngine', 'Re-initializing engine...') },
+    { key: 'model_acquiring', label: jt('shell.progress.downloadingModel', 'Downloading model...') },
+    { key: 'model_loading', label: jt('shell.progress.loadingModel', 'Loading model...') },
+    { key: 'ready',         label: jt('shell.progress.modelLoaded', 'Model loaded') },
   ];
 
   var SETTLE_DELAY_MS = 1200;
@@ -65,17 +66,17 @@
   }
 
   var STARTUP_OVERLAY_LABELS = {
-    ollama_start: 'Starting local inference\u2026',
-    ollama_ready: 'Inference engine ready',
-    sidecar_spawn: 'Launching companion engine\u2026',
-    sidecar_ready: 'Engine process started',
-    sidecar_spawned: 'Engine process started',
-    sidecar_initialize: 'Initializing engine\u2026',
-    model_load: 'Almost ready\u2026',
-    model_acquiring: 'Downloading the configured model\u2026',
-    model_loading: 'Loading model capabilities\u2026',
-    model_unavailable: 'Model unavailable',
-    ready: 'Jenny is ready',
+    ollama_start: jt('shell.progress.startingLocalInference', 'Starting local inference\u2026'),
+    ollama_ready: jt('shell.progress.inferenceEngineReady', 'Inference engine ready'),
+    sidecar_spawn: jt('shell.progress.launchingCompanionEngine', 'Launching companion engine\u2026'),
+    sidecar_ready: jt('shell.progress.engineProcessStarted', 'Engine process started'),
+    sidecar_spawned: jt('shell.progress.engineProcessStarted', 'Engine process started'),
+    sidecar_initialize: jt('shell.progress.initializingEngine', 'Initializing engine\u2026'),
+    model_load: jt('shell.progress.almostReady', 'Almost ready\u2026'),
+    model_acquiring: jt('shell.progress.downloadingConfiguredModel', 'Downloading the configured model\u2026'),
+    model_loading: jt('shell.progress.loadingModelCapabilities', 'Loading model capabilities\u2026'),
+    model_unavailable: jt('shell.progress.modelUnavailableLabel', 'Model unavailable'),
+    ready: jt('shell.progress.ready', 'Jenny is ready'),
   };
 
   // UIUX-021: fatal startup/backend-failure alertdialog + Retry, shared by
@@ -172,7 +173,7 @@
     var retryButton = getStartupOverlayRetryButton(overlayEl);
     if (retryButton) { return retryButton; }
     renderStartupOverlayActions(overlayEl, [
-      { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: 'Retry', variant: 'primary' },
+      { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: jt('common.retry', 'Retry'), variant: 'primary' },
     ]);
     return getStartupOverlayRetryButton(overlayEl);
   }
@@ -442,7 +443,7 @@
     function getLifecycleScenarioLabel(scenario) {
       if (scenario === 'startup') { return 'Startup'; }
       if (scenario === 'shutdown') { return 'Shutdown'; }
-      if (scenario === 'modelSwitch') { return 'Model Switch'; }
+      if (scenario === 'modelSwitch') { return jt('shell.progress.modelSwitch', 'Model Switch'); }
       return 'Lifecycle';
     }
 
@@ -509,9 +510,9 @@
       if (startupOverlayDismissed || !startupOverlay || startupOverlayBlockedActive
         || isStartupOverlayFatalActive(startupOverlay)) { return; }
       startupOverlay.setAttribute('data-state', 'slow');
-      if (startupOverlaySecondary) { startupOverlaySecondary.textContent = 'Startup is taking longer than usual.'; }
+      if (startupOverlaySecondary) { startupOverlaySecondary.textContent = jt('shell.progress.startupSlow', 'Startup is taking longer than usual.'); }
       setStartupOverlayActions([
-        { id: 'startup-continue', label: 'Continue anyway', variant: 'secondary' },
+        { id: 'startup-continue', label: jt('shell.progress.continueAnyway', 'Continue anyway'), variant: 'secondary' },
       ]);
       bindStartupOverlayAction('startup-continue', function () { handleStartupOverlayContinue('slow'); });
     }
@@ -534,11 +535,11 @@
       if (error) {
         startupOverlayBlockedActive = false;
         startupOverlay.setAttribute('data-state', 'error');
-        if (startupOverlaySublabel) { startupOverlaySublabel.textContent = 'Startup failed'; }
-        if (startupOverlaySecondary) { startupOverlaySecondary.textContent = String(detail || error || 'Backend failed to start.'); }
+        if (startupOverlaySublabel) { startupOverlaySublabel.textContent = jt('shell.progress.startupFailed', 'Startup failed'); }
+        if (startupOverlaySecondary) { startupOverlaySecondary.textContent = String(detail || error || jt('shell.progress.backendFailedToStart', 'Backend failed to start.')); }
         setStartupOverlayActions([
-          { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: 'Retry', variant: 'primary' },
-          { id: 'startup-view-logs', label: 'View logs', variant: 'secondary' },
+          { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: jt('common.retry', 'Retry'), variant: 'primary' },
+          { id: 'startup-view-logs', label: jt('shell.progress.viewLogs', 'View logs'), variant: 'secondary' },
         ]);
         bindStartupOverlayAction('startup-retry', handleStartupOverlayRetryClick);
         bindStartupOverlayAction('startup-view-logs', handleStartupOverlayViewLogs);
@@ -559,10 +560,10 @@
         startupOverlayBlockedActive = true;
         startupOverlay.setAttribute('data-state', 'blocked');
         if (startupOverlaySecondary) {
-          startupOverlaySecondary.textContent = 'The configured model is unavailable. You can continue and choose another model in Settings.';
+          startupOverlaySecondary.textContent = jt('shell.progress.modelUnavailable', 'The configured model is unavailable. You can continue and choose another model in Settings.');
         }
         setStartupOverlayActions([
-          { id: 'startup-continue', label: 'Continue', variant: 'primary' },
+          { id: 'startup-continue', label: jt('shell.progress.continue', 'Continue'), variant: 'primary' },
         ]);
         bindStartupOverlayAction('startup-continue', function () { handleStartupOverlayContinue('model_unavailable'); });
       } else if (startupOverlaySlowElapsed) {
@@ -772,7 +773,7 @@
         handleLifecycleProgress({
           scenario: unavailableScenario,
           phase: 'model_unavailable',
-          detail: 'Model failed to load. Send a message to retry, or pick another model in Settings.',
+          detail: jt('shell.progress.modelLoadFailed', 'Model failed to load. Send a message to retry, or pick another model in Settings.'),
           stepIndex: unavailableScenario === 'modelSwitch' ? MODEL_SWITCH_STEPS.length - 1 : 6,
           stepCount: unavailableScenario === 'modelSwitch' ? MODEL_SWITCH_STEPS.length : 7,
           percent: 100,
@@ -786,7 +787,7 @@
         // banner/toast surface's job, not this one's.
         if (!startupOverlayDismissed && startupOverlay) {
           var failureDetail = String(payload.detail || '').trim();
-          updateStartupOverlay(phase, failureDetail || 'Backend failed to start.', failureDetail, 100);
+          updateStartupOverlay(phase, failureDetail || jt('shell.progress.backendFailedToStart', 'Backend failed to start.'), failureDetail, 100);
           presentStartupOverlayFatalError(startupOverlay, { onRetry: handleStartupOverlayRetryClick });
         }
       } else if (phase === 'ready' && startupActive) {
@@ -795,7 +796,7 @@
         handleLifecycleProgress({
           scenario: 'startup',
           phase: 'ready',
-          detail: 'Jenny is ready',
+          detail: jt('shell.progress.ready', 'Jenny is ready'),
           stepIndex: 6,
           stepCount: 7,
           percent: 100,
@@ -848,11 +849,11 @@
       handleLifecycleProgress({
         scenario: 'modelSwitch',
         phase: 'model_unavailable',
-        detail: detail || 'Model switch failed',
+        detail: detail || jt('shell.progress.modelSwitchFailed', 'Model switch failed'),
         stepIndex: steps.length - 1,
         stepCount: steps.length,
         percent: 100,
-        error: detail || 'Model switch failed',
+        error: detail || jt('shell.progress.modelSwitchFailed', 'Model switch failed'),
       });
     }
 
@@ -881,7 +882,7 @@
 
       setTurnStatusPill(pillSource, {
         message: statusModel.message
-          || (progress.scenario === 'shutdown' ? 'Shutting down…' : ''),
+          || (progress.scenario === 'shutdown' ? jt('shell.progress.shuttingDown', 'Shutting down…') : ''),
         tone: progress.error
           ? 'danger'
           : terminal

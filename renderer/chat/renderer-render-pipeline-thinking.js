@@ -83,9 +83,9 @@
         );
       };
 
-    const SPRITE_REANCHOR_RETRY_LIMIT = 2;
     const SPRITE_NON_CONTENT_KINDS = new Set(['tool_use', 'tool_result']);
     let disposed = false;
+    spriteRuntime.sessionId = state?.currentSessionId;
     let positionRequestVersion = 0;
     function normalizeSpritePhase(message) {
       const status = String(message?.status || '').trim().toLowerCase();
@@ -327,45 +327,12 @@
       }
     }
 
-    function syncLiveReasoningStatusLabel(thinkingText, thinkingId, activeMessageId = '') {
-      if (!chatTimeline || !thinkingId) return;
-      const cleanedText = String(thinkingText || '').trim();
-      const el = typeof chatThinkingUtils.resolveLiveReasoningStatusRow === 'function'
-        ? chatThinkingUtils.resolveLiveReasoningStatusRow(chatTimeline, {
-          thinkingId,
-          activeMessageId,
-          escapeSelectorValue,
-        })
-        : null;
-      if (!el) return;
-      const iterMatch = cleanedText.match(/^Starting iteration (\d+)\/(\d+)/);
-      if (iterMatch) {
-        if (el.getAttribute('data-reasoning-iteration') !== iterMatch[1]) {
-          el.setAttribute('data-reasoning-iteration', iterMatch[1]);
-        }
-        return;
-      }
-      if (!cleanedText) return;
-      const main = el.querySelector('.reasoning-row-main');
-      if (!main) return;
-      // Same label-flattening as the settled header: live GPT-style deltas
-      // open with a bold markdown title that must not show its ** wrappers.
-      const labelText = typeof chatThinkingUtils.markdownToPlainReasoningLabel === 'function'
-        ? chatThinkingUtils.markdownToPlainReasoningLabel(cleanedText)
-        : cleanedText;
-      if (!labelText) return;
-      if (main.textContent !== labelText) {
-        main.textContent = labelText;
-      }
-      if (!main.classList.contains('shimmer-active')) {
-        main.classList.add('shimmer-active');
-      }
-    }
-
     function renderLiveThinkingChip(thinkingState = null, activeMessageId = '') {
       const { activeStreamId, thinkingText, thinkingId } = thinkingState
         || getActiveThinkingStreamState();
-      syncLiveReasoningStatusLabel(thinkingText, thinkingId, activeMessageId);
+      chatThinkingUtils.syncLiveReasoningStatusLabel?.(chatTimeline, {
+        thinkingText, thinkingId, activeMessageId, escapeSelectorValue,
+      });
 
       const indicatorState = thinkingIndicator ? thinkingIndicator.getDisplayState() : null;
       if (
@@ -401,7 +368,6 @@
         hideAssistantSprite({ reason: 'missing_target' });
         return;
       }
-      spriteRuntime.reanchorRetryCount = 0;
       applySpriteViewState(createVisibleSpriteState(targetMessage, targetY), options);
       renderLiveThinkingChip(thinkingState, targetMessage.id);
     }
@@ -416,6 +382,11 @@
       messages = Array.isArray(messages) ? messages : [];
       positionRequestVersion += 1;
       const requestVersion = positionRequestVersion;
+      const sessionId = state?.currentSessionId;
+      if (spriteRuntime.sessionId !== sessionId) {
+        spriteRuntime.sessionId = sessionId;
+        hideAssistantSprite({ clearTarget: true, reason: 'session_changed' });
+      }
       if (spriteRuntime.frameHandle) {
         cancelFrame?.(spriteRuntime.frameHandle);
         spriteRuntime.frameHandle = 0;
@@ -426,6 +397,10 @@
           return;
         }
         spriteRuntime.frameHandle = 0;
+        if (sessionId !== state?.currentSessionId) {
+          hideAssistantSprite({ clearTarget: true, reason: 'session_changed' });
+          return;
+        }
 
         const uiState = state?.ui || {};
         if (
@@ -489,22 +464,6 @@
           rowKind: !usingThinkingFallback ? 'assistant_text' : '',
         });
         if (!baseTargetMessage || !targetNode) {
-          if (
-            uiState.activeView === 'chat'
-            && typeof requestFrame === 'function'
-            && Number(spriteRuntime.reanchorRetryCount || 0) < SPRITE_REANCHOR_RETRY_LIMIT
-          ) {
-            spriteRuntime.reanchorRetryCount = Number(spriteRuntime.reanchorRetryCount || 0) + 1;
-            spriteRuntime.frameHandle = requestFrame(() => {
-              if (disposed || requestVersion !== positionRequestVersion) {
-                return;
-              }
-              spriteRuntime.frameHandle = 0;
-              updateAssistantSpritePosition(messages, derivedState, options);
-            });
-            return;
-          }
-          spriteRuntime.reanchorRetryCount = 0;
           hideAssistantSprite({ reason: 'missing_target' });
           return;
         }
@@ -545,11 +504,16 @@
           && hasRenderableAssistantContent(baseTargetMessage)
           && normalizeSpritePhase(baseTargetMessage) !== 'live'
         );
-        const targetMessage = usingThinkingFallback || (
+        // Geometry follows prose, but the newest assistant row owns the outcome.
+        const latestMessage = messages.find((message) => message?.id === resolvedLatestAssistantId);
+        const outcomeMessage = assistantAnchor.hasCurrentTurnAssistant && latestMessage
+          ? latestMessage : baseTargetMessage;
+        const terminalOutcome = ['error', 'cancelled'].includes(normalizeSpritePhase(outcomeMessage));
+        const targetMessage = !terminalOutcome && (usingThinkingFallback || (
           hasActiveSendAnchor
           && assistantAnchor.hasCurrentTurnAssistant
           && !anchorIsTerminalLatestContent
-        )
+        ))
           ? {
             ...baseTargetMessage,
             status: MESSAGE_STATUS.STREAMING,
@@ -560,7 +524,7 @@
               || ''
             ).trim(),
           }
-          : baseTargetMessage;
+          : { ...outcomeMessage, id: baseTargetMessage.id };
         applyAssistantSprite(targetMessage, targetYValue, options, thinkingState);
       };
 
@@ -571,17 +535,39 @@
       }
     }
 
+    // Reconcile from current session data after layout or virtualizer changes;
+    // no polling deadline and no stale message snapshot retained by a retry.
+    const reconcileLayout = () => {
+      if (!disposed && state?.ui?.activeView === 'chat') updateAssistantSpritePosition();
+    };
+    const resizeObserver = typeof windowRef.ResizeObserver === 'function'
+      ? new windowRef.ResizeObserver(reconcileLayout) : null;
+    if (chatThreadColumn) resizeObserver?.observe(chatThreadColumn);
+    if (chatTimeline) resizeObserver?.observe(chatTimeline);
+    const mountObserver = typeof windowRef.MutationObserver === 'function'
+      ? new windowRef.MutationObserver(reconcileLayout) : null;
+    if (chatTimeline) mountObserver?.observe(chatTimeline, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ['hidden', 'open', 'class', 'style'],
+    });
+    chatTimeline?.addEventListener?.('load', reconcileLayout, true);
+    windowRef.addEventListener?.('resize', reconcileLayout);
+
     function dispose() {
       if (disposed) {
         return;
       }
+      resizeObserver?.disconnect();
+      mountObserver?.disconnect();
+      chatTimeline?.removeEventListener?.('load', reconcileLayout, true);
+      windowRef.removeEventListener?.('resize', reconcileLayout);
+      hideAssistantSprite({ clearTarget: true, reason: 'disposed' });
       disposed = true;
       positionRequestVersion += 1;
       if (spriteRuntime.frameHandle) {
         cancelFrame?.(spriteRuntime.frameHandle);
         spriteRuntime.frameHandle = 0;
       }
-      setSpriteHoloState(false, 'idle');
     }
 
     return {

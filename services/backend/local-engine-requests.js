@@ -71,7 +71,15 @@ async function startLocalEngineChatStream(service, {
   skillInvocation,
   editedMessageId,
   failureRetry,
-}) {
+}, options = {}) {
+  const cancellation = options?.cancellation;
+  const throwIfStartCancelled = () => {
+    if (!cancellation?.signal?.aborted) return;
+    const error = new Error('chat_start_cancelled');
+    error.code = 'chat_start_cancelled';
+    error.retryable = false;
+    throw error;
+  };
   const hasImageAttachments = (Array.isArray(attachments) ? attachments : []).some((entry) => isImageAttachment(entry));
   const normalizedInteractiveResponse = normalizeInteractiveResponse(interactiveResponse);
   if (interactiveResponse != null && !normalizedInteractiveResponse) {
@@ -122,6 +130,7 @@ async function startLocalEngineChatStream(service, {
   };
   let runtimePreferredModel = normalizedPreferences.preferred_model;
   let runtimePreferredEngineType = '';
+  throwIfStartCancelled();
   const actorRegistry = ensureSessionTurnActorRegistry(service);
   let turnLease = sessionKey
     ? actorRegistry.reserveStart({
@@ -169,6 +178,8 @@ async function startLocalEngineChatStream(service, {
       }
     }
 
+    throwIfStartCancelled();
+    if (turnLease?.identity?.streamId) cancellation?.bindStream?.(turnLease.identity.streamId);
     return await service._startManagedSidecarChatStream({
       sessionId,
       prompt,

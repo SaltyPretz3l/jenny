@@ -45,6 +45,18 @@
     let disposed = false;
     let lastValidSessionIds = [];
     let mutationChain = Promise.resolve();
+    // Canonical identities are irreversible, even if workspace persistence fails.
+    const sessionAliases = new Map();
+    function resolveId(value) {
+      let id = normalizeId(value);
+      const seen = new Set();
+      while (sessionAliases.has(id) && !seen.has(id)) {
+        seen.add(id);
+        id = sessionAliases.get(id);
+      }
+      return id;
+    }
+    const resolveIds = (values) => normalizeIdList((values || []).map(resolveId));
     // Alt+Tab-style MRU cycling. While the user holds Ctrl and taps Tab we walk a
     // frozen snapshot of mruStack WITHOUT promoting anything; the single MRU
     // promotion is deferred to commitCycle() (fired on Ctrl release). This keeps
@@ -184,6 +196,33 @@
       getState: snapshot,
 
       getRollbackSnapshot: captureInternalState,
+
+      async rekeySession(sourceSessionId, targetSessionId) {
+        const source = resolveId(sourceSessionId);
+        const target = resolveId(targetSessionId);
+        if (!source || !target || source === target) return snapshot();
+        return queueMutation(async () => {
+          sessionAliases.set(source, target);
+          const migrate = (ids) => ids.includes(source)
+            ? normalizeIdList(ids.filter((id) => id !== target).map((id) => id === source ? target : resolveId(id)))
+            : resolveIds(ids);
+          const cycleActive = cycleSnapshot?.[cycleCursor];
+          state.openSessionIds = migrate(state.openSessionIds);
+          state.mruStack = migrate(state.mruStack);
+          state.activeSessionId = resolveId(state.activeSessionId);
+          lastValidSessionIds = resolveIds(lastValidSessionIds);
+          if (cycleSnapshot) {
+            cycleSnapshot = migrate(cycleSnapshot);
+            cycleCursor = cycleSnapshot.indexOf(resolveId(cycleActive));
+          }
+          // Unlike ordinary tab mutations, never roll back to a dead local ID.
+          // restore() also resolves saved aliases, so a failed write is recoverable.
+          try { await persist(); } catch (_error) {
+            reportPersistenceError('workspace_state_persist_failed');
+          }
+          return publish();
+        });
+      },
 
       async openSession(sessionId) {
         const id = normalizeId(sessionId);
@@ -376,18 +415,22 @@
         });
       },
 
-      async restore(validSessionIds) {
+      async restore(validSessionIds, options = {}) {
         const capturedValidSessionIds = normalizeIdList(validSessionIds);
         return queueMutation(async () => {
-          lastValidSessionIds = capturedValidSessionIds;
+          const resolvedValidSessionIds = resolveIds(capturedValidSessionIds);
+          lastValidSessionIds = resolvedValidSessionIds;
           resetCycle(); // a full restore rebuilds mruStack; drop any stale snapshot
-          const saved = await bridge.getState().catch(() => ({}));
-          const validSet = new Set(capturedValidSessionIds);
-          const savedOpen = normalizeIdList(saved?.openSessionIds, validSet, MAX_OPEN_SESSIONS);
-          const savedActive = normalizeId(saved?.activeSessionId);
+          // Background metadata refresh is not a navigation or boot restore.
+          const saved = options.preserveCurrentSession === true
+            ? snapshot()
+            : await bridge.getState().catch(() => ({}));
+          const validSet = new Set(resolvedValidSessionIds);
+          const savedOpen = normalizeIdList(resolveIds(saved?.openSessionIds), validSet, MAX_OPEN_SESSIONS);
+          const savedActive = resolveId(saved?.activeSessionId);
           state.openSessionIds = savedOpen.length
             ? savedOpen
-            : (capturedValidSessionIds[0] ? [capturedValidSessionIds[0]] : []);
+            : (resolvedValidSessionIds[0] ? [resolvedValidSessionIds[0]] : []);
           state.activeSessionId =
             savedActive && validSet.has(savedActive) && state.openSessionIds.includes(savedActive)
               ? savedActive

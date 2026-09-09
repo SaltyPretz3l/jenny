@@ -5,6 +5,7 @@
   }
   root.rendererSendFlowHelpers = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const sendOutboxModule = (typeof globalThis !== 'undefined' && globalThis.rendererSendOutbox)
     || (typeof require === 'function' ? require('./renderer-send-outbox') : null);
   if (!sendOutboxModule || typeof sendOutboxModule.getOrCreateSendOutbox !== 'function') {
@@ -31,7 +32,7 @@
 
   function rejectBusyPluginCommand({ invocation, sessionId, setNotice, render, log }) {
     if (!invocation) return null;
-    setNotice?.('Wait for the active response to finish before running a plugin command.', {
+      setNotice?.(jt('chat.send.waitForPluginCommand', 'Wait for the active response to finish before running a plugin command.'), {
       owner: 'send:plugin_command_busy', tone: 'warning',
     });
     render?.();
@@ -111,7 +112,7 @@
     const extra = {
       id: `assistant_failed_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`,
       status: 'error',
-      stream_error: String(candidate.message || error || 'Chat stream failed.'),
+        stream_error: String(candidate.message || error || jt('error.chat.streamFailed', 'Chat stream failed.')),
       error_code: errorCode,
       retryable,
       category,

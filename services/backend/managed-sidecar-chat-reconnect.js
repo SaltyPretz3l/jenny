@@ -133,6 +133,9 @@ function needsManagedSidecarChatReconnect(service) {
   if (!service.sidecarManager.process) {
     return true;
   }
+  if (service.hostMode === 'server' && service._hostedPolicyProcess !== service.sidecarManager.process) {
+    return true;
+  }
   return !service.sidecarClient || service.sidecarClient.connected === false;
 }
 
@@ -175,6 +178,9 @@ async function ensureManagedOllamaReadyForChat(
   service,
   { engineType, sessionId, streamId, traceId } = {}
 ) {
+  if (service?.hostPorts?.posture?.ownsEngineLifecycle === false) {
+    return false;
+  }
   if (String(engineType || '').trim().toLowerCase() !== 'ollama') {
     return false;
   }
@@ -227,6 +233,9 @@ async function ensureManagedLlamaServerReadyForChat(
   service,
   { engineType, sessionId, streamId, traceId } = {}
 ) {
+  if (service?.hostPorts?.posture?.ownsEngineLifecycle === false) {
+    return false;
+  }
   if (String(engineType || '').trim().toLowerCase() !== 'openai-compatible') {
     return false;
   }

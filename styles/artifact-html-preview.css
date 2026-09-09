@@ -23,7 +23,7 @@
 
 /* Right cluster: ghost stepper + v{k}/{n}. Emitted only when >=2 versions. */
 .artifact-html-preview-versions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;

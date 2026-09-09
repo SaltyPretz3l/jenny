@@ -26,6 +26,7 @@
   root.rendererScratchpadPin = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const MAX_NOTE_CHARS = 4000; // mirrors MAX_HOME_SCRATCHPAD_CHARS
@@ -125,7 +126,7 @@
     // Collapsed pin = a compact titlebar pill (title only; the body preview rides
     // along as the hover tooltip). The active pin's tab is marked aria-selected.
     function buildTab(note) {
-      const title = String(note.title || '').trim() || 'Untitled note';
+      const title = String(note.title || '').trim() || jt('scratchpad.pin.untitledNote', 'Untitled note');
       const preview = previewOf(note.text);
       const isActive = note.id === expandedId;
       const inner = '<span class="pin-tab__icon" aria-hidden="true">📌</span>'
@@ -139,14 +140,14 @@
         trustedHtml: inner,
         role: 'tab',
         ariaSelected: isActive,
-        ariaLabel: `Pinned note ${title}`,
+        ariaLabel: jt('scratchpad.pin.noteLabel', 'Pinned note {title}', { title }),
         title: preview ? `${title} — ${preview}` : title,
         dataset: { 'pin-expand': note.id },
       });
     }
 
     function buildPanel(note) {
-      const title = String(note.title || '').trim() || 'Untitled note';
+      const title = String(note.title || '').trim() || jt('scratchpad.pin.untitledNote', 'Untitled note');
       const headerBtn = (kind, glyph, label) => actionButton({
         plain: true,
         className: 'scratchpad-pin__hbtn',
@@ -155,12 +156,16 @@
         title: label,
         dataset: { [`pin-${kind}`]: note.id },
       });
+      // Resolved outside the textField({...}) literal: the spellcheck inventory
+      // test scans that object with a non-greedy brace regex, and `{ title })`
+      // inside it would end the match before the spellcheck property.
+      const editLabel = jt('scratchpad.pin.editLabel', 'Edit {title}', { title });
       const editor = textField({
         id: EDITOR_ID,
         multiline: true,
         value: String(note.text || ''),
         maxLength: MAX_NOTE_CHARS,
-        ariaLabel: `Edit ${title}`,
+        ariaLabel: editLabel,
         spellcheck: true,
         className: 'scratchpad-pin__editor',
       });
@@ -168,8 +173,8 @@
         + '<div class="scratchpad-pin__header">'
         + `<span class="scratchpad-pin__title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>`
         + '<span class="scratchpad-pin__header-actions">'
-        + headerBtn('open', '⤤', 'Open in Home')
-        + headerBtn('unpin', '✕', 'Unpin note')
+        + headerBtn('open', '⤤', jt('scratchpad.pin.openInHome', 'Open in Home'))
+        + headerBtn('unpin', '✕', jt('scratchpad.pin.unpinNote', 'Unpin note'))
         + headerBtn('collapse', '▾', 'Collapse')
         + '</span>'
         + '</div>'
@@ -327,7 +332,7 @@
       Promise.resolve(actions.unpinNote(noteId)).then(
         (result) => {
           if (result && result.error) {
-            showToastMessage(String(result.error), { title: 'Scratchpad', tone: 'danger' });
+            showToastMessage(String(result.error), { title: jt('scratchpad.title', 'Scratchpad'), tone: 'danger' });
           }
           // The config echo re-renders; force it in case the write was a no-op.
           lastSig = null;
@@ -381,7 +386,7 @@
       }
       const saved = layerEl.querySelector('[data-pin-saved]');
       if (saved) {
-        saved.textContent = 'Saving…';
+        saved.textContent = jt('common.saving', 'Saving…');
       }
       if (typeof actions.queueSave === 'function') {
         actions.queueSave(target.value, expandedId);

@@ -31,6 +31,7 @@
   asyncFence
 ) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var actionButton = typeof actionButtonModule === 'function'
     ? actionButtonModule
@@ -40,15 +41,15 @@
   var MEMORY_NOTES_ID = 'memoryNotesInput';
 
   var NOTES_CLEAR_CONFIRM = {
-    title: 'Clear long-term notes?',
-    message: 'The notes go back to empty. Approved memories are not affected.',
-    confirmLabel: 'Clear',
-    cancelLabel: 'Cancel',
+    title: jt('memory.notes.clearConfirmTitle', 'Clear long-term notes?'),
+    message: jt('memory.notes.clearConfirmMessage', 'The notes go back to empty. Approved memories are not affected.'),
+    confirmLabel: jt('common.clear', 'Clear'),
+    cancelLabel: jt('common.cancel', 'Cancel'),
   };
 
   function toMessage(error, fallback) {
     var text = error && error.message ? String(error.message) : String(error || '');
-    return text.trim() || String(fallback || 'Something went wrong.');
+    return text.trim() || String(fallback || jt('memory.notes.somethingWentWrong', 'Something went wrong.'));
   }
 
   function setText(node, text) {
@@ -109,13 +110,13 @@
       dom.memoryNotesActions.innerHTML = ''
         + button({
           id: 'memory-notes-clear',
-          label: 'Clear',
+          label: jt('common.clear', 'Clear'),
           variant: 'ghost',
           disabled: busy,
         })
         + button({
           id: 'memory-notes-save',
-          label: notesState.saving === true ? 'Saving…' : 'Save',
+          label: notesState.saving === true ? jt('common.saving', 'Saving…') : jt('common.save', 'Save'),
           variant: 'secondary',
           disabled: saveDisabled,
         });
@@ -126,8 +127,8 @@
       dom.memoryNotesFieldHost.innerHTML = textField({
         id: MEMORY_NOTES_ID,
         value: String(notesState.body || ''),
-        ariaLabel: 'Long-term notes',
-        placeholder: 'Durable facts and preferences the assistant should always know.',
+        ariaLabel: jt('memory.notes.label', 'Long-term notes'),
+        placeholder: jt('memory.notes.placeholder', 'Durable facts and preferences the assistant should always know.'),
         multiline: true,
         spellcheck: true,
         // A MEMORY.md over 64 KiB is read-only here: the service refuses the
@@ -200,7 +201,7 @@
       if (disposalFence.isDisposed()) return;
       var contextFiles = api();
       if (!contextFiles || typeof contextFiles.getState !== 'function') {
-        notesState.loadStatus = 'Long-term notes are unavailable.';
+        notesState.loadStatus = jt('memory.notes.unavailable', 'Long-term notes are unavailable.');
         render();
         return;
       }
@@ -227,7 +228,7 @@
         shellRendered = false;
       } catch (error) {
         if (disposalFence.isDisposed() || !refreshGate.isCurrent(refreshToken)) return;
-        notesState.loadStatus = 'Unable to load long-term notes: ' + toMessage(error, 'unknown error');
+        notesState.loadStatus = jt('memory.notes.loadFailed', 'Unable to load long-term notes: {error}', { error: toMessage(error, 'unknown error') });
       } finally {
         if (!disposalFence.isDisposed() && refreshGate.isCurrent(refreshToken)) {
           notesState.loading = false;
@@ -241,7 +242,7 @@
       if (disposalFence.isDisposed() || notesState.saving === true) return;
       var contextFiles = api();
       if (!contextFiles || typeof contextFiles.writeFile !== 'function') {
-        notesState.actionStatus = 'Saving long-term notes is unavailable.';
+        notesState.actionStatus = jt('memory.notes.savingUnavailable', 'Saving long-term notes is unavailable.');
         renderMeta();
         return;
       }
@@ -258,8 +259,7 @@
         var result = await contextFiles.writeFile({ body: body });
         if (disposalFence.isDisposed() || !mutationGate.isCurrent(mutationToken)) return;
         if (!result || result.ok !== true) {
-          notesState.actionStatus = counters.buildSaveFailureMessage(result, 'Save')
-            + ' Your notes were kept.';
+          notesState.actionStatus = jt('memory.notes.operationRejected', '{message} Your notes were kept.', { message: counters.buildSaveFailureMessage(result, 'Save') });
           return;
         }
         if (typeof result.oversized === 'boolean') notesState.oversized = result.oversized;
@@ -269,7 +269,7 @@
         notesState.actionStatus = '';
       } catch (error) {
         if (disposalFence.isDisposed() || !mutationGate.isCurrent(mutationToken)) return;
-        notesState.actionStatus = 'Save failed. Your notes were kept.';
+        notesState.actionStatus = jt('memory.notes.saveFailedKept', 'Save failed. Your notes were kept.');
       } finally {
         if (!disposalFence.isDisposed() && mutationGate.isCurrent(mutationToken)) {
           notesState.saving = false;
@@ -283,7 +283,7 @@
       if (disposalFence.isDisposed() || notesState.saving === true) return;
       var contextFiles = api();
       if (!contextFiles || typeof contextFiles.resetFile !== 'function') {
-        notesState.actionStatus = 'Clearing long-term notes is unavailable.';
+        notesState.actionStatus = jt('memory.notes.clearingUnavailable', 'Clearing long-term notes is unavailable.');
         renderMeta();
         return;
       }
@@ -300,8 +300,7 @@
         var result = await contextFiles.resetFile();
         if (disposalFence.isDisposed() || !mutationGate.isCurrent(mutationToken)) return;
         if (!result || result.ok !== true) {
-          notesState.actionStatus = counters.buildSaveFailureMessage(result, 'Clear')
-            + ' Your notes were kept.';
+          notesState.actionStatus = jt('memory.notes.operationRejected', '{message} Your notes were kept.', { message: counters.buildSaveFailureMessage(result, 'Clear') });
           return;
         }
         notesState.oversized = false;
@@ -312,7 +311,7 @@
         notesState.actionStatus = '';
       } catch (error) {
         if (disposalFence.isDisposed() || !mutationGate.isCurrent(mutationToken)) return;
-        notesState.actionStatus = 'Clear failed. Your notes were kept.';
+        notesState.actionStatus = jt('memory.notes.clearFailedKept', 'Clear failed. Your notes were kept.');
       } finally {
         if (!disposalFence.isDisposed() && mutationGate.isCurrent(mutationToken)) {
           notesState.saving = false;

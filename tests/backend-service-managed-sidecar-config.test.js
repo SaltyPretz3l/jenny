@@ -29,6 +29,31 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
+test('managed sidecar config forwards normalized safety mode and UI language', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-managed-i18n-safety-'));
+  trackDirectory(userDataPath);
+  const service = new BackendService({
+    userDataPath,
+    repoRoot: process.cwd(),
+    pythonExecutable: process.execPath,
+    safeStorage: createFakeSafeStorage(),
+    defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+  });
+
+  const defaults = buildManagedSidecarConfig(service);
+  assert.equal(defaults.safety_mode, 'normal');
+  assert.equal(defaults.ui_language, 'en');
+  assert.equal(defaults.use_24_hour_time, false);
+
+  service.configService = {
+    getChatUiState: () => ({ safetyMode: 'paranoid', uiLanguage: 'ja', use24HourTime: true }),
+  };
+  const configured = buildManagedSidecarConfig(service);
+  assert.equal(configured.safety_mode, 'paranoid');
+  assert.equal(configured.ui_language, 'ja');
+  assert.equal(configured.use_24_hour_time, true);
+});
+
 test('managed sidecar startup vllm fallback switches catalog lookups to ollama', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-managed-model-catalog-'));
   trackDirectory(userDataPath);

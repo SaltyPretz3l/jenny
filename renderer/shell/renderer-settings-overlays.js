@@ -5,6 +5,7 @@
   }
   root.rendererSettingsOverlays = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function positionPopover(button, popover, windowRef) {
     if (!button || !popover || !windowRef || typeof button.getBoundingClientRect !== 'function') {
       return;
@@ -78,7 +79,7 @@
         composerChatZoomSelect.value = String(chatZoomPercent);
       }
       if (composerChatZoomStatus) {
-        composerChatZoomStatus.textContent = `${chatZoomPercent}% · Ctrl + wheel adjusts · Ctrl+0 resets.`;
+        composerChatZoomStatus.textContent = jt('settings.shell.chatZoomInstructions', '{percent}% · Ctrl + wheel adjusts · Ctrl+0 resets.', { percent: chatZoomPercent });
       }
       positionPopover(composerSettingsButton, composerSettingsPopover, windowRef);
     }
@@ -113,8 +114,8 @@
       if (typeof actionButton !== 'function') return '';
       return commands.map((command, index) => {
         const available = command.available !== false;
-        const reason = available ? '' : String(command.unavailableReason || 'Command unavailable.');
-        const actionLabel = String(command.actionLabel || (command.action === 'insert' ? 'Insert' : 'Run'));
+        const reason = available ? '' : String(command.unavailableReason || jt('settings.shell.commandUnavailable', 'Command unavailable.'));
+        const actionLabel = jt('chat.terminalState.completeLabel', 'Complete');
         return actionButton({
           className: 'composer-popover-action composer-command-item' + (available ? '' : ' composer-command-item--unavailable'),
           dataset: {
@@ -139,6 +140,9 @@
     }
 
     function renderCommandPopover(renderOptions) {
+      // The shared search controller owns this button while installed. Keep the
+      // legacy renderer as a fallback, without overwriting its live ARIA state.
+      if (composerTerminalShortcut?.getAttribute('data-slash-menu-owned') === 'true') return;
       if (!composerCommandPopover || !composerTerminalShortcut || !composerCommandPopoverList) return;
       const open = Boolean(state.ui.commandPopoverOpen);
       if (composerCommandPopover.classList.contains('hidden') === open) {
@@ -171,7 +175,7 @@
       if (nextFingerprint !== commandFingerprint) {
         const focusedCommand = composerCommandPopoverList.ownerDocument?.activeElement?.dataset?.commandName || '';
         const markup = buildCommandMarkup(commands);
-        composerCommandPopoverList.innerHTML = markup || '<p class="composer-command-empty" role="status">Commands are unavailable.</p>';
+        composerCommandPopoverList.innerHTML = markup || '<p class="composer-command-empty" role="status">' + escapeHtml(jt('settings.shell.commandsUnavailable', 'Commands are unavailable.')) + '</p>';
         for (const item of composerCommandPopoverList.querySelectorAll('[data-command-name]')) {
           if (item.dataset.commandAvailable === 'false') item.setAttribute('aria-disabled', 'true');
         }

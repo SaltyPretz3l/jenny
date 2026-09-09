@@ -1,4 +1,5 @@
 (function exposePersonalityUiUtils(globalScope) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function normalizePersonalityMessage(value) {
     return String(value || '').trim();
   }
@@ -17,18 +18,18 @@
     }
 
     if (!activeFileLabel) {
-      return 'No personality file selected.';
+      return jt('personality.status.noFileSelected', 'No personality file selected.');
     }
 
     if (state && state.loading) {
-      return `Loading ${activeFileLabel}...`;
+      return jt('personality.status.loadingFile', 'Loading {file}...', { file: activeFileLabel });
     }
 
     if (state && state.dirty) {
-      return `${activeFileLabel} has unsaved changes.`;
+      return jt('personality.status.unsavedChanges', '{file} has unsaved changes.', { file: activeFileLabel });
     }
 
-    return `${activeFileLabel} is ready to edit.`;
+    return jt('personality.status.readyToEdit', '{file} is ready to edit.', { file: activeFileLabel });
   }
 
   function resolvePreferredPersonalityTab(files, preferredActiveTab) {

@@ -28,6 +28,7 @@ function makeBackendPayload(overrides = {}) {
   return {
     setup_complete: false,
     setup_state: {
+      acknowledged_version: '1',
       seen: false,
       dismissed: false,
       setup_complete: false,
@@ -60,6 +61,7 @@ test('normalizeSetupPayload reshapes snake_case payload into renderer state shap
   const payload = makeBackendPayload({
     setup_complete: true,
     setup_state: {
+      acknowledged_version: '1',
       seen: true,
       setup_complete: true,
       completed_at: '2026-05-07T12:00:00.000Z',
@@ -89,6 +91,7 @@ test('normalizeSetupPayload reshapes snake_case payload into renderer state shap
 test('normalizeSetupPayload carries readiness metadata and derives workspace root status', () => {
   const payload = makeBackendPayload({
     setup_state: {
+      acknowledged_version: '1',
       steps: {
         workspace_root: 'done',
         local_model: 'done',
@@ -131,6 +134,7 @@ test('createSetupService wraps the bridge and forwards updateState patches', asy
         calls.push({ method: 'updateState', patch });
         return makeBackendPayload({
           setup_state: {
+            acknowledged_version: '1',
             steps: { workspace_root: 'done', local_model: 'pending', endpoint: 'pending', personality: 'pending', skills: 'pending' },
           },
         });
@@ -193,6 +197,7 @@ test('createSetupService exposes the bounded factoryReset bridge wrapper', async
         return makeBackendPayload({
           setup_complete: false,
           setup_state: {
+            acknowledged_version: '1',
             seen: false,
             dismissed: false,
             setup_complete: false,
@@ -433,7 +438,9 @@ test('personality scene saves name, note and About you through personality.save'
     windowRef: dom.window,
     applyAssistantIdentity: async (identity) => {
       savedIdentity = identity;
-      return makeBackendPayload({ setup_state: { assistant_identity: identity } });
+      return makeBackendPayload({
+        setup_state: { acknowledged_version: '1', assistant_identity: identity },
+      });
     },
     markStep: async () => {},
     closeModal: () => {},
@@ -558,6 +565,7 @@ test('controller seeds state.setup and routes Finish through completeSetup', asy
       serviceCalls.push({ method: 'updateState', patch });
       return normalizeSetupPayload(makeBackendPayload({
         setup_state: {
+          acknowledged_version: '1',
           steps: { workspace_root: 'done', local_model: 'pending', endpoint: 'pending', personality: 'pending', skills: 'pending' },
           updated_at: '2026-05-07T12:01:00.000Z',
         },
@@ -568,6 +576,7 @@ test('controller seeds state.setup and routes Finish through completeSetup', asy
       return normalizeSetupPayload(makeBackendPayload({
         setup_complete: true,
         setup_state: {
+          acknowledged_version: '1',
           setup_complete: true,
           steps: { workspace_root: 'done', local_model: 'done', endpoint: 'done', personality: 'done', skills: 'done' },
         },
@@ -601,6 +610,7 @@ test('controller seeds state.setup and routes Finish through completeSetup', asy
   assert.equal(state.setup.setupComplete, false, 'setup is incomplete on the seeded payload');
   controller.applySnapshot(normalizeSetupPayload(makeBackendPayload({
     setup_state: {
+      acknowledged_version: '1',
       steps: {
         workspace_root: 'done', local_model: 'done', endpoint: 'pending',
         personality: 'pending', skills: 'pending', capabilities: 'pending',
@@ -627,6 +637,7 @@ test('Finish later from a fresh checklist persists firstRunCompleted and leaves 
       calls.push({ method: 'updateState', patch });
       return normalizeSetupPayload(makeBackendPayload({
         setup_state: {
+          acknowledged_version: '1',
           first_run_completed: true,
           steps: makeBackendPayload().setup_state.steps,
         },
@@ -634,7 +645,10 @@ test('Finish later from a fresh checklist persists firstRunCompleted and leaves 
     },
     async complete() {
       calls.push('complete');
-      return normalizeSetupPayload(makeBackendPayload({ setup_complete: true, setup_state: { setup_complete: true } }));
+      return normalizeSetupPayload(makeBackendPayload({
+        setup_complete: true,
+        setup_state: { acknowledged_version: '1', setup_complete: true },
+      }));
     },
     async reset() { return normalizeSetupPayload(makeBackendPayload()); },
     subscribePullProgress() { return () => {}; },
@@ -694,10 +708,14 @@ test('controller does not start the setup hub for returning users (firstRunCompl
   let hubStarted = false;
   const fakeService = {
     async getState() {
-      return normalizeSetupPayload(makeBackendPayload({ setup_state: { first_run_completed: true } }));
+      return normalizeSetupPayload(makeBackendPayload({
+        setup_state: { acknowledged_version: '1', first_run_completed: true },
+      }));
     },
     async updateState() {
-      return normalizeSetupPayload(makeBackendPayload({ setup_state: { first_run_completed: true } }));
+      return normalizeSetupPayload(makeBackendPayload({
+        setup_state: { acknowledged_version: '1', first_run_completed: true },
+      }));
     },
     subscribePullProgress() { return () => {}; },
   };
@@ -734,6 +752,7 @@ test('controller refreshes when backend readiness changes without updatedAt chan
   const { document } = dom.window;
   const pendingPayload = makeBackendPayload({
     setup_state: {
+      acknowledged_version: '1',
       updated_at: '2026-05-07T12:00:00.000Z',
       readiness: {
         local_model: { ready: false, source: 'runtime_probe_unavailable' },
@@ -742,6 +761,7 @@ test('controller refreshes when backend readiness changes without updatedAt chan
   });
   const readyPayload = makeBackendPayload({
     setup_state: {
+      acknowledged_version: '1',
       updated_at: '2026-05-07T12:00:00.000Z',
       steps: {
         workspace_root: 'pending',

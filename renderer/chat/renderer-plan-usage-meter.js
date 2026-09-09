@@ -20,6 +20,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var PLAN_METER_ENGINE_TYPE = 'chatgpt';
   var PLAN_METER_FLAG = 'chatgpt_plan_meter';
   var PLAN_WARNING_THRESHOLD = 0.75;
@@ -184,7 +186,7 @@
   /* Label derived from the reported window length — never a fixed plan name. */
   function formatWindowLabel(windowMinutes) {
     var minutes = Math.max(0, Math.floor(Number(windowMinutes) || 0));
-    if (minutes <= 0) return 'Usage window';
+    if (minutes <= 0) return jt('chat.planUsage.usageWindow', 'Usage window');
     if (minutes < MINUTES_PER_HOUR) return pluralize(minutes, 'min') + ' window';
     if (minutes < MINUTES_PER_DAY) {
       var hours = minutes / MINUTES_PER_HOUR;
@@ -211,20 +213,20 @@
 
   function formatResetLabel(resetAtMs, nowMs) {
     var reset = Math.max(0, Number(resetAtMs) || 0);
-    if (reset <= 0) return 'reset time unknown';
+    if (reset <= 0) return jt('chat.planUsage.resetTimeUnknown', 'reset time unknown');
     var now = Number(nowMs) || clock();
-    if (reset <= now) return 'window reset — awaiting next request';
-    return 'resets in ' + formatDuration(reset - now);
+    if (reset <= now) return jt('chat.planUsage.windowResetAwaiting', 'window reset — awaiting next request');
+    return jt('chat.planUsage.resetsIn', 'resets in {duration}', { duration: formatDuration(reset - now) });
   }
 
   function formatUpdatedAgo(capturedAtMs, nowMs) {
     var captured = Math.max(0, Number(capturedAtMs) || 0);
-    if (captured <= 0) return 'Updated after the last ChatGPT response';
+    if (captured <= 0) return jt('chat.planUsage.updatedAfterLastResponse', 'Updated after the last ChatGPT response');
     var delta = Math.max(0, (Number(nowMs) || clock()) - captured);
-    if (delta < MINUTE_MS) return 'Updated just now';
-    if (delta < HOUR_MS) return 'Updated ' + Math.floor(delta / MINUTE_MS) + ' min ago';
-    if (delta < DAY_MS) return 'Updated ' + Math.floor(delta / HOUR_MS) + ' hr ago';
-    return 'Updated ' + Math.floor(delta / DAY_MS) + ' day ago';
+    if (delta < MINUTE_MS) return jt('chat.planUsage.updatedJustNow', 'Updated just now');
+    if (delta < HOUR_MS) return jtn('chat.planUsage.updatedMinutesAgo', Math.floor(delta / MINUTE_MS), { count: Math.floor(delta / MINUTE_MS) }, 'Updated {count} min ago', 'Updated {count} min ago');
+    if (delta < DAY_MS) return jtn('chat.planUsage.updatedHoursAgo', Math.floor(delta / HOUR_MS), { count: Math.floor(delta / HOUR_MS) }, 'Updated {count} hr ago', 'Updated {count} hr ago');
+    return jtn('chat.planUsage.updatedDaysAgo', Math.floor(delta / DAY_MS), { count: Math.floor(delta / DAY_MS) }, 'Updated {count} day ago', 'Updated {count} day ago');
   }
 
   function formatPercent(value) {
@@ -284,13 +286,13 @@
     var plan = account.planType ? account.planType.charAt(0).toUpperCase() + account.planType.slice(1) : '';
     var parts = [];
     if (plan) parts.push('ChatGPT ' + plan);
-    if (account.email) parts.push('signed in as ' + account.email);
+    if (account.email) parts.push(jt('chat.planUsage.signedInAs', 'signed in as {email}', { email: account.email }));
     return parts.join(' · ');
   }
 
   function buildDetailText(summary) {
     var lines = [];
-    if (summary.limitReached) lines.push('Limit reached · ' + summary.limitResetLabel);
+    if (summary.limitReached) lines.push(jt('chat.planUsage.limitReachedWithReset', 'Limit reached · {reset}', { reset: summary.limitResetLabel }));
     summary.windows.forEach(function eachWindow(entry) {
       lines.push(entry.label + ': ' + entry.percentLabel + ' used · ' + entry.resetLabel);
     });
@@ -329,17 +331,17 @@
   }
 
   function renderPopoverBody(summary) {
-    var html = '<h3>ChatGPT plan usage</h3>';
+    var html = '<h3>' + escapeHtml(jt('chat.planUsage.title', 'ChatGPT plan usage')) + '</h3>';
     if (summary.accountLabel) {
       html += '<p class="inv-plan-account">' + escapeHtml(summary.accountLabel) + '</p>';
     }
     if (summary.limitReached) {
-      html += '<p class="inv-plan-limit" role="status">Limit reached · '
-        + escapeHtml(summary.limitResetLabel) + '</p>';
+      html += '<p class="inv-plan-limit" role="status">'
+        + escapeHtml(jt('chat.planUsage.limitReachedWithReset', 'Limit reached · {reset}', { reset: summary.limitResetLabel })) + '</p>';
     }
     summary.windows.forEach(function eachWindow(entry) { html += renderWindowRow(entry); });
-    html += '<p class="inv-plan-updated">' + escapeHtml(summary.updatedAgoLabel)
-      + ' · from the last ChatGPT response</p>';
+    html += '<p class="inv-plan-updated">' + escapeHtml(jt('chat.planUsage.updatedFromLastResponse', '{updated} · from the last ChatGPT response', { updated: summary.updatedAgoLabel }))
+      + '</p>';
     return html;
   }
 
@@ -351,7 +353,7 @@
     var chip = inventory && inventory.chip;
     var popover = inventory && inventory.popover;
     if (typeof chip !== 'function') return '';
-    var chipLabel = summary.limitReached ? 'Limit' : summary.percentLabel;
+    var chipLabel = summary.limitReached ? jt('chat.planUsage.limitLabel', 'Limit') : summary.percentLabel;
     var ringClass = 'inv-context-ring inv-plan-ring'
       + (summary.severity ? ' inv-context-ring--' + summary.severity + ' inv-plan-ring--' + summary.severity : '')
       + (summary.limitReached ? ' inv-plan-ring--exhausted' : '');
@@ -361,7 +363,7 @@
         domId: CHIP_DOM_ID,
         iconHtml: ringSvg(summary.ringRatio),
         label: chipLabel,
-        ariaLabel: 'ChatGPT plan usage: ' + summary.percentLabel + (summary.limitReached ? ', limit reached' : ''),
+        ariaLabel: summary.limitReached ? jt('chat.planUsage.ariaLabelLimitReached', 'ChatGPT plan usage: {percent}, limit reached', { percent: summary.percentLabel }) : jt('chat.planUsage.ariaLabel', 'ChatGPT plan usage: {percent}', { percent: summary.percentLabel }),
         title: buildDetailText(summary),
         hasPopup: typeof popover === 'function',
         ariaControls: typeof popover === 'function' ? POPOVER_DOM_ID : '',
@@ -371,7 +373,7 @@
       html += popover({
         id: POPOVER_ID,
         domId: POPOVER_DOM_ID,
-        ariaLabel: 'ChatGPT plan usage details',
+        ariaLabel: jt('chat.planUsage.detailsLabel', 'ChatGPT plan usage details'),
         className: 'inv-context-details-popover inv-plan-details-popover',
         trustedHtml: renderPopoverBody(summary),
       });

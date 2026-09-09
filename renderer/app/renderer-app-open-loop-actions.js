@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const noop = () => {};
   const noopArr = () => [];
   const noopAsync = async () => {};
@@ -25,7 +26,7 @@
       const title = String(
         suggestion.title
           || clipMessagePreview(suggestion.body || suggestion.promptSuggestion || message?.content, 80)
-          || 'Proactive suggestion'
+          || jt('app.openLoop.proactiveSuggestion', 'Proactive suggestion')
       ).trim();
       const body = String(suggestion.body || suggestion.promptSuggestion || message?.content || '').trim();
       return {
@@ -96,9 +97,9 @@
         previewLength: details.body.length,
       });
       showToastMessage(
-        status === 'deferred' ? 'Saved to deferred open loops.' : 'Saved to Open Loops.',
+        status === 'deferred' ? jt('app.openLoop.savedDeferred', 'Saved to deferred open loops.') : jt('app.openLoop.savedActive', 'Saved to Open Loops.'),
         {
-          title: status === 'deferred' ? 'Open Loop Deferred' : 'Follow-up Saved',
+          title: status === 'deferred' ? jt('app.openLoop.deferredTitle', 'Open Loop Deferred') : jt('app.openLoop.savedTitle', 'Follow-up Saved'),
           tone: 'success',
           source: sessionActionSource,
           dedupeKey: `${sessionActionSource}:follow-up:${messageId}:${status}:${deferPreset || 'active'}`,
@@ -125,16 +126,16 @@
     async function promptMessageDeferSelection(messageId, sourceKind) {
       const presets = await ensureAvailableCompanionDeferPresets();
       if (!presets.length) {
-        showToastMessage('No defer presets are available right now.', {
-          title: 'Open Loops',
+        showToastMessage(jt('app.openLoop.noDeferPresets', 'No defer presets are available right now.'), {
+          title: jt('app.openLoop.title', 'Open Loops'),
           tone: 'warning',
           source: sessionActionSource,
           dedupeKey: `${sessionActionSource}:follow-up:defer:none`,
         });
         return null;
       }
-      showToastMessage('Choose when this should come back.', {
-        title: 'Defer Open Loop',
+      showToastMessage(jt('app.openLoop.chooseReturnTime', 'Choose when this should come back.'), {
+        title: jt('app.openLoop.deferTitle', 'Defer Open Loop'),
         tone: 'info',
         sticky: true,
         source: sessionActionSource,

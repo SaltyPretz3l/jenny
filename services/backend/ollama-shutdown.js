@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
-const { isProcessAlive } = require('./process-utils');
+const {
+  getProcessCommandLineSync,
+  isProcessAlive,
+  processCommandMatchesStored,
+} = require('./process-utils');
 
 const OLLAMA_STATE_FILENAME = 'ollama-process.json';
 const OLLAMA_WINDOWS_IMAGE_NAMES = Object.freeze([
@@ -39,8 +43,8 @@ function hasOwnedOllamaState(userDataPath, { fsImpl = fs } = {}) {
   }
 }
 
-// Best-effort read of the owned-state record. Returns null when absent or
-// unreadable; callers treat that as "no owned pid known".
+// Best-effort read of a complete owned-state record. Missing ownership fields
+// are malformed rather than permission to widen cleanup to every Ollama.
 function readOwnedOllamaState(userDataPath, { fsImpl = fs } = {}) {
   const statePath = getOwnedStatePath(userDataPath);
   if (!statePath) {
@@ -49,22 +53,23 @@ function readOwnedOllamaState(userDataPath, { fsImpl = fs } = {}) {
   try {
     const parsed = JSON.parse(String(fsImpl.readFileSync(statePath, 'utf8') || ''));
     const pid = Number(parsed && parsed.pid);
-    return {
-      pid: Number.isInteger(pid) && pid > 0 ? pid : 0,
-      command: String((parsed && parsed.command) || '').trim(),
-    };
+    const command = typeof parsed?.command === 'string' ? parsed.command.trim() : '';
+    if (parsed?.app_owned !== true || !Number.isInteger(pid) || pid <= 0 || !command) {
+      return null;
+    }
+    return { pid, command };
   } catch (_error) {
     return null;
   }
 }
 
-function clearOwnedOllamaState(userDataPath) {
+function clearOwnedOllamaState(userDataPath, { fsImpl = fs } = {}) {
   const statePath = getOwnedStatePath(userDataPath);
   if (!statePath) {
     return;
   }
   try {
-    fs.unlinkSync(statePath);
+    fsImpl.unlinkSync(statePath);
   } catch (error) {
     if (error && error.code !== 'ENOENT') {
       throw error;
@@ -381,6 +386,12 @@ function forceKillAnyRemainingLocalOllamaSync({
       }
     }
     targetProcesses = processes.filter((processInfo) => ownedTreePids.has(processInfo.pid));
+    // Enumeration can fail or omit a live root. The caller's verified owned
+    // PID remains a cleanup target independently of name-based discovery.
+    const listedPids = new Set(targetProcesses.map((entry) => entry.pid));
+    for (const pid of ownedPidSet) {
+      if (!listedPids.has(pid)) targetProcesses.push({ pid, parentPid: 0 });
+    }
   }
   const killedPids = [];
 
@@ -456,26 +467,20 @@ function forceKillAnyRemainingLocalOllamaVerifiedSync({
   const log = normalizeLogger(logger);
   let lastResult = { discoveredPids: [], killedPids: [] };
   let verifiedAllKilled = false;
+  const knownPids = normalizeOwnedPidSet(ownedPids);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     lastResult = forceKillAnyRemainingLocalOllamaSync({
       platform, execFileSyncImpl, spawnSyncImpl, logger, isProcessAliveImpl, ownedPids,
     });
 
-    if (lastResult.discoveredPids.length === 0 && attempt > 0) {
+    for (const pid of lastResult.discoveredPids) knownPids.add(pid);
+    const survivingPids = [...knownPids].filter((pid) => isProcessAliveImpl(pid));
+    if (survivingPids.length === 0) {
       verifiedAllKilled = true;
       log('INFO', 'ollama.verified_all_killed', { attempts: attempt + 1 });
       break;
     }
-
-    if (lastResult.discoveredPids.length === 0 && attempt === 0) {
-      verifiedAllKilled = true;
-      break;
-    }
-
-    const survivingPids = lastResult.discoveredPids.filter(
-      (pid) => isProcessAliveImpl(pid),
-    );
 
     if (attempt < maxRetries) {
       if (survivingPids.length > 0) {
@@ -551,6 +556,7 @@ function shutdownAnyLocalOllamaSync({
   spawnSyncImpl = spawnSync,
   logger,
   isProcessAliveImpl = isProcessAlive,
+  getProcessCommandLineSyncImpl = getProcessCommandLineSync,
   fsImpl = fs,
 } = {}) {
   const log = normalizeLogger(logger);
@@ -567,26 +573,47 @@ function shutdownAnyLocalOllamaSync({
   const ownedState = readOwnedOllamaState(userDataPath, { fsImpl });
   let result;
   if (ownedState === null) {
-    // Unreadable/malformed record: fail closed. Only a VALID record with no
-    // usable pid (pid 0) may widen the quit path to the by-name sweep; garbage
-    // on disk must not authorize killing every local ollama.
+    // Unreadable or incomplete records cannot authorize process cleanup.
     log('WARN', 'ollama.owned_state_malformed', { reason: 'unreadable_or_malformed' });
     result = { discoveredPids: [], killedPids: [], skipped: 'malformed_owned_state' };
   } else {
-    const ownedPid = ownedState.pid || 0;
-    // `ollama stop <model>` is deliberately not on this path because it unloads
-    // every model the daemon has resident, including one another tool put in VRAM.
-    // F2b: `wsl --shutdown` is likewise gone from quit — it terminates every
-    // WSL2 distribution and the shared VM (Docker Desktop, dev containers).
-    result = forceKillAnyRemainingLocalOllamaVerifiedSync({
-      platform,
-      execFileSyncImpl,
-      spawnSyncImpl,
-      logger,
-      isProcessAliveImpl,
-      ownedPids: ownedPid ? [ownedPid] : null,
-    });
-    if (ownedPid && !result.verifiedAllKilled) {
+    const ownedPid = ownedState.pid;
+    if (!isProcessAliveImpl(ownedPid)) {
+      log('INFO', 'ollama.any_local_sweep_skipped', { reason: 'stale_owned_pid', pid: ownedPid });
+      result = { discoveredPids: [], killedPids: [], skipped: 'stale_owned_pid' };
+    } else {
+      let commandLine = '';
+      try {
+        commandLine = getProcessCommandLineSyncImpl(ownedPid, { platform, spawnSyncImpl });
+      } catch (_error) {
+        // An unavailable identity probe is an unconfirmed identity.
+      }
+      if (!commandLine) {
+        log('WARN', 'ollama.force_kill_identity_unconfirmed', {
+          pid: ownedPid, status: 'skipped', phase: 'emergency_shutdown', reason: 'probe_unavailable',
+        });
+        log('WARN', 'ollama.state_retained', { pid: ownedPid, reason: 'identity_probe_unavailable' });
+        return { discoveredPids: [], killedPids: [], skipped: 'identity_unconfirmed' };
+      }
+      if (!processCommandMatchesStored(commandLine, ownedState.command)) {
+        log('WARN', 'ollama.force_kill_identity_unconfirmed', {
+          pid: ownedPid, status: 'skipped', phase: 'emergency_shutdown', reason: 'command_mismatch',
+        });
+        result = { discoveredPids: [], killedPids: [], skipped: 'identity_mismatch' };
+      } else {
+        // Model unload and WSL shutdown affect other applications, so the quit
+        // path only force-kills this verified process tree.
+        result = forceKillAnyRemainingLocalOllamaVerifiedSync({
+          platform,
+          execFileSyncImpl,
+          spawnSyncImpl,
+          logger,
+          isProcessAliveImpl,
+          ownedPids: [ownedPid],
+        });
+      }
+    }
+    if (!result.skipped && !result.verifiedAllKilled) {
       log('WARN', 'ollama.state_retained', {
         pid: ownedPid,
         reason: 'owned_pid_not_verified_dead',
@@ -596,7 +623,7 @@ function shutdownAnyLocalOllamaSync({
   }
 
   try {
-    clearOwnedOllamaState(userDataPath);
+    clearOwnedOllamaState(userDataPath, { fsImpl });
   } catch (error) {
     log('WARN', 'ollama.state_clear_failed', {
       message: String(error && error.message || error),

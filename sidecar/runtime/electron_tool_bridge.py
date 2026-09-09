@@ -63,6 +63,7 @@ _PATH_METADATA_KEYS = {
     "fullPath",
     "generatedArtifacts",
     "generated_artifacts",
+    "preview_image", "previewImage", "data_base64", "trusted_attachments",
 }
 def _is_safe_display_path(value: str) -> bool:
     normalized = str(value or "").strip().replace("\\", "/")
@@ -238,7 +239,9 @@ def _sanitize_metadata(value: Any) -> dict[str, Any]:
     return sanitized
 
 
-def _normalize_result_payload(payload: Any, *, fallback_tool_name: str) -> MCPToolResult:
+def _normalize_result_payload(
+    payload: Any, *, fallback_tool_name: str, preview_call_id: str = "",
+) -> MCPToolResult:
     if not isinstance(payload, dict):
         return _failure_result(
             fallback_tool_name=fallback_tool_name,
@@ -287,6 +290,14 @@ def _normalize_result_payload(payload: Any, *, fallback_tool_name: str) -> MCPTo
         generated_artifacts=generated_artifacts,
         error_code=error_code,
         metadata=metadata,
+        preview_image=(
+            dict(result["preview_image"])
+            if fallback_tool_name == "preview_test" and preview_call_id
+            and result.get("tool_name") == fallback_tool_name
+            and isinstance(result.get("preview_image"), dict)
+            and result["preview_image"].get("call_id") == preview_call_id
+            else None
+        ),
     )
 
 
@@ -401,6 +412,9 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
             result = _normalize_result_payload(
                 response.get("result"),
                 fallback_tool_name=request.tool_name,
+                preview_call_id=(
+                    request.tool_call_id if request.arguments.get("screenshot") is True else ""
+                ),
             )
             log_event(
                 event_logger,

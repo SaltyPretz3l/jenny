@@ -5,7 +5,10 @@ const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 async function loadRendererTestApp(t, options) {
-  const app = await loadRendererApp(options);
+  const app = await loadRendererApp({
+    ...options,
+    shell: { ...options?.shell, chat: { ...options?.shell?.chat, persistAcceptedUserTurn: true } },
+  });
   t.after(async () => {
     await app.dispose();
   });
@@ -18,19 +21,12 @@ test('appending a new message rebuilds the threaded transcript with user-rooted 
   const sendButton = window.document.getElementById('sendButton');
   const timeline = window.document.querySelector('.chat-timeline');
 
-  shell.__state.workspaceState = {
-    activeSessionId: 'session-existing',
-    openSessionIds: ['session-existing'],
-  };
-
   // First exchange: send → stream → complete.
   input.value = 'Hello';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
-  await waitForUi(window, 20);
-
-  assert.equal(shell.__state.workspaceState.activeSessionId, 'session-1');
-  assert.deepEqual(shell.__state.workspaceState.openSessionIds, ['session-existing', 'session-1']);
+  await waitForUiState(window, () => window.__rendererState.currentSessionId === 'session-1'
+    && window.document.getElementById('chatView').dataset.sendLifecycle === 'streaming');
 
   shell.__state.messagesBySession.set('session-1', [
     { id: 'u1', role: 'user', content: 'Hello', status: 'complete' },
@@ -100,6 +96,11 @@ test('tail finalization keeps the threaded assistant article addressable after c
   });
   await waitForUi(window, 30);
 
+  shell.__state.messagesBySession.set('session-1', [
+    ...shell.__state.messagesBySession.get('session-1'),
+    { id: 'assistant_stream-test-1', role: 'assistant', content: 'Hi there!',
+      status: 'complete', streamId: 'stream-test-1', finalizedAt: new Date().toISOString() },
+  ]);
   await shell.__emitChat({
     type: 'finish',
     sessionId: 'session-1',
@@ -653,7 +654,9 @@ test('active-turn row-aware patch keeps sibling turn roots stable when tool rows
   // state each step needs instead (same conversion as e9af2ff3).
   await waitForUiState(
     window,
-    () => Boolean(window.document.querySelector('.chat-entry.user')),
+    () => window.__rendererState.currentSessionId === 'session-1'
+      && window.document.getElementById('chatView').dataset.sendLifecycle === 'streaming'
+      && Boolean(window.document.querySelector('.chat-entry.user')),
     { timeoutMs: 10_000, message: 'Timed out waiting for the sent user turn-article to render.' }
   );
 

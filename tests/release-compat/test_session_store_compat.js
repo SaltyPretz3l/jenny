@@ -7,7 +7,7 @@
 // to detect, so a regression in any cascade step surfaces here.
 //
 // App-version dimension: every fixture pins the assumption that
-// `package.json:version` is `0.9.1`. The lockstep_release policy
+// `package.json:version` is `1.1.0`. The lockstep_release policy
 // (services/backend/schema-version-registry.js) treats schema versions as
 // release-coupled; if the app version bumps without a matching
 // userdata-v<N> fixture being added, the release gate fails fast at
@@ -28,7 +28,7 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.0.0';
+const EXPECTED_APP_VERSION = '1.1.0';
 const EXPECTED_SCHEMA_VERSION = 20;
 const FIXTURE_DIRS = [
   'userdata-v3',

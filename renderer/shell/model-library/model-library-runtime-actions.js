@@ -11,6 +11,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   if (!formatUtils || typeof formatUtils.canonicalOllamaTag !== 'function'
     || typeof formatUtils.boundedErrorMessage !== 'function') {
     throw new Error('model-library-runtime-actions: missing required dependency');
@@ -97,13 +98,12 @@
         return '';
       }).catch(function (error) {
         if (disposed || operationId !== runtimeOperationId) return '';
-        var message = boundedErrorMessage(error, 'Could not save the local model preference.');
+        var message = boundedErrorMessage(error, jt('models.library.runtime.preferenceSaveFailed', 'Could not save the local model preference.'));
         appendClientLog('WARN', 'model_library.preferred_local_update_failed', {
           model: modelId,
           message: message,
         });
-        return 'Now chatting with "' + modelId
-          + '", but the local preference could not be saved.';
+        return jt('models.library.runtime.nowChattingPreferenceSaveFailed', 'Now chatting with "{model}", but the local preference could not be saved.', { model: modelId });
       });
     }
 
@@ -111,12 +111,12 @@
       var modelId = String(tag || '').trim();
       if (!modelId) return;
       if (activation.status === 'running') {
-        setStatusMessage('Still switching models.');
+        setStatusMessage(jt('models.library.runtime.stillSwitching', 'Still switching models.'));
         return;
       }
       var load = windowRef.jennyShell?.models?.load;
       if (typeof load !== 'function') {
-        setStatusMessage('Model lifecycle controls are unavailable right now.');
+        setStatusMessage(jt('models.library.runtime.controlsUnavailable', 'Model lifecycle controls are unavailable right now.'));
         return;
       }
       var model = findModel(modelId);
@@ -129,24 +129,24 @@
           : (model && model.engineType) || '';
       setStatusMessage(engineHint === 'openai-compatible'
         && model.selectedEngine === 'llama-server'
-        ? 'Starting llama-server for "' + modelId + '"…'
-        : 'Switching to "' + modelId + '"…');
+        ? jt('models.library.runtime.startingLlamaServerFor', 'Starting llama-server for "{model}"…', { model: modelId })
+        : jt('models.library.runtime.switchingTo', 'Switching to "{model}"…', { model: modelId }));
       render();
       var payload = engineHint ? { model: model.tag, engine_type: engineHint } : modelId;
       invokeRuntimeAction(
         function () { return load(payload); },
         MODEL_LOAD_TIMEOUT_MS,
-        'The load request timed out. Model state will be re-checked.'
+        jt('models.library.runtime.loadTimedOut', 'The load request timed out. Model state will be re-checked.')
       ).then(function () {
         if (disposed || operationId !== runtimeOperationId) return;
         activation = { status: 'idle', key: '', message: '' };
         return updatePreferredLocalModel(modelId, operationId).then(function (preferenceNote) {
           if (disposed || operationId !== runtimeOperationId) return;
-          showToastMessage('Now chatting with "' + modelId + '"', { tone: 'success' });
+          showToastMessage(jt('models.library.runtime.nowChattingWith', 'Now chatting with "{model}"', { model: modelId }), { tone: 'success' });
           appendClientLog('INFO', 'models.loaded', { model: modelId });
           return resyncThen(
             operationId,
-            preferenceNote || 'Now chatting with "' + modelId + '".'
+            preferenceNote || jt('models.library.runtime.nowChattingWithPeriod', 'Now chatting with "{model}".', { model: modelId })
           );
         });
       }, function (error) {
@@ -156,7 +156,7 @@
           modelId,
           error,
           'model_library.activate_failed',
-          'Could not load the model.'
+          jt('models.library.runtime.loadFailed', 'Could not load the model.')
         );
       });
     }
@@ -165,19 +165,19 @@
       var modelId = String(tag || '').trim();
       if (!modelId) return;
       if (activation.status === 'running') {
-        setStatusMessage('Still switching models.');
+        setStatusMessage(jt('models.library.runtime.stillSwitching', 'Still switching models.'));
         return;
       }
       if (canonicalOllamaTag(activeModel()) !== canonicalOllamaTag(modelId)) {
         var staleOperationId = runtimeOperationId;
-        setStatusMessage('The loaded model changed. Refreshing the model library.');
-        void resyncThen(staleOperationId, 'The loaded model changed. Refreshed the model library.')
+        setStatusMessage(jt('models.library.runtime.loadedModelChangedRefreshing', 'The loaded model changed. Refreshing the model library.'));
+        void resyncThen(staleOperationId, jt('models.library.runtime.loadedModelChangedRefreshed', 'The loaded model changed. Refreshed the model library.'))
           .catch(function () {});
         return;
       }
       var unload = windowRef.jennyShell?.models?.unload;
       if (typeof unload !== 'function') {
-        setStatusMessage('Model lifecycle controls are unavailable right now.');
+        setStatusMessage(jt('models.library.runtime.controlsUnavailable', 'Model lifecycle controls are unavailable right now.'));
         return;
       }
       var model = findModel(modelId);
@@ -189,11 +189,11 @@
       invokeRuntimeAction(
         function () { return unload(); },
         MODEL_UNLOAD_TIMEOUT_MS,
-        'The unload request timed out. Model state will be re-checked.'
+        jt('models.library.runtime.unloadTimedOut', 'The unload request timed out. Model state will be re-checked.')
       ).then(function () {
         if (disposed || operationId !== runtimeOperationId) return;
         activation = { status: 'idle', key: '', message: '' };
-        showToastMessage('Unloaded "' + modelId + '"', { tone: 'success' });
+        showToastMessage(jt('models.library.runtime.unloaded', 'Unloaded "{model}"', { model: modelId }), { tone: 'success' });
         appendClientLog('INFO', 'models.unloaded', { model: modelId });
         return resyncThen(operationId, 'Unloaded "' + modelId + '".');
       }, function (error) {
@@ -203,7 +203,7 @@
           modelId,
           error,
           'model_library.unload_failed',
-          'Could not unload the model.'
+          jt('models.library.runtime.unloadFailed', 'Could not unload the model.')
         );
       });
     }

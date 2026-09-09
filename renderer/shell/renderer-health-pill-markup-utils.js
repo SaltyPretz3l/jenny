@@ -14,6 +14,8 @@
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, injectedActionButton, injectedBadge) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   const ID_PILL_BUTTON = 'workbenchHealthPillButton';
   const ID_POPOVER = 'workbenchHealthPopover';
@@ -33,15 +35,31 @@
   function buildPillMarkup(toneLabel, options) {
     const tone = escapeHtml(toneLabel.tone || 'muted');
     const labelHtml = escapeHtml(toneLabel.label || 'Unknown');
-    const accessibleLabel = toneLabel.tone === 'success'
-      ? 'Engine ready — runtime health'
-      : (toneLabel.label || 'Unknown') + ' — runtime health';
+    const runMode = options && options.runMode === 'auto' ? 'auto' : 'ask';
+    const pauseState = options && ['requested', 'paused'].includes(options.pauseState)
+      ? options.pauseState
+      : 'none';
+    const modeText = pauseState === 'requested'
+      ? jt('healthPill.runMode.pauseRequested', 'Auto · Pause requested')
+      : (pauseState === 'paused'
+        ? jt('healthPill.runMode.paused', 'Auto · Paused')
+        : jt('healthPill.runMode.autoChip', 'Auto'));
+    const modeChip = runMode === 'auto'
+      ? '<span class="workbench-health-pill-mode" data-run-mode="auto" data-pause-state="'
+        + pauseState + '">' + escapeHtml(modeText) + '</span>'
+      : '';
+    const accessibleLabel = (toneLabel.tone === 'success'
+      ? jt('healthPill.accessibleReady', 'Engine ready — runtime health')
+      : jt('healthPill.accessibleStatus', '{status} — runtime health', { status: toneLabel.label || 'Unknown' }))
+      + (runMode === 'auto'
+        ? jt('healthPill.runMode.ariaSuffix', ', Auto run on')
+        : '');
     /* EH-W11: tiny danger count badge when the error center holds
      * unseen entries; absent store (or zero unseen) renders as before. */
     const unseen = Number(options && options.unseenErrorCount) || 0;
     const badge = unseen > 0
       ? '<span class="workbench-health-pill-error-badge" role="status"'
-        + ' aria-label="' + unseen + ' recent error' + (unseen === 1 ? '' : 's') + '">'
+        + ' aria-label="' + escapeHtml(jtn('healthPill.popover.recentErrorCount', unseen, { count: unseen }, '{count} recent error', '{count} recent errors')) + '">'
         + (unseen > 9 ? '9+' : unseen) + '</span>'
       : '';
     return ''
@@ -57,6 +75,7 @@
       + (toneLabel.tone === 'success'
         ? ''
         : '<span class="workbench-health-pill-label">' + labelHtml + '</span>')
+      + modeChip
       + badge
       + '</button>';
   }
@@ -73,7 +92,7 @@
 
   function formatLifecycleDetail(lifecycle) {
     if (!lifecycle || lifecycle.available !== true) {
-      return { html: escapeHtml('lifecycle facet unavailable'), valueClass: 'muted' };
+      return { html: escapeHtml(jt('healthPill.lifecycleUnavailable', 'lifecycle facet unavailable')), valueClass: 'muted' };
     }
     const parts = [];
     const phase = normString(lifecycle.phase);
@@ -82,7 +101,7 @@
     const startupMs = pickPositiveNumber(lifecycle.startup_ms);
     if (startupMs != null) {
       const seconds = startupMs >= 1000 ? (startupMs / 1000).toFixed(2) + 's' : startupMs + 'ms';
-      parts.push('launched in ' + seconds);
+      parts.push(jt('healthPill.launchedIn', 'launched in {duration}', { duration: seconds }));
     }
     const detail = normString(lifecycle.detail);
     if (detail) parts.push(detail);
@@ -94,8 +113,8 @@
 
   function formatEngineModel(snapshot) {
     const runtime = snapshot && snapshot.runtime ? snapshot.runtime : null;
-    const engine = normString(runtime && runtime.engine) || 'no engine';
-    const model = normString(runtime && runtime.model) || 'no model';
+    const engine = normString(runtime && runtime.engine) || jt('healthPill.noEngine', 'no engine');
+    const model = normString(runtime && runtime.model) || jt('healthPill.noModel', 'no model');
     const loaded = runtime && runtime.model_loaded === true;
     const tag = loaded ? 'loaded' : 'unloaded';
     const valueClass = loaded ? 'success' : 'muted';
@@ -125,10 +144,10 @@
         + (mode && mode !== 'off' && mode !== 'unknown' ? ' · ' + mode : '');
       valueClass = 'success';
     } else if (state === 'crashed') {
-      detail = 'stopped unexpectedly' + (alias ? ' (' + alias + ')' : '');
+      detail = jt('healthPill.serverStoppedUnexpectedly', 'stopped unexpectedly{alias}', { alias: alias ? ' (' + alias + ')' : '' });
       valueClass = 'danger';
     } else if (state === 'stopped') {
-      detail = 'failed to start' + (alias ? ' (' + alias + ')' : '') + ': ' + lastError;
+      detail = jt('healthPill.serverFailedToStart', 'failed to start{alias}: {error}', { alias: alias ? ' (' + alias + ')' : '', error: lastError });
       valueClass = 'danger';
     }
     return {
@@ -155,9 +174,9 @@
     const lifecycle = snapshot && snapshot.runtime && snapshot.runtime.lifecycle;
     const acquisition = lifecycle && lifecycle.model_acquisition;
     if (!acquisition || typeof acquisition !== 'object') {
-      return { html: escapeHtml('no acquisition in progress'), valueClass: 'muted' };
+      return { html: escapeHtml(jt('healthPill.noAcquisition', 'no acquisition in progress')), valueClass: 'muted' };
     }
-    const requestedModel = normString(acquisition.requested_model) || 'no model requested';
+    const requestedModel = normString(acquisition.requested_model) || jt('healthPill.noModelRequested', 'no model requested');
     const stage = normString(acquisition.stage) || 'unloaded';
     const percent = Math.max(0, Math.min(100, Number(acquisition.percent) || 0));
     const completed = formatByteCount(acquisition.completed_bytes);
@@ -177,11 +196,11 @@
     const issueCount = logs && logs.available === true ? arrayLength(logs.recent_issues) : 0;
     const slowCount = slowOps && slowOps.available === true ? arrayLength(slowOps.items) : 0;
     if (issueCount === 0 && slowCount === 0) {
-      return { html: escapeHtml('no warnings or slow operations'), valueClass: 'success' };
+      return { html: escapeHtml(jt('healthPill.noRecentIssues', 'no warnings or slow operations')), valueClass: 'success' };
     }
     const parts = [];
     if (issueCount > 0) parts.push(issueCount + ' recent ' + (issueCount === 1 ? 'issue' : 'issues'));
-    if (slowCount > 0) parts.push(slowCount + ' slow op' + (slowCount === 1 ? '' : 's'));
+    if (slowCount > 0) parts.push(jtn('healthPill.slowOperationCount', slowCount, { count: slowCount }, '{count} slow op', '{count} slow ops'));
     const valueClass = issueCount > 0 ? 'warning' : 'muted';
     return { html: escapeHtml(parts.join(' · ')), valueClass };
   }
@@ -208,7 +227,7 @@
     const then = Number(at) || 0;
     const now = Number(nowMs) || Date.now();
     const deltaSeconds = Math.max(0, Math.round((now - then) / 1000));
-    if (deltaSeconds < 60) return 'just now';
+    if (deltaSeconds < 60) return jt('healthPill.justNow', 'just now');
     const minutes = Math.floor(deltaSeconds / 60);
     if (minutes < 60) return minutes + 'm ago';
     const hours = Math.floor(minutes / 60);
@@ -240,7 +259,7 @@
     return ''
       + '<div class="workbench-health-popover-errors">'
       + '<div class="workbench-health-popover-errors-head">'
-      + '<span class="workbench-health-popover-errors-title">Recent errors</span>'
+      + '<span class="workbench-health-popover-errors-title">' + escapeHtml(jt('healthPill.popover.recentErrors', 'Recent errors')) + '</span>'
       + '</div>'
       + '<div class="workbench-health-popover-rows">' + rows + '</div>'
       + '</div>';
@@ -260,7 +279,7 @@
     if (state.error) {
       return ''
         + '<div class="workbench-health-popover" id="' + ID_POPOVER + '" role="dialog"'
-        + ' tabindex="-1" aria-label="Runtime health" data-health-tone="danger">'
+        + ' tabindex="-1" aria-label="' + escapeHtml(jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="danger">'
         + '<div class="workbench-health-popover-status">'
         + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
         + '<span>Error</span>'
@@ -272,10 +291,10 @@
     if (!snapshot) {
       return ''
         + '<div class="workbench-health-popover" id="' + ID_POPOVER + '" role="dialog"'
-        + ' tabindex="-1" aria-label="Runtime health" data-health-tone="pending">'
+        + ' tabindex="-1" aria-label="' + escapeHtml(jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="pending">'
         + '<div class="workbench-health-popover-status">'
         + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
-        + '<span>Loading status…</span>'
+        + '<span>' + escapeHtml(jt('healthPill.popover.loadingStatus', 'Loading status…')) + '</span>'
         + '</div>'
         + '<div class="workbench-health-popover-empty">Loading</div>'
         + '</div>';
@@ -291,6 +310,17 @@
     const summary = normString(state.toneLabel && state.toneLabel.summary);
     const tone = escapeHtml(state.toneLabel.tone || 'muted');
     const recentErrors = extras && Array.isArray(extras.recentErrors) ? extras.recentErrors : [];
+    const runMode = extras && extras.runMode === 'auto' ? 'auto' : 'ask';
+    const pauseState = extras && ['requested', 'paused'].includes(extras.pauseState)
+      ? extras.pauseState
+      : 'none';
+    const pauseSummary = pauseState === 'requested'
+      ? jt('healthPill.runMode.pauseRequested', 'Auto · Pause requested')
+      : (pauseState === 'paused'
+        ? jt('healthPill.runMode.paused', 'Auto · Paused')
+        : '');
+    const runModeSummary = jt('healthPill.runMode.autoSummary', 'Auto — tools run without asking')
+      + (pauseSummary ? ' · ' + pauseSummary : '');
     const hasLifecycle = lifecycleFacet && lifecycleFacet.available === true
       && lifecycle.html !== escapeHtml('idle');
     /* The composer always emits a model_acquisition object (idle stages mirror
@@ -304,7 +334,7 @@
 
     return ''
       + '<div class="workbench-health-popover" id="' + ID_POPOVER + '" role="dialog"'
-      + ' tabindex="-1" aria-label="Runtime health" data-health-tone="' + tone + '">'
+      + ' tabindex="-1" aria-label="' + escapeHtml(jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="' + tone + '">'
       + '<div class="workbench-health-popover-status">'
       + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
       + '<span>' + escapeHtml(state.toneLabel.label) + '</span>'
@@ -312,6 +342,13 @@
       + (summary ? '<div class="workbench-health-popover-summary">'
         + escapeHtml(summary) + '</div>' : '')
       + '<div class="workbench-health-popover-facts">'
+      + (runMode === 'auto'
+        ? buildPopoverRow(
+          jt('healthPill.runMode.rowLabel', 'Run mode'),
+          escapeHtml(runModeSummary),
+          pauseState === 'paused' ? 'danger' : (pauseState === 'requested' ? 'warning' : '')
+        )
+        : '')
       + '<div class="workbench-health-popover-fact workbench-health-popover-row-value-'
       + engine.valueClass + '">' + engine.html + '</div>'
       + (hasLifecycle
@@ -333,7 +370,7 @@
       + buildRecentErrorsSection(extras)
       + '<div class="workbench-health-popover-actions">'
       + (llamaServer && llamaServer.needsRestart
-        ? buildPopoverAction('Restart llama-server', 'restart-llama-server')
+        ? buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server')
         : '')
       + (modelUnavailable
         ? buildPopoverAction('Retry', 'retry-model')
@@ -341,7 +378,7 @@
         : '')
       + buildPopoverAction('Diagnostics', 'open-runtime-health')
       + buildPopoverAction('Logs', 'open-logs')
-      + (recentErrors.length ? buildPopoverAction('Clear errors', 'clear-errors') : '')
+      + (recentErrors.length ? buildPopoverAction(jt('healthPill.popover.clearErrors', 'Clear errors'), 'clear-errors') : '')
       + '</div>'
       + '</div>';
   }

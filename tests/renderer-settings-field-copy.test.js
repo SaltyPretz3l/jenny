@@ -62,6 +62,20 @@ test('getSettingsFieldCopy returns entries by id and null for unknown ids', () =
   assert.equal(fieldCopy.getSettingsFieldCopy(null), null);
 });
 
+test('chat UI settings fields carry searchable copy in their owning sections', () => {
+  const expectedSections = {
+    uiLanguageSelect: 'appearance',
+    safetyModeSelect: 'tools',
+    unattendedGuardMinutesInput: 'tools',
+  };
+  for (const [id, sectionId] of Object.entries(expectedSections)) {
+    const entry = fieldCopy.getSettingsFieldCopy(id);
+    assert.ok(entry, `${id}: copy entry exists`);
+    assert.ok(entry.description.length >= 10, `${id}: description is useful`);
+    assert.equal(entry.sectionId, sectionId);
+  }
+});
+
 test('toggle-list builders inherit descriptions from the copy map', () => {
   const seen = [];
   const stubToggleSwitch = (opts) => {

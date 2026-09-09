@@ -179,6 +179,13 @@ function getConfiguredLocalOpenAICompatibleState(service) {
   return null;
 }
 
+function getHostedModelEndpoint(service) {
+  if (service?.hostMode !== 'server') return null;
+  const endpoint = service.options?.modelEndpoint;
+  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) return null;
+  return endpoint;
+}
+
 function getConfiguredToolsImageReadEnabled(service) {
   return readConfigState(service, (state) => state.tools?.imageRead === true);
 }
@@ -534,7 +541,46 @@ function forcePhaseEventsForStreamEnvelopeV2(config) {
   }
 }
 
+// Hosted tool capabilities are a closed set. Keep every RuntimeConfig tool
+// toggle explicit here so desktop preferences, integrations, and newly-added
+// config patches cannot widen the server process by accident.
+const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
+  tools_glob_enabled: true,
+  tools_grep_enabled: true,
+  tools_edit_file_enabled: true,
+  tools_delete_file_enabled: false,
+  tools_move_file_enabled: false,
+  tools_lsp_enabled: false,
+  tools_distill_enabled: false,
+  tools_worktree_enabled: false,
+  tools_subagents_enabled: false,
+  tools_subagent_batch_enabled: false,
+  tools_mcp_resources_enabled: false,
+  tools_automations_enabled: false,
+  tools_workspace_present_enabled: false,
+  tools_preview_test_enabled: false,
+  tools_verify_enabled: false,
+  tools_home_enabled: false,
+  tools_task_board_enabled: false,
+  tools_rich_files_enabled: false,
+  tools_knowledge_enabled: false,
+  tools_shell_enabled: false,
+  tools_web_enabled: false,
+  tools_image_read_enabled: false,
+  tools_todo_enabled: false,
+  tools_connections_enabled: false,
+  tools_mermaid_enabled: true,
+  tools_workspace_manifest_enabled: false,
+  tools_task_capsule_enabled: false,
+  tools_python_runtime_enabled: false,
+  tools_load_skill_enabled: false,
+});
+
 function resolveManagedConfiguredModel(service) {
+  const hostedEndpoint = getHostedModelEndpoint(service);
+  if (hostedEndpoint?.model) {
+    return String(hostedEndpoint.model).trim();
+  }
   const engineType = service.currentEngineType
     || inferEngineTypeFromModel(service.currentModel || service.defaultModel);
   const manager = engineType === 'openai-compatible'
@@ -563,6 +609,9 @@ function resolveManagedConfiguredModel(service) {
 function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   const workspaceRoot = guardedConfiguredWorkspaceRootForSidecar(service, 'managed_sidecar_config');
   const hasWorkspaceRoot = Boolean(workspaceRoot);
+  const chatUiState = service.configService && typeof service.configService.getChatUiState === 'function'
+    ? service.configService.getChatUiState()
+    : {};
   const ollamaModelsDirState = resolveUsableOllamaModelsDir();
   if (ollamaModelsDirState.warning && typeof service._emitServiceLog === 'function') {
     service._emitServiceLog('WARN', 'ollama.models_dir_ignored', {
@@ -574,7 +623,12 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       message: ollamaModelsDirState.warning.message,
     });
   }
-  const engineType = service.currentEngineType || inferEngineTypeFromModel(service.currentModel || service.defaultModel);
+  const hostedEndpoint = getHostedModelEndpoint(service);
+  const engineType = String(
+    hostedEndpoint?.engine
+    || service.currentEngineType
+    || inferEngineTypeFromModel(service.currentModel || service.defaultModel)
+  ).trim().toLowerCase();
   const assistantIdentity = getConfiguredAssistantIdentity(service);
   const compactionTuning = getConfiguredCompactionTuning(service);
   const generationProfiles = getConfiguredGenerationProfiles(service);
@@ -610,6 +664,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     ollama_request_timeout_seconds: getConfiguredOllamaRequestTimeoutSeconds(service),
     ollama_models_dir: ollamaModelsDirState.modelsDir,
     tools_workspace_root: hasWorkspaceRoot ? workspaceRoot : null,
+    desktop_execution_policy_version: service.configService?.getState?.()?.commandSandbox?.enabled === true ? 1 : null,
     tools_shell_enabled: hasWorkspaceRoot,
     tools_web_enabled: getConfiguredToolsWebEnabled(service),
     tools_web_search_provider: getConfiguredToolsWebSearchProvider(service),
@@ -650,6 +705,9 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       ? path.join(pythonRuntimeBundleRoot, 'python-runtime-wheels')
       : null,
     tools_confirm_side_effects: true,
+    safety_mode: chatUiState?.safetyMode || 'normal',
+    ui_language: chatUiState?.uiLanguage || 'en',
+    use_24_hour_time: chatUiState?.use24HourTime === true,
     tool_policy_snapshot: getConfiguredToolPolicySnapshot(service),
     max_tools_per_turn: getConfiguredMaxToolsPerTurn(service),
     max_loop_iterations: getConfiguredMaxLoopIterations(service),
@@ -697,7 +755,8 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     electron_shell_config_path: path.join(service.options.userDataPath, 'shell-config.json'),
     electron_sessions_path: path.join(service.options.userDataPath, 'sessions.json'),
     electron_tool_permissions_path: path.join(service.options.userDataPath, 'tool-permissions.json'),
-    memory_db_path: path.join(service.options.userDataPath, 'sidecar-memory.db'),
+    memory_db_path: service.hostMode === 'server' && service.options.memoryPath
+      ? service.options.memoryPath : path.join(service.options.userDataPath, 'sidecar-memory.db'),
     background_runtime_root: path.join(service.options.userDataPath, 'background-memory'),
     diagnostics_log_level: getConfiguredDiagnosticsLogLevel(service),
     diagnostics_capture_mode: getConfiguredDiagnosticsCaptureMode(service),
@@ -785,12 +844,55 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     // the account id (not a secret) travels on the non-secrets config.
     config.chatgpt_account_id = service.chatgptAuthService?.getAccountId?.() || '';
   }
+  if (service.hostMode === 'server') {
+    const requestedHostPolicyVersion = Number(
+      service.options?.hostExecutionPolicyVersion ?? service.hostExecutionPolicyVersion ?? 1
+    );
+    const hostExecutionPolicyVersion = [1, 2].includes(requestedHostPolicyVersion)
+      ? requestedHostPolicyVersion
+      : 1;
+    const workerStatus = service.hostExecutionBroker?.status?.()
+      || service.options?.hostExecutionBroker?.status?.()
+      || null;
+    const hostExecutionWorkerEnabled = hostExecutionPolicyVersion === 2
+      && workerStatus?.available === true;
+    // Server-side policy is an initialize-payload boundary contract. Keep it
+    // after user/configured feature assembly so a persisted desktop setting
+    // cannot re-enable a host-owned capability for a hosted process.
+    for (const key of Object.keys(config)) {
+      if (
+        /^tools_.*_enabled$/.test(key)
+        && !Object.prototype.hasOwnProperty.call(HOSTED_TOOL_CAPABILITY_POLICY, key)
+      ) {
+        config[key] = false;
+      }
+    }
+    Object.assign(config, {
+      host_mode: 'server',
+      host_execution_policy_version: hostExecutionPolicyVersion,
+      host_execution_worker_enabled: hostExecutionWorkerEnabled,
+      ...HOSTED_TOOL_CAPABILITY_POLICY,
+      tools_workspace_root: hasWorkspaceRoot ? workspaceRoot : null,
+      // This flag gates the reviewed hosted bridge descriptor. The builtin
+      // shell handler remains denied at its hosted dispatch seam.
+      tools_shell_enabled: hostExecutionWorkerEnabled,
+      electron_tool_bridge_enabled: true,
+      repo_delta_resume_enabled: false,
+    });
+    if (hostedEndpoint?.apiUrl && ['ollama', 'openai-compatible'].includes(engineType)) {
+      config.api_url = String(hostedEndpoint.apiUrl).trim();
+    }
+  }
   return config;
 }
 
 // The api_url the sidecar's openai-compatible engine will talk to: an
 // explicit endpoint wins, otherwise the configured local port.
 function resolveOpenAICompatibleApiUrl(service) {
+  const hostedEndpoint = getHostedModelEndpoint(service);
+  if (hostedEndpoint?.engine === 'openai-compatible' && hostedEndpoint.apiUrl) {
+    return String(hostedEndpoint.apiUrl).trim();
+  }
   const openaiCompatState = getConfiguredLocalOpenAICompatibleState(service);
   const explicitUrl = typeof openaiCompatState?.apiUrl === 'string'
     ? openaiCompatState.apiUrl.trim()
@@ -803,6 +905,14 @@ function resolveOpenAICompatibleApiUrl(service) {
 }
 
 function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) {
+  if (service.hostMode === 'server') {
+    const endpoint = getHostedModelEndpoint(service);
+    if (endpoint?.engine !== 'openai-compatible') return {};
+    // Host endpoint selection and credentials share the same immutable owner.
+    // A read error rejects initialization instead of silently dropping a key.
+    const key = service.hostPorts.credentialService.get('openai_compatible_api_key');
+    return key ? { openai_compatible_api_key: String(key).trim() } : {};
+  }
   const secrets = {};
   if (
     (telemetrySettings || getConfiguredTelemetrySettings(service)).crashReportingOptIn === true

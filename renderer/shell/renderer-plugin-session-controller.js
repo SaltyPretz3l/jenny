@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const PROVIDER_SLOT_ID = 'pluginSessionProviderActions';
   const PROVIDER_ACTION = 'new-plugin-session';
   const FALLBACK_ID = 'pluginSessionFallback';
@@ -26,7 +27,7 @@
           pluginId: text(plugin.plugin_id, 64),
           providerContributionId: text(contribution.contribution_id, 64),
           generationId: text(plugin.generation_id, 96),
-          displayName: text(contribution.display_name, 80) || 'Plugin session',
+          displayName: text(contribution.display_name, 80) || jt('plugins.session.defaultName', 'Plugin session'),
         }));
       }
     }
@@ -66,13 +67,13 @@
       const markup = providers.map((provider, index) => button({
         plain: true,
         className: 'new-chat-button plugin-session-provider-button',
-        title: `New ${provider.displayName}`,
-        ariaLabel: `New ${provider.displayName}`,
+        title: jt('plugins.session.newProvider', 'New {provider}', { provider: provider.displayName }),
+        ariaLabel: jt('plugins.session.newProvider', 'New {provider}', { provider: provider.displayName }),
         dataset: { 'plugin-session-action': PROVIDER_ACTION, 'provider-index': String(index) },
         trustedHtml: '<svg class="new-chat-icon" viewBox="0 0 16 16" aria-hidden="true">'
           + '<rect x="2.5" y="3.5" width="11" height="9" rx="1.5"></rect>'
           + '<circle cx="6" cy="7" r="1"></circle><path d="M13 10.5 10.25 7.75 5.5 12.5"></path>'
-          + `</svg><span class="new-chat-label">New ${button.escapeHtml(provider.displayName)}</span>`,
+          + `</svg><span class="new-chat-label">${button.escapeHtml(jt('plugins.session.newProvider', 'New {provider}', { provider: provider.displayName }))}</span>`,
       })).join('');
       if (slot.innerHTML !== markup) slot.innerHTML = markup;
     }
@@ -88,12 +89,12 @@
       const provider = resolveCurrentProvider(session);
       const copy = notice.querySelector?.('[data-plugin-session-fallback-copy]');
       if (copy) copy.textContent = provider
-        ? 'This transcript is read-only. Open the provider workspace to continue.'
-        : 'This transcript is read-only because its plugin is missing, disabled, or incompatible.';
+        ? jt('plugins.session.readOnlyOpenProvider', 'This transcript is read-only. Open the provider workspace to continue.')
+        : jt('plugins.session.readOnlyUnavailable', 'This transcript is read-only because its plugin is missing, disabled, or incompatible.');
       const button = root.inventoryActionButton;
       if (typeof button === 'function') {
         actionSlot.innerHTML = button({
-          label: provider ? 'Open provider' : 'Manage plugins',
+          label: provider ? jt('plugins.session.openProvider', 'Open provider') : jt('plugins.session.managePlugins', 'Manage plugins'),
           size: 'sm',
           dataset: { 'plugin-session-action': provider ? 'open-current' : 'manage-plugins' },
         });
@@ -127,7 +128,7 @@
       if (disposed || !provider) return '';
       const sessionId = text(await callbacks.handleCreateSession?.({
         sessionType: 'plugin',
-        title: `New ${provider.displayName}`,
+        title: jt('plugins.session.newProvider', 'New {provider}', { provider: provider.displayName }),
         providerAuthority: {
           publisher_id: provider.publisherId,
           plugin_id: provider.pluginId,
@@ -155,7 +156,7 @@
         callbacks.setActiveView?.('chat');
         syncFallbackNotice();
         callbacks.showToastMessage?.(
-          'This plugin is unavailable. The saved transcript remains readable.',
+          jt('plugins.session.unavailableToast', 'This plugin is unavailable. The saved transcript remains readable.'),
           { tone: 'warning' },
         );
         return { ok: false, reason: 'session_provider_unavailable', fallback: true };
@@ -171,7 +172,7 @@
       if (!result?.ok) {
         callbacks.setActiveView?.('chat');
         callbacks.showToastMessage?.(
-          'The provider workspace could not open. The saved transcript remains readable.',
+          jt('plugins.session.openFailedToast', 'The provider workspace could not open. The saved transcript remains readable.'),
           { tone: 'warning' },
         );
       }
@@ -185,7 +186,7 @@
       const result = await viewHost.close(reason, '', { navigate: false });
       if (result?.ok === false) {
         callbacks.showToastMessage?.(
-          'Jenny could not verify that the plugin process stopped, so navigation is blocked.',
+          jt('plugins.session.stopUnverifiedToast', 'Jenny could not verify that the plugin process stopped, so navigation is blocked.'),
           { tone: 'warning' },
         );
         return false;
@@ -215,7 +216,7 @@
       const provider = providers[Number(target.dataset.providerIndex)];
       void createSession(provider).catch((error) => {
         log('WARN', 'plugin_session.create_failed', { reason_code: text(error?.code || 'create_failed', 64) });
-        callbacks.showToastMessage?.('Could not create the plugin session.', { tone: 'warning' });
+        callbacks.showToastMessage?.(jt('plugins.session.createFailedToast', 'Could not create the plugin session.'), { tone: 'warning' });
       });
     }
 

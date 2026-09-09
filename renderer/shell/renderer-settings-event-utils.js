@@ -6,6 +6,13 @@
   }
   root.rendererSettingsEventUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFenceModule) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const CHAT_UI_ERROR_TITLES = Object.freeze({
+    use24HourTime: jt('settings.timeFormat.updateFailed', 'Time Format Update Failed'),
+    uiLanguage: jt('settings.uiLanguage.updateFailed', 'Language Update Failed'),
+    safetyMode: jt('settings.safetyMode.updateFailed', 'Safety Mode Update Failed'),
+    unattendedGuardMinutes: jt('settings.unattendedGuard.updateFailed', 'Unattended Guard Update Failed'),
+  });
   const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
     || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
     || {};
@@ -23,6 +30,12 @@
     resolveToolConfigToggleEvent = function fallbackResolveToolConfigToggleEvent() { return null; },
     normalizeDefaultRunMode = function fallbackNormalizeDefaultRunMode() { return 'ask'; },
     resolveDefaultRunModeChangeEvent = function fallbackResolveDefaultRunModeChangeEvent() { return null; },
+    normalizeUiLanguageTag = function fallbackNormalizeUiLanguageTag() { return 'en'; },
+    normalizeSafetyMode = function fallbackNormalizeSafetyMode() { return 'normal'; },
+    normalizeUnattendedGuardMinutes = function fallbackNormalizeUnattendedGuardMinutes() { return 10; },
+    resolveUiLanguageChangeEvent = function fallbackResolveUiLanguageChangeEvent() { return null; },
+    resolveSafetyModeChangeEvent = function fallbackResolveSafetyModeChangeEvent() { return null; },
+    resolveUnattendedGuardChangeEvent = function fallbackResolveUnattendedGuardChangeEvent() { return null; },
     resolveWebSearchFieldChangeEvent = function fallbackResolveWebSearchFieldChangeEvent() { return null; },
     resolveWebSearchKeySaveClickEvent = function fallbackResolveWebSearchKeySaveClickEvent() { return null; },
     resolveCompactionFieldChangeEvent = function fallbackResolveCompactionFieldChangeEvent() { return null; },
@@ -124,7 +137,7 @@
     let bound = false;
     let listenerOptions = undefined;
     let ensureSectionBindings = function noopEnsureSectionBindings() {};
-    let defaultRunModeWriteVersion = 0;
+    const chatUiWriteVersions = Object.create(null);
     const cleanupFns = [];
     const boundSections = new Set();
 
@@ -149,6 +162,39 @@
         });
       }
       return true;
+    }
+
+    function persistChatUiSetting({ key, value, normalize }) {
+      const api = (typeof window !== 'undefined' && window.jennyShell?.chatUi) || null;
+      const errorTitle = key === 'defaultRunMode'
+        ? jt('settings.runMode.updateFailed', 'Default Run Mode Update Failed')
+        : CHAT_UI_ERROR_TITLES[key];
+      if (!api || typeof api.updateSettings !== 'function') {
+        renderSettings();
+        showSessionActionError(new Error('Chat settings are unavailable.'), errorTitle);
+        return Promise.resolve();
+      }
+      const version = (chatUiWriteVersions[key] || 0) + 1;
+      chatUiWriteVersions[key] = version;
+      return Promise.resolve(api.updateSettings({ [key]: value })).then((snapshot) => {
+        if (!bound || version !== chatUiWriteVersions[key]) return undefined;
+        if (!Object.prototype.hasOwnProperty.call(snapshot || {}, key) || normalize(snapshot[key]) !== value) {
+          throw new Error(key === 'defaultRunMode' ? 'The saved run mode could not be confirmed.' : jt('settings.chatUi.confirmError', 'The saved setting could not be confirmed.'));
+        }
+        state[key] = normalize(snapshot[key]);
+        if (key === 'use24HourTime') {
+          globalThis.jennyI18n?.setTimeFormat?.(state[key]);
+          renderAll();
+        }
+        if (key === 'defaultRunMode' && !state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state[key];
+        renderSettings();
+        return state[key];
+      }).catch((error) => {
+        if (!bound || version !== chatUiWriteVersions[key]) return undefined;
+        renderSettings();
+        showSessionActionError(error, errorTitle);
+        return undefined;
+      });
     }
 
     function dispose() {
@@ -316,10 +362,10 @@
           },
           scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
           previousValue,
-          failureMessage: () => 'Could not save context history scope.',
+          failureMessage: () => jt('settings.context.historyScopeSaveFailed', 'Could not save context history scope.'),
           successMessage: '',
         }).catch((error) => {
-          showSessionActionError(error, 'Context Update Failed');
+          showSessionActionError(error, jt('settings.context.updateFailed', 'Context Update Failed'));
         });
       }, listenerOptions);
 
@@ -349,10 +395,10 @@
             },
             scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
             previousValue,
-            failureMessage: () => 'Could not save context preferences.',
+            failureMessage: () => jt('settings.context.preferencesSaveFailed', 'Could not save context preferences.'),
             successMessage: '',
           }).catch((error) => {
-            showSessionActionError(error, 'Context Update Failed');
+            showSessionActionError(error, jt('settings.context.updateFailed', 'Context Update Failed'));
           });
           return;
         }
@@ -360,7 +406,7 @@
         if (flagKey) {
           applyFeatureSettings({
             featureOverrides: { [flagKey]: checked },
-          }, 'Context Feature Update Failed');
+          }, jt('settings.context.featureUpdateFailed', 'Context Feature Update Failed'));
         }
       }
       registerListener(contextSourcesList, 'inv-toggle-change', handleContextToggleChange, listenerOptions);
@@ -396,35 +442,35 @@
           tools: {
             [resolvedToggle.key]: resolvedToggle.checked,
           },
-        }, `${resolvedToggle.label || 'Tool'} Update Failed`);
+        }, jt('settings.tools.toggleUpdateFailed', '{label} Update Failed', { label: resolvedToggle.label || jt('common.tool', 'Tool') }));
       }, listenerOptions);
 
       registerListener(toolsConfigFieldList, 'change', (event) => {
-        const resolved = resolveDefaultRunModeChangeEvent(event);
-        if (!resolved) return;
-        const api = (typeof window !== 'undefined' && window.jennyShell?.chatUi) || null;
-        if (!api || typeof api.updateSettings !== 'function') {
-          renderSettings();
-          showSessionActionError(new Error('Chat settings are unavailable.'), 'Default Run Mode Update Failed');
+        const safetyMode = resolveSafetyModeChangeEvent(event);
+        if (safetyMode) {
+          persistChatUiSetting({ key: 'safetyMode', value: safetyMode.value, normalize: normalizeSafetyMode });
           return;
         }
-        const version = ++defaultRunModeWriteVersion;
-        Promise.resolve(api.updateSettings({ defaultRunMode: resolved.value })).then((snapshot) => {
-          if (!bound || version !== defaultRunModeWriteVersion) return;
-          if (!Object.prototype.hasOwnProperty.call(snapshot || {}, 'defaultRunMode')) {
-            throw new Error('The saved run mode could not be confirmed.');
-          }
-          const persisted = normalizeDefaultRunMode(snapshot.defaultRunMode);
-          if (persisted !== resolved.value) {
-            throw new Error('The saved run mode could not be confirmed.');
-          }
-          state.defaultRunMode = persisted;
-          if (!state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = persisted;
-          renderSettings();
-        }).catch((error) => {
-          if (!bound || version !== defaultRunModeWriteVersion) return;
-          renderSettings();
-          showSessionActionError(error, 'Default Run Mode Update Failed');
+        const resolved = resolveDefaultRunModeChangeEvent(event);
+        if (resolved) {
+          persistChatUiSetting({ key: 'defaultRunMode', value: resolved.value, normalize: normalizeDefaultRunMode });
+          return;
+        }
+        const unattended = resolveUnattendedGuardChangeEvent(event);
+        if (unattended) persistChatUiSetting({ key: 'unattendedGuardMinutes', value: unattended.value, normalize: normalizeUnattendedGuardMinutes });
+      }, listenerOptions);
+
+      registerListener(settingsView, 'change', (event) => {
+        if (event.target?.id === 'use24HourTimeSelect') {
+          persistChatUiSetting({ key: 'use24HourTime', value: event.target.value === 'true', normalize: (value) => value === true });
+          return;
+        }
+        const resolved = resolveUiLanguageChangeEvent(event);
+        if (!resolved) return;
+        persistChatUiSetting({ key: 'uiLanguage', value: resolved.value, normalize: normalizeUiLanguageTag }).then((persisted) => {
+          if (persisted !== resolved.value) return;
+          try { window.localStorage.setItem('jenny.ui.language', persisted); } catch (_error) { /* best effort */ }
+          if (typeof showToastMessage === 'function') showToastMessage(jt('settings.language.savedToast', 'Language saved. Restart Jenny to switch the interface.'), { tone: 'info', dedupeKey: 'settings:ui-language' });
         });
       }, listenerOptions);
 
@@ -509,11 +555,11 @@
         }
         if (resolved.field === 'provider') {
           ensureWebSearchSecretStatus();
-          applyFeatureSettings({ webSearch: { provider: resolved.value } }, 'Web Search Provider Update Failed');
+          applyFeatureSettings({ webSearch: { provider: resolved.value } }, jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'));
           return;
         }
         if (resolved.field === 'searxngUrl') {
-          applyFeatureSettings({ webSearch: { searxngUrl: resolved.value } }, 'SearXNG URL Update Failed');
+          applyFeatureSettings({ webSearch: { searxngUrl: resolved.value } }, jt('settings.tools.webSearch.searxngUrlUpdateFailed', 'SearXNG URL Update Failed'));
         }
       }, listenerOptions);
       registerListener(toolsConfigFieldList, 'click', (event) => {
@@ -521,16 +567,16 @@
         if (testButton) {
           const status = toolsConfigFieldList.querySelector('[data-web-search-test-status]');
           testButton.disabled = true;
-          if (status) status.textContent = 'Testing the selected provider…';
+          if (status) status.textContent = jt('settings.shell.webSearchTesting', 'Testing the selected provider…');
           Promise.resolve(window.jennyShell?.harness?.inspect?.({ web_search_probe: true }))
             .then((snapshot) => {
               const probe = snapshot?.web_search_probe || {};
               if (status) status.textContent = probe.ok === true
-                ? `Connected to ${String(probe.provider || 'the selected provider')}.`
-                : `Connection failed: ${String(probe.error || 'provider unavailable').slice(0, 160)}`;
+                ? jt('settings.shell.webSearchConnected', 'Connected to {provider}.', { provider: String(probe.provider || jt('settings.tools.webSearch.selectedProviderFallback', 'the selected provider')) }).replace('{provider}', () => String(probe.provider || jt('settings.tools.webSearch.selectedProviderFallback', 'the selected provider')))
+                : jt('settings.shell.webSearchConnectionFailed', 'Connection failed: {error}', { error: String(probe.error || jt('settings.tools.webSearch.providerUnavailableFallback', 'provider unavailable')).slice(0, 160) }).replace('{error}', () => String(probe.error || jt('settings.tools.webSearch.providerUnavailableFallback', 'provider unavailable')).slice(0, 160));
             })
             .catch(() => {
-              if (status) status.textContent = 'Connection test unavailable. Local chat is unaffected.';
+              if (status) status.textContent = jt('settings.shell.webSearchTestUnavailable', 'Connection test unavailable. Local chat is unaffected.');
             })
             .finally(() => { testButton.disabled = false; });
           return;
@@ -556,14 +602,14 @@
             // save was lost when it wasn't.
             if (status.configRefreshed === false && typeof showToastMessage === 'function') {
               showToastMessage(
-                'Key saved. It will apply after the sidecar config refreshes or Jenny restarts.',
-                { title: 'Web Search Key Saved', tone: 'info', source: TOAST_SOURCE.settings }
+                jt('settings.shell.webSearchKeySaved', 'Key saved. It will apply after the sidecar config refreshes or Jenny restarts.'),
+                { title: jt('settings.shell.webSearchKeySavedTitle', 'Web Search Key Saved'), tone: 'info', source: TOAST_SOURCE.settings }
               );
             }
           }
           renderSettings();
         }).catch((error) => {
-          showSessionActionError(error, 'Web Search Key Update Failed');
+          showSessionActionError(error, jt('settings.tools.webSearch.keyUpdateFailed', 'Web Search Key Update Failed'));
         });
       }, listenerOptions);
       // Save-on-Enter for the key fields (the section spec's other save path).
@@ -631,19 +677,19 @@
         const action = target.dataset.action;
         if (action === 'settingsOpenSetupHelp') {
           Promise.resolve(showSetupHelp?.()).catch((error) => {
-            showSessionActionError(error, 'Setup Help Failed');
+            showSessionActionError(error, jt('settings.shell.setupHelpFailed', 'Setup Help Failed'));
           });
           return;
         }
         if (action === 'settingsOpenFactoryReset') {
           Promise.resolve(showFactoryReset?.()).catch((error) => {
-            showSessionActionError(error, 'Factory Reset Failed');
+            showSessionActionError(error, jt('settings.shell.factoryResetFailed', 'Factory Reset Failed'));
           });
           return;
         }
         if (typeof handleRunSetupAgain === 'function') {
           Promise.resolve(handleRunSetupAgain()).catch((error) => {
-            showSessionActionError(error, 'Setup Run Again Failed');
+            showSessionActionError(error, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
           });
         }
       }, listenerOptions);
@@ -747,7 +793,7 @@
         if (detail.id !== 'appearanceSpellcheckToggle') return;
         applyFeatureSettings({
           featureOverrides: { text_spellcheck: detail.checked === true },
-        }, 'Spell Check Update Failed');
+        }, jt('settings.editor.spellCheckUpdateFailed', 'Spell Check Update Failed'));
       }, listenerOptions);
 
       registerListener(composerChatZoomSelect, 'change', () => {
@@ -757,7 +803,7 @@
             renderComposerPopover();
           })
           .catch((error) => {
-            showSessionActionError(error, 'Chat Zoom Update Failed');
+            showSessionActionError(error, jt('settings.appearance.chatZoomUpdateFailed', 'Chat Zoom Update Failed'));
           });
       }, listenerOptions);
 
@@ -782,7 +828,7 @@
           })
           .catch((error) => {
             reconcileAppZoomGroupClose(appZoomWriteGroup.settle(myAppZoomToken, false));
-            showSessionActionError(error, 'App Zoom Update Failed');
+            showSessionActionError(error, jt('settings.appearance.appZoomUpdateFailed', 'App Zoom Update Failed'));
           });
       }, listenerOptions);
 

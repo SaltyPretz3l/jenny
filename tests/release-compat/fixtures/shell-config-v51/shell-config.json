@@ -1,0 +1,208 @@
+{
+  "version": 51,
+  "toolsWorkspaceRoot": "G:/JennyWorkspace",
+  "maxBudgetUsd": 5,
+  "modelTuning": {
+    "streamInactivitySecondsByModel": {},
+    "pendingLegacyStreamInactivitySeconds": null,
+    "generationProfilesByModel": {}
+  },
+  "engineTuning": {
+    "maxBudgetUsd": 5
+  },
+  "compactionTuning": {
+    "ratioByModel": {},
+    "contextLengthByModel": {},
+    "customPrompt": ""
+  },
+  "tools": {
+    "imageRead": false,
+    "fileTools": true,
+    "richFiles": true,
+    "web": false,
+    "worktree": true,
+    "subagents": true,
+    "pythonRuntime": false,
+    "bash": true,
+    "lsp": false
+  },
+  "toolsWorktreeEnabled": true,
+  "webSearch": {
+    "provider": "duckduckgo",
+    "searxngUrl": ""
+  },
+  "chatUi": {
+    "zoomPercent": 110
+  },
+  "windowUi": {
+    "appZoomPercent": 100
+  },
+  "telemetry": {
+    "crashReportingOptIn": false
+  },
+  "featureOverrides": {},
+  "setup": {
+    "seen": false,
+    "dismissed": false,
+    "setupComplete": false,
+    "firstRunCompleted": false,
+    "completedAt": "",
+    "updatedAt": "",
+    "steps": {
+      "workspaceRoot": "pending",
+      "localModel": "pending",
+      "endpoint": "pending",
+      "personality": "pending",
+      "skills": "pending",
+      "capabilities": "pending"
+    }
+  },
+  "assistantIdentity": {
+    "agentName": "Jenny",
+    "updatedAt": ""
+  },
+  "offlineIntelligence": {
+    "mode": "disabled",
+    "preferredLocalModel": ""
+  },
+  "localEngines": {
+    "vllm": {
+      "port": 8000,
+      "maxModelLen": 131072,
+      "reasoningParser": "qwen3",
+      "toolCallParser": "qwen3_coder",
+      "enableAutoToolChoice": true,
+      "extraArgs": []
+    },
+    "openaiCompatible": {
+      "port": 8033,
+      "apiUrl": "",
+      "acceleration": {
+        "mode": "off",
+        "draftNMax": 0
+      },
+      "managed": {
+        "enabled": false,
+        "profileId": "",
+        "lastUsedTag": "",
+        "lastPickDir": "",
+        "libraryRoots": [],
+        "perModel": {}
+      }
+    }
+  },
+  "preferredEngineType": "ollama",
+  "defaultRunMode": "ask",
+  "codexCli": {
+    "enabled": false,
+    "commandPath": "",
+    "models": [],
+    "requestTimeoutSeconds": 300
+  },
+  "companion": {
+    "mode": "planner"
+  },
+  "home": {
+    "links": [],
+    "weather": {
+      "lat": null,
+      "lon": null,
+      "units": "metric"
+    },
+    "widgets": {
+      "order": [],
+      "hidden": []
+    },
+    "scratchpad": {
+      "notes": [
+        {
+          "id": "note-1",
+          "title": "Note 1",
+          "text": "",
+          "updatedAt": "",
+          "appendLog": false
+        }
+      ],
+      "activeNoteId": "note-1",
+      "settings": {
+        "rows": 6,
+        "font": "prose",
+        "captureMode": "append",
+        "markdown": false,
+        "globalCapture": true
+      },
+      "pins": []
+    },
+    "calendar": {
+      "feeds": [],
+      "viewMode": "agenda"
+    },
+    "layout": {
+      "railWidth": 360
+    },
+    "focusMode": false,
+    "showContextualTips": true
+  },
+  "skills": {
+    "bundledEnabled": true,
+    "userEnabled": false,
+    "projectEnabled": false,
+    "disabledSkillIds": [],
+    "autoIndex": "auto"
+  },
+  "tips": {
+    "sessionCount": 0,
+    "historyByTipId": {}
+  },
+  "memory": {
+    "captureSuggestions": true
+  },
+  "followUps": [],
+  "proactive": {
+    "reminders": []
+  },
+  "workspace": {
+    "activeSessionId": null,
+    "openSessionIds": []
+  },
+  "workspaceIde": {
+    "preferences": {
+      "railPanel": "explorer",
+      "railSide": "left",
+      "railWidth": 300,
+      "bottomPanelOpen": false,
+      "bottomPanelHeight": 220,
+      "bottomPanelActiveView": "terminal",
+      "secondaryPanelOpen": false,
+      "secondaryPanel": "changes",
+      "secondaryWidth": 260,
+      "chatDockOpen": false,
+      "chatDockSide": "right",
+      "chatDockWidth": 380,
+      "panelLocations": {
+        "explorer": "primary",
+        "search": "primary",
+        "changes": "secondary",
+        "source-control": "secondary"
+      },
+      "showGenerated": false,
+      "explorerSortMode": "name",
+      "wordWrap": "off",
+      "fontSize": 13,
+      "tabSize": 2,
+      "minimap": true,
+      "lineNumbers": "on",
+      "renderWhitespace": "selection",
+      "eol": "",
+      "inlineSuggestEnabled": true,
+      "inlineSuggestModel": "",
+      "autoSaveEnabled": false,
+      "formatOnSave": false,
+      "trimTrailingWhitespace": false,
+      "insertFinalNewline": false,
+      "rulers": []
+    },
+    "rootLru": [],
+    "roots": {}
+  }
+}

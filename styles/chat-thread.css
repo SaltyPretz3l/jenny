@@ -120,61 +120,6 @@
   letter-spacing: 0.01em;
 }
 
-.prompt-grid {
-  display: none;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: calc(var(--space-5) * var(--chat-zoom-factor, 1));
-  margin-top: calc(var(--space-7) * var(--chat-zoom-factor, 1));
-  width: min(560px, 100%);
-}
-
-.prompt-chip {
-  min-width: 0;
-  padding: calc(var(--space-5) * var(--chat-zoom-factor, 1)) calc(var(--space-8) * var(--chat-zoom-factor, 1));
-  border-radius: var(--radius-pill);
-  background: var(--surface-prompt-chip-background);
-  border: 1px solid var(--surface-prompt-chip-border);
-  color: color-mix(in srgb, var(--text-secondary) 78%, white);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
-  cursor: pointer;
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.prompt-chip:hover {
-  border-color: var(--surface-prompt-chip-border-hover);
-  background: var(--surface-prompt-chip-hover);
-  color: var(--text-primary);
-  transform: translateY(calc(-1 * var(--motion-hover-lift)));
-}
-
-.prompt-chip:focus-visible {
-  outline: 2px solid var(--focus-outline);
-  outline-offset: 2px;
-  border-color: var(--surface-prompt-chip-border-hover);
-  color: var(--text-primary);
-}
-
-/* ---- reveal (AI suggestions loaded) ---- */
-
-.prompt-chip.suggestion-reveal {
-  animation: suggestion-reveal var(--motion-duration-regular) var(--motion-ease-emphasis) both;
-  animation-delay: calc(var(--suggestion-reveal-index, 0) * var(--motion-stagger));
-}
-
-/* ---- reduced motion ---- */
-@media (prefers-reduced-motion: reduce) {
-  .prompt-chip.suggestion-reveal {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-}
-
 .chat-thread-stage {
   position: relative;
   z-index: var(--z-content);
@@ -262,9 +207,11 @@
   --_thread-col-content: min(var(--content-column-width), calc(100vw - 120px));
   width: calc(var(--_thread-col-content) + var(--chat-sprite-rail-offset));
   max-width: 100%;
-  margin-left: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
-  margin-right: auto;
-  padding: var(--chat-thread-offset) 0 var(--composer-safe-offset) var(--chat-sprite-rail-offset);
+  margin-inline-start: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
+  margin-inline-end: auto;
+  padding-block: var(--chat-thread-offset) var(--composer-safe-offset);
+  padding-inline-start: var(--chat-sprite-rail-offset);
+  padding-inline-end: 0;
 }
 
 /* Generate the scrim only while data-widget-modifier is present on the chat effect gutter;
@@ -304,7 +251,7 @@
   --_thread-col-content: min(var(--content-column-width), calc(100vw - 120px));
   top: 0;
   bottom: 0;
-  left: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
+  inset-inline-start: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
   width: calc(var(--_thread-col-content) + var(--chat-sprite-rail-offset));
   max-width: 100%;
 }
@@ -379,7 +326,7 @@
   --sprite-holo-ring-width: var(--sprite-holo-ring-width-idle);
   position: absolute;
   top: 0;
-  left: 2px;
+  inset-inline-start: 2px;
   z-index: 1;
   display: grid;
   place-items: center;
@@ -396,7 +343,6 @@
   /* Promote the sprite only while it is live; settled thread anchors stay
      static and do not hold compositor resources indefinitely. */
   transition:
-    transform var(--motion-duration-emphasis) var(--motion-ease-emphasis),
     border-color var(--motion-duration-regular) var(--motion-ease-standard),
     box-shadow var(--motion-duration-emphasis) var(--motion-ease-standard),
     filter var(--motion-duration-emphasis) var(--motion-ease-standard),
@@ -406,7 +352,7 @@
 .chat-sprite-holo {
   position: absolute;
   top: calc(-1 * var(--sprite-holo-border-width, 2px));
-  left: calc(-1 * var(--sprite-holo-border-width, 2px));
+  inset-inline-start: calc(-1 * var(--sprite-holo-border-width, 2px));
   width: calc(100% + (2 * var(--sprite-holo-border-width, 2px)));
   height: calc(100% + (2 * var(--sprite-holo-border-width, 2px)));
   display: block;
@@ -526,7 +472,7 @@
 .chat-comet-svg {
   position: absolute;
   top: 0;
-  left: 0;
+  inset-inline-start: 0;
   pointer-events: none;
   overflow: visible;
   z-index: 0;
@@ -711,7 +657,7 @@
 .chat-entry.user {
   align-self: flex-end;
   align-items: flex-end;
-  margin-left: auto;
+  margin-inline-start: auto;
   max-width: min(100%, var(--chat-user-bubble-max-width));
   width: fit-content;
 }

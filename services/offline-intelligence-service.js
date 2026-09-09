@@ -3,6 +3,7 @@ const {
   normalizeOfflineIntelligence,
 } = require('./shell-config-service');
 const { normalizeString } = require('./backend/path-utils');
+const { t } = require('./i18n-main');
 const { buildModelFitEstimates } = require('./model-fit-diagnostics');
 
 const DIAGNOSTICS_CACHE_TTL_MS = 5000;
@@ -286,7 +287,7 @@ class OfflineIntelligenceService {
       localVisionReady: false,
       unavailableReason: 'Managed sidecar is not ready yet.',
       visionUnavailableReason: 'Local inference must be ready before image analysis can run locally.',
-      summary: 'Choose a local inference model in Model Library.',
+      summary: t('main.offlineIntelligence.chooseLocalModel', 'Choose a local inference model in Model Library.'),
     };
   }
 
@@ -305,7 +306,7 @@ class OfflineIntelligenceService {
     if (!backend) {
       return {
         available: false,
-        reason: 'Force local inference requires the managed local backend.',
+      reason: t('main.offlineIntelligence.forceLocalRequiresBackend', 'Force local inference requires the managed local backend.'),
         models: previousModels,
       };
     }
@@ -313,7 +314,7 @@ class OfflineIntelligenceService {
     if (String(backendStatus?.phase || '') !== 'ready') {
       return {
         available: false,
-        reason: 'Managed sidecar is not ready yet.',
+      reason: t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.'),
         models: previousModels,
       };
     }

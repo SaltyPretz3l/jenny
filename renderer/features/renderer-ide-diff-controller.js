@@ -18,6 +18,7 @@
   }
   root.rendererIdeDiffController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -138,32 +139,44 @@
     // Every safety-write toast carries the "Jenny's Changes" title + a
     // path-scoped dedupeKey; collapse that repeated option object into one site.
     function changesToast(message, dedupeKey) {
-      showShellErrorToast(message, { title: "Jenny's Changes", dedupeKey });
+      showShellErrorToast(message, { title: jt('ide.diff.changesTitle', "Jenny's Changes"), dedupeKey });
     }
 
     function safeReadFailure(error) {
       const code = String(error?.code || error?.error_code || '').trim();
-      if (code === 'CMP-WORKSPACEFS-0002' || code === 'CMP-WORKSPACEFS-0003') {
+      if (code === 'CMP-WORKSPACEFS-0002') {
+        return { code, message: jt('error.workspaceFs.pathInvalid', 'Path must be a workspace-relative path.') };
+      }
+      if (code === 'CMP-WORKSPACEFS-0011') {
+        return { code, message: jt('error.workspaceFs.fileTooLarge', 'File is too large to open or save in the editor.') };
+      }
+      if (code === 'CMP-WORKSPACEFS-0008') {
+        return { code, message: jt('error.workspaceFs.rootTransitioning', 'The workspace root is changing; retry after the transition completes.') };
+      }
+      if (code === 'CMP-WORKSPACEFS-0009' || code === 'workspace_file_operation_stale') {
+        return { code, message: jt('ide.fileOps.rootChangedDuringRead', 'The workspace root changed during the file read.') };
+      }
+      if (code === 'CMP-WORKSPACEFS-0003') {
         return {
           code: code || 'unsafe_path',
-          message: 'This change cannot be opened because its file is outside the originating workspace.',
+          message: jt('ide.diff.outsideOriginatingWorkspace', 'This change cannot be opened because its file is outside the originating workspace.'),
         };
       }
       if (code === 'CMP-WORKSPACEFS-0004') {
         return {
           code,
-          message: 'This change cannot be opened because the file is no longer available.',
+          message: jt('ide.diff.fileUnavailable', 'This change cannot be opened because the file is no longer available.'),
         };
       }
-      if (['CMP-WORKSPACEFS-0001', 'CMP-WORKSPACEFS-0007', 'CMP-WORKSPACEFS-0008', 'CMP-WORKSPACEFS-0009'].includes(code)) {
+      if (['CMP-WORKSPACEFS-0001', 'CMP-WORKSPACEFS-0007'].includes(code)) {
         return {
           code,
-          message: 'This change belongs to a workspace that is not currently available.',
+          message: jt('ide.diff.workspaceUnavailable', 'This change belongs to a workspace that is not currently available.'),
         };
       }
       return {
         code: code || 'workspace_read_failed',
-        message: 'Jenny could not safely read this file to build the diff.',
+        message: jt('ide.diff.safeReadFailed', 'Jenny could not safely read this file to build the diff.'),
       };
     }
 
@@ -193,7 +206,7 @@
       if (workspaceIdentityEnforced
         && (!currentWorkspaceId || (!legacyOrigin && originWorkspaceId !== currentWorkspaceId))) {
         changesToast(
-          'This change belongs to a workspace that is not currently available.',
+          jt('ide.diff.workspaceUnavailable', 'This change belongs to a workspace that is not currently available.'),
           `ide:diff-workspace:${String(change.changeId).slice(0, 80)}`
         );
         appendClientLog('WARN', 'ide.change_diff_workspace_unavailable', {
@@ -258,10 +271,10 @@
       }
       const placeholderText = original === null
         ? (buildHunksSummaryText(change)
-          || 'The original version of this change is no longer available.')
+          || jt('ide.diff.originalVersionUnavailable', 'The original version of this change is no longer available.'))
         : '';
       const id = changeDiffId(change);
-      const label = `${fileNameOf(change.path)} (Jenny's change)`;
+      const label = jt('ide.diff.jennyChangeLabel', "{file} (Jenny's change)", { file: fileNameOf(change.path) });
       if (!isCurrent(epoch)) {
         return false;
       }
@@ -343,8 +356,8 @@
         diskContent = normalizeDiffText(payload?.content);
       } catch (error) {
         if (!isCurrent(epoch)) return false;
-        showShellErrorToast(`Could not read the saved copy of ${normalized}.`, {
-          title: 'Compare with Saved',
+        showShellErrorToast(jt('ide.diff.savedCopyReadFailed', 'Could not read the saved copy of {path}.', { path: normalized }), {
+          title: jt('ide.diff.compareWithSaved', 'Compare with Saved'),
           dedupeKey: `ide:diff:${normalized}`,
         });
         appendClientLog('WARN', 'ide.unsaved_compare_read_failed', {
@@ -353,7 +366,7 @@
         return false;
       }
       const id = `${diffPrefix()}unsaved/${normalized}`;
-      const label = `${fileNameOf(normalized)} (unsaved vs saved)`;
+      const label = jt('ide.diff.unsavedVsSavedLabel', '{file} (unsaved vs saved)', { file: fileNameOf(normalized) });
       await editorHost.openDiffDocument({
         id,
         label,
@@ -395,7 +408,7 @@
     async function writeFileSafe(path, content, meta, noBridgeDedupeKey = 'ide:revert:no-bridge') {
       const operations = getFileOperations();
       if (!operations) {
-        showShellErrorToast('Workspace file access is unavailable; the file was not saved.', { title: 'Save Failed', dedupeKey: noBridgeDedupeKey });
+        showShellErrorToast(jt('ide.diff.workspaceFileAccessUnavailable', 'Workspace file access is unavailable; the file was not saved.'), { title: jt('ide.diff.saveFailed', 'Save Failed'), dedupeKey: noBridgeDedupeKey });
         appendClientLog('WARN', 'ide.safety_write_failed', { path, reason: 'no_bridge' });
         return { ok: false, conflict: false, noBridge: true };
       }
@@ -464,7 +477,7 @@
           || isLegacyWorkspaceId(originWorkspaceId)
           || originWorkspaceId !== currentWorkspaceId) {
           changesToast(
-            'This change belongs to a workspace that is not currently available.',
+            jt('ide.diff.workspaceUnavailable', 'This change belongs to a workspace that is not currently available.'),
             `ide:revert-workspace:${String(change.changeId || '').slice(0, 80)}`
           );
           return 'workspace_unavailable';
@@ -497,7 +510,7 @@
         }
         const fileName = fileNameOf(change.path);
         if (original === null) {
-          changesToast(`The original version of ${fileName} is no longer available, so this change can’t be reverted.`, `ide:revert:${change.path}`);
+          changesToast(jt('ide.diff.fileOriginalUnavailableForRevert', 'The original version of {file} is no longer available, so this change can’t be reverted.', { file: fileName }), `ide:revert:${change.path}`);
           return false;
         }
         // Capture the on-disk state BEFORE the prompt so an edit made while the
@@ -508,17 +521,17 @@
           return false;
         }
         const unsavedNote = editorHost.isDirty?.(change.path) === true
-          ? ' Your unsaved edits to this file will be discarded.'
+          ? jt('ide.diff.unsavedEditsDiscarded', 'Your unsaved edits to this file will be discarded.')
           : '';
         const approved = confirmDialog && typeof confirmDialog.confirm === 'function'
           ? await confirmDialog.confirm({
-            title: 'Revert this change?',
+            title: jt('ide.diff.revertChangeTitle', 'Revert this change?'),
             message: (isCreated
-              ? `Revert Jenny’s change to “${fileName}”? Jenny created this file, so reverting deletes it (moved to the recycle bin, not erased).`
-              : `Revert Jenny’s change to “${fileName}”? This restores the version from before Jenny’s edit and overwrites the current contents.`)
-              + unsavedNote,
-            confirmLabel: isCreated ? 'Delete' : 'Revert',
-            cancelLabel: 'Keep Changes',
+              ? jt('ide.diff.revertCreatedChangeMessage', 'Revert Jenny’s change to “{file}”? Jenny created this file, so reverting deletes it (moved to the recycle bin, not erased).', { file: fileName })
+              : jt('ide.diff.revertChangedFileMessage', 'Revert Jenny’s change to “{file}”? This restores the version from before Jenny’s edit and overwrites the current contents.', { file: fileName }))
+              + (unsavedNote ? ' ' + unsavedNote : ''),
+            confirmLabel: isCreated ? jt('common.delete', 'Delete') : jt('common.revert', 'Revert'),
+            cancelLabel: jt('ide.diff.keepChanges', 'Keep Changes'),
             variant: 'danger',
           })
           : false;
@@ -535,7 +548,7 @@
           return false;
         }
         if (after.lf !== before.lf) {
-          changesToast(`${fileName} changed on disk; not reverted.`, `ide:revert:${change.path}`);
+          changesToast(jt('ide.diff.changedOnDiskNotReverted', '{file} changed on disk; not reverted.', { file: fileName }), `ide:revert:${change.path}`);
           return false;
         }
         if (isCreated) {
@@ -545,7 +558,7 @@
           // and never an empty-file overwrite that would silently discard the
           // fact this path ever existed.
           if (typeof api.delete !== 'function') {
-            changesToast('Workspace file access is unavailable; the file was not deleted.', `ide:revert:${change.path}`);
+            changesToast(jt('ide.diff.workspaceFileAccessUnavailableForDelete', 'Workspace file access is unavailable; the file was not deleted.'), `ide:revert:${change.path}`);
             appendClientLog('WARN', 'ide.safety_write_failed', { path: change.path, reason: 'no_delete_bridge' });
             return false;
           }
@@ -553,7 +566,7 @@
             await api.delete({ path: change.path });
           } catch (error) {
             if (!isCurrentWrite(writeToken)) return false;
-            changesToast(`Could not delete ${fileName}.`, `ide:revert:${change.path}`);
+            changesToast(jt('ide.diff.deleteFailed', 'Could not delete {file}.', { file: fileName }), `ide:revert:${change.path}`);
             appendClientLog('WARN', 'ide.revert_delete_failed', {
               message: String(error?.message || error || ''),
             });
@@ -584,8 +597,8 @@
           if (!write.ok) {
             if (write.noBridge) return false;
             changesToast(write.conflict
-              ? `${fileName} changed on disk; not reverted.`
-              : `Could not revert ${fileName}.`, `ide:revert:${change.path}`);
+              ? jt('ide.diff.changedOnDiskNotReverted', '{file} changed on disk; not reverted.', { file: fileName })
+              : jt('ide.diff.revertFailed', 'Could not revert {file}.', { file: fileName }), `ide:revert:${change.path}`);
             return false;
           }
           await refreshOpenBuffer(change.path, content, write, after.eol);
@@ -648,7 +661,7 @@
       // An open buffer with unsaved edits would be silently overwritten by the
       // write-back; refuse rather than clobber the user's in-flight work.
       if (editorHost.isDirty?.(ctx.path) === true) {
-        changesToast(`Save or discard your unsaved edits to ${fileNameOf(ctx.path)} before reviewing individual changes.`, `ide:hunk:${ctx.path}`);
+        changesToast(jt('ide.diff.saveOrDiscardBeforeReview', 'Save or discard your unsaved edits to {file} before reviewing individual changes.', { file: fileNameOf(ctx.path) }), `ide:hunk:${ctx.path}`);
         return false;
       }
       const writeToken = beginWrite();
@@ -663,7 +676,7 @@
         const out = hunkUtils.applyHunkDecisions(ctx.baseModifiedText, ctx.hunks, { rejected: next });
         if (out.conflicts.includes(index)) {
           ctx.conflicts = out.conflicts;
-          changesToast('This part of the change can no longer be applied separately. Use “Revert this change” instead.', `ide:hunk:${ctx.path}`);
+          changesToast(jt('ide.diff.partNoLongerApplicable', 'This part of the change can no longer be applied separately. Use “Revert this change” instead.'), `ide:hunk:${ctx.path}`);
           renderToolbar();
           return false;
         }
@@ -673,7 +686,7 @@
           return false;
         }
         if (meta.lf !== expectedCurrent) {
-          changesToast(`${fileNameOf(ctx.path)} changed on disk; not updated.`, `ide:hunk:${ctx.path}`);
+          changesToast(jt('ide.diff.changedOnDiskNotUpdated', '{file} changed on disk; not updated.', { file: fileNameOf(ctx.path) }), `ide:hunk:${ctx.path}`);
           return false;
         }
         const content = restoreEol(out.text, meta.eol);
@@ -684,8 +697,8 @@
         if (!write.ok) {
           if (write.noBridge) return false;
           changesToast(write.conflict
-            ? `${fileNameOf(ctx.path)} changed on disk; not updated.`
-            : `Could not update ${fileNameOf(ctx.path)}.`, `ide:hunk:${ctx.path}`);
+            ? jt('ide.diff.changedOnDiskNotUpdated', '{file} changed on disk; not updated.', { file: fileNameOf(ctx.path) })
+            : jt('ide.diff.updateFailed', 'Could not update {file}.', { file: fileNameOf(ctx.path) }), `ide:hunk:${ctx.path}`);
           return false;
         }
         ctx.rejected = next;
@@ -729,7 +742,7 @@
         }
       }
       const at = Number(hunk.newStart) || 0;
-      return `Part ${index + 1} (+${added} -${removed}) at line ${at}`;
+      return jt('ide.diff.partAtLine', 'Part {part} (+{added} -{removed}) at line {line}', { part: index + 1, added, removed, line: at });
     }
 
     function buildHunkRow(ctx, hunk, index) {
@@ -737,13 +750,13 @@
       const conflicted = ctx.conflicts.includes(index);
       const toggle = actionButton
         ? actionButton({
-          label: rejected ? 'Restore' : 'Reject',
+          label: rejected ? jt('ide.diff.restore', 'Restore') : jt('ide.diff.reject', 'Reject'),
           variant: rejected ? 'secondary' : 'ghost',
           size: 'sm',
           disabled: conflicted,
           ariaPressed: rejected,
           dataset: { 'ide-diff-hunk-toggle': String(index) },
-          title: rejected ? 'Re-apply this part of Jenny’s change' : 'Undo just this part of Jenny’s change',
+          title: rejected ? jt('ide.diff.reapplyPart', 'Re-apply this part of Jenny’s change') : jt('ide.diff.undoPart', 'Undo just this part of Jenny’s change'),
         })
         : '';
       return `<span class="ide-diff-hunk${rejected ? ' ide-diff-hunk--rejected' : ''}`
@@ -758,36 +771,36 @@
       const canRevert = revertAvailable(ctx);
       const revertBtn = actionButton
         ? actionButton({
-          label: 'Revert this change',
+          label: jt('ide.diff.revertChange', 'Revert this change'),
           variant: 'danger',
           size: 'sm',
           disabled: !canRevert,
           dataset: { 'ide-diff-revert': '1' },
           title: canRevert
-            ? `Restore ${fileName} to the version before Jenny’s edit`
-            : 'The original version of this change is no longer available.',
+            ? jt('ide.diff.restoreVersionTitle', 'Restore {file} to the version before Jenny’s edit', { file: fileName })
+            : jt('ide.diff.originalVersionUnavailable', 'The original version of this change is no longer available.'),
         })
         : '';
       let body;
       if (ctx.reverted) {
-        body = '<span class="ide-diff-toolbar-note">This change has been reverted.</span>';
+        body = '<span class="ide-diff-toolbar-note">' + escapeHtml(jt('ide.diff.changeReverted', 'This change has been reverted.')) + '</span>';
       } else if (perHunkAvailable(ctx)) {
         body = '<div class="ide-diff-toolbar-hunks">'
           + ctx.hunks.map((hunk, index) => buildHunkRow(ctx, hunk, index)).join('')
           + '</div>';
       } else {
-        let why = ' (the diff is summarized or too large)';
+        let note = jt('ide.diff.perLineUnavailableSummarized', 'Per-line review isn’t available for this change (the diff is summarized or too large).');
         if (ctx.originalText === null) {
-          why = ' (the original version is no longer available)';
+          note = jt('ide.diff.perLineUnavailableOriginalMissing', 'Per-line review isn’t available for this change (the original version is no longer available).');
         } else if (ctx.reviewState === 'partial') {
-          why = ' (only part of this change was captured for line-by-line review)';
+          note = jt('ide.diff.perLineUnavailablePartial', 'Per-line review isn’t available for this change (only part of this change was captured for line-by-line review).');
         } else if (ctx.reviewState === 'full' && ctx.hunks.length > 0 && !ctx.baseConsistent) {
-          why = ' (the file has changed since Jenny’s edit)';
+          note = jt('ide.diff.perLineUnavailableChanged', 'Per-line review isn’t available for this change (the file has changed since Jenny’s edit).');
         }
-        body = `<span class="ide-diff-toolbar-note">Per-line review isn’t available for this change${why}.</span>`;
+        body = `<span class="ide-diff-toolbar-note">${escapeHtml(note)}</span>`;
       }
       return '<div class="ide-diff-toolbar-inner">'
-        + `<span class="ide-diff-toolbar-title">Reviewing Jenny’s change to <strong>${escapeHtml(fileName)}</strong></span>`
+        + `<span class="ide-diff-toolbar-title">${escapeHtml(jt('ide.diff.reviewingChangeTo', 'Reviewing Jenny’s change to'))} <strong>${escapeHtml(fileName)}</strong></span>`
         + body
         + `<span class="ide-diff-toolbar-actions">${revertBtn}</span>`
         + '</div>';

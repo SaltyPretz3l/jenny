@@ -18,6 +18,8 @@
   }
   root.rendererDashboardWidgetsScratchpad = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const MAX_NOTES = 8;            // mirrors MAX_HOME_SCRATCHPAD_NOTES
   const MAX_PINS = 4;            // mirrors MAX_HOME_SCRATCHPAD_PINS
@@ -52,7 +54,7 @@
     // completely untouched.
     const markdownModule = deps.markdownModule || windowRef.rendererDashboardScratchpadMarkdown || null;
     const nowProvider = typeof deps.nowProvider === 'function' ? deps.nowProvider : () => new Date();
-
+    const escapeHtml = typeof textField?.escapeHtml === 'function' ? textField.escapeHtml : (value) => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
     // Optimistic active note (lazily adopted from config), the last scratchpad
     // rendered (so delegated handlers can read note ids), the in-progress rename
     // target, a pending status-clear timer, and a one-shot "focus the textarea
@@ -118,17 +120,17 @@
       }
       const deltaSec = Math.floor((now.getTime() - then) / 1000);
       if (deltaSec < 45) {
-        return 'just now';
+        return jt('dashboard.widgets.scratchpad.justNow', 'just now');
       }
       const min = Math.floor(deltaSec / 60);
       if (min < 60) {
-        return `${min}m ago`;
+        return jtn('dashboard.widgets.scratchpad.minutesAgo', min, { count: min }, '{count}m ago', '{count}m ago');
       }
       const hr = Math.floor(min / 60);
       if (hr < 24) {
-        return `${hr}h ago`;
+        return jtn('dashboard.widgets.scratchpad.hoursAgo', hr, { count: hr }, '{count}h ago', '{count}h ago');
       }
-      return `${Math.floor(hr / 24)}d ago`;
+      return jtn('dashboard.widgets.scratchpad.daysAgo', Math.floor(hr / 24), { count: Math.floor(hr / 24) }, '{count}d ago', '{count}d ago');
     }
 
     function setNote(body, message, isError) {
@@ -160,7 +162,7 @@
     function setSaving(body) {
       const meta = body.querySelector('[data-scratchpad-meta]');
       if (meta) {
-        meta.textContent = 'Saving…';
+        meta.textContent = jt('common.saving', 'Saving…');
       }
     }
 
@@ -179,7 +181,7 @@
       const metaEl = body.querySelector('[data-scratchpad-meta]');
       if (metaEl) {
         const rel = relativeTime(activeNote?.updatedAt, nowProvider());
-        metaEl.textContent = rel ? `Saved · ${rel}` : '';
+        metaEl.textContent = rel ? jt('dashboard.widgets.scratchpad.savedAt', 'Saved · {time}', { time: rel }) : '';
       }
     }
 
@@ -207,7 +209,9 @@
     // ---- multi-note markup -------------------------------------------------
 
     function tabLabel(note, index) {
-      return String(note?.title || '').trim() || `Note ${index + 1}`;
+      const title = String(note?.title || '').trim();
+      const generated = /^Note (\d+)$/.exec(title);
+      return generated ? jt('dashboard.widgets.scratchpad.noteNumber', 'Note {number}', { number: generated[1] }) : title || jt('dashboard.widgets.scratchpad.noteNumber', 'Note {number}', { number: index + 1 });
     }
 
     function buildTabsHtml(notes, activeId) {
@@ -223,7 +227,7 @@
           ariaSelected: selected,
           ariaControls: 'homeScratchpadPanel',
           tabIndex: selected ? 0 : -1,
-          title: `${label} — double-click to rename`,
+          title: jt('dashboard.widgets.scratchpad.doubleClickRename', '{label} — double-click to rename', { label }),
           dataset: { 'scratchpad-tab': note.id },
         });
         // The active tab gets a rename pencil; every tab past the one-note floor
@@ -239,8 +243,8 @@
           title,
           dataset: { [`scratchpad-${kind}`]: note.id },
         });
-        const edit = selected ? tabControl('edit', '✎', 'Rename note', 'Rename note') : '';
-        const close = atFloor ? '' : tabControl('close', '×', `Delete ${label}`, 'Delete note');
+        const edit = selected ? tabControl('edit', '✎', jt('dashboard.widgets.scratchpad.renameNote', 'Rename note'), jt('dashboard.widgets.scratchpad.renameNote', 'Rename note')) : '';
+        const close = atFloor ? '' : tabControl('close', '×', jt('dashboard.widgets.scratchpad.deleteNamedNote', 'Delete {label}', { label }), jt('dashboard.widgets.scratchpad.deleteNote', 'Delete note'));
         const wrapClass = 'dashboard-scratchpad__tab-wrap'
           + (note.id === newNoteId ? ' dashboard-scratchpad__tab-wrap--new' : '');
         return `<div class="${wrapClass}">` + tab + edit + close + '</div>';
@@ -250,15 +254,15 @@
         plain: true,
         className: 'dashboard-scratchpad__tab-add',
         label: '+',
-        ariaLabel: 'New note',
+        ariaLabel: jt('dashboard.widgets.scratchpad.newNote', 'New note'),
         disabled: atCap,
-        title: atCap ? `Up to ${MAX_NOTES} notes — delete one to add another` : 'New note',
+        title: atCap ? jt('dashboard.widgets.scratchpad.noteLimit', 'Up to {count} notes — delete one to add another', { count: MAX_NOTES }) : jt('dashboard.widgets.scratchpad.newNote', 'New note'),
         dataset: { 'scratchpad-add': '1' },
       });
       // The grow-in is one-shot: consuming newNoteId here means a later repaint
       // (idle tick / note switch) rebuilds the same tab without re-animating.
       newNoteId = null;
-      return '<div class="dashboard-scratchpad__tabs" role="tablist" aria-label="Scratchpad notes">'
+      return '<div class="dashboard-scratchpad__tabs" role="tablist" aria-label="' + escapeHtml(jt('dashboard.widgets.scratchpad.notesLabel', 'Scratchpad notes')) + '">'
         + tabs + add + '</div>';
     }
 
@@ -269,9 +273,9 @@
         ? actionButton({
           plain: true,
           className: 'dashboard-scratchpad__preview-toggle',
-          label: inPreview ? 'Edit' : 'Preview',
+          label: inPreview ? jt('common.edit', 'Edit') : jt('dashboard.widgets.scratchpad.preview', 'Preview'),
           ariaPressed: inPreview,
-          title: inPreview ? 'Back to editing' : 'Preview markdown & checklists',
+          title: inPreview ? jt('dashboard.widgets.scratchpad.backToEditing', 'Back to editing') : jt('dashboard.widgets.scratchpad.previewMarkdown', 'Preview markdown & checklists'),
           dataset: { 'scratchpad-preview-toggle': '1' },
         })
         : '';
@@ -285,8 +289,8 @@
           plain: true,
           className: 'dashboard-scratchpad__menu-btn',
           label: '⋯',
-          ariaLabel: 'Note actions',
-          title: 'Note actions',
+          ariaLabel: jt('dashboard.widgets.scratchpad.noteActions', 'Note actions'),
+          title: jt('dashboard.widgets.scratchpad.noteActions', 'Note actions'),
           ariaHaspopup: 'menu',
           dataset: { 'scratchpad-actions': '1' },
         })
@@ -301,9 +305,9 @@
         value: text,
         maxLength: MAX_NOTE_CHARS,
         placeholder: markdownOn
-          ? 'New note — jot, list, or “- [ ] task” for a checklist'
-          : 'Jot something down…',
-        ariaLabel: 'Quick scratchpad',
+          ? jt('dashboard.widgets.scratchpad.markdownPlaceholder', 'New note — jot, list, or “- [ ] task” for a checklist')
+          : jt('dashboard.widgets.scratchpad.placeholder', 'Jot something down…'),
+        ariaLabel: jt('dashboard.widgets.scratchpad.quickLabel', 'Quick scratchpad'),
         spellcheck: true,
         className: 'dashboard-scratchpad__field',
       });
@@ -311,7 +315,7 @@
 
     function renderPreviewInner(text) {
       if (String(text || '').trim() === '') {
-        return '<div class="dashboard-scratchpad__preview-empty">Nothing to preview yet.</div>';
+        return '<div class="dashboard-scratchpad__preview-empty">' + escapeHtml(jt('dashboard.widgets.scratchpad.nothingToPreview', 'Nothing to preview yet.')) + '</div>';
       }
       if (markdownModule && typeof markdownModule.renderPreviewHtml === 'function') {
         return markdownModule.renderPreviewHtml(String(text || ''), {
@@ -325,7 +329,7 @@
 
     function buildPreviewHtml(text) {
       return '<div class="dashboard-scratchpad__preview" data-scratchpad-preview'
-        + ' role="group" aria-label="Note preview">'
+        + ' role="group" aria-label="' + escapeHtml(jt('dashboard.widgets.scratchpad.previewLabel', 'Note preview')) + '">'
         + renderPreviewInner(text)
         + '</div>';
     }
@@ -495,7 +499,7 @@
       const label = tabLabel(note, notes.indexOf(note));
       contextMenu.show({
         items: [
-          { label: `Delete “${label}”`, action: () => deleteNote(body, noteId) },
+          { label: jt('dashboard.widgets.scratchpad.deleteNamedNoteQuoted', 'Delete “{label}”', { label }), action: () => deleteNote(body, noteId) },
         ],
         anchorX,
         anchorY,
@@ -520,7 +524,7 @@
         id: 'homeScratchpadRename',
         value: String(note?.title || ''),
         maxLength: 60,
-        ariaLabel: 'Rename note',
+        ariaLabel: jt('dashboard.widgets.scratchpad.renameNote', 'Rename note'),
         spellcheck: true,
         className: 'dashboard-scratchpad__rename',
         dataset: { 'scratchpad-rename': noteId },
@@ -611,7 +615,7 @@
         anchorX,
         anchorY,
         rootEl: body,
-        onActionError: (error) => setNote(body, String(error?.message || error || 'Action failed.'), true),
+        onActionError: (error) => setNote(body, String(error?.message || error || jt('dashboard.widgets.scratchpad.actionFailed', 'Action failed.')), true),
       });
       const finish = (canSaveFile) => present(buildScratchpadMenu({
         actions,
@@ -638,12 +642,12 @@
       const isLast = getNotes(lastScratchpad).length <= 1;
       contextMenu.show({
         items: [
-          { label: 'Rename', action: () => beginRename(body, noteId) },
+          { label: jt('common.rename', 'Rename'), action: () => beginRename(body, noteId) },
           { separator: true },
           {
-            label: 'Delete note',
+            label: jt('dashboard.widgets.scratchpad.deleteNote', 'Delete note'),
             disabled: isLast,
-            shortcutHint: isLast ? 'last note' : '',
+            shortcutHint: isLast ? jt('dashboard.widgets.scratchpad.lastNoteHint', 'last note') : '',
             action: isLast ? undefined : () => deleteNote(body, noteId),
           },
         ],
@@ -700,7 +704,7 @@
         if (target.closest('[data-scratchpad-to-loop]')) {
           const textarea = body.querySelector('#homeScratchpadInput');
           void actions.promoteToLoop(textarea ? textarea.value : '').then((result) => {
-            setNote(body, result?.error || 'Saved to Open Loops.', Boolean(result?.error));
+            setNote(body, result?.error || jt('dashboard.widgets.scratchpad.savedToOpenLoops', 'Saved to Open Loops.'), Boolean(result?.error));
           });
           return;
         }
@@ -852,7 +856,7 @@
           + actionButton({
             variant: 'ghost',
             size: 'sm',
-            label: 'Turn into open loop',
+            label: jt('dashboard.widgets.scratchpad.turnIntoOpenLoop', 'Turn into open loop'),
             dataset: { 'scratchpad-to-loop': '1' },
           })
           + '</div>'
@@ -899,7 +903,7 @@
         body.innerHTML = '<div class="dashboard-scratchpad" data-scratchpad-v2>'
           + buildTabsHtml(notes, activeId)
           + '<div class="dashboard-scratchpad__panel" id="homeScratchpadPanel"'
-          + ' role="tabpanel" aria-label="Note content">'
+          + ' role="tabpanel" aria-label="' + escapeHtml(jt('dashboard.widgets.scratchpad.noteContent', 'Note content')) + '">'
           + (showPreview ? buildPreviewHtml(text) : buildFieldHtml(text, markdownOn))
           + '</div>'
           + buildFooterHtml({ markdownOn, previewMode })
@@ -950,7 +954,7 @@
 
     return {
       id: 'scratchpad',
-      title: 'Scratchpad',
+      title: jt('dashboard.widgets.scratchpad.title', 'Scratchpad'),
       render(body, ctx) {
         if (!body || !textField || !actionButton) {
           return;

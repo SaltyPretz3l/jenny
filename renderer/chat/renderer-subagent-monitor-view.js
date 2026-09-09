@@ -17,6 +17,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (modelUtils, actionButton, badge, collapsible) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -39,7 +40,7 @@
     const elapsed = modelUtils.formatElapsed?.(viewModel.elapsedMs) || '';
     const meta = [countLabel, stateLabel, elapsed].filter(Boolean).join(' · ');
     const key = String(options.key || viewModel.key || viewModel.toolCallId || '').trim();
-    const triggerLabel = `Open subagent monitor: ${viewModel.summaryLabel}, ${meta}`;
+    const triggerLabel = jt('chat.subagentMonitor.openAriaLabel', 'Open subagent monitor: {summary}, {meta}', { summary: viewModel.summaryLabel, meta });
     const content = stateDot(viewModel.tone)
       + `<span class="subagent-summary-label">${escapeHtml(viewModel.summaryLabel)}</span>`
       + '<span class="subagent-summary-meta">'
@@ -107,11 +108,11 @@
       });
     }).join('');
     return '<div class="subagent-monitor-tree-pane">'
-      + '<div class="subagent-monitor-kicker">Subagent tree</div>'
-      + '<div class="subagent-tree" role="tree" aria-label="Subagent tasks">'
+      + '<div class="subagent-monitor-kicker">' + escapeHtml(jt('chat.subagentMonitor.treeTitle', 'Subagent tree')) + '</div>'
+      + '<div class="subagent-tree" role="tree" aria-label="' + escapeHtml(jt('chat.subagentMonitor.tasksAriaLabel', 'Subagent tasks')) + '">'
       + '<div class="subagent-tree-parent" role="treeitem" aria-expanded="true" tabindex="-1">'
       + stateDot(viewModel.terminal ? viewModel.tone : 'pending')
-      + `<span>Jenny · ${escapeHtml(viewModel.parentState)}</span>`
+      + `<span>${escapeHtml(jt('chat.subagentMonitor.parentState', 'Jenny · {state}', { state: viewModel.parentState }))}</span>`
       + '</div>'
       + `<div class="subagent-tree-children" role="group">${childRows}</div>`
       + '</div></div>';
@@ -134,7 +135,7 @@
         : (entry.source_tool || entry.source || 'Evidence');
       const description = entry.summary || entry.quote
         || (entry.fact && entry.value ? `${entry.fact}: ${entry.value}` : '');
-      const provenance = entry.provenance === 'tool_observed' ? 'Tool observed' : '';
+      const provenance = entry.provenance === 'tool_observed' ? jt('chat.subagentMonitor.toolObserved', 'Tool observed') : '';
       const pathAttrs = entry.relative_path
         ? ` role="link" tabindex="0" data-chat-path-open="${escapeHtml(entry.relative_path)}" data-chat-path="${escapeHtml(entry.relative_path)}"`
         : '';
@@ -158,12 +159,12 @@
     const elapsed = modelUtils.formatElapsed?.(child.budget?.elapsed_ms || liveElapsedMs || 0) || '';
     if (!usage && !elapsed) return '';
     const total = usage ? modelUtils.formatTokens?.(usage.total_tokens) : 'Unavailable';
-    const compact = `<div class="subagent-usage-summary"><strong>${escapeHtml(total)} tokens</strong>${elapsed ? ` · <span data-subagent-live-elapsed>${escapeHtml(elapsed)}</span>` : ''}</div>`;
+    const compact = `<div class="subagent-usage-summary"><strong>${escapeHtml(jt('chat.subagentMonitor.tokenCount', '{count} tokens', { count: total }))}</strong>${elapsed ? ` · <span data-subagent-live-elapsed>${escapeHtml(elapsed)}</span>` : ''}</div>`;
     if (!usage) return compact;
     const details = [
       ['Input', usage.input_tokens], ['Output', usage.output_tokens],
-      ['Latest request', usage.last_request_input_tokens], ['Context estimate', usage.context_tokens_estimate],
-      ['Context window', usage.context_window], ['Compact threshold', usage.compact_threshold_tokens],
+      [jt('chat.subagentMonitor.latestRequest', 'Latest request'), usage.last_request_input_tokens], [jt('chat.subagentMonitor.contextEstimate', 'Context estimate'), usage.context_tokens_estimate],
+      [jt('chat.subagentMonitor.contextWindow', 'Context window'), usage.context_window], [jt('chat.subagentMonitor.compactThreshold', 'Compact threshold'), usage.compact_threshold_tokens],
     ].filter(([, value]) => Number.isSafeInteger(value));
     const rows = details.map(([label, value]) => (
       `<span><span>${escapeHtml(label)}</span><strong>${escapeHtml(modelUtils.formatTokens?.(value))}</strong></span>`
@@ -173,7 +174,7 @@
     const trigger = collapsible?.trigger?.({
       id: contentId,
       className: 'subagent-usage-trigger',
-      children: compact + '<span class="subagent-disclosure-label">Expand</span>',
+      children: compact + '<span class="subagent-disclosure-label">' + escapeHtml(jt('chat.subagentMonitor.expand', 'Expand')) + '</span>',
     }) || compact;
     const content = collapsible?.content?.({
       id: contentId,
@@ -191,20 +192,20 @@
     const trigger = collapsible?.trigger?.({
       id: contentId,
       className: 'subagent-technical-trigger',
-      children: `<span>Technical details${code ? ` · ${escapeHtml(code)}` : ''}</span><span class="subagent-disclosure-label">Expand</span>`,
+      children: `<span>${escapeHtml(jt('chat.subagentMonitor.technicalDetails', 'Technical details{code}', { code: code ? ` · ${code}` : '' }))}</span><span class="subagent-disclosure-label">${escapeHtml(jt('chat.subagentMonitor.expand', 'Expand'))}</span>`,
     }) || '';
     const content = collapsible?.content?.({
       id: contentId,
       className: 'subagent-technical-detail',
-      children: `<p>${escapeHtml(child.error.message || 'No additional details.')}</p>`
-        + `<p>Retryable: ${child.error.retryable === true ? 'yes' : 'no'}</p>`,
+      children: `<p>${escapeHtml(child.error.message || jt('chat.subagentMonitor.noAdditionalDetails', 'No additional details.'))}</p>`
+        + `<p>${escapeHtml(child.error.retryable === true ? jt('chat.subagentMonitor.retryableYes', 'Retryable: yes') : jt('chat.subagentMonitor.retryableNo', 'Retryable: no'))}</p>`,
     }) || '';
     return trigger + content;
   }
 
   function renderDetails(viewModel) {
     const child = viewModel.selected;
-    if (!child) return '<div class="subagent-monitor-empty">Details unavailable.</div>';
+    if (!child) return '<div class="subagent-monitor-empty">' + escapeHtml(jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.')) + '</div>';
     const failureBadge = typeof badge === 'function' && child.terminal
       ? badge({ text: child.terminalCopy, tone: child.tone, size: 'sm' })
       : '';
@@ -222,19 +223,19 @@
   }
 
   function renderInspector(viewModel, options = {}) {
-    if (!viewModel || !viewModel.childCount) return '<div class="subagent-monitor-empty">Details unavailable.</div>';
+    if (!viewModel || !viewModel.childCount) return '<div class="subagent-monitor-empty">' + escapeHtml(jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.')) + '</div>';
     const closeButton = actionButton({
-      id: 'subagent-close', label: 'Close', variant: 'ghost', size: 'sm',
-      className: 'subagent-monitor-close', ariaLabel: 'Close subagent monitor', title: 'Close subagent monitor',
+      id: 'subagent-close', label: jt('common.close', 'Close'), variant: 'ghost', size: 'sm',
+      className: 'subagent-monitor-close', ariaLabel: jt('chat.subagentMonitor.closeAriaLabel', 'Close subagent monitor'), title: jt('chat.subagentMonitor.closeAriaLabel', 'Close subagent monitor'),
       dataset: { 'subagent-close': 'true' },
     });
     const backButton = actionButton({
-      id: 'subagent-back', label: 'Back', variant: 'ghost', size: 'sm',
-      className: 'subagent-monitor-back', ariaLabel: 'Back to subagent list', title: 'Back to subagent list',
+      id: 'subagent-back', label: jt('common.back', 'Back'), variant: 'ghost', size: 'sm',
+      className: 'subagent-monitor-back', ariaLabel: jt('chat.subagentMonitor.backAriaLabel', 'Back to subagent list'), title: jt('chat.subagentMonitor.backAriaLabel', 'Back to subagent list'),
       dataset: { 'subagent-back': 'true' },
     });
     return '<div class="subagent-monitor-header">'
-      + '<div><span class="subagent-monitor-title">Subagent Monitor</span>'
+      + '<div><span class="subagent-monitor-title">' + escapeHtml(jt('chat.subagentMonitor.title', 'Subagent Monitor')) + '</span>'
       + `<span class="subagent-monitor-parent-state">${escapeHtml(viewModel.parentState)}</span></div>`
       + `<div class="subagent-monitor-header-actions">${options.compactDetail ? backButton : ''}${closeButton}</div>`
       + '</div>'

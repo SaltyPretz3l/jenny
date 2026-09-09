@@ -30,6 +30,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var TURN_PHASES = Object.freeze({
     SENDING: 'sending',
     THINKING: 'thinking',
@@ -171,7 +172,7 @@
         var assistantStreaming = resolvedContext.assistantStreaming === true;
         return {
           phase: resolvedPhase,
-          message: assistantStreaming ? 'Responding\u2026' : 'Thinking\u2026',
+          message: assistantStreaming ? jt('chat.turnPhase.responding', 'Responding\u2026') : jt('chat.turnPhase.thinking', 'Thinking\u2026'),
           tone: 'pending',
           spinner: true,
           badgeText: assistantStreaming ? 'Responding' : 'Thinking',
@@ -179,8 +180,8 @@
       }
       case TURN_PHASES.NEEDS_APPROVAL: {
         var approvalMessage = approvalLabel
-          ? 'Approval needed for ' + approvalLabel
-          : 'Approval needed';
+          ? jt('chat.turnPhase.approvalNeededFor', 'Approval needed for {tool}', { tool: approvalLabel })
+          : jt('chat.turnPhase.approvalNeeded', 'Approval needed');
         return {
           phase: resolvedPhase,
           message: approvalMessage,
@@ -191,8 +192,8 @@
       }
       case TURN_PHASES.RUNNING_TOOL: {
         var runningMessage = toolLabel
-          ? 'Running ' + toolLabel + '\u2026'
-          : 'Running tool\u2026';
+          ? jt('chat.turnPhase.runningToolNamed', 'Running {tool}\u2026', { tool: toolLabel })
+          : jt('chat.turnPhase.runningTool', 'Running tool\u2026');
         return {
           phase: resolvedPhase,
           message: runningMessage,
@@ -213,7 +214,7 @@
         }
         return {
           phase: resolvedPhase,
-          message: 'Reviewing artifact\u2026',
+          message: jt('chat.turnPhase.reviewingArtifact', 'Reviewing artifact\u2026'),
           tone: 'default',
           spinner: false,
           badgeText: 'Artifact',
@@ -225,7 +226,7 @@
           || terminalStatus === TERMINAL_SUBSTATUS.PREEMPTED) {
           return {
             phase: TURN_PHASES.DONE,
-            message: 'Cancelled',
+            message: jt('chat.turnPhase.cancelled', 'Cancelled'),
             tone: 'default',
             spinner: false,
             badgeText: 'Cancelled',
@@ -234,16 +235,16 @@
         if (terminalStatus === TERMINAL_SUBSTATUS.TIMED_OUT) {
           return {
             phase: TURN_PHASES.DONE,
-            message: 'Timed out',
+            message: jt('chat.turnPhase.timedOut', 'Timed out'),
             tone: 'danger',
             spinner: false,
-            badgeText: 'Timed out',
+            badgeText: jt('chat.turnPhase.timedOut', 'Timed out'),
           };
         }
         if (terminalStatus === TERMINAL_SUBSTATUS.INTERRUPTED) {
           return {
             phase: TURN_PHASES.DONE,
-            message: 'Interrupted',
+            message: jt('chat.turnPhase.interrupted', 'Interrupted'),
             tone: 'default',
             spinner: false,
             badgeText: 'Interrupted',

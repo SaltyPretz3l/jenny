@@ -19,6 +19,7 @@
   }
   root.rendererHomeViewHydrate = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createHomeViewHydrator(deps) {
     const fwd = (deps && deps.fwd) || {};
     const appendClientLog = (deps && typeof deps.appendClientLog === 'function')
@@ -40,7 +41,7 @@
       }).catch((err) => {
         appendClientLog('WARN', 'home.refresh_companion_failed', { message: String(err?.message || err || '') });
         /* EH-W10: error-center-only intake route (no toast for pollers). */
-        fwd.reportError({ message: 'Companion state could not be refreshed.', dedupeKey: 'offline-refresh:companion' }, { origin: 'offline-refresh' });
+        fwd.reportError({ message: jt('shell.home.companionRefreshFailed', 'Companion state could not be refreshed.'), dedupeKey: 'offline-refresh:companion' }, { origin: 'offline-refresh' });
         // Reveal the shell anyway so a failed fetch never strands the overlay.
         fwd.notifyBootViewReady();
       });
@@ -50,7 +51,7 @@
         fwd.refreshOfflineState().then(() => fwd.renderDashboard())
           .catch((err) => {
             appendClientLog('WARN', 'home.refresh_offline_failed', { message: String(err?.message || err || '') });
-            fwd.reportError({ message: 'Offline readiness could not be refreshed.', dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
+            fwd.reportError({ message: jt('shell.home.offlineRefreshFailed', 'Offline readiness could not be refreshed.'), dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
           });
       }
     }

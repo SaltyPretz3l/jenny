@@ -7,7 +7,7 @@
   root.rendererTimelineV2Presentation = factory(root.toolCallUtils, root.rendererStreamTerminalState || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (toolCallUtilsModule, terminalStateUtils) {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const formatToolCallSummary = toolCallUtilsModule.formatToolCallSummary;
 
   const SURFACE_CAPS = Object.freeze({
@@ -113,12 +113,12 @@
     const terminalPresentation = resolveKnownTerminalPresentation?.(normalized);
     if (terminalPresentation) return terminalPresentation.label;
     const terminalPhase = terminalPhaseForStatus(normalized);
-    if (normalized === 'approval_wait') return 'Approval Needed';
-    if (normalized === 'tool_use' || normalized === 'running_tool') return 'Using Tools';
-    if (normalized === 'tool_result') return 'Reading Results';
+    if (normalized === 'approval_wait') return jt('chat.sessionHelpers.approvalNeededTitle', 'Approval Needed');
+    if (normalized === 'tool_use' || normalized === 'running_tool') return jt('chat.timeline.usingTools', 'Using Tools');
+    if (normalized === 'tool_result') return jt('chat.timeline.readingResults', 'Reading Results');
     if (normalized === 'text' || normalized === 'final_answer') return 'Writing';
     if (terminalPhase === 'completed') return 'Complete';
-    if (terminalPhase === 'error') return 'Needs Recovery';
+    if (terminalPhase === 'error') return jt('chat.terminalState.errorLabel', 'Needs Recovery');
     if (terminalPhase === 'cancelled') return 'Cancelled';
     if (terminalPhase === 'interrupted') return 'Interrupted';
     return 'Thinking';
@@ -333,7 +333,7 @@
     const callId = readToolCallId(input, payload);
     const toolName = readToolName(input, payload);
     const label = toolNameLabel(readFirstString(input?.label, toolName));
-    const summary = compactText(readFirstString(payload.prompt, payload.summary, input?.summary, 'Waiting for approval'), cap);
+    const summary = compactText(readFirstString(payload.prompt, payload.summary, input?.summary, jt('chat.timeline.waitingForApproval', 'Waiting for approval')), cap);
     const resolvedTone = toneForState(state, 'warning');
     const tone = resolvedTone === 'neutral' ? 'warning' : resolvedTone;
     const kind = readKind(input);

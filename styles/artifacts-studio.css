@@ -24,7 +24,7 @@
   border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 92%, transparent);
   border-radius: 24px;
   background: var(--artifact-catalog-card-bg);
-  text-align: left;
+  text-align: start;
   color: inherit;
   box-shadow:
     0 16px 28px color-mix(in srgb, var(--bg-base) 14%, transparent),
@@ -266,14 +266,16 @@
   position: relative;
   display: grid;
   gap: 5px;
-  padding: 2px 0 18px 28px;
+  padding-block: 2px 18px;
+  padding-inline-end: 0;
+  padding-inline-start: 28px;
 }
 
 .provenance-entry::before {
   content: attr(data-provenance-step);
   position: absolute;
   top: 0;
-  left: 0;
+  inset-inline-start: 0;
   display: grid;
   place-items: center;
   width: 18px;
@@ -290,7 +292,7 @@
   content: '';
   position: absolute;
   top: 20px;
-  left: 8px;
+  inset-inline-start: 8px;
   bottom: -2px;
   width: 1px;
   background: color-mix(in srgb, var(--artifact-studio-divider) 82%, transparent);

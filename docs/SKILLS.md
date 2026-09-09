@@ -148,6 +148,17 @@ When a discovery bound is reached, Jenny keeps the files found so far and emits
 `ai.context.skill_discovery_partial`. Its reason identifies the bound, including
 `aggregate_file_budget`, `entry_budget`, `depth_budget`, or `time_budget`.
 
+## Review skills in the 1.1 source
+
+- `/insight` summarizes observed harness friction in the current conversation.
+  It is a retrospective, not an automatic investigation or code change.
+- `/po-review <feature>` reviews a named feature and produces a handoff
+  specification. It does not authorize implementation or saving a report.
+
+The dedicated Mermaid artifact workflow skill was removed; use the existing
+diagram/artifact capabilities rather than assuming its slash command remains.
+Skill availability still follows normal scope, discovery and enabled state.
+
 ## Using a skill
 
 You can bring a skill into a turn in three ways.

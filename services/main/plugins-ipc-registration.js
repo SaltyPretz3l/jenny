@@ -28,6 +28,7 @@
 // inspecting require.cache.
 
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('../ipc-contract');
+const { t } = require('../i18n-main');
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
 const {
   createTrustedSenderAuthorizer,
@@ -631,7 +632,7 @@ function registerPluginsRuntime(ipcMainLike, {
     let selection;
     try {
       selection = await pickerDialog.showOpenDialog({
-        title: 'Select an offline Jenny plugin mirror',
+        title: t('main.dialog.plugins.selectOfflineMirror', 'Select an offline Jenny plugin mirror'),
         properties: ['openDirectory', 'dontAddToRecent'],
       });
     } catch (_error) {
@@ -704,55 +705,32 @@ function registerPluginsRuntime(ipcMainLike, {
     confirmOfflineTrust: async (identity) => {
       const result = await pickerDialog.showMessageBox(getMainWindow?.() || undefined, {
         type: 'warning',
-        buttons: ['Trust mirror', 'Cancel'],
+        buttons: [t('main.dialog.plugins.trustMirror', 'Trust mirror'), t('common.cancel', 'Cancel')],
         defaultId: 1,
         cancelId: 1,
         noLink: true,
-        title: 'Trust offline plugin mirror?',
-        message: `Trust “${identity.display_name}” as a plugin catalog?`,
-        detail: `Pinned root fingerprint:\n${identity.root_fingerprint}\n\nOnly signed targets accepted by this root can be installed.`,
+        title: t('main.dialog.plugins.trustOfflineMirrorTitle', 'Trust offline plugin mirror?'),
+        message: t('main.dialog.plugins.trustCatalog', 'Trust “{name}” as a plugin catalog?', { name: identity.display_name }),
+        detail: t('main.dialog.plugins.pinnedRootDetail', 'Pinned root fingerprint:\n{fingerprint}\n\nOnly signed targets accepted by this root can be installed.', { fingerprint: identity.root_fingerprint }),
       });
       return result?.response === 0;
     },
     log,
   });
-  const { createChatGptPluginMigration, PACKAGE_IDENTITY } = require('../../services/plugins/provider/chatgpt-migration');
-  const { resolveBundledPluginRecord } = require('../../services/plugins/provider/bundled-plugin-inventory');
-  const bundledPlugins = require('../../config/plugins/bundled-plugins.json');
-  const chatgptBundle = resolveBundledPluginRecord(bundledPlugins, PACKAGE_IDENTITY);
-  const chatgptMigration = createChatGptPluginMigration({
+  const { createBundledInstallWiring } = require('./plugins-bundled-install-wiring');
+  const bundledInstall = createBundledInstallWiring({
+    inventory: require('../../config/plugins/bundled-plugins.json'),
     facade,
     baseDir: PLUGIN_STORE_BASE_DIR,
     stage5Service,
     chatgptAuthService,
     preferredEngineType: () => backendService.configService?.getState?.()?.preferredEngineType || '',
     enablePlugin: (identity) => service.enable(identity),
-    loadBundledPackage: async () => {
-      if (!chatgptBundle.ok) return chatgptBundle;
-      const packagePath = nodePath.join(resourcesRoot, ...chatgptBundle.record.package_resource.split('/'));
-      try {
-        return { ok: true, bytes: await nodeFs.promises.readFile(packagePath),
-          expectedSha256: chatgptBundle.record.package_sha256 };
-      } catch (_error) {
-        if (app.isPackaged !== true) {
-          try {
-            const devPackagePath = nodePath.join(appRoot, ...chatgptBundle.record.package_resource.split('/'));
-            return { ok: true, bytes: await nodeFs.promises.readFile(devPackagePath),
-              expectedSha256: chatgptBundle.record.package_sha256 };
-          } catch (_devError) { /* fall through to the unavailable result */ }
-        }
-        // A packaged build missing its bundled plugin is a packaging defect,
-        // not the benign dev-checkout miss: give it a distinct reason so the
-        // migration's quiet-skip branch does not swallow it (it falls through
-        // to the failed-receipt + WARN path instead).
-        return {
-          ok: false,
-          reason: app.isPackaged === true
-            ? 'bundled_package_missing_from_build' : 'bundled_package_unavailable',
-        };
-      }
-    },
-    log: (event, data, level = 'WARN') => log(level, event, data),
+    resourcesRoot,
+    appRoot,
+    isPackaged: app.isPackaged === true,
+    readFile: nodeFs.promises.readFile,
+    log,
   });
   const unsubscribeManagedPolicy = managedPolicy.subscribe((status) => {
     if (!managedPolicyInitialized) return;
@@ -845,8 +823,7 @@ function registerPluginsRuntime(ipcMainLike, {
         const result = await runAfterStartupMigration(methodPath, chatgptMigrationReady, () => (
           service[methodName](payload || {})
         ), () => disposing);
-        if (result?.ok && payload?.publisher_id === PACKAGE_IDENTITY.publisher_id
-          && payload?.plugin_id === PACKAGE_IDENTITY.plugin_id) await chatgptMigration.markRemoved();
+        if (result?.ok) await bundledInstall.markRemoved(payload);
         return result;
       };
     } else {
@@ -974,7 +951,7 @@ function registerPluginsRuntime(ipcMainLike, {
       })
       : true));
     chatgptMigrationReady = runtimeReady.then((ready) => (
-      ready ? chatgptMigration.run() : { ok: false, migrated: false,
+      ready ? bundledInstall.run() : { ok: false, migrated: false,
         reason: startupAbortController.signal.aborted
           ? 'startup_disposed' : 'runtime_sidecar_unavailable' }
     )).then((result) => {

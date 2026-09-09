@@ -20,7 +20,8 @@
   root.inventoryInlineTextEditor = factory(root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var escapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : function fallbackEscapeHtml(value) {
@@ -51,7 +52,7 @@
     var id = String(settings.messageId || '');
     var draft = String(settings.draftText == null ? '' : settings.draftText);
     var committing = settings.committing === true;
-    var ariaLabel = String(settings.ariaLabel || 'Edit your message');
+    var ariaLabel = String(settings.ariaLabel || jt('inventory.inlineTextEditor.ariaLabel', 'Edit your message'));
     var maxLength = Number.isFinite(settings.maxLength) ? settings.maxLength : 32000;
     var rows = Number.isFinite(settings.rows) ? settings.rows : 3;
     var cancelLabel = String(settings.cancelLabel || 'Cancel');
@@ -65,6 +66,7 @@
       ' data-pin-fade-trigger="user"',
       ariaBusyAttr, '>',
       '<textarea class="chat-bubble-editor"',
+      ' dir="auto"',
       ' spellcheck="true"',
       ' maxlength="', String(maxLength), '"',
       ' rows="', String(rows), '"',
@@ -74,19 +76,17 @@
       escapeHtml(draft),
       '</textarea>',
       affectedCount > 0
-        ? '<p class="chat-bubble-editor-impact">Affects ' + affectedCount
-          + (affectedCount === 1 ? ' existing message' : ' existing messages')
-          + ': this message and all later history.</p>'
+        ? '<p class="chat-bubble-editor-impact">' + escapeHtml(jtn('inventory.inlineTextEditor.affectedMessages', affectedCount, { count: affectedCount }, 'Affects {count} existing message: this message and all later history.', 'Affects {count} existing messages: this message and all later history.')) + '</p>'
         : '',
       '<div class="chat-bubble-editor-actions">',
       '<button type="button" class="chat-bubble-editor-cancel"',
       ' data-edit-action="cancel"',
-      ' title="Cancel edit (Esc)"',
+      ' title="', escapeHtml(jt('inventory.inlineTextEditor.cancelTitle', 'Cancel edit (Esc)')), '"',
       ' data-message-id="', escapeHtml(id), '"',
       disabledAttr, '>', escapeHtml(cancelLabel), '</button>',
       '<button type="button" class="chat-bubble-editor-save"',
       ' data-edit-action="save"',
-      ' title="Save and resend (Ctrl+Enter)"',
+      ' title="', escapeHtml(jt('inventory.inlineTextEditor.saveTitle', 'Save and resend (Ctrl+Enter)')), '"',
       ' data-message-id="', escapeHtml(id), '"',
       disabledAttr, '>', escapeHtml(saveLabel), '</button>',
       '</div>',

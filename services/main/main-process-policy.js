@@ -8,6 +8,7 @@ const MANAGED_CONFIG_REFRESH_REASONS = new Set([
   'skills_settings_updated',
   'tools_worktree_enabled_updated',
   'feature_settings_updated',
+  'time_format_updated',
   // Model/context tuning uses ModelTuningService's awaited transaction so the
   // renderer gets a truthful applied/rolled-back acknowledgement. Do not also
   // trigger this fire-and-forget policy refresh for those writes.

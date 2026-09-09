@@ -2,6 +2,10 @@
 
 const { EventEmitter } = require('events');
 const path = require('path');
+const semver = require('semver');
+const { t } = require('./i18n-main');
+const { UPDATER_ERROR_CODES } = require('./backend/error-codes');
+const { createGitHubReleaseClient, RELEASES_URL, stableVersion, MAX_NOTES_LENGTH } = require('./github-release-client');
 
 const { FileJsonStore } = require('./backend/file-json-store');
 const { resolveLinuxPackageKind } = require('./linux-package-kind');
@@ -11,6 +15,7 @@ const UPDATE_STORE_DEFAULT = {
   failureCount: 0,
   lastError: '',
   lastFailedAt: '',
+  lastCheckedAt: '',
 };
 
 function loadAutoUpdater() {
@@ -29,7 +34,7 @@ function cloneState(state) {
 }
 
 function normalizeVersion(value) {
-  return String(value || '').trim();
+  return String(value || '').trim().slice(0, 128);
 }
 
 function normalizeReleaseNotes(value) {
@@ -54,9 +59,9 @@ function normalizeUpdateInfo(info = {}) {
   const source = info && typeof info === 'object' ? info : {};
   return {
     latestVersion: normalizeVersion(source.version),
-    releaseName: String(source.releaseName || source.name || '').trim(),
-    releaseDate: String(source.releaseDate || source.release_date || '').trim(),
-    releaseNotesMarkdown: normalizeReleaseNotes(source.releaseNotes),
+    releaseName: String(source.releaseName || source.name || '').trim().slice(0, 256),
+    releaseDate: String(source.releaseDate || source.release_date || '').trim().slice(0, 64),
+    releaseNotesMarkdown: normalizeReleaseNotes(source.releaseNotes).slice(0, MAX_NOTES_LENGTH),
     hasSha512: Boolean(
       String(source.sha512 || '').trim()
       || (Array.isArray(source.files)
@@ -81,229 +86,189 @@ function normalizeProgress(progress = {}) {
 }
 
 class UpdateService extends EventEmitter {
-  constructor({
-    app,
-    autoUpdater,
-    autoUpdaterLoader = loadAutoUpdater,
-    storePath = '',
-    logger = null,
-    platform = process.platform,
-    // electron-updater keys on APPIMAGE; Jenny also anchors the executable
-    // under APPDIR so an inherited variable cannot enable AppImage updates.
-    env = process.env,
-    execPath = process.execPath,
-    now = () => new Date(),
-    // macOS auto-update only works for a signed + notarized app (Squirrel.Mac
-    // refuses unsigned updates). Defaults off; the signed release build sets
-    // JENNY_MAC_SIGNED=1 so a signed DMG/zip can self-update.
+  constructor({ app, autoUpdater, autoUpdaterLoader = loadAutoUpdater,
+    storePath = '', logger = null, platform = process.platform, arch = process.arch,
+    env = process.env, execPath = process.execPath, now = () => new Date(),
+    releaseClient = createGitHubReleaseClient(),
     macUpdatesSigned = /^(1|true|yes|on)$/i.test(String(process.env.JENNY_MAC_SIGNED || '').trim()),
   } = {}) {
     super();
     this.app = app || null;
     this.autoUpdater = autoUpdater || null;
-    this.autoUpdaterLoader = typeof autoUpdaterLoader === 'function'
-      ? autoUpdaterLoader
-      : loadAutoUpdater;
+    this.autoUpdaterLoader = autoUpdaterLoader;
     this._autoUpdaterResolutionAttempted = false;
-    this.platform = String(platform || '').trim().toLowerCase();
-    this.env = env && typeof env === 'object' ? env : {};
+    this.platform = String(platform || '').toLowerCase();
+    this.arch = arch;
+    this.env = env || {};
     this.execPath = execPath;
     this.macUpdatesSigned = Boolean(macUpdatesSigned);
-    this.now = typeof now === 'function' ? now : () => new Date();
+    this.now = now;
     this.logger = typeof logger === 'function' ? logger : null;
-    const defaultStorePath = this.app && typeof this.app.getPath === 'function'
-      ? path.join(this.app.getPath('userData'), 'update-state.json')
-      : '';
-    this.store = new FileJsonStore(storePath || defaultStorePath, { logger: this.logger });
+    this.releaseClient = releaseClient;
+    this.store = new FileJsonStore(storePath || (app?.getPath
+      ? path.join(app.getPath('userData'), 'update-state.json') : ''), { logger: this.logger });
     this.persisted = this._normalizePersisted(this.store.read(UPDATE_STORE_DEFAULT));
-    this.disabledReason = this._disabledReason({ checkUpdater: Boolean(this.autoUpdater) });
+    this.disabledReason = this._disabledReason({ checkUpdater: Boolean(autoUpdater) });
     this._availableInfo = null;
-    this._checkPromise = null;
-    this._downloadPromise = null;
+    this._downloadedVersion = '';
+    this._operation = null;
+    this._installOperation = null;
     this._disposed = false;
+    this._abort = new AbortController();
     this.state = {
-      status: this.disabledReason ? 'disabled' : 'idle',
-      reason: this.disabledReason,
-      currentVersion: this._currentVersion(),
-      latestVersion: '',
-      releaseName: '',
-      releaseDate: '',
-      releaseNotesMarkdown: '',
-      downloadProgress: {
-        percent: 0,
-        transferred: 0,
-        total: 0,
-        bytesPerSecond: 0,
-      },
-      skippedVersion: this.persisted.skippedVersion,
-      failureCount: this.persisted.failureCount,
-      lastError: this.persisted.lastError,
-      lastFailedAt: this.persisted.lastFailedAt,
-      devInstall: this.app?.isPackaged !== true,
-      autoUpdateAllowed: !this.disabledReason,
+      status: 'unchecked', reason: '', currentVersion: this._currentVersion(),
+      latestVersion: '', releaseName: '', releaseDate: '', releaseNotesMarkdown: '',
+      releaseUrl: RELEASES_URL, packageAvailable: false,
+      downloadProgress: normalizeProgress(), skippedVersion: this.persisted.skippedVersion,
+      failureCount: this.persisted.failureCount, lastError: '', errorCode: '', errorStage: '',
+      lastFailedAt: this.persisted.lastFailedAt, lastCheckedAt: this.persisted.lastCheckedAt,
+      devInstall: app?.isPackaged !== true, autoUpdateAllowed: !this.disabledReason,
     };
   }
 
   getState() {
-    return cloneState(this.state);
+    const busy = Boolean(this._operation) || this.state.status === 'installing';
+    return cloneState({ ...this.state,
+      canCheck: !this._disposed && !busy && !this._downloadedVersion,
+      canDownload: !this._disposed && !busy && !this.disabledReason && Boolean(this._availableInfo)
+        && (this.state.status === 'available' || (this.state.status === 'error' && this.state.errorStage === 'download')),
+      canInstall: !this._disposed && !busy && !this.disabledReason && Boolean(this._downloadedVersion)
+        && (this.state.status === 'downloaded' || (this.state.status === 'error' && this.state.errorStage === 'install')),
+      installUnavailableReason: this.disabledReason,
+    });
   }
 
-  async check() {
-    if (this.disabledReason || !this._resolveAutoUpdater()) {
-      return this.getState();
+  check() {
+    if (this._disposed || this._downloadedVersion || ['downloading', 'downloaded', 'installing'].includes(this.state.status)) {
+      return Promise.resolve(this.getState());
     }
-    if (this._checkPromise) {
-      return this._checkPromise;
+    return this._run('check', () => this._checkForUpdates());
+  }
+
+  download() {
+    if (this._disposed || this.disabledReason || this._downloadedVersion
+      || this.state.status === 'installing') return Promise.resolve(this.getState());
+    return this._run('download', () => this._downloadUpdate());
+  }
+
+  install() {
+    if (this._disposed || this.disabledReason || this.state.status === 'installing') {
+      return Promise.resolve(this.getState());
     }
-    this._checkPromise = this._checkForUpdates();
-    try {
-      return await this._checkPromise;
-    } finally {
-      this._checkPromise = null;
-    }
+    return this._run('install', () => {
+      if (!this._downloadedVersion || this._downloadedVersion !== this.state.latestVersion) {
+        throw Object.assign(new Error('install-not-ready'), { code: 'install-not-ready' });
+      }
+      this._installOperation = this._operation;
+      this._setState({ status: 'installing' });
+      this.autoUpdater.quitAndInstall();
+    });
+  }
+
+  _run(stage, action) {
+    if (this._operation) return this._operation.stage === stage
+      ? this._operation.promise : Promise.resolve(this.getState());
+    // Publish the operation before executing code that may synchronously emit events.
+    const operation = { stage, failed: false, promise: null };
+    this._operation = operation;
+    operation.promise = Promise.resolve().then(() => {
+      if (this._disposed) return;
+      this._setState({ reason: '', lastError: '', errorCode: '', errorStage: '' });
+      return action();
+    }).catch((error) => this._recordError(error, operation)).finally(() => {
+      if (this._operation === operation) this._operation = null;
+      if (!this._disposed) this._setState({});
+    }).then(() => this.getState());
+    return operation.promise;
   }
 
   async _checkForUpdates() {
-    this._setState({
-      status: 'checking',
-      reason: '',
-      lastError: '',
-      downloadProgress: normalizeProgress(),
-    });
-    try {
-      const result = await this.autoUpdater.checkForUpdates();
-      if (this._disposed) {
-        return this.getState();
-      }
-      if (this.state.status === 'checking') {
-        const info = normalizeUpdateInfo(result?.updateInfo);
-        if (info.latestVersion && info.latestVersion !== this.state.currentVersion) {
-          this._handleUpdateAvailable(info.raw);
-        } else {
-          this._setState({
-            status: 'idle',
-            reason: 'Jenny is up to date.',
-            latestVersion: info.latestVersion || '',
-            releaseName: info.releaseName || '',
-            releaseDate: info.releaseDate || '',
-            releaseNotesMarkdown: info.releaseNotesMarkdown || '',
-          });
-        }
-      }
-    } catch (error) {
-      if (!this._disposed) {
-        this._recordError(error, 'Update check failed.');
+    this._availableInfo = null;
+    this._setState({ status: 'checking', downloadProgress: normalizeProgress() });
+    if (this.disabledReason || !this._resolveAutoUpdater()) {
+      await this._checkManualRelease();
+    } else {
+      try {
+        const result = await this.autoUpdater.checkForUpdates();
+        if (this._disposed) return;
+        if (this._operation.eventError) throw this._operation.eventError;
+        // The completed check owns the selected version; stale events cannot replace it.
+        this._acceptUpdateInfo(result?.updateInfo, result?.isUpdateAvailable !== false);
+      } catch (error) {
+        if (error?.code !== 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') throw error;
+        await this._checkManualRelease();
       }
     }
-    return this.getState();
+    if (this._disposed || this._operation.failed) return;
+    this.persisted.lastCheckedAt = this.now().toISOString();
+    this._persist();
+    this._setState({ lastCheckedAt: this.persisted.lastCheckedAt });
   }
 
-  async download() {
-    if (this.disabledReason || !this._resolveAutoUpdater()) {
-      return this.getState();
+  async _checkManualRelease() {
+    const release = await this.releaseClient({ platform: this.platform, arch: this.arch, signal: this._abort.signal });
+    if (this._disposed) return;
+    if (!release) {
+      this._setState({ status: 'no-release', latestVersion: '', packageAvailable: false,
+        releaseName: '', releaseNotesMarkdown: '', releaseDate: '' });
+      return;
     }
-    if (this._downloadPromise) {
-      return this._downloadPromise;
+    const comparison = this._compareVersion(release.latestVersion);
+    this._setState({ ...release, status: !release.packageAvailable ? 'no-package'
+      : comparison > 0 ? 'manual' : comparison < 0 ? 'ahead' : 'current' });
+  }
+
+  _compareVersion(version) {
+    if (!stableVersion(version) || !semver.valid(this.state.currentVersion)) {
+      throw Object.assign(new Error('invalid-version'), { code: 'invalid-version' });
     }
-    this._downloadPromise = this._downloadUpdate();
-    try {
-      return await this._downloadPromise;
-    } finally {
-      this._downloadPromise = null;
+    return semver.compare(version, this.state.currentVersion);
+  }
+
+  _acceptUpdateInfo(raw, eligible = true) {
+    const info = normalizeUpdateInfo(raw);
+    const comparison = this._compareVersion(info.latestVersion);
+    if (raw?.tag && stableVersion(raw.tag) !== info.latestVersion) {
+      throw Object.assign(new Error('invalid-version'), { code: 'invalid-version' });
     }
+    if (!info.hasSha512) throw Object.assign(new Error('missing-sha512'), { code: 'missing-sha512' });
+    if (comparison > 0 && eligible) this._availableInfo = info.raw;
+    const { raw: _raw, hasSha512: _hasSha512, ...display } = info;
+    this._setState({ ...display, packageAvailable: true,
+      status: comparison > 0 ? (eligible ? 'available' : 'manual') : comparison < 0 ? 'ahead' : 'current' });
   }
 
   async _downloadUpdate() {
-    if (this.state.status === 'downloaded') {
-      return this.getState();
-    }
-    if (!this._availableInfo) {
-      this._recordError(new Error('No update is available to download.'));
-      return this.getState();
-    }
-    const info = normalizeUpdateInfo(this._availableInfo);
-    if (!info.hasSha512) {
-      this._recordError(new Error('Update metadata is missing SHA512 verification data.'));
-      return this.getState();
-    }
-    this._setState({
-      status: 'downloading',
-      reason: '',
-      lastError: '',
-      downloadProgress: normalizeProgress(),
-    });
-    try {
-      await this.autoUpdater.downloadUpdate();
-      if (this._disposed) {
-        return this.getState();
-      }
-      if (this.state.status === 'downloading') {
-        this._setState({
-          status: 'downloaded',
-          reason: '',
-          downloadProgress: { ...this.state.downloadProgress, percent: 100 },
-        });
-      }
-    } catch (error) {
-      if (!this._disposed) {
-        this._recordError(error, 'Update download failed.');
-      }
-    }
-    return this.getState();
-  }
-
-  async install() {
-    if (this.disabledReason || !this._resolveAutoUpdater()) {
-      return this.getState();
-    }
-    if (this.state.status === 'installing') {
-      return this.getState();
-    }
-    if (this.state.status !== 'downloaded') {
-      this._recordError(new Error('No downloaded update is ready to install.'));
-      return this.getState();
-    }
-    this._setState({ status: 'installing', reason: '', lastError: '' });
-    try {
-      this.autoUpdater.quitAndInstall();
-    } catch (error) {
-      this._recordError(error, 'Update install handoff failed.');
-    }
-    return this.getState();
+    if (!this._availableInfo) throw Object.assign(new Error('download-not-ready'), { code: 'download-not-ready' });
+    const version = normalizeVersion(this._availableInfo.version);
+    this._setState({ status: 'downloading', downloadProgress: normalizeProgress() });
+    const files = await this.autoUpdater.downloadUpdate();
+    if (this._disposed || this._operation.failed) return;
+    if (this._operation.eventError) throw this._operation.eventError;
+    if (!Array.isArray(files) || !files.length) throw new Error('download-incomplete');
+    this._downloadedVersion = version;
+    this._setState({ status: 'downloaded', latestVersion: version,
+      downloadProgress: { ...this.state.downloadProgress, percent: 100 } });
   }
 
   async skip(version = '') {
+    // Compatibility only: explicit checks always reveal a release, even if skipped.
+    if (this._disposed) return this.getState();
     const skippedVersion = normalizeVersion(version) || this.state.latestVersion;
-    this.persisted = {
-      ...this.persisted,
-      skippedVersion,
-    };
+    this.persisted.skippedVersion = skippedVersion;
     this._persist();
-    this._setState({
-      skippedVersion,
-      status: this.state.latestVersion === skippedVersion ? 'idle' : this.state.status,
-      reason: skippedVersion ? `Skipped update ${skippedVersion}.` : '',
-    });
+    this._setState({ skippedVersion });
     return this.getState();
   }
 
   dispose() {
     this._disposed = true;
-    if (!this.autoUpdater || typeof this.autoUpdater.removeListener !== 'function') {
-      return;
-    }
-    for (const [eventName, listener] of this._listeners || []) {
-      this.autoUpdater.removeListener(eventName, listener);
-    }
+    this._abort.abort();
+    for (const [event, listener] of this._listeners || []) this.autoUpdater.removeListener(event, listener);
     this._listeners = [];
   }
 
-  _currentVersion() {
-    if (this.app && typeof this.app.getVersion === 'function') {
-      return normalizeVersion(this.app.getVersion());
-    }
-    return '';
-  }
+  _currentVersion() { return normalizeVersion(this.app?.getVersion?.()); }
 
   _disabledReason({ checkUpdater = true } = {}) {
     if (!this.app || this.app.isPackaged !== true) {
@@ -340,192 +305,93 @@ class UpdateService extends EventEmitter {
   }
 
   _resolveAutoUpdater() {
-    if (this._disposed) {
-      return false;
-    }
-    if (this._autoUpdaterResolutionAttempted) {
-      return !this.disabledReason;
-    }
+    if (this._disposed) return false;
+    if (this._autoUpdaterResolutionAttempted) return !this.disabledReason;
     this._autoUpdaterResolutionAttempted = true;
-    if (!this.autoUpdater) {
-      try {
-        this.autoUpdater = this.autoUpdaterLoader() || null;
-      } catch (error) {
-        this._log('WARN', 'updates.loader_failed', {
-          message: String(error && error.message || error),
-        });
-      }
-    }
-    this.disabledReason = this._disabledReason();
-    if (this.disabledReason) {
-      this._setState({
-        status: 'disabled',
-        reason: this.disabledReason,
-        autoUpdateAllowed: false,
-      });
-      return false;
-    }
-    this._configureUpdater();
-    this._bindUpdaterEvents();
-    return true;
-  }
-
-  _configureUpdater() {
     try {
-      this.autoUpdater.autoDownload = false;
-      this.autoUpdater.autoInstallOnAppQuit = false;
-      if ('allowPrerelease' in this.autoUpdater) {
+      this.autoUpdater = this.autoUpdater || this.autoUpdaterLoader();
+      this.disabledReason = this._disabledReason();
+      if (!this.disabledReason) {
+        this.autoUpdater.autoDownload = false;
+        this.autoUpdater.autoInstallOnAppQuit = false;
         this.autoUpdater.allowPrerelease = false;
+        this.autoUpdater.allowDowngrade = false;
+        this.autoUpdater.requestHeaders = { 'x-user-staging-id': 'manual' };
+        // Never pipe provider response bodies, paths or identifiers into diagnostics.
+        this.autoUpdater.logger = { info() {}, warn() {}, error() {}, debug() {} };
+        if (this.autoUpdater.autoDownload !== false || this.autoUpdater.autoInstallOnAppQuit !== false) {
+          throw new Error('unsafe-updater-configuration');
+        }
+        this._bindUpdaterEvents();
       }
-    } catch (error) {
-      this._log('WARN', 'updates.configure_failed', {
-        message: String(error && error.message || error),
-      });
+    } catch (_error) {
+      this.disabledReason = t('updates.service.unavailable', 'Self-installation is unavailable in this build.');
+      this._log('WARN', 'updates.loader_failed', {});
     }
+    this._setState({ autoUpdateAllowed: !this.disabledReason });
+    return !this.disabledReason;
   }
 
   _bindUpdaterEvents() {
     this._listeners = [
-      ['checking-for-update', () => {
-        this._setState({ status: 'checking', reason: '', lastError: '' });
-      }],
-      ['update-available', (info) => this._handleUpdateAvailable(info)],
-      ['update-not-available', (info) => {
-        const normalized = normalizeUpdateInfo(info);
-        this._availableInfo = null;
-        this._setState({
-          status: 'idle',
-          reason: 'Jenny is up to date.',
-          latestVersion: normalized.latestVersion || '',
-          releaseName: normalized.releaseName || '',
-          releaseDate: normalized.releaseDate || '',
-          releaseNotesMarkdown: normalized.releaseNotesMarkdown || '',
-        });
-      }],
       ['download-progress', (progress) => {
-        this._setState({
-          status: 'downloading',
-          reason: '',
-          downloadProgress: normalizeProgress(progress),
-        });
+        if (this._operation?.stage !== 'download' || this._operation.failed) return;
+        this._setState({ status: 'downloading', downloadProgress: normalizeProgress(progress) });
       }],
-      ['update-downloaded', (info) => {
-        const normalized = normalizeUpdateInfo(info || this._availableInfo);
-        this._setState({
-          status: 'downloaded',
-          reason: '',
-          latestVersion: normalized.latestVersion || this.state.latestVersion,
-          releaseName: normalized.releaseName || this.state.releaseName,
-          releaseDate: normalized.releaseDate || this.state.releaseDate,
-          releaseNotesMarkdown: normalized.releaseNotesMarkdown || this.state.releaseNotesMarkdown,
-          downloadProgress: { ...this.state.downloadProgress, percent: 100 },
-        });
+      ['update-available', () => {}],
+      ['error', (error) => {
+        const operation = this._operation || this._installOperation;
+        if (operation?.stage === 'install') this._recordError(error, operation);
+        else if (operation) operation.eventError = error;
       }],
-      ['error', (error) => this._recordError(error)],
     ];
-    for (const [eventName, listener] of this._listeners) {
-      this.autoUpdater.on(eventName, listener);
-    }
+    for (const [event, listener] of this._listeners) this.autoUpdater.on(event, listener);
   }
 
-  _handleUpdateAvailable(info) {
-    const normalized = normalizeUpdateInfo(info);
-    if (!normalized.latestVersion) {
-      this._recordError(new Error('Update metadata did not include a version.'));
-      return;
-    }
-    if (!normalized.hasSha512) {
-      this._recordError(new Error('Update metadata is missing SHA512 verification data.'));
-      return;
-    }
-    this._availableInfo = normalized.raw;
-    if (normalized.latestVersion === this.state.skippedVersion) {
-      this._setState({
-        status: 'idle',
-        reason: `Update ${normalized.latestVersion} is skipped.`,
-        latestVersion: normalized.latestVersion,
-        releaseName: normalized.releaseName,
-        releaseDate: normalized.releaseDate,
-        releaseNotesMarkdown: normalized.releaseNotesMarkdown,
-      });
-      return;
-    }
-    this._setState({
-      status: 'available',
-      reason: '',
-      latestVersion: normalized.latestVersion,
-      releaseName: normalized.releaseName,
-      releaseDate: normalized.releaseDate,
-      releaseNotesMarkdown: normalized.releaseNotesMarkdown,
-      downloadProgress: normalizeProgress(),
-    });
-  }
-
-  _recordError(error, fallbackMessage = 'Updater failed.') {
-    const message = String(error && error.message || error || fallbackMessage).trim() || fallbackMessage;
-    this.persisted = {
-      ...this.persisted,
-      failureCount: this.persisted.failureCount + 1,
-      lastError: message,
-      lastFailedAt: this.now().toISOString(),
-    };
+  _recordError(error, operation) {
+    if (this._disposed || !operation || operation.failed) return;
+    operation.failed = true;
+    const stage = operation.stage;
+    let message = t('updates.service.checkFailed', 'Could not check GitHub. Check your connection and try again.');
+    if (stage === 'download') message = t('updates.service.downloadFailed', 'Could not download and verify the update. Try the download again.');
+    if (stage === 'install') message = t('updates.service.installFailed', 'Could not hand off the installer. Try again or open the releases page.');
+    if (error?.code === 'rate-limited') message = t('updates.service.rateLimited', 'GitHub is limiting requests. Try again later.');
+    if (error?.code === 'timeout') message = t('updates.service.timeout', 'GitHub did not respond in time. Try again.');
+    if (error?.code === 'invalid-version') message = t('updates.service.invalidVersion', 'The release version is invalid. Open the releases page.');
+    if (error?.code === 'missing-sha512') message = t('updates.service.missingHash', 'Release metadata is missing SHA512 verification data. Open the releases page.');
+    const errorCode = UPDATER_ERROR_CODES[stage];
+    this.persisted = { ...this.persisted, failureCount: Math.min(this.persisted.failureCount + 1, 1000000),
+      lastError: message, lastFailedAt: this.now().toISOString() };
     this._persist();
-    this._setState({
-      status: 'error',
-      reason: message,
-      lastError: message,
-      lastFailedAt: this.persisted.lastFailedAt,
-      failureCount: this.persisted.failureCount,
-    });
-    this._log('ERROR', 'updates.failed', { message });
+    this._setState({ status: 'error', reason: message, lastError: message, errorCode, errorStage: stage,
+      failureCount: this.persisted.failureCount, lastFailedAt: this.persisted.lastFailedAt });
+    this._log('ERROR', 'updates.failed', { errorCode, stage });
   }
 
-  _setState(patch = {}) {
-    if (this._disposed) {
-      return;
-    }
-    this.state = {
-      ...this.state,
-      ...(patch && typeof patch === 'object' ? patch : {}),
-    };
-    const state = this.getState();
-    this.emit('changed', state);
-    this._log('INFO', 'updates.state_changed', {
-      status: state.status,
-      latestVersion: state.latestVersion,
-      currentVersion: state.currentVersion,
+  _setState(patch) {
+    if (this._disposed) return;
+    const previousStatus = this.state.status;
+    this.state = { ...this.state, ...patch };
+    if (this.state.status !== previousStatus) this._log('INFO', 'updates.state_changed', {
+      status: this.state.status, currentVersion: this.state.currentVersion, latestVersion: this.state.latestVersion,
     });
+    this.emit('changed', this.getState());
   }
 
   _normalizePersisted(value) {
-    const source = value && typeof value === 'object' ? value : {};
-    return {
-      skippedVersion: normalizeVersion(source.skippedVersion),
-      failureCount: Math.max(Number(source.failureCount) || 0, 0),
-      lastError: String(source.lastError || '').trim(),
-      lastFailedAt: String(source.lastFailedAt || '').trim(),
-    };
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return { ...source, skippedVersion: normalizeVersion(source.skippedVersion),
+      failureCount: Math.max(0, Math.min(Math.trunc(Number(source.failureCount)) || 0, 1000000)),
+      lastError: '',
+      lastFailedAt: Number.isFinite(Date.parse(source.lastFailedAt)) ? new Date(source.lastFailedAt).toISOString() : '',
+      lastCheckedAt: Number.isFinite(Date.parse(source.lastCheckedAt)) ? new Date(source.lastCheckedAt).toISOString() : '' };
   }
 
-  _persist() {
-    this.store.write(this.persisted);
-  }
+  _persist() { this.store.write(this.persisted); }
 
-  _log(level, event, details = {}) {
-    if (!this.logger) {
-      return;
-    }
-    try {
-      this.logger(level, event, details);
-    } catch (_error) {
-      // Logging must never block updater state transitions.
-    }
+  _log(level, event, details) {
+    try { this.logger?.(level, event, details); } catch (_error) { /* diagnostics never block updates */ }
   }
 }
 
-module.exports = {
-  UpdateService,
-  normalizeProgress,
-  normalizeReleaseNotes,
-  normalizeUpdateInfo,
-};
+module.exports = { UpdateService, normalizeProgress, normalizeReleaseNotes, normalizeUpdateInfo };

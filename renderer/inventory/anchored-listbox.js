@@ -8,7 +8,7 @@
   root.inventoryAnchoredListbox = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var instanceCounter = 0;
 
   function safeToken(value, fallback) {
@@ -79,7 +79,7 @@
       if (!visibleItems.length) {
         var empty = doc.createElement('div');
         empty.className = 'inv-anchored-listbox-empty';
-        empty.textContent = String(options.emptyLabel || 'No matching options');
+        empty.textContent = String(options.emptyLabel || jt('inventory.anchoredListbox.noMatchingOptions', 'No matching options'));
         listEl.appendChild(empty);
         activeIndex = -1;
         syncActiveDescendant();
@@ -195,8 +195,8 @@
       filterInput = doc.createElement('input');
       filterInput.type = 'search';
       filterInput.className = 'inv-anchored-listbox-filter';
-      filterInput.placeholder = String(options.filterPlaceholder || 'Filter options');
-      filterInput.setAttribute('aria-label', String(options.filterAriaLabel || options.filterPlaceholder || 'Filter options'));
+      filterInput.placeholder = String(options.filterPlaceholder || jt('inventory.anchoredListbox.filterOptions', 'Filter options'));
+      filterInput.setAttribute('aria-label', String(options.filterAriaLabel || options.filterPlaceholder || jt('inventory.anchoredListbox.filterOptions', 'Filter options')));
       filterInput.setAttribute('aria-controls', listEl.id);
       filterInput.addEventListener('input', function () { applyFilter(filterInput.value); });
       rootEl.appendChild(filterInput);

@@ -38,7 +38,7 @@ html[data-active-view="plugin"] .plugin-view {
 @media (max-width: 760px) {
   .plugin-view-trust-chrome { align-items: flex-start; flex-wrap: wrap; }
   .plugin-view-status { order: 3; width: 100%; }
-  .plugin-view-actions { margin-left: auto; }
+  .plugin-view-actions { margin-inline-start: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -63,8 +63,4 @@ html[data-active-view="plugin"] .plugin-view {
 
 .plugin-session-fallback p {
   margin: 0;
-}
-
-.hero-plugin-session .prompt-grid {
-  display: none !important;
 }

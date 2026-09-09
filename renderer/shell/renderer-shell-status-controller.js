@@ -6,6 +6,7 @@
   }
   root.rendererShellStatusControllerUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function createShellStatusController(deps) {
     const { state } = deps;
@@ -101,26 +102,26 @@
     const BACKEND_NOTICES = {
       retrying: {
         tone: 'warning',
-        title: 'Reconnecting',
-        message: 'Having trouble connecting to the backend. Retrying automatically.',
+        title: jt('titlebar.status.reconnecting', 'Reconnecting'),
+        message: jt('titlebar.status.reconnectingMessage', 'Having trouble connecting to the backend. Retrying automatically.'),
         actions: [],
       },
       model_unavailable: {
         tone: 'danger',
-        title: 'Model failed to load',
-        message: 'Send a message to retry, or pick another model in Settings.',
+        title: jt('titlebar.status.modelLoadFailed', 'Model failed to load'),
+        message: jt('titlebar.status.modelLoadFailedMessage', 'Send a message to retry, or pick another model in Settings.'),
         actions: ['retry', 'models'],
       },
       failed: {
         tone: 'danger',
-        title: 'Backend connection failed',
-        message: 'Jenny could not reach its runtime. Check the logs for details.',
+        title: jt('titlebar.status.backendConnectionFailed', 'Backend connection failed'),
+        message: jt('titlebar.status.backendConnectionFailedMessage', 'Jenny could not reach its runtime. Check the logs for details.'),
         actions: ['retry', 'logs'],
       },
       stopped: {
         tone: 'warning',
-        title: 'Backend stopped',
-        message: 'The backend has stopped. Retry to bring it back.',
+        title: jt('titlebar.status.backendStopped', 'Backend stopped'),
+        message: jt('titlebar.status.backendStoppedMessage', 'The backend has stopped. Retry to bring it back.'),
         actions: ['retry'],
       },
     };
@@ -129,11 +130,11 @@
       const actions = [];
       for (const key of keys) {
         if (key === 'retry') {
-          actions.push({ id: 'backend-retry', label: 'Retry', kind: 'primary', onClick: () => { retryBackendStart(); } });
+          actions.push({ id: 'backend-retry', label: jt('common.retry', 'Retry'), kind: 'primary', onClick: () => { retryBackendStart(); } });
         } else if (key === 'models') {
-          actions.push({ id: 'backend-open-models', label: 'Open Models', kind: 'secondary', onClick: () => { openSettingsSection('models'); } });
+          actions.push({ id: 'backend-open-models', label: jt('titlebar.status.openModels', 'Open Models'), kind: 'secondary', onClick: () => { openSettingsSection('models'); } });
         } else if (key === 'logs') {
-          actions.push({ id: 'backend-open-logs', label: 'Open Diagnostics', kind: 'secondary', onClick: () => { openLogs(); } });
+          actions.push({ id: 'backend-open-logs', label: jt('titlebar.status.openDiagnostics', 'Open Diagnostics'), kind: 'secondary', onClick: () => { openLogs(); } });
         }
       }
       return actions;

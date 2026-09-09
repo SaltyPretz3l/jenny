@@ -11,6 +11,7 @@
   }
   root.rendererIdeTabsController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -119,8 +120,8 @@
         anchorY: rect.bottom,
         items,
         onActionError: (error) => {
-          showShellErrorToast(toErrorMessage(error, 'The tab action failed.'), {
-            title: 'Workspace',
+      showShellErrorToast(toErrorMessage(error, jt('ide.tabs.actionFailed', 'The tab action failed.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'),
             dedupeKey: 'ide:tab:menu',
           });
         },
@@ -249,26 +250,26 @@
       const isReviewSurface = isDiffTabId(path) || isPreviewTabId(path);
       const items = [];
       if (!isReviewSurface && isDirty(path)) {
-        items.push({ label: 'Compare with Saved', action: () => openUnsavedCompare(path) });
+        items.push({ label: jt('ide.tabs.compareWithSaved', 'Compare with Saved'), action: () => openUnsavedCompare(path) });
       }
       items.push(
-        { label: 'Close', action: () => closeTab(path) },
-        { label: 'Close Others', action: () => closeOtherTabs(path), disabled: tabPaths().length < 2 },
-        { label: 'Close Saved', action: () => closeSavedTabs() },
-        { label: 'Close All', action: () => closeAllTabs() }
+        { label: jt('common.close', 'Close'), action: () => closeTab(path) },
+        { label: jt('ide.tabs.closeOthers', 'Close Others'), action: () => closeOtherTabs(path), disabled: tabPaths().length < 2 },
+        { label: jt('ide.tabs.closeSaved', 'Close Saved'), action: () => closeSavedTabs() },
+        { label: jt('ide.tabs.closeAll', 'Close All'), action: () => closeAllTabs() }
       );
       if (!isReviewSurface) {
         // Pin/Unpin clamps a file tab to the left of the strip (compact, hard to
         // close by accident, spared by Close Others / Close All).
         items.push(
           { separator: true },
-          { label: isPinned(path) ? 'Unpin' : 'Pin', action: () => togglePin(path) }
+          { label: isPinned(path) ? jt('ide.tabs.unpin', 'Unpin') : jt('ide.tabs.pin', 'Pin'), action: () => togglePin(path) }
         );
         // Copy Path / Copy Relative Path / OS reveal ride in through
         // buildExtraMenuItems (the controller's shared path utilities).
         items.push(
           { separator: true },
-          { label: 'Reveal in Explorer View', action: () => revealInExplorer(path) }
+          { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => revealInExplorer(path) }
         );
         items.push(...buildExtraMenuItems(path));
       }
@@ -278,8 +279,8 @@
         anchorY: event.clientY,
         items,
         onActionError: (error) => {
-          showShellErrorToast(toErrorMessage(error, 'The tab action failed.'), {
-            title: 'Workspace',
+      showShellErrorToast(toErrorMessage(error, jt('ide.tabs.actionFailed', 'The tab action failed.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'),
             dedupeKey: 'ide:tab:menu',
           });
         },

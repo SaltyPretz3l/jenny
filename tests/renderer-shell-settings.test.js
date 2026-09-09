@@ -475,7 +475,7 @@ test('Session Tools renders and saves the default run mode for new chats', async
   assert.deepEqual([...select.options].map((option) => option.textContent), ['Ask', 'Auto', 'Plan']);
   const fieldText = doc.querySelector('[data-default-run-mode-field]').textContent;
   assert.match(fieldText, /Jenny asks before running tools that change things\./);
-  assert.match(fieldText, /Python, blocked commands, and explicit denies still prompt\./);
+  assert.match(fieldText, /Python and explicit denies still ask; blocked commands are refused\./);
   assert.match(fieldText, /Read-only: Jenny plans first and presents it before acting\./);
   assert.match(fieldText, /Applies to new chats; the composer switcher changes the current chat\./);
 
@@ -502,6 +502,15 @@ test('a fresh chat projects an auto default onto its first send', async (t) => {
   input.value = 'Use the configured default';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+
+  // The first Auto send in a renderer lifetime asks once before anything runs.
+  assert.equal(shell.__state.chatCalls.length, 0, 'no send before the Auto confirmation');
+  const confirmButton = window.document.querySelector(
+    '#composerAutoRunConfirmOverlay [data-ide-confirm-action="confirm"]'
+  );
+  assert.ok(confirmButton, 'the Auto run confirmation dialog is shown');
+  confirmButton.click();
   await waitForUi(window, 30);
 
   assert.equal(shell.__state.chatCalls[0].approvalMode, 'auto_run');

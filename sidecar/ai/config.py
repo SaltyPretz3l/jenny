@@ -41,11 +41,16 @@ from sidecar.ai.config_parsing import (
     _normalize_tool_policy_snapshot,
     _normalize_tool_search_mode,
     _normalize_tool_search_threshold_pct,
+    _normalize_ui_language,
     _parse_fallback_models,
     _parse_mcp_servers,
     codex_cli_unavailable_reason,  # noqa: F401  (re-exported for backward-compat imports)
 )
+from sidecar.ai.execution_policy import (
+    desktop_policy_from_config,
+)
 from sidecar.ai.feature_flags import normalize_feature_flags
+from sidecar.ai.host_policy import host_policy_from_config
 from sidecar.ai.mode_policy import normalize_mode
 from sidecar.ai.personality import normalize_assistant_name
 
@@ -95,6 +100,10 @@ def resolve_effective_max_tokens(
     return config_max_tokens or fallback
 
 
+def _parse_ui_language(raw_config: dict[str, Any]) -> str:
+    return _normalize_ui_language(raw_config.get("ui_language"))
+
+
 def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     if not isinstance(raw_config, dict):
         return RuntimeConfig()
@@ -124,6 +133,14 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         )
 
     engine_type = _as_non_empty_string(raw_config.get("engine_type")) or "mock"
+    host_policy = host_policy_from_config(raw_config)
+    host_mode = host_policy.mode
+    host_execution_policy_version = host_policy.version
+    host_execution_worker_enabled = _as_bool(
+        raw_config.get("host_execution_worker_enabled"), default=False
+    )
+    desktop_execution_policy = desktop_policy_from_config(raw_config)
+    desktop_execution_policy_version = desktop_execution_policy.version
     raw_model = raw_config.get("model")
     explicit_blank_model = isinstance(raw_model, str) and not raw_model.strip()
     normalized_model = _as_non_empty_string(raw_model)
@@ -508,6 +525,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_confirm_side_effects"),
         default=True,
     )
+    # Hosted filesystem mutations always enter the ordinary one-call approval
+    # path, regardless of a desktop auto-approval preference.
+    if host_policy.enforced:
+        tools_confirm_side_effects = True
     tools_web_enabled = _as_bool(raw_config.get("tools_web_enabled"), default=False)
     tools_image_read_enabled = _as_bool(
         raw_config.get("tools_image_read_enabled"),
@@ -648,12 +669,46 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     )
     crash_reporting_opt_in = _as_bool(raw_config.get("crash_reporting_opt_in"), default=False)
     feature_flags = normalize_feature_flags(raw_config.get("feature_flags"))
+    if host_policy.enforced:
+        # These hooks call back into Electron or invoke repository tooling. A
+        # hosted sidecar has no Electron bridge and must not inherit forged
+        # feature flags from a server request.
+        feature_flags = dict(feature_flags or {})
+        feature_flags["auto_checkpoint"] = False
+        feature_flags["verification_gate"] = False
+        tools_verify_enabled = False
+    if desktop_execution_policy.enforced:
+        # The sandbox keeps managed/local inference alive while closing every
+        # sidecar-owned execution path.  The command descriptor is advertised
+        # separately and is routed through the Electron bridge.
+        feature_flags = dict(feature_flags or {})
+        feature_flags["auto_checkpoint"] = False
+        feature_flags["verification_gate"] = False
+        feature_flags["git_tracking"] = False
+        repo_delta_resume_enabled = False
+        tools_verify_enabled = False
+        tools_worktree_enabled = False
+        tools_subagents_enabled = False
+        tools_subagent_batch_enabled = False
+        tools_python_runtime_enabled = False
+        tools_lsp_enabled = False
+        tools_automations_enabled = False
+        tools_mcp_resources_enabled = False
+        mcp_sse_enabled = False
+        electron_tool_bridge_enabled = True
+        # Keep the user-facing command descriptor available.  The builtin
+        # subprocess receives a separate shell-disabled argv below.
+        tools_shell_enabled = True
     fallback_models = _parse_fallback_models(raw_config.get("fallback_models"))
     app_profile = _as_non_empty_string(raw_config.get("app_profile")) or ""
 
     return RuntimeConfig(
         engine_type=engine_type,
         model=model,
+        host_mode=host_mode,
+        host_execution_policy_version=host_execution_policy_version,
+        host_execution_worker_enabled=host_execution_worker_enabled,
+        desktop_execution_policy_version=desktop_execution_policy_version,
         context_length=context_length,
         context_length_override=context_length_override,
         ollama_models_dir=ollama_models_dir,
@@ -702,6 +757,8 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         reasoning_effort=reasoning_effort,
         session_start_date=session_start_date,
         safety_mode=safety_mode,
+        ui_language=_parse_ui_language(raw_config),
+        use_24_hour_time=raw_config.get("use_24_hour_time") is True,
         tool_search_mode=tool_search_mode,
         tool_search_auto_threshold_pct=tool_search_auto_threshold_pct,
         max_tools_per_turn=max_tools_per_turn,

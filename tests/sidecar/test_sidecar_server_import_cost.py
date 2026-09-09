@@ -73,6 +73,10 @@ def _sidecar_modules_after_server_import() -> set[str]:
 def test_server_import_graph_stays_within_module_budget() -> None:
     loaded = _sidecar_modules_after_server_import()
 
+    assert loaded.isdisjoint({
+        "sidecar.ai.routing.preview_vision",
+        "sidecar.ai.tools.preview_image",
+    }), "Preview helpers must load on use rather than during server startup"
     assert len(loaded) <= _MAX_SIDECAR_MODULES, (
         f"importing sidecar.server loaded {len(loaded)} sidecar modules; "
         f"the limit is {_MAX_SIDECAR_MODULES}. Investigate the new eager import "

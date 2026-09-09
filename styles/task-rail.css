@@ -5,7 +5,7 @@
 .chat-timeline-utility-count {
   position: absolute;
   top: -4px;
-  right: -5px;
+  inset-inline-end: -5px;
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
@@ -209,7 +209,9 @@
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row-actions {
   justify-content: flex-end;
-  margin: 8px 27px 0 29px;
+  margin-block: 8px 0;
+  margin-inline-start: 29px;
+  margin-inline-end: 27px;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor {

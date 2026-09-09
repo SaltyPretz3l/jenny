@@ -191,13 +191,14 @@
         flagKeys: Object.keys(visibleFlags || {}).filter((key) => visibleFlags[key]),
       });
       if (visible) {
-        queueRender(visibleFlags, options);
+        queueRender({ ...visibleFlags, chrome: true }, options);
         return;
       }
       if (renderCurrentMessagesWhenHidden) {
         queueRender({
           ...visibleFlags,
           full: false,
+          chrome: true,
         }, options);
         return;
       }

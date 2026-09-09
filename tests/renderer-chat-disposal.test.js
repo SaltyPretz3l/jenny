@@ -209,8 +209,6 @@ function createPipelineHarness() {
       refreshActiveSurfaceEffect() {},
       appendClientLog() {},
       renderHeader() {},
-      renderPrompts() {},
-      stopFallbackRotation() {},
     },
   });
   return { pipeline, uiRuntime, spriteRuntime, state };

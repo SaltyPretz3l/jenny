@@ -2,9 +2,21 @@
 
 Jenny is a desktop AI assistant that runs on your computer. She can help you write code, edit files, run commands, and make charts and diagrams. You choose the model, the project folder, and the permissions for her tools. You can also change her name and personality.
 
-With a local model, Jenny processes your prompts on your computer and saves conversations there. You don't need an account or API key for local chat. [Ollama](https://ollama.com/) runs the model; [vLLM](https://docs.vllm.ai/) is another supported option.
+With a local model, Jenny processes your prompts locally and saves conversations on your computer. You can use [Ollama](https://ollama.com/), [vLLM](https://docs.vllm.ai/), or an existing OpenAI-compatible server on this computer or your private network. Ollama is optional.
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
+
+## 1.1 preview
+
+The next feature release is being prepared as **1.1.0**. Integrated source adds
+19 interface languages with Arabic RTL, an optional 24-hour clock, bulk chat
+management, clearer waiting states, improved artifact/preview workflows and
+explicit update controls. See the [unreleased notes](RELEASE_NOTES.md).
+
+The latest published installer remains 1.0.0 until a new release is published.
+Source support, downloadable assets and platform qualification are listed
+separately below. Translations are model-authored and may fall back to English
+for newer copy.
 
 ## Demo
 
@@ -39,32 +51,32 @@ Download **[Jenny-Setup-x64.exe](https://github.com/SaltyPretz3l/jenny/releases/
 1. Click **More info**.
 2. Click **Run anyway**.
 
-You can check a download against the SHA-256 file hashes in [RELEASE_NOTES.md](RELEASE_NOTES.md). Automatic updates are checked against the release's SHA512 manifest, downloaded over HTTPS, before installation.
+You can check a download against the SHA-256 file hashes in [RELEASE_NOTES.md](RELEASE_NOTES.md). Updates are checked only when requested in Settings; downloads are validated against the release's SHA512 metadata over HTTPS before explicit installation.
 
 ### First launch
 
-Jenny's setup walks you through installing Ollama, downloading a model, choosing a project folder, and setting up your assistant. It checks the Ollama download against its SHA-256 hash and recommends a model based on your hardware. Allow time for the model download: it can be several gigabytes.
+Choose a project folder and one model route: **Use Ollama on this computer** or **Connect an existing server**. The existing-server route needs no Ollama installation or model download. If you choose Ollama, Jenny checks its download against its SHA-256 hash and recommends a model based on your hardware; model downloads can be several gigabytes.
 
 - **Project folder:** choose the folder Jenny will work in, called the *workspace root* in the app. Her tools stay blocked until you choose one.
-- **Model:** setup downloads a model for you and shows its progress. You can choose another model already installed in Ollama from the setup tile or Settings.
+- **Model:** select or download an Ollama model, or open **Connect an existing server**, select your provider, enter its URL, validate, and save. Local/private-network vLLM and OpenAI-compatible endpoints are supported; endpoint availability and model readiness still need to pass validation.
 - **Personality:** choose balanced, concise, creative, or mentor, or write your own instructions. The default name is Jenny; you can change it.
 - **Other setup steps:** check the connection to your model and review the available skills.
 
 The setup tiles disappear when you're done. You can run setup again from **Settings → Account**.
 
-### macOS: available, but untested
+### macOS: experimental; installer not yet available
 
-Releases also include `Jenny-arm64.dmg` for Apple Silicon Macs. **The macOS build is produced automatically and has never been run by the maintainer. Windows is the supported platform.**
+The current public release has no macOS installer. The Apple Silicon build pipeline targets `Jenny-arm64.dmg` and `Jenny-arm64.zip`, but build repair does not establish download availability or real-hardware testing. Use source setup for now and check the [release assets](https://github.com/SaltyPretz3l/jenny/releases) for future availability. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
-- The app is unsigned, so Gatekeeper blocks it at first. Right-click **Jenny.app** → **Open** → **Open**, or clear the quarantine flag with `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
+- Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
-- Install Ollama from [ollama.com/download/mac](https://ollama.com/download/mac). Jenny's setup links there and checks again after you install it.
+- For the Ollama route, install it from [ollama.com/download/mac](https://ollama.com/download/mac). Existing-server users do not need it.
 
 ### Linux (experimental)
 
-Linux packages start with the next 1.0.x release; 1.0.0 has no Linux
-package, so run from source until then (see **Running from source**
-below). When available, download **`Jenny-x86_64.AppImage`** or
+Linux packages are candidates for 1.1.0; the published 1.0.0 release has no
+Linux package. Run from source until a release provides verified assets
+(see **Running from source** below). When available, download **`Jenny-x86_64.AppImage`** or
 **`Jenny-amd64.deb`** from the
 [releases page](https://github.com/SaltyPretz3l/jenny/releases) (they are
 listed only for releases whose Linux build succeeded).
@@ -95,9 +107,30 @@ unlocked Secret Service keyring such as gnome-keyring or KWallet. Local chat
 still works with the automatic local profile when no protected keyring is
 available.
 
-The Linux packages are built automatically and have been verified by the
-maintainer under WSLg only, not on a bare-metal desktop. Windows remains the
+Linux build and WSL/container evidence does not qualify a new installer.
+Installed-package and bare-metal acceptance remain release gates. Windows remains the
 supported platform; please [report problems](https://github.com/SaltyPretz3l/jenny/issues).
+
+## Docker localhost and browser hosting (experimental)
+
+Use the [guided Docker quick start](docs/operations/HOSTED_QUICKSTART.md): run
+`bash docker-setup.sh` or `.\docker-setup.ps1` from a source checkout. Docker
+builds the runtime and a terminal wizard configures your existing model server
+and owner login. Open `http://127.0.0.1:8080` on that computer; Tailscale is not
+required. Optional private HTTPS connects other devices to the same durable host.
+
+The browser host provides chat, typed file tools and one-off-approved commands
+in a separate offline disposable sandbox. Command file changes are discarded.
+Desktop IDE/terminal and plugin parity remain outside this MVP. See
+[hosting operations](docs/operations/HOSTED_JENNY.md) for qualification and recovery.
+
+### Optional desktop command sandbox
+
+The desktop app can also use a Docker command sandbox without becoming a
+browser host. It defaults off and requires a running Linux Docker engine.
+Commands operate on disposable workspace copies and discard their file changes;
+this mode does not provide terminal, MCP or executable-plugin parity. See
+[desktop sandbox setup and qualification](docs/operations/DESKTOP_COMMAND_SANDBOX.md).
 
 ## Running from source
 
@@ -109,12 +142,16 @@ Download or clone this repository, then open a terminal in the project folder.
 
 - **Node.js 22.23.2+ (22.x) or 24.19.0+ (24.x)** and npm 10+
 - **Python 3.11 or newer**
-- **Ollama** to run a local model
-- Roughly **8–10 GB of free disk space** for the default model download
+- **Ollama or an existing supported model server**
+- Roughly **8–10 GB of free disk space** if downloading the default model
 
 ### Guided setup
 
 The setup script checks what is installed, installs dependencies, creates a Python environment in `.venv`, checks that Ollama is running, downloads a model, and offers to launch Jenny. You can run it again later; completed steps are skipped.
+
+**Already have a model server?** Run `npm run setup -- --existing-server`. With the platform wrappers, use `./setup.sh --existing-server` or `./setup.ps1 -ExistingServer`. This installs Jenny's application dependencies but skips all Ollama operations and model downloads. Configure the URL with **Connect an existing server** after launch. `--existing-server` cannot be combined with `--model`; `--skip-model` alone only skips the model download.
+
+Setup forwards this choice when launching Jenny, suppressing automatic Ollama daemon startup for that app process. To launch later with the same behavior, run `npm run dev -- --existing-server`. This launch flag does not alter saved settings or bypass endpoint validation.
 
 **Windows:** run this in PowerShell:
 
@@ -241,12 +278,20 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Release 1.0.0
+### Source version 1.1.0
 
-This release includes the Windows installer, experimental Linux packages from the releases page, guided setup, local coding tools with live command output, and support for plugins. No plugins are bundled; first-party plugins will be released separately when ready. Crash reporting is optional and off by default.
+This source tree includes guided setup, local coding tools with live command output, experimental platform and Docker workflows, and the plugin host. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. No plugins are bundled. Crash reporting is optional and off by default.
 
 See [RELEASE_NOTES.md](RELEASE_NOTES.md) for release details, earlier changes, and SHA-256 download hashes.
 
 ## License
 
 Jenny is free to use under the [MIT License](LICENSE), without warranty. Third-party credits are in [NOTICE](NOTICE).
+
+### Updates
+
+Use Settings → About & Updates → Check for Updates. This contacts GitHub and
+requires internet access; there is no startup polling. Only published stable
+releases count. Download and Restart and Install are separate explicit actions.
+Manual-install formats can discover versions and open GitHub Releases. Unsigned
+installer integrity relies on SHA512 over HTTPS, not independent publisher signing.

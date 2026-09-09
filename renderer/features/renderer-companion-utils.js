@@ -5,6 +5,8 @@
   }
   root.rendererCompanionUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   // Load-time ambient fallback only. Per-manager code shadows this with the
   // owner document of its deps.dom hosts -- see createCompanionManager.
@@ -218,10 +220,6 @@
       container.append(stack);
     }
 
-    function pluralize(count, singular, plural = `${singular}s`) {
-      return `${count} ${count === 1 ? singular : plural}`;
-    }
-
     function createMetadataBadge(text, modifier) {
       const badge = documentRef.createElement('span');
       badge.className = `home-loop-badge${modifier ? ` home-loop-badge--${modifier}` : ''}`;
@@ -238,7 +236,7 @@
       details.className = 'home-loop-history';
       const summary = documentRef.createElement('summary');
       summary.className = 'home-loop-history-toggle';
-      summary.textContent = `History (${entries.length})`;
+      summary.textContent = jt('companion.openLoops.historyCount', 'History ({count})', { count: entries.length });
       details.append(summary);
 
       const list = documentRef.createElement('div');
@@ -249,7 +247,7 @@
         const when = new Date(entry.at);
         const label = Number.isNaN(when.valueOf())
           ? entry.at
-          : when.toLocaleString();
+          : when.toLocaleString(globalThis.jennyI18n?.tag?.());
         const kind = documentRef.createElement('div');
         kind.className = 'home-summary-label';
         kind.textContent = `${entry.kind} / ${label}`;
@@ -313,8 +311,9 @@
         return '';
       }
       /* Mirrors companion-service's short deferred format. */
-      const time = parsed.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      return `Deferred until ${parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+      const date = parsed.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric' });
+      const time = parsed.toLocaleTimeString(globalThis.jennyI18n?.tag?.(), { hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit' });
+      return jt('companion.followUps.deferredUntil', 'Deferred until {date}, {time}', { date, time });
     }
 
     function renderOpenLoopActionRow(loop) {
@@ -343,15 +342,15 @@
       }
       item.dataset.loopStatus = loop.status;
       item.dataset.loopDue = loop.isDue ? 'true' : 'false';
-      const kickerParts = ['open loop'];
+      const kickerParts = [jt('companion.openLoops.kicker', 'open loop')];
       if (loop.isDue) {
-        kickerParts.push('due now');
+        kickerParts.push(jt('companion.openLoops.dueNow', 'due now'));
       } else if (loop.status === 'archived') {
-        kickerParts.push('archived');
+        kickerParts.push(jt('companion.openLoops.archived', 'archived'));
       } else if (loop.status === 'deferred') {
-        kickerParts.push('deferred');
+        kickerParts.push(jt('companion.openLoops.deferred', 'deferred'));
       } else if (loop.status === 'resolved') {
-        kickerParts.push('completed');
+        kickerParts.push(jt('companion.openLoops.completed', 'completed'));
       }
       item.append(createSummaryText('home-summary-label', kickerParts.join(' / ')));
       item.append(createSummaryText('home-summary-value', stripInlineMarkdownLabel(loop.title)));
@@ -415,8 +414,8 @@
       }
       if (homeArchivedLoopToggle) {
         homeArchivedLoopToggle.setAttribute('aria-expanded', archivedSectionExpanded ? 'true' : 'false');
-        homeArchivedLoopToggle.textContent = archivedSectionExpanded ? 'Hide' : 'Show';
-        homeArchivedLoopToggle.title = archivedSectionExpanded ? 'Hide archived open loops' : 'Show archived open loops';
+        homeArchivedLoopToggle.textContent = archivedSectionExpanded ? jt('common.hide', 'Hide') : jt('common.show', 'Show');
+        homeArchivedLoopToggle.title = archivedSectionExpanded ? jt('companion.openLoops.hideArchivedTitle', 'Hide archived open loops') : jt('companion.openLoops.showArchivedTitle', 'Show archived open loops');
       }
     }
 
@@ -461,7 +460,7 @@
       if (!companionState.loaded) {
         homeOpenLoopCount.textContent = '0';
         homeOpenLoopCount.hidden = true;
-        homeOpenLoopStatus.textContent = 'Loading open loops...';
+        homeOpenLoopStatus.textContent = jt('companion.openLoops.loading', 'Loading open loops...');
         setSectionHidden(homeDeferredSection, true);
         setSectionHidden(homeRecentResolvedSection, true);
         setSectionHidden(homeArchivedSection, true);
@@ -480,9 +479,9 @@
       homeOpenLoopCount.hidden = activeCount === 0;
       homeOpenLoopStatus.textContent = activeCount
         ? dueCount
-          ? `${pluralize(activeCount, 'active')}, ${pluralize(dueCount, 'due now', 'due now')}.`
-          : `${pluralize(activeCount, 'active')}.`
-        : 'All loops closed.';
+          ? jtn('companion.openLoops.activeDueCount', activeCount, { activeCount, dueCount }, '{activeCount} active, {dueCount} due now.', '{activeCount} active, {dueCount} due now.')
+          : jtn('companion.openLoops.activeCount', activeCount, { count: activeCount }, '{count} active.', '{count} active.')
+        : jt('companion.openLoops.allClosed', 'All loops closed.');
       renderOpenLoopList(companionState);
 
       /* Empty subsections collapse entirely — when everything is closed the
@@ -493,8 +492,8 @@
       }
       if (homeDeferredLoopStatus) {
         homeDeferredLoopStatus.textContent = deferredCount
-          ? `${pluralize(deferredCount, 'deferred')}. Returns here when due.`
-          : 'Nothing set aside.';
+          ? jtn('companion.openLoops.deferredSummary', deferredCount, { count: deferredCount }, '{count} deferred. Returns here when due.', '{count} deferred. Returns here when due.')
+          : jt('companion.openLoops.nothingDeferred', 'Nothing set aside.');
       }
       renderDeferredLoopList(companionState);
 
@@ -508,7 +507,7 @@
          * empty-state copy. */
         homeRecentResolvedStatus.textContent = recentResolvedCount
           ? ''
-          : 'Nothing closed yet.';
+          : jt('companion.openLoops.nothingClosed', 'Nothing closed yet.');
       }
       renderRecentResolvedLoopList(companionState);
 
@@ -519,8 +518,8 @@
       }
       if (homeArchivedLoopStatus) {
         homeArchivedLoopStatus.textContent = archivedCount
-          ? `${pluralize(archivedCount, 'archived')}.`
-          : 'Nothing archived yet.';
+          ? jtn('companion.openLoops.archivedCount', archivedCount, { count: archivedCount }, '{count} archived.', '{count} archived.')
+          : jt('companion.openLoops.nothingArchived', 'Nothing archived yet.');
       }
       renderArchivedLoopList(companionState);
 

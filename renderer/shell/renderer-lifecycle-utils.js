@@ -5,6 +5,7 @@
   }
   root.rendererLifecycleUtils = factory(root.rendererLoggingUtils || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (loggingUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const attachmentQueueUtils = globalThis.rendererAttachmentQueueUtils || {};
   const sessionCacheUtils = globalThis.rendererSessionCacheUtils || {};
   const sessionLifecycleUtils = globalThis.rendererSessionLifecycleUtils || {};
@@ -47,7 +48,6 @@
     mergeRequestedRuntimePreferences,
   } = lifecycleFormatUtils;
   function createLocalDraftSessionId() { return `session_local_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`; }
-
   const activeViewPersistence = resolveLifecycleModule('rendererActiveViewPersistence', './renderer-active-view-persistence') || {};
   const readPersistedActiveView = typeof activeViewPersistence.readPersistedActiveView === 'function'
     ? activeViewPersistence.readPersistedActiveView
@@ -86,7 +86,7 @@
     const call = deps.callbacks;
     let disposed = false;
     const lifecycleFence = asyncFenceUtils.createDisposalFence();
-    const FWD_KEYS = ['renderComposerPopover', 'renderCommandPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderPrompts', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshTipsState', 'refreshOfflineState', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeSpriteHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
+    const FWD_KEYS = ['renderComposerPopover', 'renderCommandPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshTipsState', 'refreshOfflineState', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeSpriteHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
     const fwd = {};
     for (const k of FWD_KEYS) {
       fwd[k] = (...a) => (typeof call[k] === 'function' ? call[k](...a) : undefined);
@@ -400,7 +400,7 @@
         fwd.ensureSettingsSectionReady?.(activeSection);
         fwd.refreshSettingsSection?.(activeSection).catch((error) => {
           if (activeSection === 'personality') {
-            state.personality.loadStatus = `Unable to refresh workspace: ${error.message || String(error)}`;
+            state.personality.loadStatus = jt('personality.workspaceRefreshFailed', 'Unable to refresh workspace: {message}', { message: error.message || String(error) });
             fwd.renderPersonalityEditor();
           }
           appendClientLog('WARN', 'settings.refresh_section_failed', {
@@ -417,7 +417,9 @@
         fwd.renderMessages({ reason: catchup?.catchupRequired ? 'view_catchup' : 'view_activation' });
         fwd.renderComposerState();
         fwd.renderSessions();
+        const activatedSessionId = state.currentSessionId;
         requestAnimationFrame(() => {
+          if (disposed || state.ui.activeView !== 'chat' || state.currentSessionId !== activatedSessionId) return;
           chatInput.focus();
           fwd.updateComposerSafeOffset({
             force: true,
@@ -425,63 +427,8 @@
           });
           fwd.updateAssistantSpritePosition();
 
-          if (state.ui.morphStartRect) {
-            const startRect = state.ui.morphStartRect;
-            delete state.ui.morphStartRect;
-
-            /* Reduced motion: skip the morph flight — zeroed transitions never
-               fire transitionend, stranding the sprite until MORPH_SAFETY_MS. */
-            const motionPreferenceUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionPreferenceUtils) || null;
-            const skipMorphFlight = Boolean(motionPreferenceUtils && motionPreferenceUtils.prefersReducedMotion());
-            if (!skipMorphFlight) requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                const chatSprite = document.getElementById('chatAssistantSprite');
-                if (chatSprite) {
-                  const endRect = chatSprite.getBoundingClientRect();
-                  if (endRect.width > 0 && endRect.height > 0) {
-                    const overlay = document.createElement('div');
-                    overlay.className = 'presence-morph-overlay';
-                    overlay.style.top = `${startRect.top}px`;
-                    overlay.style.left = `${startRect.left}px`;
-                    overlay.style.width = `${startRect.width}px`;
-                    overlay.style.height = `${startRect.height}px`;
-                    document.body.appendChild(overlay);
-
-                    const originalOpacity = chatSprite.style.opacity;
-                    chatSprite.style.opacity = '0';
-
-                    overlay.offsetHeight; // trigger reflow
-
-                    overlay.classList.add('morphing');
-                    overlay.style.top = `${endRect.top}px`;
-                    overlay.style.left = `${endRect.left}px`;
-                    overlay.style.width = `${endRect.width}px`;
-                    overlay.style.height = `${endRect.height}px`;
-
-                    setTimeout(() => {
-                      overlay.style.opacity = '0';
-                    }, 260);
-
-                    /* Safety: if transitionend never fires (animation
-                       interruption, visibility change, reduced-motion
-                       toggle), clean up after a generous deadline so the
-                       overlay doesn't leak and the sprite stays visible. */
-                    const MORPH_SAFETY_MS = 800;
-                    const safetyTimer = setTimeout(() => {
-                      chatSprite.style.opacity = originalOpacity;
-                      if (overlay.parentNode) overlay.remove();
-                    }, MORPH_SAFETY_MS);
-
-                    overlay.addEventListener('transitionend', () => {
-                      clearTimeout(safetyTimer);
-                      chatSprite.style.opacity = originalOpacity;
-                      overlay.remove();
-                    }, { once: true });
-                  }
-                }
-              });
-            });
-          }
+          // The rail owns presence. Do not hide it behind a second, timed avatar.
+          delete state.ui.morphStartRect;
         });
       } else {
         fwd.hideAssistantSprite();
@@ -664,30 +611,6 @@
       : { refreshSnapshots: async () => {} };
     const refreshSnapshots = (options = {}) => snapshotRefresh.refreshSnapshots(options);
 
-    async function refreshSuggestions() {
-      if (state.backend.phase !== 'ready') return;
-      state.suggestions.requestId = (state.suggestions.requestId || 0) + 1;
-      var myRequestId = state.suggestions.requestId;
-      state.suggestions.status = 'loading';
-      fwd.renderPrompts();
-      try {
-        var result = await window.jennyShell.suggestions.generate();
-        if (state.suggestions.requestId !== myRequestId) return;
-        var items = Array.isArray(result?.suggestions) ? result.suggestions : [];
-        if (items.length > 0) {
-          state.suggestions.status = 'ready';
-          state.suggestions.items = items;
-        } else {
-          state.suggestions.status = 'error';
-        }
-      } catch (error) {
-        if (state.suggestions.requestId !== myRequestId) return;
-        state.suggestions.status = 'error';
-        appendClientLog('WARN', 'suggestions.refresh_failed', { message: error?.message || String(error) });
-      }
-      fwd.renderPrompts();
-    }
-
     async function bootstrap({ signalRendererReadyOnce = () => {} } = {}) {
       attachGlobalErrorBoundary();
       // The startup-audit probe buffers marks until this async config enables it.
@@ -711,7 +634,6 @@
       if (typeof document !== 'undefined' && document.documentElement?.dataset) {
         document.documentElement.dataset.activeView = String(state.ui?.activeView || '').trim() || 'chat';
       }
-      fwd.renderPrompts();
       fwd.renderAll();
       noteFirstRenderComplete();
       markStartupAudit('first-render');
@@ -763,7 +685,7 @@
             message: error?.message || String(error),
           });
           /* EH-W10: error-center-only intake route (no toast for pollers). */
-          fwd.reportError({ message: 'Offline readiness could not be refreshed.', dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
+          fwd.reportError({ message: jt('shell.home.offlineRefreshFailed', 'Offline readiness could not be refreshed.'), dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
         });
       }
 
@@ -920,7 +842,6 @@
         fwd.renderAll(); chatInput.focus();
       }
       appendClientLog('INFO', 'sessions.created', { sessionId: createdSessionId });
-      refreshSuggestions().catch((err) => { appendClientLog('WARN', 'sessions.refresh_suggestions_failed', { message: String(err?.message || err || '') }); });
       return createdSessionId
         && createdSessionId !== previousCurrentSessionId
         && !knownSessionIds.has(createdSessionId)
@@ -943,19 +864,26 @@
       appendClientLog('INFO', 'sessions.renamed', { sessionId });
     }
 
-    async function handleDeleteSession(sessionId) {
+    async function handleDeleteSession(sessionId, options = {}) {
       // Confirmation moved to the undo window: renderer-session-actions defers
       // this hard delete behind an Undo toast; callers reach it via that path.
       // Session deletion must not outrun a supervised plugin host. The backend
       // independently enforces the same invariant for non-renderer callers.
       const pluginSessions = globalThis.rendererPluginSessions?.instance || null;
-      if (pluginSessions && !(await pluginSessions.guardLeaveSession(sessionId, 'session_delete'))) {
-        return;
+      if (options.onlyIfIdle !== true && pluginSessions && !(await pluginSessions.guardLeaveSession(sessionId, 'session_delete'))) {
+        throw new Error('Session deletion was cancelled by the plugin.');
       }
       const sessionSummary = state.sessions.find((session) => session.id === sessionId) || null;
       const isOptimisticLocal = sessionSummary?.optimistic_local === true;
       const normalizedSessionId = String(sessionId || '').trim();
       const controllerPreflight = getMultiStreamController()?.getPreflight?.(normalizedSessionId) || null;
+      if (options.onlyIfIdle === true && (controllerPreflight
+        || getMultiStreamController()?.getActiveStreamIdForCancel?.(normalizedSessionId)
+        || state.sendOutboxBySession?.get?.(normalizedSessionId)?.length
+        || state.sendPreflight?.sessionId === normalizedSessionId
+        || state.sendPreflight?.optimisticSessionId === normalizedSessionId)) {
+        return { id: sessionId, deleted: false, reason: 'session_busy' };
+      }
       if (controllerPreflight) controllerPreflight.discarded = true;
       if (state.sendPreflight && (
         String(state.sendPreflight.sessionId || '').trim() === normalizedSessionId
@@ -963,21 +891,26 @@
       )) {
         state.sendPreflight.discarded = true;
       }
-      await clearSessionStreamState(sessionId, { cancelActive: true });
+      if (options.onlyIfIdle !== true) await clearSessionStreamState(sessionId, { cancelActive: true });
       if (!isOptimisticLocal) {
-        const deleteResult = await window.jennyShell.sessions.delete(sessionId);
+        const deleteResult = await window.jennyShell.sessions.delete(sessionId, options);
+        if (options.onlyIfIdle === true && (deleteResult?.id !== sessionId || deleteResult?.deleted !== true)) {
+          return { id: sessionId, deleted: false, reason: deleteResult?.reason || 'delete_unacknowledged' };
+        }
         if (
           deleteResult
           && typeof deleteResult === 'object'
           && Object.prototype.hasOwnProperty.call(deleteResult, 'deleted')
           && deleteResult.deleted !== true
         ) {
+          if (options.onlyIfIdle === true) return deleteResult;
           throw new Error('Session could not be deleted because the session store refused the delete request.');
         }
       }
       // tombstone: the backend delete above succeeded (or the session was
       // optimistic-local and never reached the backend), so a stale list
       // snapshot must not resurrect the id (Audit A2).
+      if (options.onlyIfIdle === true) await clearSessionStreamState(sessionId, { cancelActive: false });
       fwd.removeSessionState(normalizedSessionId, { tombstone: true });
       if (typeof call.invalidateSessionArtifacts === 'function') {
         call.invalidateSessionArtifacts(sessionId);
@@ -986,6 +919,7 @@
       await loadSessions();
       fwd.renderAll();
       appendClientLog('INFO', 'sessions.deleted', { sessionId });
+      return { id: sessionId, deleted: true };
     }
 
     const attachmentQueueController = attachmentQueueUtils.createAttachmentQueueController?.({ state, windowRef: window, constants: { TOAST_SOURCE }, callbacks: { clearAttachmentNotice: fwd.clearAttachmentNotice, buildAttachmentToastMessage: fwd.buildAttachmentToastMessage, showToastMessage: fwd.showToastMessage, renderAttachmentTray: fwd.renderAttachmentTray, renderComposerState: (...a) => fwd.renderComposerState(...a), closeComposerPopover, appendClientLog } }) || {};
@@ -1008,7 +942,7 @@
     }) || null;
     window.rendererComposerSessionStateController = composerSessionStateController;
 
-    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, closeCommandPopover, openCommandPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleJumpToLastPrompt, handleCreateSession, handleRenameSession, handleDeleteSession, refreshSuggestions, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
+    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, closeCommandPopover, openCommandPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleJumpToLastPrompt, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
   }
 
   return { createLifecycleController };

@@ -16,7 +16,7 @@ const {
 test('v23 migration seeds the home key with defaults on older payloads', () => {
   const state = normalizeState({ version: 22 });
 
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   assert.deepEqual(state.home, {
     links: [],
     weather: { lat: null, lon: null, units: 'metric' },

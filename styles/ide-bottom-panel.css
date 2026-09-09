@@ -92,7 +92,7 @@
 }
 
 .ide-bottom-collapse {
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 4px 8px;
   border: 0;
   border-radius: 4px;

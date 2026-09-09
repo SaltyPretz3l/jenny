@@ -259,8 +259,8 @@
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-expand-overlay {
   position: absolute;
   bottom: 0;
-  left: 0;
-  right: 0;
+  left: 0; /* rtl:physical */
+  right: 0; /* rtl:physical */
   width: 100%;
   border: 0;
   height: 64px;
@@ -276,8 +276,8 @@
   transition: 
     background var(--motion-duration-regular) var(--motion-ease-standard),
     height var(--motion-duration-regular) var(--motion-ease-standard);
-  border-bottom-left-radius: var(--markdown-code-block-radius);
-  border-bottom-right-radius: var(--markdown-code-block-radius);
+  border-bottom-left-radius: var(--markdown-code-block-radius); /* rtl:physical */
+  border-bottom-right-radius: var(--markdown-code-block-radius); /* rtl:physical */
 }
 
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-block.collapsible:not(.collapsed) .markdown-code-expand-overlay {
@@ -376,7 +376,9 @@
 /* —— Blockquotes —— */
 .chat-bubble-markdown blockquote {
   margin: var(--markdown-flow-gap) 0;
-  padding: 0 0 0 1.25em;
+  padding-block: 0;
+  padding-inline-end: 0;
+  padding-inline-start: 1.25em;
   border: 0;
   background: transparent;
   border-radius: 0;
@@ -391,7 +393,7 @@
 .chat-bubble-markdown ul,
 .chat-bubble-markdown ol {
   margin: var(--markdown-flow-gap) 0;
-  padding-left: 1.6em;
+  padding-inline-start: 1.6em;
 }
 
 .chat-bubble-markdown li {
@@ -406,7 +408,7 @@
 .chat-bubble-markdown ol { list-style-type: decimal; }
 
 .chat-bubble-markdown .contains-task-list {
-  padding-left: 0.2em;
+  padding-inline-start: 0.2em;
   list-style: none;
 }
 
@@ -466,7 +468,7 @@
 .chat-bubble-markdown td {
   padding: var(--markdown-table-cell-padding-block) var(--markdown-table-cell-padding-inline);
   border: 0;
-  text-align: left;
+  text-align: start;
 }
 
 .chat-bubble-markdown :is(th, td):first-child { padding-inline-start: 0; }
@@ -474,8 +476,8 @@
 .chat-bubble-markdown tbody tr:last-child { border-bottom: 0; }
 
 .chat-bubble-markdown :is(th, td)[align="center"] { text-align: center; }
-.chat-bubble-markdown :is(th, td)[align="right"] { text-align: right; }
-.chat-bubble-markdown :is(th, td)[align="left"] { text-align: left; }
+.chat-bubble-markdown :is(th, td)[align="right"] { text-align: right; /* rtl:physical */ }
+.chat-bubble-markdown :is(th, td)[align="left"] { text-align: left; /* rtl:physical */ }
 
 .chat-bubble-markdown th {
   font-weight: var(--tl-weight-label);
@@ -599,7 +601,7 @@
   gap: 2px;
   position: absolute;
   top: 8px;
-  right: 8px;
+  inset-inline-end: 8px;
   z-index: 2;
   background: var(--bg-surface);
   border: 1px solid var(--line);
@@ -657,8 +659,8 @@
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-block > .markdown-code-block.markdown-mermaid-source,
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-block > .markdown-code-block.markdown-mermaid-source.markdown-mermaid-source-collapsed {
   border-top: 1px solid var(--markdown-code-header-border);
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+  border-top-left-radius: 0; /* rtl:physical */
+  border-top-right-radius: 0; /* rtl:physical */
   margin: 0;
 }
 
@@ -680,7 +682,7 @@
   border-bottom: 1px solid var(--markdown-code-block-border);
   background: transparent;
   font-family: inherit;
-  text-align: left;
+  text-align: start;
   user-select: none;
 }
 
@@ -737,7 +739,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   user-select: none;
 }
@@ -757,7 +759,7 @@
   content: '▶';
   font-size: calc(9px * var(--chat-zoom-factor, 1));
   display: inline-block;
-  margin-right: 6px;
+  margin-inline-end: 6px;
   transition: transform var(--transition-fast);
 }
 
@@ -824,7 +826,7 @@ body.mermaid-fullscreen-open {
 .mermaid-fullscreen-shell .mermaid-controls {
   position: absolute;
   top: 14px;
-  right: 14px;
+  inset-inline-end: 14px;
   opacity: 1;
   pointer-events: auto;
 }

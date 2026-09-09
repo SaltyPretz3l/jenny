@@ -5,6 +5,8 @@
   }
   root.rendererSkillsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function createSkillsManager(deps) {
@@ -45,7 +47,7 @@
 
     function normalizeWarning(warning) {
       const source = warning && typeof warning === 'object' && !Array.isArray(warning) ? warning : {};
-      return { message: text(source.message) || 'A skill file could not be loaded.' };
+      return { message: text(source.message) || jt('skills.errors.fileLoadFailed', 'A skill file could not be loaded.') };
     }
 
     function normalizeScope(scope) {
@@ -101,24 +103,23 @@
 
     function skillRowMarkup(entry) {
       const command = entry.command || 'unavailable';
-      const description = entry.description || 'No description provided.';
-      const toolCount = entry.allowedTools.length ? ` · ${entry.allowedTools.length} tools` : '';
+      const description = entry.description || jt('skills.descriptionUnavailable', 'No description provided.');
+      const toolCount = entry.allowedTools.length ? escapeHtml(jt('skills.allowedToolsCount', ' · {count} tools', { count: entry.allowedTools.length })) : '';
       return '<div class="settings-field-row skills-settings-row'
         + (entry.enabled ? '' : ' settings-field-row--muted') + '" data-skill-id="' + escapeHtml(entry.id) + '">'
         + '<span class="settings-field-row-text"><strong>' + escapeHtml(entry.name) + '</strong><small>/'
         + escapeHtml(command) + ' · ' + escapeHtml(description) + escapeHtml(toolCount) + '</small></span>'
         + (toggleSwitch?.({ id: 'skillToggle:' + entry.id, checked: entry.enabled,
-          label: entry.name + ' enabled', className: 'skills-settings-row-toggle' }) || '') + '</div>';
+          label: jt('skills.settings.skillEnabled', '{name} enabled', { name: entry.name }), className: 'skills-settings-row-toggle' }) || '') + '</div>';
     }
 
     function autoIndexRowMarkup(skillsState) {
-      const autoCopy = 'Adds a short skill index to every turn (~900 tokens). '
-        + 'Auto: on for cloud models, off for local models.';
+      const autoCopy = jt('skills.autoIndex.description', 'Adds a short skill index to every turn (~900 tokens). Auto: on for cloud models, off for local models.');
       return '<div class="settings-field-row skills-settings-row" data-skills-auto-index-row>'
-        + '<span class="settings-field-row-text"><strong>Let Jenny choose skills automatically</strong><small>'
-        + autoCopy + '</small></span>'
+        + '<span class="settings-field-row-text"><strong>' + jt('skills.settings.autoChoose', 'Let Jenny choose skills automatically') + '</strong><small>'
+        + escapeHtml(autoCopy) + '</small></span>'
         + (toggleSwitch?.({ id: 'skillsAutoIndexToggle', checked: skillsState.settings.autoIndex === 'on',
-          label: 'Let Jenny choose skills automatically', className: 'skills-settings-row-toggle' }) || '') + '</div>';
+          label: jt('skills.settings.autoChoose', 'Let Jenny choose skills automatically'), className: 'skills-settings-row-toggle' }) || '') + '</div>';
     }
 
     function warningMarkup(skillsState, scopes) {
@@ -126,9 +127,8 @@
         ? skillsState.warnings
         : scopes.flatMap((scope) => scope.warnings);
       if (!warnings.length) return '';
-      const noun = warnings.length === 1 ? 'skill file' : 'skill files';
-      return '<p class="settings-note" data-skills-warning>' + warnings.length + ' ' + noun
-        + ' skipped: ' + escapeHtml(warnings[0].message) + '</p>';
+      return '<p class="settings-note" data-skills-warning>'
+        + escapeHtml(jtn('skills.warnings.skippedCount', warnings.length, { count: warnings.length, message: warnings[0].message }, '{count} skill file skipped: {message}', '{count} skill files skipped: {message}')) + '</p>';
     }
 
     function scopeByName(skillsState, scopeName) {
@@ -139,31 +139,31 @@
       const blocked = scope.blocked || scope.status === 'blocked';
       return '<span class="skills-folder-row-controls">'
         + (toggleSwitch?.({ id: toggleId, checked: scope.enabled,
-          label: (scope.scope === 'user' ? 'Personal' : 'Project') + ' skills enabled',
+          label: scope.scope === 'user' ? jt('skills.scopes.personalEnabled', 'Personal skills enabled') : jt('skills.scopes.projectEnabled', 'Project skills enabled'),
           className: 'skills-settings-row-toggle' }) || '')
-        + (actionButton?.({ label: 'Open folder', variant: 'ghost', size: 'sm', disabled: blocked,
+        + (actionButton?.({ label: jt('common.openFolder', 'Open folder'), variant: 'ghost', size: 'sm', disabled: blocked,
           dataset: { 'skills-action': 'open-folder', 'skills-scope': scope.scope } }) || '') + '</span>';
     }
 
     function foldersMarkup(skillsState) {
       const userScope = scopeByName(skillsState, 'user');
       const projectScope = scopeByName(skillsState, 'project');
-      const userPath = userScope.path || 'Folder unavailable';
-      const projectPath = projectScope.path || 'no workspace root';
-      const manageButton = actionButton?.({ label: 'Manage', variant: 'ghost', size: 'sm',
+      const userPath = userScope.path || jt('skills.folders.unavailable', 'Folder unavailable');
+      const projectPath = projectScope.path || jt('skills.folders.noWorkspaceRoot', 'no workspace root');
+      const manageButton = actionButton?.({ label: jt('skills.folders.manage', 'Manage'), variant: 'ghost', size: 'sm',
         ariaExpanded: foldersExpanded, ariaControls: 'skillsFoldersDisclosure',
         dataset: { 'skills-action': 'toggle-folders' } }) || '';
       return '<div class="settings-field-row skills-folders-summary">'
-        + '<span class="settings-field-row-text"><strong>Your skill folders</strong><small>'
+        + '<span class="settings-field-row-text"><strong>' + escapeHtml(jt('skills.folders.heading', 'Your skill folders')) + '</strong><small>'
         + escapeHtml(userPath) + ' · ' + (userScope.enabled ? 'on' : 'off') + ' · '
         + escapeHtml(projectPath) + ' · ' + (projectScope.enabled ? 'on' : 'off') + '</small></span>'
         + manageButton + '</div>'
         + '<div class="skills-folders-disclosure" id="skillsFoldersDisclosure" data-skills-folders-region'
         + (foldersExpanded ? '' : ' hidden') + '>'
-        + '<div class="settings-field-row"><span class="settings-field-row-text"><strong>Personal skills</strong><small>'
+        + '<div class="settings-field-row"><span class="settings-field-row-text"><strong>' + escapeHtml(jt('skills.folders.personal', 'Personal skills')) + '</strong><small>'
         + escapeHtml(userPath) + '</small></span>' + folderControlsMarkup(userScope, 'skillsUserToggle') + '</div>'
-        + '<div class="settings-field-row"><span class="settings-field-row-text"><strong>Project skills</strong><small>'
-        + escapeHtml(projectScope.path || 'Set a workspace root first') + '</small></span>'
+        + '<div class="settings-field-row"><span class="settings-field-row-text"><strong>' + escapeHtml(jt('skills.folders.project', 'Project skills')) + '</strong><small>'
+        + escapeHtml(projectScope.path || jt('skills.folders.setWorkspaceRootFirst', 'Set a workspace root first')) + '</small></span>'
         + folderControlsMarkup(projectScope, 'skillsProjectToggle') + '</div></div>';
     }
 
@@ -176,7 +176,7 @@
       if (priorDisclosure) foldersExpanded = !priorDisclosure.hidden;
       const skillsState = state.skills || normalizeSkillsState({});
       if (!skillsState.featureEnabled) {
-        rowsHost.innerHTML = '<p class="settings-note">Skills are turned off by the JENNY_ENABLE_SKILLS_SYSTEM kill switch.</p>';
+        rowsHost.innerHTML = '<p class="settings-note">' + jt('skills.settings.killSwitchOff', 'Skills are turned off by the JENNY_ENABLE_SKILLS_SYSTEM kill switch.') + '</p>';
         foldersHost.innerHTML = '';
         return;
       }
@@ -197,8 +197,8 @@
         applySkillsPayload(payload);
         renderSettings();
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not update skills settings.'), {
-          title: 'Skills Update Failed',
+        showShellErrorToast(toErrorMessage(error, jt('skills.errors.updateFailed', 'Could not update skills settings.')), {
+          title: jt('skills.errors.updateTitle', 'Skills Update Failed'),
           source: TOAST_SOURCE.settings,
           dedupeKey: `${TOAST_SOURCE.settings}:skills:error`,
         });
@@ -210,15 +210,15 @@
         const payload = await windowRef.jennyShell.skills.openScopeFolder(scope);
         applySkillsPayload(payload);
         renderSettings();
-        showToastMessage('Opened skill folder.', {
-          title: 'Skills',
+        showToastMessage(jt('skills.folders.opened', 'Opened skill folder.'), {
+          title: jt('skills.notifications.title', 'Skills'),
           tone: 'success',
           source: TOAST_SOURCE.settings,
           dedupeKey: `${TOAST_SOURCE.settings}:skills:open:${scope}`,
         });
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not open the skill folder.'), {
-          title: 'Skills Folder Failed',
+        showShellErrorToast(toErrorMessage(error, jt('skills.errors.openFolderFailed', 'Could not open the skill folder.')), {
+          title: jt('skills.errors.folderTitle', 'Skills Folder Failed'),
           source: TOAST_SOURCE.settings,
           dedupeKey: `${TOAST_SOURCE.settings}:skills:open:error`,
         });

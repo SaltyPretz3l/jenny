@@ -26,6 +26,7 @@
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (textFieldModule, segmentedModule, actionButtonModule) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var textField = typeof textFieldModule === 'function' ? textFieldModule : null;
   var segmentedControl = typeof segmentedModule === 'function'
@@ -58,10 +59,10 @@
   };
 
   var PRESET_OPTIONS = [
-    { value: 'balanced', label: 'Balanced' },
-    { value: 'concise', label: 'Concise' },
-    { value: 'creative', label: 'Creative' },
-    { value: 'mentor', label: 'Mentor' },
+    { value: 'balanced', label: jt('personality.voice.balanced', 'Balanced') },
+    { value: 'concise', label: jt('personality.voice.concise', 'Concise') },
+    { value: 'creative', label: jt('personality.voice.creative', 'Creative') },
+    { value: 'mentor', label: jt('personality.voice.mentor', 'Mentor') },
   ];
 
   var CUSTOM_VOICE = 'custom';
@@ -69,15 +70,15 @@
   var COPY = {
     nameLabel: 'Name',
     voiceLabel: 'Voice',
-    noteLabel: 'Personality note',
-    userLabel: 'About you',
-    voiceHint: 'Presets fill the note below with a starting point you can edit.',
-    voiceCustomHint: 'Custom — your own words. Pick a preset to start from a template instead.',
-    noteHint: 'Tone and behavior only. Tools, dates, and formatting are handled by the app.',
-    userHint: 'Name, how to address you, what you do, how you like to work.',
-    notePlaceholder: 'How the assistant should sound.',
-    userPlaceholder: 'Anything the assistant should always know about you.',
-    oversized: 'This file is larger than 64 KiB. Open the folder to edit it.',
+    noteLabel: jt('personality.form.noteLabel', 'Personality note'),
+    userLabel: jt('personality.form.aboutYouLabel', 'About you'),
+    voiceHint: jt('personality.form.presetHint', 'Presets fill the note below with a starting point you can edit.'),
+    voiceCustomHint: jt('personality.form.customPresetHint', 'Custom — your own words. Pick a preset to start from a template instead.'),
+    noteHint: jt('personality.form.noteHint', 'Tone and behavior only. Tools, dates, and formatting are handled by the app.'),
+    userHint: jt('personality.form.aboutYouHint', 'Name, how to address you, what you do, how you like to work.'),
+    notePlaceholder: jt('personality.form.notePlaceholder', 'How the assistant should sound.'),
+    userPlaceholder: jt('personality.form.aboutYouPlaceholder', 'Anything the assistant should always know about you.'),
+    oversized: jt('personality.form.fileTooLarge', 'This file is larger than 64 KiB. Open the folder to edit it.'),
   };
 
   function escapeHtml(value) {
@@ -308,7 +309,7 @@
         + '<div class="personality-row-content">'
         + actionButton({
           id: 'save-personality',
-          label: opts.saving ? 'Saving…' : 'Save',
+          label: opts.saving ? jt('common.saving', 'Saving…') : jt('common.save', 'Save'),
           variant: 'primary',
           disabled: disabled || opts.saving === true,
           domId: fieldId(prefix, 'save'),
@@ -397,10 +398,10 @@
       }
       pending = presetKey;
       host.innerHTML = '<span class="personality-preset-confirm-copy">'
-        + escape('Replace your note with the ' + presetLabel(presetKey) + ' starting point?')
+        + escape(jt('personality.preset.replacePrompt', 'Replace your note with the {preset} starting point?', { preset: presetLabel(presetKey) }))
         + '</span>'
-        + button({ id: 'personality-preset-replace', label: 'Replace', variant: 'ghost', size: 'sm' })
-        + button({ id: 'personality-preset-keep', label: 'Keep', variant: 'ghost', size: 'sm' });
+        + button({ id: 'personality-preset-replace', label: jt('personality.preset.replace', 'Replace'), variant: 'ghost', size: 'sm' })
+        + button({ id: 'personality-preset-keep', label: jt('personality.preset.keep', 'Keep'), variant: 'ghost', size: 'sm' });
       host.removeAttribute('hidden');
     }
 

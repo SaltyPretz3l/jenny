@@ -5,6 +5,7 @@
   }
   root.rendererArtifactsRender = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const documentRef = typeof globalThis !== 'undefined' ? globalThis.document || null : null;
   const presentation = (function resolvePresentation() {
     if (typeof globalThis !== 'undefined' && globalThis.rendererArtifactPresentation) {
@@ -56,7 +57,7 @@
       })
       .filter(Boolean)
       .join('');
-    return content || '<div class="context-empty-state">No detail metadata</div>';
+    return content || '<div class="context-empty-state">' + escapeHtml(jt('artifacts.detail.noMetadata', 'No detail metadata')) + '</div>';
   }
 
   function renderProvenanceTimeline(target, artifact, deps) {
@@ -74,45 +75,47 @@
     }
     const entries = [];
     if (artifact.timestamp) {
-      entries.push({ label: 'Created', detail: formatArtifactTimestamp(artifact.timestamp) });
+      entries.push({ label: jt('artifacts.detail.created', 'Created'), detail: formatArtifactTimestamp(artifact.timestamp) });
     }
     if (isGeneratedFile(artifact)) {
       const file = artifact.generatedFile || {};
-      if (artifact.tool?.toolName) entries.push({ label: 'Tool', detail: artifact.tool.toolName });
-      if (file.displayPath || file.fileName) entries.push({ label: 'File', detail: file.displayPath || file.fileName });
-      if (file.language) entries.push({ label: 'Language', detail: formatLanguageLabel(file.language) });
-      if (file.artifactKind && file.artifactKind !== 'document') entries.push({ label: 'Kind', detail: file.artifactKind });
+      if (artifact.tool?.toolName) entries.push({ label: jt('artifacts.detail.tool', 'Tool'), detail: artifact.tool.toolName });
+      if (file.displayPath || file.fileName) entries.push({ label: jt('artifacts.detail.file', 'File'), detail: file.displayPath || file.fileName });
+      if (file.language) entries.push({ label: jt('artifacts.detail.language', 'Language'), detail: formatLanguageLabel(file.language) });
+      if (file.artifactKind && file.artifactKind !== 'document') entries.push({ label: jt('artifacts.detail.kind', 'Kind'), detail: file.artifactKind });
     } else if (isImageArtifact(artifact)) {
       const image = artifact.image || {};
       if (image.sourceKind) {
         const sourceLabel = image.sourceKind === 'capture'
-          ? 'Screenshot'
+          ? jt('artifacts.detail.screenshot', 'Screenshot')
           : image.sourceKind === 'clipboard'
-            ? 'Pasted image'
-            : 'Attachment';
-        entries.push({ label: 'Source', detail: sourceLabel });
+            ? jt('artifacts.detail.pastedImage', 'Pasted image')
+            : jt('artifacts.detail.attachment', 'Attachment');
+        entries.push({ label: jt('artifacts.detail.source', 'Source'), detail: sourceLabel });
       }
       if (image.width > 0 && image.height > 0) {
-        entries.push({ label: 'Dimensions', detail: `${image.width} x ${image.height}` });
+        entries.push({ label: jt('artifacts.detail.dimensions', 'Dimensions'), detail: `${image.width} x ${image.height}` });
       }
     } else {
-      if (artifact.tool?.toolName) entries.push({ label: 'Tool', detail: artifact.tool.toolName });
-      if (artifact.tool?.isError) entries.push({ label: 'Status', detail: 'Error' });
+      if (artifact.tool?.toolName) entries.push({ label: jt('artifacts.detail.tool', 'Tool'), detail: artifact.tool.toolName });
+      if (artifact.tool?.isError) entries.push({ label: jt('artifacts.detail.status', 'Status'), detail: jt('artifacts.detail.error', 'Error') });
     }
     if (artifact.sourceMessageId) {
-      entries.push({ label: 'Source', detail: `Message ${artifact.sourceMessageId.slice(0, 8)}...` });
+      entries.push({ label: jt('artifacts.detail.source', 'Source'), detail: jt('artifacts.detail.messageReference', 'Message {id}...', { id: artifact.sourceMessageId.slice(0, 8) }) });
     }
     target.innerHTML = entries.map((entry, index) =>
       `<div class="provenance-entry" data-provenance-step="${escapeHtml(String(index + 1))}">`
       + `<span class="provenance-entry-label">${escapeHtml(entry.label)}</span>`
       + `<span class="provenance-entry-detail">${escapeHtml(entry.detail)}</span>`
       + '</div>'
-    ).join('') || '<div class="context-empty-state">No provenance data</div>';
+    ).join('') || '<div class="context-empty-state">' + escapeHtml(jt('artifacts.detail.noProvenance', 'No provenance data')) + '</div>';
   }
 
   function setDetailNote(surface, text, isError) {
     if (!surface?.detailNote) return;
     surface.detailNote.textContent = text;
+    surface.detailNote.classList.toggle('hidden', !text);
+    surface.detailNote.setAttribute?.('role', isError ? 'alert' : 'status');
     surface.detailNote.classList.toggle('detail-note-error', Boolean(isError));
   }
 
@@ -141,27 +144,27 @@
     const toolbar = state.features?.featureFlags?.artifact_panel_v3 === true ? '' : (
       '<div class="artifact-preview-mermaid-toolbar">'
       + renderMermaidModeButton('preview', !editMode, 'Preview', state.artifacts.loading, escapeHtml)
-      + renderMermaidModeButton('edit', editMode, editable ? 'Edit Source' : 'View Source', state.artifacts.loading, escapeHtml)
+      + renderMermaidModeButton('edit', editMode, editable ? jt('artifacts.document.editSource', 'Edit Source') : jt('artifacts.document.viewSource', 'View Source'), state.artifacts.loading, escapeHtml)
       + '</div>'
     );
     if (state.artifacts.lastError) {
       setDetailNoteImpl(surface, state.artifacts.lastError, true);
     } else if (state.artifacts.loading) {
-      setDetailNoteImpl(surface, 'Loading artifact...');
+      setDetailNoteImpl(surface, jt('artifacts.detail.loading', 'Loading artifact...'));
     } else if (editable) {
       setDetailNoteImpl(
         surface,
         editMode
-          ? 'Editing Mermaid source. Save writes back to the session scratch file.'
-          : 'Mermaid preview with source and edit access below.'
+          ? jt('artifacts.mermaid.editingScratchSource', 'Editing Mermaid source. Save writes back to the session scratch file.')
+          : jt('artifacts.mermaid.previewWithSourceAccess', 'Mermaid preview with source and edit access below.')
       );
     } else {
-      setDetailNoteImpl(surface, 'Read-only Mermaid artifact. You can inspect the source below.');
+      setDetailNoteImpl(surface, jt('artifacts.mermaid.readOnlySource', 'Read-only Mermaid artifact. You can inspect the source below.'));
     }
 
     surface.previewContent.classList.remove('hidden');
     if (editMode) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">Editing Mermaid source below. Switch back to Preview to re-render the diagram.</div>';
+      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.editingSource', 'Editing Mermaid source below. Switch back to Preview to re-render the diagram.') + '</div>';
       surface.editorShell.classList.remove('hidden');
       ensureEditor(surface.key)?.setDocument({
         value: mermaidSource,
@@ -173,7 +176,7 @@
 
     surface.editorShell.classList.add('hidden');
     if (!mermaidSource.trim()) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">Preview unavailable. Mermaid source is empty.</div>';
+      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.emptySource', 'Preview unavailable. Mermaid source is empty.') + '</div>';
       return;
     }
 
@@ -181,7 +184,7 @@
     surface.previewContent.innerHTML = (
       toolbar + '<div class="artifact-preview-mermaid-shell">'
       + `<div class="artifact-preview-mermaid-host" id="${escapeHtml(hostId)}">`
-      + '<div class="artifacts-empty">Rendering Mermaid preview...</div>'
+      + '<div class="artifacts-empty">' + jt('artifacts.mermaid.renderingPreview', 'Rendering Mermaid preview...') + '</div>'
       + '</div>'
       + '</div>'
       + sourceHtml
@@ -193,7 +196,7 @@
       `artifact-mermaid-svg-${String(hostId || '').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase() || 'preview'}`
     );
     if (!previewStarted) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">Preview unavailable. Mermaid source is shown below.</div>'
+      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>'
         + sourceHtml;
     }
   }
@@ -291,14 +294,14 @@
       return (
         '<span class="catalog-entry-media catalog-entry-media-image catalog-entry-media-fallback" aria-hidden="true">'
         + `<span class="catalog-entry-icon material-symbols-outlined">${icon}</span>`
-        + `<span class="catalog-entry-media-label">${artifact?.image?.requiresArtifactRead === true ? 'Image preview' : 'Image unavailable'}</span>`
+        + `<span class="catalog-entry-media-label">${escapeHtml(artifact?.image?.requiresArtifactRead === true ? jt('artifacts.image.preview', 'Image preview') : jt('artifacts.image.unavailable', 'Image unavailable'))}</span>`
         + '</span>'
       );
     }
     if (artifact.artifactType === 'generated_file') {
       const file = artifact.generatedFile || {};
       const language = String(file.language || '').trim();
-      const label = language ? formatLanguageLabel(language) : 'Scratch file';
+      const label = language ? formatLanguageLabel(language) : jt('artifacts.generated.scratchFile', 'Scratch file');
       const fileName = String(file.fileName || artifact.title || 'artifact').trim();
       const displayPath = String(file.displayPath || '').trim();
       return (
@@ -325,14 +328,14 @@
       const file = artifact.generatedFile || {};
       const descriptor = file.displayPath
         ? clipPreviewText(file.displayPath, CATALOG_PATH_PREVIEW_LIMIT + 8)
-        : file.fileName || artifact.previewText || 'Generated scratch artifact';
+        : file.fileName || artifact.previewText || jt('artifacts.generated.scratchArtifact', 'Generated scratch artifact');
       return `${created} &middot; ${escapeHtml(descriptor)}`;
     }
     if (artifact.artifactType === 'image') {
-      return `${created} &middot; ${escapeHtml(String(artifact.previewText || 'Image attachment'))}`;
+      return `${created} &middot; ${escapeHtml(String(artifact.previewText || jt('artifacts.image.attachment', 'Image attachment')))}`;
     }
     const preview = clipPreviewText(artifact.outputText || artifact.previewText || '', CATALOG_PATH_PREVIEW_LIMIT + 4);
-    return `${created} &middot; ${escapeHtml(preview || 'Tool output')}`;
+    return `${created} &middot; ${escapeHtml(preview || jt('artifacts.tool.output', 'Tool output'))}`;
   }
 
   function renderCatalogEntry(artifact, selected, deps) {
@@ -357,7 +360,7 @@
             <span class="catalog-entry-badges">${buildCatalogBadges(artifact, deps)}</span>
           </span>
           <span class="catalog-entry-title">${escapeHtml(title)}</span>
-          <span class="catalog-entry-preview">${escapeHtml(previewText || 'Open this artifact to inspect it on stage.')}</span>
+          <span class="catalog-entry-preview">${escapeHtml(previewText || jt('artifacts.catalog.openToInspect', 'Open this artifact to inspect it on stage.'))}</span>
           <span class="catalog-entry-meta">${buildCatalogMetaLine(artifact, deps)}</span>
         </span>
       </button>

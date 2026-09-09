@@ -1,0 +1,11 @@
+{
+  "official_packages_schema_version": 1,
+  "packages": [
+    {
+      "plugin_id": "chatgpt-subscription"
+    },
+    {
+      "plugin_id": "remote-control"
+    }
+  ]
+}

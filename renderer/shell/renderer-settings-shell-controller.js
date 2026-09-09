@@ -6,6 +6,7 @@
   }
   root.rendererSettingsShellControllerUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const settingsSectionRegistry = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSectionRegistry)
     || (typeof require === 'function' ? require('./renderer-settings-section-registry') : null)
     || {};
@@ -74,7 +75,7 @@
     function notifySettingsConflict(message, dedupeKey) {
       if (typeof showToastMessage !== 'function') return;
       showToastMessage(message, {
-        title: 'Settings Updated Elsewhere',
+        title: jt('settings.shell.updatedElsewhere', 'Settings Updated Elsewhere'),
         tone: 'warning',
         source: settingsToastSource.settings,
         dedupeKey,
@@ -104,7 +105,7 @@
               : null
           ),
           onConflict: () => notifySettingsConflict(
-            'Compaction settings changed elsewhere while you were editing. Your draft is kept -- save it or reopen Settings to see the latest.',
+            jt('settings.compaction.changedElsewhere', 'Compaction settings changed elsewhere while you were editing. Your draft is kept -- save it or reopen Settings to see the latest.'),
             `${settingsToastSource.settings}:compaction:conflict`
           ),
         },
@@ -132,7 +133,7 @@
             return null;
           },
           onConflict: () => notifySettingsConflict(
-            'Web search settings changed elsewhere while you were editing. Your draft is kept -- save it or reopen Settings to see the latest.',
+            jt('settings.tools.webSearch.changedElsewhere', 'Web search settings changed elsewhere while you were editing. Your draft is kept -- save it or reopen Settings to see the latest.'),
             `${settingsToastSource.settings}:tools:conflict`
           ),
         },
@@ -271,10 +272,10 @@
               }
             }
             return usageConfirmDialog?.confirm?.({
-              title: 'Clear usage history?',
-              message: 'This permanently removes all retained local usage rows and totals.',
-              confirmLabel: 'Clear history',
-              cancelLabel: 'Cancel',
+              title: jt('settings.shell.clearUsageHistoryTitle', 'Clear usage history?'),
+              message: jt('settings.shell.clearUsageHistoryMessage', 'This permanently removes all retained local usage rows and totals.'),
+              confirmLabel: jt('settings.shell.clearHistory', 'Clear history'),
+              cancelLabel: jt('common.cancel', 'Cancel'),
               variant: 'danger',
             }) || false;
           },
@@ -442,7 +443,7 @@
         : previousSectionId === 'memories' && hasMemoryContextUnsavedChanges?.() === true;
       if (!hasUnsavedChanges || nextSectionId === previousSectionId) return true;
       return typeof globalWindow?.confirm === 'function'
-        ? globalWindow.confirm('You have unsaved context-file changes. Leave this section without saving?')
+        ? globalWindow.confirm(jt('settings.shell.unsavedContextChangesConfirm', 'You have unsaved context-file changes. Leave this section without saving?'))
         : false;
     }
 

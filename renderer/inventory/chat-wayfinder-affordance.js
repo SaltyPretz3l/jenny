@@ -9,7 +9,7 @@
   root.inventoryChatWayfinderAffordance = factory(root, root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (_root, stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var escapeHtml = stringUtils && stringUtils.escapeHtml;
   var sanitizeToken = stringUtils && stringUtils.sanitizeToken;
   if (typeof escapeHtml !== 'function' || typeof sanitizeToken !== 'function') {
@@ -25,8 +25,8 @@
       + ' id="' + escapeHtml(ids.button) + '"'
       + ' data-chat-wayfinder-action="activate"'
       + ' data-chat-wayfinder-state="hidden"'
-      + ' aria-label="Conversation wayfinder"'
-      + ' title="Conversation wayfinder"'
+      + ' aria-label="' + escapeHtml(jt('inventory.chatWayfinder.label', 'Conversation wayfinder')) + '"'
+      + ' title="' + escapeHtml(jt('inventory.chatWayfinder.label', 'Conversation wayfinder')) + '"'
       + '>'
       + '<svg class="chat-wayfinder-icon" viewBox="0 0 16 16" aria-hidden="true">'
       + '<path d="M3 12.75h10"></path>'
@@ -34,7 +34,7 @@
       + '<path d="M4.75 8 8 11.25 11.25 8"></path>'
       + '</svg>'
       + '<span class="chat-wayfinder-copy">'
-      + '<span class="chat-wayfinder-label">Conversation wayfinder</span>'
+      + '<span class="chat-wayfinder-label">' + escapeHtml(jt('inventory.chatWayfinder.label', 'Conversation wayfinder')) + '</span>'
       + '<span class="chat-wayfinder-detail" hidden></span>'
       + '</span>'
       + '</button>'
@@ -125,7 +125,7 @@
       if (!root || !buttonEl) return;
       var visible = model.visible === true;
       var stateName = String(model.state || (visible ? 'latest' : 'hidden')).trim() || 'hidden';
-      var label = String(model.label || 'Conversation wayfinder').trim() || 'Conversation wayfinder';
+      var label = String(model.label || jt('inventory.chatWayfinder.label', 'Conversation wayfinder')).trim() || jt('inventory.chatWayfinder.label', 'Conversation wayfinder');
       var detail = String(model.detail || '').trim();
       root.dataset.chatWayfinderState = stateName;
       buttonEl.dataset.chatWayfinderState = stateName;

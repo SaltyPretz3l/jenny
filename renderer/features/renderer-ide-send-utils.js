@@ -11,6 +11,7 @@
   }
   root.rendererIdeSendUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function noop() {}
   function noopAsync() { return Promise.resolve(); }
 
@@ -212,8 +213,8 @@
           /* the existing bounded toast below owns user-facing failure */
         }
         if (!createdSessionId && (wantsNewSession || !String(state.currentSessionId || '').trim())) {
-          showShellErrorToast('Could not open a chat session to send to.', {
-            title: 'Send to Jenny',
+          showShellErrorToast(jt('ide.send.openChatFailed', 'Could not open a chat session to send to.'), {
+            title: jt('ide.send.title', 'Send to Jenny'),
             dedupeKey: 'ide:send:no-session',
           });
           return false;

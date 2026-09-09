@@ -11,7 +11,7 @@
   }
   root.rendererArtifactsRenderImage = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function renderImageArtifactKind(ctx) {
     const { surface, artifact, deps } = ctx;
     const {
@@ -30,17 +30,17 @@
     setDetailNote(
       surface,
       available
-        ? 'Previewing the session image at full stage size.'
+        ? jt('artifacts.image.previewingFullStage', 'Previewing the session image at full stage size.')
         : loadingImage
-          ? 'Loading image preview...'
-          : 'Image unavailable in local storage.',
+          ? jt('artifacts.image.loadingPreview', 'Loading image preview...')
+          : jt('artifacts.image.unavailableInLocalStorage', 'Image unavailable in local storage.'),
       !available && !loadingImage
     );
     surface.editorShell.classList.add('hidden');
     surface.previewContent.classList.remove('hidden');
     surface.previewContent.innerHTML = available
-      ? `<div class="artifact-preview-image-shell"><img class="artifact-preview-image" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(image.displayName || artifact.title)}"></div>`
-      : `<div class="artifacts-empty">${loadingImage ? 'Loading image preview...' : 'Image unavailable in local storage.'}</div>`;
+      ? '<div class="artifact-preview-image-shell"><img class="artifact-preview-image" src="{src}" alt="{alt}"></div>'.replace('{src}', () => escapeHtml(previewUrl)).replace('{alt}', () => escapeHtml(jt('artifacts.image.previewAlt', '{name}', { name: image.displayName || artifact.title })))
+      : `<div class="artifacts-empty">${escapeHtml(loadingImage ? jt('artifacts.image.loadingPreview', 'Loading image preview...') : jt('artifacts.image.unavailableInLocalStorage', 'Image unavailable in local storage.'))}</div>`;
   }
 
   return { renderImageArtifactKind };

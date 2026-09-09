@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   FEATURE_OVERRIDE_KEYS,
+  FORCE_DENY_ENV_KEYS,
   INTERNAL_FEATURE_FLAG_KEYS,
   buildFeatureFlagDefaults,
   buildFeatureFlags,
@@ -728,6 +729,44 @@ test('strict_auto_run is a user-overridable DEFAULT-OFF flag with an env opt-in'
   assert.deepEqual(
     normalizeFeatureOverrides({ strict_auto_run: true }),
     { strict_auto_run: true }
+  );
+});
+
+test('remote_control is DEFAULT-ON with a stored override and emergency env deny', () => {
+  assert.equal(buildFeatureFlags({}).remote_control, true);
+  assert.equal(buildFeatureFlags({}, { remote_control: true }).remote_control, true);
+  assert.equal(
+    buildFeatureFlags(
+      { JENNY_ENABLE_REMOTE_CONTROL: '0' },
+      { remote_control: true, strict_auto_run: true }
+    ).remote_control,
+    false
+  );
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_REMOTE_CONTROL: '1' }).remote_control, true);
+  assert.equal(
+    buildFeatureFlags(
+      { JENNY_ENABLE_REMOTE_CONTROL: '0' },
+      { remote_control: true, strict_auto_run: true }
+    ).strict_auto_run,
+    true
+  );
+  assert.ok(FEATURE_OVERRIDE_KEYS.includes('remote_control'));
+  assert.deepEqual(FORCE_DENY_ENV_KEYS, {
+    remote_control: 'JENNY_ENABLE_REMOTE_CONTROL',
+  });
+});
+
+test('unattended_guard is a default-on user override with env rollback', () => {
+  assert.equal(buildFeatureFlagDefaults({}).unattended_guard, true);
+  assert.equal(
+    buildFeatureFlagDefaults({ JENNY_ENABLE_UNATTENDED_GUARD: '0' }).unattended_guard,
+    false
+  );
+  assert.ok(FEATURE_OVERRIDE_KEYS.includes('unattended_guard'));
+  assert.ok(!INTERNAL_FEATURE_FLAG_KEYS.includes('unattended_guard'));
+  assert.deepEqual(
+    normalizeFeatureOverrides({ unattended_guard: false }),
+    { unattended_guard: false }
   );
 });
 

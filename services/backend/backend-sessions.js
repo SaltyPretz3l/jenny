@@ -486,6 +486,54 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
   return updated;
 }
 
+function pauseSessionAutoRun(service, sessionId, {
+  streamId,
+  reason,
+  idleSeconds,
+} = {}) {
+  const session = service.sessionStore.getSession?.(sessionId) || null;
+  if (!session) {
+    return { requested: false, reason: 'no_session' };
+  }
+  const activeTurn = service.sessionStore.getActiveTurn?.(sessionId);
+  const activeStreamId = String(activeTurn?.stream_id || activeTurn?.request_id || '').trim();
+  const requestedStreamId = String(streamId || '').trim();
+  if (
+    !activeStreamId
+    || (requestedStreamId && activeStreamId !== requestedStreamId)
+    || !service.activeStreams?.has?.(activeStreamId)
+  ) {
+    return { requested: false, reason: 'no_live_stream' };
+  }
+  const runMode = String(session.run_mode || '').trim().toLowerCase();
+  if (runMode !== 'auto') {
+    return { requested: false, reason: 'not_auto' };
+  }
+  if (typeof service.sidecarClient?.notifySessionRunModeUpdated !== 'function') {
+    return { requested: false, reason: 'transport_unavailable' };
+  }
+
+  const readOnly = runMode === 'plan' || session.plan_mode === true;
+  service.sidecarClient.notifySessionRunModeUpdated({
+    sessionId,
+    approvalMode: 'prompt',
+    readOnly,
+  });
+  service._emitServiceLog('INFO', 'session.auto_run_pause_requested', {
+    sessionId,
+    streamId: activeStreamId,
+    reason,
+    idleSeconds,
+  });
+  return {
+    requested: true,
+    sessionId,
+    streamId: activeStreamId,
+    approvalMode: 'prompt',
+    readOnly,
+  };
+}
+
 async function setSessionMeta(service, sessionId, meta = {}) {
   if (!sessionId) {
     return null;
@@ -570,6 +618,7 @@ module.exports = {
   deleteSession,
   getSessionMessages,
   setSessionPreferences,
+  pauseSessionAutoRun,
   setSessionMeta,
   sweepEmptySessions,
   updateSessionMessage,

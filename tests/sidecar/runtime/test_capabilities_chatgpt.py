@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.engines.chatgpt_subscription import (
     CHATGPT_MODEL_CONTEXT_LENGTHS,
@@ -26,6 +28,26 @@ def _catalog_entries() -> list[dict[str, object]]:
         }
         for model in CHATGPT_MODEL_CONTEXT_LENGTHS
     ]
+
+
+@pytest.mark.parametrize("token", ["", "fake-chatgpt-access-token"])
+def test_astra_is_published_with_explicit_reasoning_metadata(token: str) -> None:
+    result = models_list_result(
+        {"engine_type": "chatgpt", "_runtime_config": RuntimeConfig(chatgpt_access_token=token)},
+        models_for_engine=lambda _engine: [],
+    )
+    entries = {row["id"]: row for row in result["models"]}
+    assert entries["gpt-6-astra"] == {
+        "id": "gpt-6-astra",
+        "capabilities": {
+            "vision": True,
+            "reasoning_effort": True,
+            "default_reasoning_effort": "medium",
+            "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+        },
+    }
+    assert result["models"][0]["id"] == "gpt-5.6-sol"
+    assert result["available"] is bool(token)
 
 
 def test_chatgpt_capability_signed_out() -> None:

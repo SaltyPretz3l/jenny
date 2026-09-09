@@ -10,6 +10,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (scrollUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var STATE_HIDDEN = 'hidden';
   var STATE_UNREAD = 'unread';
   var STATE_PROMPT = 'prompt';
@@ -171,7 +172,7 @@
         return {
           visible: true,
           state: STATE_UNREAD,
-          label: 'Jump to first unread',
+          label: jt('chat.wayfinder.jumpToFirstUnread', 'Jump to first unread'),
           messageId: normalizeId(unreadState.messageId),
           sessionId: sessionId,
           detail: '',
@@ -181,7 +182,7 @@
         return {
           visible: true,
           state: STATE_PROMPT,
-          label: 'Back to prompt',
+          label: jt('chat.wayfinder.backToPrompt', 'Back to prompt'),
           messageId: normalizeId(pinState.messageId),
           sessionId: sessionId,
           detail: String(pinState.text || '').trim(),
@@ -191,7 +192,7 @@
         return {
           visible: true,
           state: STATE_LATEST,
-          label: 'Return to latest',
+          label: jt('chat.wayfinder.returnToLatest', 'Return to latest'),
           messageId: '',
           sessionId: sessionId,
           detail: '',

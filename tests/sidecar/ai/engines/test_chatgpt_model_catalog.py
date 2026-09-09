@@ -48,6 +48,14 @@ def test_codex_spark_matches_the_owner_captured_first_party_catalog() -> None:
     }
 
 
+def test_astra_matches_first_party_comparison_metadata() -> None:
+    assert CHATGPT_MODEL_CONTEXT_LENGTHS["gpt-6-astra"] == 272_000
+    assert CHATGPT_MODEL_REASONING_PROFILES["gpt-6-astra"] == {
+        "default_reasoning_effort": "medium",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    }
+
+
 def test_every_catalog_value_is_a_positive_int() -> None:
     for model, length in CHATGPT_MODEL_CONTEXT_LENGTHS.items():
         assert isinstance(length, int) and length > 0, f"{model} -> {length!r}"

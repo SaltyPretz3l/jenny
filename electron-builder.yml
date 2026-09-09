@@ -37,6 +37,14 @@ win:
   # Windows v1 ships the verified CPython 3.13 runtime bundle. The package
   # command checks every manifest/hash before electron-builder runs.
   extraResources:
+    - from: Dockerfile.worker
+      to: command-worker/Dockerfile.worker
+    - from: config/command-worker-image.json
+      to: command-worker/config/command-worker-image.json
+    - from: server/worker
+      to: command-worker/server/worker
+      filter:
+        - "*.py"
     - from: build/sidecar
       to: sidecar
       filter:
@@ -97,6 +105,14 @@ mac:
       arch:
         - arm64
   extraResources:
+    - from: Dockerfile.worker
+      to: command-worker/Dockerfile.worker
+    - from: config/command-worker-image.json
+      to: command-worker/config/command-worker-image.json
+    - from: server/worker
+      to: command-worker/server/worker
+      filter:
+        - "*.py"
     - from: build/sidecar
       to: sidecar
       filter:
@@ -141,6 +157,14 @@ linux:
       arch:
         - x64
   extraResources:
+    - from: Dockerfile.worker
+      to: command-worker/Dockerfile.worker
+    - from: config/command-worker-image.json
+      to: command-worker/config/command-worker-image.json
+    - from: server/worker
+      to: command-worker/server/worker
+      filter:
+        - "*.py"
     - from: build/sidecar
       to: sidecar
       filter:
@@ -203,15 +227,19 @@ files:
   - "*.html"
   - "*.css"
   - services/**/*
+  - scripts/packaging/build-command-worker-context.js
   - renderer/**/*
   - styles/**/*
   # Self-hosted fonts referenced by styles/foundation.css @font-face rules
   # (Fraunces, Anastasia). Without this glob they 404 in packaged builds and
   # the renderer silently falls back to system serif.
   - assets/fonts/**/*
+  # UI catalogs (locales/<tag>.catalog.js + .json) loaded by renderer/shared/i18n-bootstrap.js and services/i18n-main.js.
+  - locales/**/*
   - config/**/*
   - comet/**/*
   - skills/**/*
+  - "!remote/**"
   - vendor/pretext-layout.umd.js
   - package.json
   # The app loads Monaco's AMD build (min/vs) only; drop the ESM/dev builds

@@ -29,6 +29,7 @@
   root.rendererCodeReviewRail = factory(root.stringUtils || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const normalizeId = typeof stringUtils.normalizeId === 'function'
     ? stringUtils.normalizeId
@@ -234,7 +235,7 @@
         });
         showComposerActionError(
           new Error('Could not find that change in the current session.'),
-          'Code Review Unavailable'
+          jt('codeReview.unavailableTitle', 'Code Review Unavailable')
         );
         return false;
       }

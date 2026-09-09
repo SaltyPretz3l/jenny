@@ -5,6 +5,24 @@ const { createWorkspaceIdeStub } = require('./renderer-shell-harness-workspace-i
 const { createCompactionStub } = require('./renderer-shell-harness-compaction');
 const { applyWorkspaceRootPayload, createWorkspaceRootStub, getProactiveStatePayload } = require('./renderer-shell-harness-workspace-root');
 const { createMemoryNotesStub, createPersonalityStub } = require('./renderer-shell-harness-personality');
+const { persistUserTurn } = require('../../services/backend/chat-stream-session-lifecycle');
+
+function persistAcceptedUserTurn(state, payload, result) {
+  const sessionId = String(result?.sessionId || '').trim();
+  const streamId = String(result?.streamId || '').trim();
+  if (!sessionId || !streamId) return result;
+  const messageId = String(result.identity?.userMessageId || `user_${streamId}`);
+  const messages = state.messagesBySession.get(sessionId) || [];
+  if (!messages.some((message) => message.id === messageId)) {
+    persistUserTurn({ appendMessage(message) {
+      state.messagesBySession.set(sessionId, [...messages, message]);
+    } }, {
+      messageId, content: payload.visiblePrompt ?? payload.prompt,
+      attachments: payload.attachments, skill_invocation: payload.skillInvocation || null,
+    });
+  }
+  return result;
+}
 
 function activateWorkspaceSessionState(state, sessionId) {
   const id = String(sessionId || '').trim();
@@ -731,7 +749,9 @@ function createShellStubServices(context) {
       async startStream(payload) {
         state.chatCalls.push(payload);
         if (typeof chatOptions.startStream === 'function') {
-          return chatOptions.startStream(payload, { state, emitChat: context.emitChat });
+          const result = await chatOptions.startStream(payload, { state, emitChat: context.emitChat });
+          return chatOptions.persistAcceptedUserTurn === true
+            ? persistAcceptedUserTurn(state, payload, result) : result;
         }
         const sessionId = payload.sessionId || `session-${state.sessionCounter++}`;
         if (!state.sessions.find((session) => session.id === sessionId)) {
@@ -753,9 +773,11 @@ function createShellStubServices(context) {
             updated_at: new Date().toISOString(),
           }];
         }
-        state.messagesBySession.set(sessionId, []);
+        if (chatOptions.persistAcceptedUserTurn !== true) state.messagesBySession.set(sessionId, []);
         activateWorkspaceSessionState(state, sessionId);
-        return { sessionId, streamId: 'stream-test-1' };
+        const result = { sessionId, streamId: 'stream-test-1' };
+        return chatOptions.persistAcceptedUserTurn === true
+          ? persistAcceptedUserTurn(state, payload, result) : result;
       },
       async editAndRegenerate(payload) {
         state.chatCalls.push(payload);

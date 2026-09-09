@@ -187,6 +187,7 @@ def build_context_block_system_messages(
     *,
     include_personality: bool = True,
     agent_name: Any = None,
+    ui_language: Any = "en",
 ) -> list[dict[str, object]]:
     """Render the typed trusted-context channel as ``system`` rows.
 
@@ -198,7 +199,8 @@ def build_context_block_system_messages(
     emitted in the caller's order so callers can place them in the trusted
     leading system run BEFORE any compaction summary. Personality is the one
     user-authored block: it is sanitized and rendered under the single
-    ``## Personality`` heading with the name/precedence line the sidecar owns.
+    ``## Personality`` heading with the name/precedence and UI-language lines
+    the sidecar owns.
 
     At most ONE personality row is emitted, and it is emitted even when the
     Electron-compiled body sanitizes to nothing, because the name line is
@@ -218,7 +220,9 @@ def build_context_block_system_messages(
             if not include_personality or personality_rendered:
                 continue
             personality_rendered = True
-            content = build_personality_system_message(agent_name, content)
+            content = build_personality_system_message(
+                agent_name, content, ui_language=ui_language
+            )
         if content:
             rendered.append({"role": "system", "content": content})
     return rendered

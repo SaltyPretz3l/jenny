@@ -652,7 +652,7 @@ test('F8: formatMessageTokenMeta labels estimated message and cumulative tokens'
     estimated: true,
   });
 
-  assert.equal(label, '~42 tokens est. · ~1.8k cumulative');
+  assert.equal(label, '~42 tokens est. · ~1.8k cumulative text tokens est.');
 });
 
 test('toggle() dispatches inv-toggle-change custom event payload', (t) => {

@@ -78,6 +78,7 @@
   root.rendererIdeMapControls = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -105,9 +106,9 @@
   const SEARCH_DEBOUNCE_MS = 150;
 
   const LAYER_DEFS = [
-    { name: 'activity', label: 'Activity' },
-    { name: 'health', label: 'Health' },
-    { name: 'deps', label: 'Deps' },
+    { name: 'activity', label: jt('ide.map.layers.activity', 'Activity') },
+    { name: 'health', label: jt('ide.map.layers.health', 'Health') },
+    { name: 'deps', label: jt('ide.map.layers.dependencies', 'Deps') },
   ];
   const LAYER_NAMES = new Set(LAYER_DEFS.map((def) => def.name));
 
@@ -157,9 +158,9 @@
         parts.push(textField({
           id: 'ide-map-search',
           value: state.search,
-          placeholder: 'Search files…',
+          placeholder: jt('ide.map.searchPlaceholder', 'Search files…'),
           className: 'ide-map-search',
-          ariaLabel: 'Search files',
+          ariaLabel: jt('ide.map.searchLabel', 'Search files'),
         }));
       }
       if (typeof actionButton === 'function') {
@@ -177,7 +178,7 @@
           + '<span class="ide-map-hide-tests">'
           + toggleSwitchModule.toggleSwitch({
             id: 'ide-map-hide-tests',
-            label: 'Hide tests',
+            label: jt('ide.map.hideTests', 'Hide tests'),
             checked: state.hideTests,
           })
           + '<span class="ide-map-hide-tests-count" data-map-hide-tests-count>0/0</span>'
@@ -187,18 +188,18 @@
       if (typeof actionButton === 'function') {
         parts.push(actionButton({
           id: 'generate',
-          label: 'Generate',
+          label: jt('ide.map.generate', 'Generate'),
           variant: 'primary',
           className: 'ide-map-generate',
         }));
         parts.push(actionButton({
           id: 'refresh',
-          label: 'Refresh',
+          label: jt('common.refresh', 'Refresh'),
           className: 'ide-map-refresh',
         }));
         parts.push(actionButton({
           id: 'overview',
-          label: 'Overview',
+          label: jt('ide.map.overview', 'Overview'),
           plain: true,
           className: 'ide-map-overview-toggle',
         }));

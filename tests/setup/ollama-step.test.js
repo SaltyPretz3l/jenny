@@ -61,9 +61,9 @@ test('ollamaInstallDirs lists the LOCALAPPDATA and Program Files candidates on w
   assert.ok(dirs.some((dir) => /Program Files[\\/]Ollama$/.test(dir)), 'should include the Program Files/Ollama dir');
 });
 
-test('ollamaInstallDirs returns nothing on non-win32 platforms', () => {
+test('ollamaInstallDirs returns nothing on darwin and the managed bin dir on linux', () => {
   assert.deepEqual(ollamaInstallDirs('darwin', { LOCALAPPDATA: 'C:/Users/x/AppData/Local' }), []);
-  assert.deepEqual(ollamaInstallDirs('linux', {}), []);
+  assert.deepEqual(ollamaInstallDirs('linux', { HOME: '/home/x' }), ['/home/x/.local/share/jenny/ollama/bin']);
 });
 
 test('ollamaBinaryPath returns the candidate when it exists on disk', () => {

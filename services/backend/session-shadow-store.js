@@ -836,6 +836,10 @@ class SessionShadowStore {
     return this._backend.flush();
   }
 
+  hasNewerSchema() {
+    return this._backend.hasNewerSchema();
+  }
+
   hasPendingWrites() {
     return this._backend.hasPendingWrites();
   }

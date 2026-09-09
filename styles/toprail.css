@@ -28,7 +28,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: var(--space-4);
+  margin-inline-start: var(--space-4);
 }
 
 .toprail-tab {
@@ -73,8 +73,8 @@
 .toprail-tab[aria-selected="true"]::after {
   content: "";
   position: absolute;
-  left: var(--toprail-item-pad-inline);
-  right: var(--toprail-item-pad-inline);
+  inset-inline-start: var(--toprail-item-pad-inline);
+  inset-inline-end: var(--toprail-item-pad-inline);
   bottom: calc((var(--toprail-item-height) - var(--toprail-height)) / 2);
   height: var(--toprail-indicator-height);
   border-radius: var(--radius-pill);
@@ -91,7 +91,7 @@
   /* Anchor at the padding-box origin: offsetLeft is measured from there, so
      without left:0 the static flex position double-counts the rail padding
      and the underline lands right of the active tab. */
-  left: 0;
+  left: 0; /* rtl:physical */
   bottom: -1px;
   height: var(--toprail-indicator-height);
   border-radius: var(--radius-pill);
@@ -125,7 +125,7 @@
 
 /* Settings is the system view: float it to the trailing edge. */
 .toprail-tab[data-tab-id="settings"] {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* Narrow widths: Settings rejoins the row, rail scrolls instead of wrapping. */
@@ -144,7 +144,7 @@
   }
 
   .toprail-tab[data-tab-id="settings"] {
-    margin-left: 0;
+    margin-inline-start: 0;
   }
 }
 

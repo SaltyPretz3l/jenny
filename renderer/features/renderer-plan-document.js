@@ -6,6 +6,7 @@
   root.rendererPlanDocument = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const TERMINAL_STATES = new Set(['approved', 'approved_auto', 'rejected', 'abandoned', 'superseded']);
 
@@ -28,7 +29,7 @@
       plan_id: bounded(source.plan_id, 120),
       tool_call_id: bounded(source.tool_call_id, 160),
       approval_id: bounded(source.approval_id || source.tool_call_id, 240),
-      title: bounded(source.title || source.summary || 'Implementation plan', 120),
+      title: bounded(source.title || source.summary || jt('artifacts.plan.implementationPlan', 'Implementation plan'), 120),
       summary: bounded(source.summary, 800),
       steps,
       notes: bounded(source.notes, 4000),
@@ -60,7 +61,7 @@
     return `<details class="plan-document-receipt" data-plan-document="true" data-plan-state="${escapeHtml(plan.state)}">`
       + `<summary><span>${escapeHtml(plan.title)}</span><span class="plan-document-receipt__state">${plan.plan_edited ? 'edited &middot; ' : ''}${escapeHtml(plan.state.replace('_', ' '))}</span></summary>`
       + `<div class="plan-document-receipt__body"><ol>${plan.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>`
-      + (plan.feedback ? `<p><strong>Feedback:</strong> ${escapeHtml(plan.feedback)}</p>` : '')
+      + (plan.feedback ? `<p><strong>${escapeHtml(jt('artifacts.plan.feedbackLabel', 'Feedback:'))}</strong> ${escapeHtml(plan.feedback)}</p>` : '')
       + '</div></details>';
   }
 
@@ -71,15 +72,15 @@
     const renderMarkdown = options?.renderMarkdown || ((text) => `<p>${escapeHtml(text)}</p>`);
     const approvalRef = plan.approval_id || plan.tool_call_id;
     return `<section class="plan-document" data-plan-document="true" data-plan-state="pending" data-approval-ref="${escapeHtml(approvalRef)}">`
-      + '<header class="plan-document__header"><span class="plan-document__eyebrow">Proposed plan</span><span class="plan-document__rule" aria-hidden="true"></span>'
-      + `<span class="plan-document__meta">${plan.steps.length} steps${plan.files_read.length ? ` · ${plan.files_read.length} files read` : ''}</span></header>`
-      + `<h3 class="plan-document__title" data-plan-title role="button" tabindex="0" aria-label="Edit plan title">${escapeHtml(plan.title)}</h3>`
+      + '<header class="plan-document__header"><span class="plan-document__eyebrow">' + escapeHtml(jt('artifacts.plan.proposedPlan', 'Proposed plan')) + '</span><span class="plan-document__rule" aria-hidden="true"></span>'
+      + `<span class="plan-document__meta" data-plan-files-read-count="${plan.files_read.length}">${escapeHtml(jt('artifacts.plan.stepCount', '{count} steps', { count: plan.steps.length }))}${plan.files_read.length ? ` · ${escapeHtml(jt('artifacts.plan.filesRead', '{count} files read', { count: plan.files_read.length }))}` : ''}</span></header>`
+      + `<h3 class="plan-document__title" data-plan-title role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editTitleLabel', 'Edit plan title'))}">${escapeHtml(plan.title)}</h3>`
       + (plan.summary ? `<p class="plan-document__summary">${escapeHtml(plan.summary)}</p>` : '')
-      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li draggable="true" data-plan-step-index="${index}"><span class="plan-document__step-text" data-plan-step-text role="button" tabindex="0" aria-label="Edit step ${index + 1}">${escapeHtml(step)}</span><span class="plan-document__step-controls" data-plan-step-controls></span></li>`).join('')}</ol>`
+      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li draggable="true" data-plan-step-index="${index}"><span class="plan-document__step-text" data-plan-step-text role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editStepLabel', 'Edit step {number}', { number: index + 1 }))}">${escapeHtml(step)}</span><span class="plan-document__step-controls" data-plan-step-controls></span></li>`).join('')}</ol>`
       + '<div class="plan-document__add-step" data-plan-add-step></div>'
       + (plan.notes ? `<div class="plan-document__notes markdown-body">${renderMarkdown(plan.notes)}</div>` : '')
-      + (plan.verification ? `<div class="plan-document__verification"><span>Verification</span><p>${escapeHtml(plan.verification)}</p></div>` : '')
-      + '<div class="plan-document__decision" role="status" aria-live="polite"><span class="plan-document__edited-chip" data-plan-edited hidden>Plan edited</span><div data-plan-actions></div></div>'
+      + (plan.verification ? `<div class="plan-document__verification"><span>${escapeHtml(jt('artifacts.plan.verificationLabel', 'Verification'))}</span><p>${escapeHtml(plan.verification)}</p></div>` : '')
+      + '<div class="plan-document__decision" role="status" aria-live="polite"><span class="plan-document__edited-chip" data-plan-edited hidden>' + escapeHtml(jt('artifacts.plan.edited', 'Plan edited')) + '</span><div data-plan-actions></div></div>'
       + '</section>';
   }
 
@@ -87,7 +88,7 @@
     const source = value && typeof value === 'object' ? value : {};
     return collapsedReceiptMarkup({
       plan_id: source.plan_id,
-      title: source.title || 'Plan-then-act plan',
+      title: source.title || jt('artifacts.plan.planThenAct', 'Plan-then-act plan'),
       summary: source.summary,
       steps: source.steps,
       verification: source.verification,
@@ -102,7 +103,7 @@
       : source;
     return collapsedReceiptMarkup({
       plan_id: proposal.proposal_id,
-      title: proposal.title || 'Proposed plan',
+      title: proposal.title || jt('artifacts.plan.proposedPlan', 'Proposed plan'),
       summary: proposal.intro_text,
       steps: (Array.isArray(proposal.steps) ? proposal.steps : []).map((step) => (
         typeof step === 'string' ? step : step?.label

@@ -11,6 +11,7 @@
   root.rendererArtifactDeleteConfirm = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const BACKDROP_ID = 'artifact-panel-confirm-delete';
 
@@ -26,7 +27,7 @@
   function describeArtifact(artifact) {
     const file = artifact && artifact.generatedFile;
     const label = (file && (file.displayPath || file.fileName)) || (artifact && artifact.title) || '';
-    return String(label).trim() || 'this artifact';
+    return String(label).trim() || jt('artifacts.delete.thisArtifact', 'this artifact');
   }
 
   function createArtifactDeleteConfirm(deps) {
@@ -61,12 +62,12 @@
       const html = stepModal.renderStepModal({
         id: BACKDROP_ID,
         tone: 'danger',
-        title: 'Delete artifact?',
-        summary: 'This deletes "' + pending.label + '" from disk. This cannot be undone.',
+        title: jt('artifacts.deleteConfirm.title', 'Delete artifact?'),
+        summary: jt('artifacts.deleteConfirm.summary', 'This deletes "{name}" from disk. This cannot be undone.', { name: pending.label }),
         bodyHtml: '',
         actions: [
-          { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-          { id: 'confirm', label: 'Delete', variant: 'danger' },
+          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+          { id: 'confirm', label: jt('common.delete', 'Delete'), variant: 'danger' },
         ],
       });
       documentRef.body.insertAdjacentHTML('beforeend', html);

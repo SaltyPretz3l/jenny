@@ -5,6 +5,8 @@
   }
   root.rendererArtifactsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const HIGHLIGHT_DURATION_MS = 2200;
   const MAX_JUMP_ATTEMPTS = 3;
   const JUMP_RETRY_DELAY_MS = 40;
@@ -94,11 +96,10 @@
     if (!mermaidUtils || typeof mermaidUtils.createMermaidFrame !== 'function') return false;
     mermaidUtils.createMermaidFrame(host, mermaidSource, {
       requestKey: renderId,
-      onFailure: () => { host.innerHTML = '<div class="artifacts-empty">Preview unavailable. Mermaid source is shown below.</div>'; },
+      onFailure: () => { host.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>'; },
     });
     return true;
   }
-
   function renderMermaidPreviewIntoHost(host, mermaidSource, renderId) {
     if (!host || typeof host.innerHTML !== 'string') return false;
     if (typeof host.setAttribute === 'function') {
@@ -117,12 +118,12 @@
         },
         onFailure: () => {
           if (!startIframeMermaidPreview(host, mermaidSource, renderId)) {
-            host.innerHTML = '<div class="artifacts-empty">Preview unavailable. Mermaid source is shown below.</div>';
+            host.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>';
           }
         },
       })).catch(() => {
         if (!startIframeMermaidPreview(host, mermaidSource, renderId)) {
-          host.innerHTML = '<div class="artifacts-empty">Preview unavailable. Mermaid source is shown below.</div>';
+          host.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>';
         }
       });
       return true;
@@ -180,6 +181,17 @@
     // Session id last seen by renderArtifactReviewPanel — a switch invalidates
     // the file-preview rail (it was opened from another conversation).
     let lastRenderedArtifactSessionId = '';
+    let reviewReturnFocus = null;
+    function rememberReviewFocus() {
+      const active = artifactReviewPanel?.ownerDocument?.activeElement;
+      if (active && !artifactReviewPanel?.contains(active)) reviewReturnFocus = active;
+    }
+    function focusReview() { artifactReviewCollapseButton?.focus?.({ preventScroll: true }); }
+    function restoreReviewFocus() {
+      const target = reviewReturnFocus?.isConnected ? reviewReturnFocus : artifactSplitViewToggle;
+      target?.focus?.({ preventScroll: true });
+      reviewReturnFocus = null;
+    }
     const surfaces = {
       // The studio ('full') surface is gone. Keep the key as an explicit null
       // so surface-controller consumers hit their !surface guards.
@@ -477,14 +489,14 @@
       const activeSession = typeof getActiveSession === 'function' ? getActiveSession() : null;
       const artifactCount = activeSession ? getArtifactsForSession(activeSession.id).length : 0;
       artifactReviewStatus.textContent = !prefs.enabled
-        ? 'Split view is off. Toggle it on to keep artifacts beside chat.'
+        ? jt('artifacts.review.splitViewOff', 'Split view is off. Toggle it on to keep artifacts beside chat.')
         : prefs.collapsed
-          ? 'Artifact review is collapsed.'
+          ? jt('artifacts.review.collapsed', 'Artifact review is collapsed.')
           : !activeSession || artifactCount === 0
-            ? 'Split view keeps artifact details beside chat.'
+            ? jt('artifacts.review.empty', 'Split view keeps artifact details beside chat.')
             : getWorkspaceWidth() < ARTIFACT_REVIEW_MIN_STAGE_WIDTH
-              ? `${artifactCount} artifact${artifactCount === 1 ? '' : 's'} in the overlay drawer (window is narrow).`
-              : `${artifactCount} artifact${artifactCount === 1 ? '' : 's'} available beside chat.`;
+              ? jtn('artifacts.review.overlayCount', artifactCount, { count: artifactCount }, '{count} artifact in the overlay drawer (window is narrow).', '{count} artifacts in the overlay drawer (window is narrow).')
+              : jtn('artifacts.review.availableCount', artifactCount, { count: artifactCount }, '{count} artifact available beside chat.', '{count} artifacts available beside chat.');
     }
     function syncArtifactReviewLayout(options = {}) {
       const prefs = getArtifactReviewState();
@@ -617,6 +629,7 @@
         prefs.userDismissed = true;
         saveArtifactReviewPreferences();
         syncArtifactReviewLayout({ refreshChatChrome: true });
+        restoreReviewFocus();
         return;
       }
       const mermaidModeButton = event.target.closest('[data-artifact-mermaid-mode]');
@@ -756,6 +769,7 @@
       const source = String(options?.source || '').trim();
       const activeSession = typeof getActiveSession === 'function' ? getActiveSession() : null;
       if (!activeSession) return false;
+      rememberReviewFocus();
       if (source) {
         appendClientLog?.('INFO', 'artifacts.open_target', { source, artifactId: normalizedArtifactId });
       }
@@ -791,6 +805,7 @@
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout();
       renderArtifactReviewPanel();
+      focusReview();
       return true;
     }
 
@@ -799,6 +814,7 @@
     // preview owner today) hand it a mode; eligibility still requires the chat
     // view, and narrow stages get the overlay drawer via the layout sync.
     function openArtifactRail(mode) {
+      rememberReviewFocus();
       const prefs = getArtifactReviewState();
       prefs.mode = normalizeArtifactReviewMode(mode);
       prefs.enabled = true;
@@ -809,10 +825,12 @@
       }
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout();
+      focusReview();
       return prefs.mode;
     }
 
     function toggleArtifactReview() {
+      rememberReviewFocus();
       const prefs = getArtifactReviewState();
       if (prefs.enabled && prefs.collapsed) {
         prefs.collapsed = false;
@@ -835,6 +853,8 @@
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout({ refreshChatChrome: true });
       renderArtifactReviewPanel();
+      if (isArtifactReviewVisible()) focusReview();
+      else restoreReviewFocus();
     }
 
     function finishArtifactReviewResize(event) {
@@ -927,9 +947,14 @@
       handleArtifactDocumentKeydown(event, 'split');
     }
     function handleArtifactPanelKeydown(event) {
-      if (event.key !== 'Escape' || !isArtifactReviewMaximized()) return;
-      event.preventDefault();
-      toggleArtifactReviewMaximized(false);
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (artifactReviewPanel?.classList.contains('artifact-review-overlay')) {
+        event.preventDefault();
+        artifactReviewCollapseButton?.click();
+      } else if (isArtifactReviewMaximized()) {
+        event.preventDefault();
+        toggleArtifactReviewMaximized(false);
+      }
     }
 
     function dispose() {

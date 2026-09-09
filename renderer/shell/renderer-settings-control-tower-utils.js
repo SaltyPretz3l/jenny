@@ -14,6 +14,8 @@
   }
   root.rendererSettingsControlTowerUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const DEFAULT_ESCAPE = function defaultEscapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -22,7 +24,6 @@
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
   };
-
   const READINESS_SECTION_ID = 'readiness';
   const READY_ITEM_ID = 'settings-ready';
 
@@ -186,8 +187,8 @@
     if (!String(getModelName(state) || '').trim()) {
       addItem(items, {
         id: 'model-unavailable',
-        label: 'No active model',
-        message: 'Choose or load a model before starting local-first work.',
+        label: jt('settings.controlTower.noActiveModel', 'No active model'),
+        message: jt('settings.controlTower.chooseModel', 'Choose or load a model before starting local-first work.'),
         tone: 'warning',
         sectionId: 'models',
         actionLabel: 'Choose a model',
@@ -216,11 +217,11 @@
     ) {
       addItem(items, {
         id: 'workspace-missing',
-        label: 'Workspace root is missing',
-        message: 'Set a workspace root so tools work inside a clear boundary.',
+        label: jt('settings.controlTower.workspaceMissing', 'Workspace root is missing'),
+        message: jt('settings.controlTower.setWorkspaceRoot', 'Set a workspace root so tools work inside a clear boundary.'),
         tone: 'warning',
         sectionId: 'tools',
-        actionLabel: 'Set a workspace root',
+        actionLabel: jt('settings.controlTower.setWorkspaceRootAction', 'Set a workspace root'),
         priority: 30,
       });
     }
@@ -229,11 +230,11 @@
     if (blockedToolCount > 0) {
       addItem(items, {
         id: 'tools-blocked',
-        label: 'Enabled tools are blocked',
-        message: `${blockedToolCount} enabled ${blockedToolCount === 1 ? 'tool is' : 'tools are'} blocked by current settings or workspace readiness.`,
+        label: jt('settings.controlTower.enabledToolsBlocked', 'Enabled tools are blocked'),
+        message: jtn('settings.controlTower.enabledToolsBlockedCount', blockedToolCount, { count: blockedToolCount }, '{count} enabled tool is blocked by current settings or workspace readiness.', '{count} enabled tools are blocked by current settings or workspace readiness.'),
         tone: 'warning',
         sectionId: 'tools',
-        actionLabel: 'Review tools',
+        actionLabel: jt('settings.controlTower.reviewTools', 'Review tools'),
         priority: 40,
       });
     }
@@ -241,11 +242,11 @@
     if (hasLoadedSetup(state) && !isSetupComplete(state)) {
       addItem(items, {
         id: 'setup-incomplete',
-        label: 'Setup is incomplete',
-        message: 'Finish the first-run setup so Jenny is ready across sessions.',
+        label: jt('settings.controlTower.setupIncomplete', 'Setup is incomplete'),
+        message: jt('settings.controlTower.finishSetup', 'Finish the first-run setup so Jenny is ready across sessions.'),
         tone: 'warning',
         sectionId: 'account',
-        actionLabel: 'Finish setup',
+        actionLabel: jt('settings.controlTower.finishSetupAction', 'Finish setup'),
         priority: 50,
       });
     }
@@ -253,11 +254,11 @@
     if (isLocalOnlyNotReady(state)) {
       addItem(items, {
         id: 'local-only-not-ready',
-        label: 'Force local inference needs attention',
-        message: 'Force local inference is on, but the selected local model is not ready.',
+        label: jt('settings.controlTower.forceLocalAttention', 'Force local inference needs attention'),
+        message: jt('settings.controlTower.forceLocalNotReady', 'Force local inference is on, but the selected local model is not ready.'),
         tone: 'warning',
         sectionId: 'offline',
-        actionLabel: 'Check local model',
+        actionLabel: jt('settings.controlTower.checkLocalModel', 'Check local model'),
         priority: 60,
       });
     }
@@ -265,11 +266,11 @@
     if (hasMemoryIssue(state)) {
       addItem(items, {
         id: 'memory-not-ready',
-        label: 'Memory manager is not ready',
-        message: 'Approved memory controls stay limited until the memory manager recovers.',
+        label: jt('settings.controlTower.memoryNotReady', 'Memory manager is not ready'),
+        message: jt('settings.controlTower.memoryLimited', 'Approved memory controls stay limited until the memory manager recovers.'),
         tone: 'warning',
         sectionId: '__memory',
-        actionLabel: 'Open memories',
+        actionLabel: jt('settings.controlTower.openMemories', 'Open memories'),
         priority: 70,
       });
     }
@@ -277,11 +278,11 @@
     if (hasProactiveIssue(state)) {
       addItem(items, {
         id: 'proactive-not-ready',
-        label: 'Proactive features are unavailable',
-        message: 'Morning briefings, reminders, or resource alerts need a readiness check.',
+        label: jt('settings.controlTower.proactiveUnavailable', 'Proactive features are unavailable'),
+        message: jt('settings.controlTower.proactiveReadiness', 'Morning briefings, reminders, or resource alerts need a readiness check.'),
         tone: 'warning',
         sectionId: 'proactive',
-        actionLabel: 'Check proactive',
+        actionLabel: jt('settings.controlTower.checkProactive', 'Check proactive'),
         priority: 80,
       });
     }
@@ -289,11 +290,11 @@
     if (hasSkillsIssue(state)) {
       addItem(items, {
         id: 'skills-not-ready',
-        label: 'Skills are unavailable',
-        message: 'Skill discovery or activation stays limited until the skills state refreshes.',
+        label: jt('settings.controlTower.skillsUnavailable', 'Skills are unavailable'),
+        message: jt('settings.controlTower.skillsLimited', 'Skill discovery or activation stays limited until the skills state refreshes.'),
         tone: 'warning',
         sectionId: 'skills',
-        actionLabel: 'Open skills',
+        actionLabel: jt('settings.controlTower.openSkills', 'Open skills'),
         priority: 90,
       });
     }
@@ -302,11 +303,11 @@
     if (degradedPaneCount > 0) {
       addItem(items, {
         id: 'settings-refresh-degraded',
-        label: 'Some settings panes are partial',
-        message: `${degradedPaneCount} settings ${degradedPaneCount === 1 ? 'pane has' : 'panes have'} partial data. The rows you can see are still current.`,
+        label: jt('settings.controlTower.somePanesPartial', 'Some settings panes are partial'),
+        message: jtn('settings.controlTower.partialPaneCount', degradedPaneCount, { count: degradedPaneCount }, '{count} settings pane has partial data. The rows you can see are still current.', '{count} settings panes have partial data. The rows you can see are still current.'),
         tone: 'pending',
         sectionId: '__diagnostics',
-        actionLabel: 'Open diagnostics',
+        actionLabel: jt('settings.controlTower.openDiagnostics', 'Open diagnostics'),
         priority: 95,
       });
     }
@@ -319,11 +320,11 @@
     if (!attentionCount) {
       addItem(items, {
         id: READY_ITEM_ID,
-        label: "Everything's ready",
-        message: 'Model, workspace, tools, setup, and companion surfaces all look ready.',
+        label: jt('settings.controlTower.everythingReady', "Everything's ready"),
+        message: jt('settings.controlTower.allReady', 'Model, workspace, tools, setup, and companion surfaces all look ready.'),
         tone: 'success',
         sectionId: 'models',
-        actionLabel: 'Review models',
+        actionLabel: jt('settings.controlTower.reviewModels', 'Review models'),
         priority: 1000,
       });
     }
@@ -331,10 +332,10 @@
     const hasWarning = items.some((item) => item.tone === 'warning' || item.tone === 'danger');
     return {
       tone: attentionCount > 0 ? 'attention' : 'ready',
-      summaryLabel: attentionCount > 0 ? `${attentionCount} to review` : 'Ready',
+      summaryLabel: attentionCount > 0 ? jt('settings.controlTower.reviewCount', '{count} to review', { count: attentionCount }) : 'Ready',
       summaryMessage: attentionCount > 0
-        ? `${attentionCount} ${attentionCount === 1 ? 'item needs' : 'items need'} a look before everything is ready.`
-        : 'Settings are ready for the current local-first workflow.',
+        ? jtn('settings.controlTower.attentionSummary', attentionCount, { count: attentionCount }, '{count} item needs a look before everything is ready.', '{count} items need a look before everything is ready.')
+        : jt('settings.controlTower.readySummary', 'Settings are ready for the current local-first workflow.'),
       attentionCount,
       readyCount: items.length - attentionCount,
       // Nav-rail badge source. Empty text at zero keeps the slot rendered-but-empty.
@@ -385,7 +386,7 @@
         + '</li>';
     }).join('');
 
-    return '<section class="settings-control-tower" id="settingsControlTower" data-tone="' + escapeHtml(safeModel.tone || 'ready') + '" aria-label="Readiness checks">'
+    return '<section class="settings-control-tower" id="settingsControlTower" data-tone="' + escapeHtml(safeModel.tone || 'ready') + '" aria-label="' + escapeHtml(jt('settings.controlTower.readinessChecksAria', 'Readiness checks')) + '">'
       + '<p class="settings-copy settings-control-tower-summary">' + escapeHtml(safeModel.summaryMessage || '') + '</p>'
       + '<ul class="settings-control-tower-list">' + rows + '</ul>'
       + '</section>';

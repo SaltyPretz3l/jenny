@@ -5,15 +5,16 @@
   }
   root.chatbarUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function formatTokenUsageDisplay(usedTokens, limit, limitLabel) {
     const safeUsed = Math.max(Number(usedTokens || 0), 0);
     const numericLimit = Number(limit);
     const hasLimit = Number.isFinite(numericLimit) && numericLimit > 0;
     const safeLimit = hasLimit ? numericLimit : 0;
     const normalizedLimitLabel = hasLimit
-      ? String(limitLabel || safeLimit.toLocaleString())
+      ? String(limitLabel || safeLimit.toLocaleString(globalThis.jennyI18n?.tag?.()))
       : '-';
-    const label = `Est. tokens: ${safeUsed.toLocaleString()} / ${normalizedLimitLabel}`;
+    const label = jt('chat.chatbar.estimatedTokens', 'Est. tokens: {used} / {limit}', { used: safeUsed.toLocaleString(globalThis.jennyI18n?.tag?.()), limit: normalizedLimitLabel });
     const ratio = hasLimit ? Math.min(safeUsed / safeLimit, 1) : 0;
     return {
       label,

@@ -371,7 +371,7 @@ describe('home tool write refusals and degraded journaling', () => {
       context(service)
     );
     assert.equal(result.metadata.journaled, true);
-    assert.match(result.content, /can be undone from Home/);
+    assert.match(result.content, /can be undone from the receipt in chat or from Home/);
   });
 });
 

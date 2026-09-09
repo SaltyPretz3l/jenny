@@ -1,6 +1,7 @@
 'use strict';
 
 const { WORKSPACE_FS_ERROR_CODES } = require('../backend/error-codes');
+const { t } = require('../i18n-main');
 
 const WORKSPACE_FILE_CODE = /^CMP-WORKSPACEFS-\d{4}$/;
 const DETAIL_KEYS = new Set([
@@ -36,8 +37,8 @@ function failure(error) {
     code,
     error_code: code,
     message: known
-      ? String(error?.message || 'The workspace file operation was refused.').slice(0, 300)
-      : 'The workspace file operation failed safely.',
+      ? String(error?.message || t('main.workspaceFile.refused', 'The workspace file operation was refused.')).slice(0, 300)
+      : t('main.workspaceFile.failedSafely', 'The workspace file operation failed safely.'),
     details: known ? boundedDetails(error?.details) : {},
   };
 }

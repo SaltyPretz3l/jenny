@@ -47,8 +47,8 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + var(--space-2));
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   margin: 0;
   padding: var(--space-2);
   list-style: none;
@@ -109,8 +109,8 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + var(--space-2));
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   padding: var(--space-3);
   border: 1px solid var(--settings-shell-nav-border);
   border-radius: var(--radius-md);
@@ -168,7 +168,7 @@
   font-family: inherit;
   font-size: var(--font-size-md);
   font-weight: 600;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -214,7 +214,7 @@
   align-items: center;
   justify-content: flex-end;
   min-width: 1.5ch;
-  margin-left: var(--space-3);
+  margin-inline-start: var(--space-3);
   font-size: var(--font-size-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -234,7 +234,7 @@
 .settings-nav-item:not([data-settings-section="readiness"])[data-dirty="true"]::after {
   content: "";
   position: absolute;
-  right: var(--space-5);
+  inset-inline-end: var(--space-5);
   top: 50%;
   width: 6px;
   height: 6px;
@@ -296,7 +296,7 @@
 .settings-nav-disclosure-icon {
   width: 8px;
   height: 8px;
-  border-right: 1.5px solid var(--text-muted);
+  border-right: 1.5px solid var(--text-muted); /* rtl:physical */
   border-bottom: 1.5px solid var(--text-muted);
   transform: rotate(45deg);
   transition:
@@ -316,7 +316,7 @@
 }
 
 .settings-nav-item-child {
-  padding-left: calc(var(--space-5) + var(--space-6));
+  padding-inline-start: calc(var(--space-5) + var(--space-6));
 }
 
 @media (forced-colors: active) {

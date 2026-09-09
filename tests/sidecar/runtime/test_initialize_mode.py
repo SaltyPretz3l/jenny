@@ -254,6 +254,7 @@ def test_process_message_plugin_runtime_returns_exact_attestation_and_notificati
     }
     apply_calls: list[dict[str, object]] = []
     brain = SimpleNamespace(
+        host_policy_enforced=False,
         apply_plugin_runtime=lambda **kwargs: apply_calls.append(kwargs) or attestation,
     )
     outcome = rd.process_message(

@@ -19,7 +19,7 @@ const {
 } = require('../renderer/chat/chat-message-utils');
 const { getThinkingSummary } = require('../renderer/chat/chat-thinking-utils');
 
-test('normalizeChatMessage marks historical assistant replies complete and finalizes at timestamp', () => {
+test('normalizeChatMessage marks historical assistant replies complete without inventing a finalization time', () => {
   const message = normalizeChatMessage(
     {
       id: 'assistant_hist_1',
@@ -31,7 +31,7 @@ test('normalizeChatMessage marks historical assistant replies complete and final
   );
 
   assert.equal(message.status, COMPLETE_STATUS);
-  assert.equal(message.finalizedAt, '2026-03-12T14:15:09.000Z');
+  assert.equal(message.finalizedAt, '');
 });
 
 test('normalizeChatMessage preserves streaming assistant replies without finalizedAt', () => {
@@ -155,11 +155,11 @@ test('buildAssistantMetaLabel formats terminal states and hides streaming metada
 
   assert.equal(
     buildAssistantMetaLabel(completeMessage, formatTime),
-    'Completed @ 2026-03-12T14:22:00.000Z'
+    'Completed · message time @ 2026-03-12T14:22:00.000Z · Model unknown'
   );
   assert.equal(
     buildAssistantMetaLabel(errorMessage, formatTime),
-    'Failed @ 2026-03-12T14:23:04.000Z'
+    'Failed @ 2026-03-12T14:23:04.000Z · Model unknown'
   );
   assert.equal(buildAssistantMetaLabel(streamingMessage, formatTime), '');
   assert.equal(
@@ -438,11 +438,10 @@ test('normalizeChatMessage renders an unknown-status assistant message without c
     source: REASONING_SOURCE_NONE,
     entries: [],
   });
-  // Deeper unknown-status UX is deferred to wave L5 -- for now the label must
-  // simply not crash; it falls back to the non-error ("Completed") wording.
+  // Unknown status must not be misrepresented as successful completion.
   assert.equal(
     buildAssistantMetaLabel(message, (value) => value),
-    `Completed ${message.finalizedAt}`
+    `Status unknown · message time ${message.timestamp} · Model unknown`
   );
 });
 

@@ -6,6 +6,7 @@
   }
   root.rendererHeaderUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function createHeaderController(deps) {
     const { state } = deps;
@@ -76,9 +77,9 @@
       const doc = metricList.ownerDocument;
       const mount = doc.createElement('div');
       mount.className = 'session-lockdown-header';
-      mount.innerHTML = '<span class="session-offline-lockdown-badge" title="Offline lockdown">'
+      mount.innerHTML = '<span class="session-offline-lockdown-badge" title="' + escapeHtml(jt('titlebar.offlineLockdown.title', 'Offline lockdown')) + '">'
         + '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="7" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg>'
-        + '<span>Offline lockdown</span></span>'
+        + '<span>' + escapeHtml(jt('titlebar.offlineLockdown.title', 'Offline lockdown')) + '</span></span>'
         + '<span class="sr-only session-lockdown-announcer" aria-live="polite" aria-atomic="true"></span>';
       metricList.parentNode.insertBefore(mount, metricList);
       lockdownMount = mount;
@@ -97,8 +98,8 @@
       badge?.classList.toggle('session-offline-lockdown-badge--fade', active && !reduceMotion);
       if (active !== lastLockdownState && announcer) {
         announcer.textContent = active
-          ? 'Offline lockdown is on for this session.'
-          : (lastLockdownState === true ? 'Offline lockdown is off for this session.' : '');
+          ? jt('titlebar.offlineLockdown.enabledAnnouncement', 'Offline lockdown is on for this session.')
+          : (lastLockdownState === true ? jt('titlebar.offlineLockdown.disabledAnnouncement', 'Offline lockdown is off for this session.') : '');
       }
       lastLockdownState = active;
     }
@@ -116,13 +117,13 @@
       const hasGpuVramMetric = !gpuTelemetryBlocked && gpuMemory && gpuMemory.available === true;
       const vramValue = hasGpuVramMetric ? formatVramGbValue(gpuMemory) : '';
       const memoryMetric = hasGpuVramMetric && vramValue
-        ? { label: 'VRAM', value: vramValue, gpuDerived: true }
-        : { label: 'RAM', value: formatPercent(stats.ramPercent) };
+        ? { label: jt('titlebar.metrics.vram', 'VRAM'), value: vramValue, gpuDerived: true }
+        : { label: jt('titlebar.metrics.ram', 'RAM'), value: formatPercent(stats.ramPercent) };
       const metrics = [
-        { label: 'CPU', value: formatPercent(stats.cpuPercent) },
+        { label: jt('titlebar.metrics.cpu', 'CPU'), value: formatPercent(stats.cpuPercent) },
         ...(telemetryFlagOn && !gpuTelemetryBlocked && gpuMemory && gpuMemory.utilAvailable === true
           ? [{
-              label: 'GPU',
+              label: jt('titlebar.metrics.gpu', 'GPU'),
               value: `${Number.isFinite(Number(gpuMemory.utilPercent)) ? Math.round(Number(gpuMemory.utilPercent)) : 0}%`,
               gpuDerived: true,
             }]
@@ -140,8 +141,8 @@
             // A 0s bucket means stale-by-failure (or unparseable timestamp),
             // not stale-by-age — "0s old" would contradict the dimmed visual.
             const staleTitle = staleAgeSeconds > 0
-              ? `GPU sample is ${staleAgeSeconds}s old`
-              : 'GPU sample may be stale';
+              ? jt('titlebar.gpuSampleAge', 'GPU sample is {seconds}s old', { seconds: staleAgeSeconds })
+              : jt('titlebar.gpuSampleStale', 'GPU sample may be stale');
             const staleAttributes = telemetryFlagOn
               && metric.gpuDerived === true
               && gpuMemory
@@ -160,7 +161,7 @@
       }
 
       if (sessionActionButton) {
-        sessionActionButton.textContent = 'End Session';
+        sessionActionButton.textContent = jt('titlebar.session.end', 'End Session');
         sessionActionButton.disabled =
           !state.auth.authenticated ||
           ((!state.currentSessionId && !isAnySendBusy()) || isSendPreflightPending());
@@ -231,7 +232,7 @@
       // metric value from screen readers. The span text is the accessible name.
       metricList.setAttribute('role', 'button');
       metricList.setAttribute('tabindex', '0');
-      metricList.setAttribute('title', 'Click to refresh system stats');
+      metricList.setAttribute('title', jt('titlebar.metrics.refreshTitle', 'Click to refresh system stats'));
       metricList.addEventListener('click', onClick);
       metricList.addEventListener('keydown', onKeydown);
       refreshAttached = true;

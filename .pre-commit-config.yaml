@@ -11,6 +11,13 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: source-encoding
+        name: Source UTF-8 and mojibake sweep
+        entry: python scripts/checks/check_no_mojibake.py --source-files
+        language: system
+        types: [file]
+        files: '\.(js|cjs|mjs|py|ts|tsx|css|html|json|toml|ya?ml)$'
+        exclude: '^plugins/official/local-image-generation/runtime/upstream/'
       - id: mypy-sidecar
         name: Mypy Sidecar
         entry: python -m mypy sidecar

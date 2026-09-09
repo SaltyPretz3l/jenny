@@ -146,6 +146,8 @@ async function runPlanApprovalScenario(t, {
   // Exactly one card: the live reducer row and the message-path twin must
   // dedup, never render side by side.
   assert.equal(timeline.querySelectorAll('[data-plan-document="true"]').length, 1);
+  assert.equal(timeline.querySelector('.tool-call-header'), null, 'plan review must not duplicate the generic tool header');
+  assert.equal(timeline.querySelector('.tool-call-details'), null, 'plan review must not expose generic tool details');
 
   const approvalGap = timeline.querySelector('[data-approval-variant="plan"]');
   assert.ok(approvalGap, 'expected the buttonless plan approval gap');

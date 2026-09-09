@@ -534,7 +534,10 @@ describe('artifact panel v2 Copy button gating (Finding 1)', () => {
     };
     v2.afterRender(artifact);
     const copyBtn = h.panelEl.querySelector('[data-artifact-panel-v2-copy]');
-    assert.equal(copyBtn.disabled, false, 'generated file: Copy must be enabled');
+    assert.equal(copyBtn.disabled, true, 'generated file: Copy waits for complete source');
+    v2.connect({ getSelectedArtifactSource: () => 'loaded source' });
+    v2.afterRender(artifact);
+    assert.equal(copyBtn.disabled, false, 'loaded generated file: Copy must be enabled');
   });
 });
 

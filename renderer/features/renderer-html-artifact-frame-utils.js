@@ -38,6 +38,7 @@
   root.rendererHtmlArtifactFrameUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Verbatim strict profile — must match html-artifact-frame.html byte for
   // byte (pinned by tests/renderer-html-artifact-frame-utils.test.js). Allow
@@ -179,7 +180,7 @@
     }
 
     if (!host || typeof host.appendChild !== 'function' || typeof host.innerHTML !== 'string') {
-      return failedHandle('HTML preview host is unavailable.');
+      return failedHandle(jt('artifacts.htmlFrame.hostUnavailable', 'HTML preview host is unavailable.'));
     }
     const previousDispose = host[HOST_DISPOSE_KEY];
     if (typeof previousDispose === 'function') {
@@ -188,23 +189,23 @@
     const ownerDocument = host.ownerDocument || (typeof document !== 'undefined' ? document : null);
     const windowRef = ownerDocument?.defaultView || (typeof window !== 'undefined' ? window : null);
     if (!ownerDocument || !windowRef) {
-      return failedHandle('HTML preview document is unavailable.');
+      return failedHandle(jt('artifacts.htmlFrame.documentUnavailable', 'HTML preview document is unavailable.'));
     }
     const body = String(htmlBody || '');
     if (!body.trim()) {
-      return failedHandle('HTML artifact source is empty.');
+      return failedHandle(jt('artifacts.htmlFrame.sourceEmpty', 'HTML artifact source is empty.'));
     }
 
     const requestId = `html-artifact-frame-${++requestSequence}-${sanitizeToken(options.requestKey || '', 'preview')}`;
     const documentHtml = buildHtmlArtifactDocument(body, requestId);
     if (!documentHtml) {
-      return failedHandle('HTML preview frame init is unavailable.');
+      return failedHandle(jt('artifacts.htmlFrame.initUnavailable', 'HTML preview frame init is unavailable.'));
     }
     const stageDocument = typeof options.stageDocument === 'function'
       ? options.stageDocument
       : resolveBridgeStageDocument(windowRef);
     if (!stageDocument) {
-      return failedHandle('HTML preview staging bridge is unavailable in this build.');
+      return failedHandle(jt('artifacts.htmlFrame.stagingBridgeUnavailable', 'HTML preview staging bridge is unavailable in this build.'));
     }
 
     const initialHeight = clampHeight(options.initialHeight, DEFAULT_HEIGHT_PX);
@@ -227,7 +228,7 @@
     // asynchronously below once the document is staged. The boot timeout is
     // already armed, so a staging stall still lands in the bounded failure.
     iframe.setAttribute('sandbox', iframeSandbox);
-    iframe.setAttribute('aria-label', 'HTML artifact live preview');
+    iframe.setAttribute('aria-label', jt('artifacts.htmlPreview.frameLabel', 'HTML artifact live preview'));
     iframe.setAttribute('scrolling', sizing === 'fill' ? 'auto' : 'no');
     iframe.style.width = '100%';
     iframe.style.border = '0';
@@ -287,7 +288,7 @@
       renderSettled = true;
       teardown(true);
       if (onFailure) {
-        onFailure(payload || { ok: false, error: 'HTML artifact preview failed.' });
+        onFailure(payload || { ok: false, error: jt('artifacts.htmlFrame.previewFailed', 'HTML artifact preview failed.') });
       }
     }
 
@@ -341,7 +342,7 @@
         type: 'error',
         requestId,
         ok: false,
-        error: 'HTML artifact preview timed out.',
+        error: jt('artifacts.htmlFrame.previewTimedOut', 'HTML artifact preview timed out.'),
       });
     }, timeoutMs);
 
@@ -363,7 +364,7 @@
             type: 'error',
             requestId,
             ok: false,
-            error: String((result && result.error) || 'HTML preview document staging failed.'),
+            error: String((result && result.error) || jt('artifacts.htmlFrame.stagingFailed', 'HTML preview document staging failed.')),
           });
           return;
         }
@@ -374,7 +375,7 @@
           type: 'error',
           requestId,
           ok: false,
-          error: String((error && error.message) || error || 'HTML preview document staging failed.'),
+          error: String((error && error.message) || error || jt('artifacts.htmlFrame.stagingFailed', 'HTML preview document staging failed.')),
         });
       });
 

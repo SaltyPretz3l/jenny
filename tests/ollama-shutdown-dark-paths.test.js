@@ -489,14 +489,14 @@ test('isVmmemWslAliveSync returns false when tasklist throws', () => {
 // (the verified-WSL helper is private; we drive it via the public entrypoint)
 // ---------------------------------------------------------------------------
 
-test('shutdownAnyLocalOllamaSync runs the name sweep on linux with residue but never touches WSL', () => {
+test('shutdownAnyLocalOllamaSync rejects an owned record without a usable pid', () => {
   const dir = createTrackedTempDir('ollama-linux-sweep-');
   fs.writeFileSync(
     path.join(dir, 'ollama-process.json'),
     JSON.stringify({ pid: 0, app_owned: true }),
   );
   const spawnCalls = [];
-  shutdownAnyLocalOllamaSync({
+  const result = shutdownAnyLocalOllamaSync({
     userDataPath: dir,
     platform: 'linux',
     execFileSyncImpl: (cmd) => {
@@ -517,11 +517,9 @@ test('shutdownAnyLocalOllamaSync runs the name sweep on linux with residue but n
     false,
     'expected no WSL-related spawn',
   );
-  // The owned record carries no usable pid, so the by-name sweep still runs.
-  assert.ok(
-    spawnCalls.some((c) => c.cmd === 'pkill'),
-    'expected pkill name-cleanup to run on linux',
-  );
+  assert.equal(result.skipped, 'malformed_owned_state');
+  assert.equal(spawnCalls.some((c) => c.cmd === 'pkill'), false,
+    'an incomplete record must never widen cleanup to a name sweep');
 });
 
 test('shutdownAnyLocalOllamaSync early-returns when the owned-state file is absent', () => {
@@ -560,7 +558,9 @@ test('readOwnedOllamaState returns the pid+command, and null for unreadable reco
   fs.writeFileSync(statePath, JSON.stringify({ pid: 4242, command: 'C:\\O\\ollama.exe', app_owned: true }));
   assert.deepEqual(readOwnedOllamaState(dir), { pid: 4242, command: 'C:\\O\\ollama.exe' });
   fs.writeFileSync(statePath, JSON.stringify({ pid: -1 }));
-  assert.deepEqual(readOwnedOllamaState(dir), { pid: 0, command: '' });
+  assert.equal(readOwnedOllamaState(dir), null);
+  fs.writeFileSync(statePath, JSON.stringify({ pid: 4242, command: 'ollama serve' }));
+  assert.equal(readOwnedOllamaState(dir), null, 'app_owned must be explicit');
 });
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@
   }
   root.rendererIdeController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -687,13 +688,13 @@
         appendClientLog, showToastMessage: (...args) => showToastMessage(...args),
         onHydrated: (ide) => welcome?.seedRecent((ide.openTabs || []).map((tab) => tab.path)),
         onPreferenceCommitted: () => statusBar?.render(),
-        onPreferenceError: (key) => showShellErrorToast('That editor preference could not be saved. Your previous setting is still active.', { title: 'Editor Setting Not Saved', dedupeKey: `ide:preference:${String(key || 'unknown')}` }),
+        onPreferenceError: (key) => showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` }),
       }) || null;
     function flushPersist() { return persistence?.flushPersist(); }
     function schedulePersist() { persistence?.schedulePersist(); }
     function commitEditorPreference(key, value) {
       if (persistence) return persistence.commitPreference(key, value);
-      showShellErrorToast('That editor preference could not be saved. Your previous setting is still active.', { title: 'Editor Setting Not Saved', dedupeKey: `ide:preference:${String(key || 'unknown')}` });
+      showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` });
       return Promise.resolve({ updated: false, code: 'workspace_ide_settings_unavailable' });
     }
     function hydratePersistedState() {
@@ -812,7 +813,7 @@
     // utilities + send (the Send-to-Jenny items live in selection-intents).
     function buildFileContextMenuItems(path) {
       return [
-        { label: 'Open in New Tab', action: () => openFile(path) },
+        { label: jt('ide.controller.openInNewTab', 'Open in New Tab'), action: () => openFile(path) },
         ...(previewController?.buildPreviewMenuItems(path) || []),
         ...buildPathUtilityMenuItems(path, 'file'),
         ...(selectionIntents?.buildSendToJennyMenuItems(path) || []),

@@ -45,7 +45,14 @@ def _release_workflow_yaml(*, build_preload: bool) -> str:
         "on:\n"
         "  push:\n"
         '    tags: ["v*"]\n'
+        "concurrency:\n"
+        "  group: release-${{ github.ref }}\n"
+        "  cancel-in-progress: false\n"
         "jobs:\n"
+        "  prepare:\n"
+        "    if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'\n"
+        "    steps:\n"
+        "      - run: python scripts/packaging/release_assets.py prepare --tag v0.1.0\n"
         "  build:\n"
         "    runs-on: windows-latest\n"
         "    steps:\n"
@@ -53,12 +60,12 @@ def _release_workflow_yaml(*, build_preload: bool) -> str:
         "        run: npm ci\n"
         f"{preload_step}"
         "      - name: Build & publish installer\n"
-        "        run: npm exec -- electron-builder --win --publish always\n"
+        "        run: npm exec -- electron-builder --win --publish never\n"
     )
 
 
 def _write_release_workflows(root: Path, *, build_preload: bool = True) -> None:
-    for name in ("release.yml", "release-attestation.yml", "ci-linux-package.yml"):
+    for name in ("release.yml", "ci-linux-package.yml"):
         _write(
             root / ".github" / "workflows" / name,
             _release_workflow_yaml(build_preload=build_preload),
@@ -80,7 +87,7 @@ def _write_release_policy_fixture(root: Path, *, package_version: str = "0.1.0")
             '    "build:full-host-supervisor:release": "python scripts/packaging/build_full_host_supervisor_artifact.py --release",\n'
             '    "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host && npm run build:full-host-supervisor && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",\n'
             '    "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",\n'
-            '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish always",\n'
+            '    "release:windows": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run build:restricted-host:release && npm run build:full-host-supervisor:release && npm run sbom:sidecar && npm exec -- electron-builder --win --config electron-builder.yml --publish never",\n'
             '    "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",\n'
             '    "release:smoke": "python scripts/packaging/smoke_packaged_flow.py"\n'
             "  },\n"
@@ -326,7 +333,7 @@ def test_release_workflow_accepts_embedded_preload_npm_script(tmp_path) -> None:
     """``npm run release:windows`` already embeds the preload build."""
     module = _load_script_module("scripts/checks/check_release_version_policy.py")
     _write_release_policy_fixture(tmp_path)
-    for name in ("release.yml", "release-attestation.yml", "ci-linux-package.yml"):
+    for name in ("release.yml", "ci-linux-package.yml"):
         _write(
             tmp_path / ".github" / "workflows" / name,
             (
@@ -334,7 +341,12 @@ def test_release_workflow_accepts_embedded_preload_npm_script(tmp_path) -> None:
                 "on:\n"
                 "  push:\n"
                 '    tags: ["v*"]\n'
+                "concurrency:\n  group: release-${{ github.ref }}\n  cancel-in-progress: false\n"
                 "jobs:\n"
+                "  prepare:\n"
+                "    if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'\n"
+                "    steps:\n"
+                "      - run: python scripts/packaging/release_assets.py prepare --tag v0.1.0\n"
                 "  build:\n"
                 "    runs-on: windows-latest\n"
                 "    steps:\n"

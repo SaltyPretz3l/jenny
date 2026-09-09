@@ -20,7 +20,7 @@
 .ask-card:not(.ask-card-inert)::before {
   content: '';
   position: absolute;
-  left: -1px;
+  inset-inline-start: -1px;
   top: var(--space-5);
   bottom: var(--space-5);
   width: 2px;
@@ -332,7 +332,7 @@
   flex-direction: column;
   gap: var(--space-4);
   margin: 0;
-  padding-left: var(--space-7);
+  padding-inline-start: var(--space-7);
 }
 
 .plan-proposal-step {
@@ -383,7 +383,7 @@
   flex-direction: column;
   gap: var(--space-2);
   margin: 0;
-  padding-left: var(--space-7);
+  padding-inline-start: var(--space-7);
   color: var(--widget-interactive-note-color);
   font-size: 13px;
   line-height: 1.5;

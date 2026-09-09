@@ -8,7 +8,7 @@
 
 .titlebar-health-slot {
   -webkit-app-region: no-drag;
-  margin-left: var(--space-2);
+  margin-inline-start: var(--space-2);
   /* The brand wordmark is all-caps in the display face, so its optical center
      sits above its line-box center; flex centering alone leaves the pill
      looking low. Nudge up to align with the caps' visual midline. */
@@ -109,6 +109,20 @@
   color: var(--text-muted);
 }
 
+.workbench-health-pill-mode {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--toprail-item-hover-bg);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+.workbench-health-pill-mode[data-pause-state="requested"] {
+  color: var(--accent-amber);
+}
+.workbench-health-pill-mode[data-pause-state="paused"] {
+  color: var(--text-danger-emphasis);
+}
 .workbench-health-pill[data-health-tone="pending"] .workbench-health-pill-dot,
 .workbench-health-popover[data-health-tone="pending"] .workbench-health-pill-dot {
   animation: status-dot-pulse var(--motion-duration-pulse) var(--motion-ease-standard) infinite;
@@ -271,7 +285,7 @@
 }
 
 .workbench-health-popover-error-code {
-  margin-right: var(--space-2);
+  margin-inline-end: var(--space-2);
 }
 
 .workbench-health-popover-error-title {
@@ -312,7 +326,7 @@
 }
 
 .workbench-health-popover-action[data-health-pill-action="clear-errors"] {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-muted);
 }
 

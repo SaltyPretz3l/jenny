@@ -9,6 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const COMMAND_NAME_PATTERN = /^\/[a-z][a-z0-9_-]*$/;
 
   function noop() {}
@@ -77,6 +78,12 @@
     const showToastMessage = options.showToastMessage || noop;
     const commands = new Map();
     const pending = new Map();
+    const listeners = new Set();
+    function notifyChanged() { for (const listener of listeners) listener(); }
+    function subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
 
     function register(name, description, handler, registrationOptions) {
       const normalizedName = String(name || '').trim().toLowerCase();
@@ -112,11 +119,14 @@
         clearPolicy: action === 'attach' || config.clearPolicy === 'never' ? 'never' : 'on_success',
         concurrency: 'drop_while_running',
       }));
+      notifyChanged();
       return true;
     }
 
     function unregister(name) {
-      return commands.delete(String(name || '').trim().toLowerCase());
+      const removed = commands.delete(String(name || '').trim().toLowerCase());
+      if (removed) notifyChanged();
+      return removed;
     }
 
     function listCommands() {
@@ -133,7 +143,7 @@
           clearPolicy: entry.clearPolicy,
           concurrency: entry.concurrency,
           available,
-          unavailableReason: available ? '' : 'Start a conversation first.',
+          unavailableReason: available ? '' : jt('composer.slash.startConversationFirst', 'Start a conversation first.'),
         };
       });
     }
@@ -153,8 +163,8 @@
       const sessionId = String(invocation?.sessionId || state.currentSessionId || '').trim();
       if (!sessionId) return false;
       if (invocation && (!isKnownSession(sessionId) || getSessionGeneration(sessionId) !== Number(invocation.generation))) {
-        showToastMessage('That command finished after its conversation changed, so its result was not added.', {
-          title: 'Command Result Not Added',
+        showToastMessage(jt('commandPalette.slash.resultNotAdded', 'That command finished after its conversation changed, so its result was not added.'), {
+          title: jt('commandPalette.slash.resultNotAddedTitle', 'Command Result Not Added'),
           tone: 'warning',
         });
         appendClientLog('INFO', 'slash.output_dropped', { command: commandName, reason: 'stale_invocation' });
@@ -216,14 +226,14 @@
         });
       }
       if (entry.requiresSession && !sessionId) {
-        showToastMessage('Start a conversation first.', { title: 'No Active Session', tone: 'warning' });
+        showToastMessage(jt('commandPalette.slash.startConversation', 'Start a conversation first.'), { title: jt('commandPalette.slash.noActiveSessionTitle', 'No Active Session'), tone: 'warning' });
         appendClientLog('WARN', 'slash.command_blocked', { command: parsed.name, reason: 'no_session' });
         return settledReceipt(parsed.name, 'blocked', { ok: false, handled: true, code: 'no_session' }, entry, invocation);
       }
 
       const pendingKey = (entry.requiresSession ? sessionId : 'global') + ':' + parsed.name;
       if (pending.has(pendingKey)) {
-        showToastMessage('That command is already running.', { title: 'Command in progress', tone: 'warning' });
+        showToastMessage(jt('commandPalette.slash.alreadyRunning', 'That command is already running.'), { title: jt('commandPalette.slash.inProgressTitle', 'Command in progress'), tone: 'warning' });
         appendClientLog('INFO', 'slash.command_busy', { command: parsed.name, sessionId });
         return settledReceipt(parsed.name, 'busy', { ok: false, handled: true, code: 'busy' }, entry, invocation);
       }
@@ -245,7 +255,7 @@
             });
           } else {
             if (result.handled !== true) {
-              showToastMessage('The command could not be completed.', { title: 'Command Failed', tone: 'warning' });
+              showToastMessage(jt('commandPalette.slash.failed', 'The command could not be completed.'), { title: jt('commandPalette.slash.failedTitle', 'Command Failed'), tone: 'warning' });
             }
             appendClientLog('WARN', 'slash.command_failed', {
               command: parsed.name,
@@ -273,7 +283,7 @@
       return execute(prompt).matched;
     }
 
-    return { register, unregister, execute, tryExecute, listCommands, injectOutput, isPending: (key) => pending.has(key) };
+    return { register, unregister, subscribe, execute, tryExecute, listCommands, injectOutput, isPending: (key) => pending.has(key) };
   }
 
   function registerBuiltInSlashCommands(options) {
@@ -284,20 +294,20 @@
     const contextHandler = config.contextHandler || (() => ({ ok: false, code: 'unavailable' }));
     const noteHandler = config.noteHandler || (() => ({ ok: false, code: 'unavailable' }));
 
-    registry.register('/help', 'List available slash commands', (invocation) => {
+    registry.register('/help', jt('composer.slash.helpDescription', 'List available slash commands'), (invocation) => {
       const entries = registry.listCommands();
       const skillEntries = entries.filter((entry) => entry.action === 'attach');
       const commandEntries = entries.filter((entry) => entry.action !== 'attach');
       const lines = [];
       if (skillEntries.length) {
-        lines.push('Skills', '');
+        lines.push(jt('composer.slash.skills', 'Skills'), '');
         const maxSkillLen = Math.max(0, ...skillEntries.map((entry) => entry.name.length));
         for (const entry of skillEntries) {
-          lines.push(`  ${entry.name.padEnd(maxSkillLen + 2)}${entry.skill?.name || 'Skill'} \u2014 ${entry.description} [Attach]`);
+          lines.push(jt('composer.slash.helpSkillEntry', '  {command}{skill} \u2014 {description} [Attach]', { command: entry.name.padEnd(maxSkillLen + 2), skill: entry.skill?.name || jt('composer.slash.skill', 'Skill'), description: entry.description }));
         }
         lines.push('');
       }
-      lines.push('Commands', '');
+      lines.push(jt('composer.slash.commands', 'Commands'), '');
       const maxLen = Math.max(0, ...commandEntries.map((entry) => entry.name.length));
       for (const entry of commandEntries) {
         const availability = entry.available ? '' : ' — ' + entry.unavailableReason;
@@ -307,15 +317,15 @@
       else {
         const available = entries.filter((entry) => entry.available).map((entry) => entry.name);
         const unavailable = entries.filter((entry) => !entry.available).map((entry) => entry.name);
-        const summary = ['Available now: ' + available.join(', ')];
-        if (unavailable.length) summary.push('Start a conversation for: ' + unavailable.join(', '));
-        showToastMessage(summary.join('. ') + '.', { title: 'Commands', tone: 'info' });
+        const summary = [jt('composer.slash.availableNow', 'Available now: {commands}', { commands: available.join(', ') })];
+        if (unavailable.length) summary.push(jt('composer.slash.startConversationFor', 'Start a conversation for: {commands}', { commands: unavailable.join(', ') }));
+        showToastMessage(summary.join('. ') + '.', { title: jt('commandPalette.slash.commandsTitle', 'Commands'), tone: 'info' });
       }
       return { ok: true, code: 'help_shown' };
     }, { requiresSession: false });
 
-    registry.register('/context', 'Show context window usage', contextHandler);
-    registry.register('/compact', 'Compact this session context now', async (invocation) => {
+    registry.register('/context', jt('composer.slash.contextDescription', 'Show context window usage'), contextHandler);
+    registry.register('/compact', jt('composer.slash.compactDescription', 'Compact this session context now'), async (invocation) => {
       const result = await config.compact?.(invocation.sessionId);
       if (!result || result.accepted !== true) {
         return { ok: false, handled: true, code: String(result?.reason || 'compaction_unavailable') };
@@ -329,7 +339,7 @@
       }
       return { ok: true, code: String(result.activity?.reason || 'compaction_completed') };
     });
-    registry.register('/note', 'Save text to your Home scratchpad', noteHandler, {
+    registry.register('/note', jt('composer.slash.noteDescription', 'Save text to your Home scratchpad'), noteHandler, {
       requiresSession: false,
       action: 'insert',
     });

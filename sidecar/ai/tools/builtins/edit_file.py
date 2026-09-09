@@ -13,6 +13,11 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
+from sidecar.ai.tools.builtins.file_atomic_write import (
+    build_write_metadata,
+    mutation_failure_metadata,
+    write_edit_bytes_after_read,
+)
 from sidecar.ai.tools.builtins.file_history import (
     CheckpointInfo,
     checkpoint_lock_for,
@@ -27,11 +32,9 @@ from sidecar.ai.tools.builtins.file_state import (
     load_existing_text_state_for_mutation,
 )
 from sidecar.ai.tools.builtins.filesystem import (
-    build_write_metadata,
     current_max_edit_file_bytes,
     failure_result,
     workspace_relative_path,
-    write_bytes_atomic,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -108,7 +111,10 @@ def edit_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
         return failure_result(
             message=f"Could not safely edit {file_path.strip()}: {error.message}",
             error_code=error.code,
-            metadata={"path": workspace_relative_path(resolved, workspace.root)},
+            metadata={
+                **error.to_error_data(),
+                "path": workspace_relative_path(resolved, workspace.root),
+            },
         )
 
 
@@ -270,13 +276,11 @@ def _edit_locked(  # noqa: PLR0913
         return recovery
     checkpoint, prepared = recovery
     try:
-        write_bytes_atomic(resolved, encoded, workspace=workspace)
+        write_edit_bytes_after_read(
+            resolved, encoded, expected=existing_state.raw_bytes, workspace=workspace,
+        )
     except ToolExecutionFailure as error:
-        failure_metadata: dict[str, object] = {"path": relative_path}
-        if prepared is not None and journal is not None:
-            failure_metadata["workspace_change_set"] = journal.mark_failed_sequence(
-                prepared, prepared.sequences[0]
-            )
+        failure_metadata = mutation_failure_metadata(error, relative_path, journal, prepared)
         return failure_result(
             message=f"Failed to write edited file: {error.message}",
             error_code=error.code,

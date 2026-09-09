@@ -5,6 +5,7 @@
   }
   root.rendererShellRuntimeUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
   function noopAsync() { return Promise.resolve(); }
@@ -149,7 +150,6 @@
       applyWorkspaceSnapshot = noop,
       renderComposerEnhancementsHook = null,
       renderSessions = noop,
-      refreshSuggestions = noopAsync,
       activateWorkspaceSession = noopAsync,
       openArtifactTarget = noopAsync,
       openIdeFileAtLine = noopAsync,
@@ -430,11 +430,11 @@
       }
       el.textContent = severity === 'danger'
         ? summary.targetType === 'auto_compact'
-          ? 'Context ' + summary.percentLabel + ' — nearly full; auto-compaction is imminent.'
-          : 'Context ' + summary.percentLabel + ' — the context window is nearly full.'
+          ? jt('shell.runtime.contextAutoCompactImminent', 'Context {percent} — nearly full; auto-compaction is imminent.', { percent: summary.percentLabel })
+          : jt('shell.runtime.contextNearlyFull', 'Context {percent} — the context window is nearly full.', { percent: summary.percentLabel })
         : summary.targetType === 'auto_compact'
-          ? 'Context ' + summary.percentLabel + ' — approaching auto-compaction.'
-          : 'Context ' + summary.percentLabel + ' — the context window is filling up.';
+          ? jt('shell.runtime.contextApproachingAutoCompact', 'Context {percent} — approaching auto-compaction.', { percent: summary.percentLabel })
+          : jt('shell.runtime.contextFilling', 'Context {percent} — the context window is filling up.', { percent: summary.percentLabel });
     }
 
     function renderComposerEnhancements() {
@@ -606,7 +606,7 @@
       if (chipEl && inv?.chip?.setCount && typeof composerToggleModule.getToolsChipCount === 'function') {
         const count = composerToggleModule.getToolsChipCount();
         inv.chip.setCount(chipEl, count.text);
-        chipEl.setAttribute('aria-label', 'Session tools: ' + count.text + ' enabled');
+        chipEl.setAttribute('aria-label', jt('shell.runtime.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }));
       } else {
         renderComposerEnhancements();
       }
@@ -769,19 +769,19 @@
     async function restartSidecarForRecovery() {
       const backend = windowRef.jennyShell?.backend;
       if (!backend || typeof backend.retryStart !== 'function') {
-        showComposerActionError(new Error('Sidecar restart is unavailable.'), 'Restart Unavailable');
+        showComposerActionError(new Error('Sidecar restart is unavailable.'), jt('shell.runtime.restartUnavailable', 'Restart Unavailable'));
         return;
       }
       try {
         await backend.retryStart();
-        showToastMessage('Restart requested for the local sidecar.', {
-          title: 'Restart Requested',
+        showToastMessage(jt('shell.runtime.restartRequestedMessage', 'Restart requested for the local sidecar.'), {
+          title: jt('shell.runtime.restartRequestedTitle', 'Restart Requested'),
           tone: 'info',
           source: TOAST_SOURCE.chatStream,
           dedupeKey: `${TOAST_SOURCE.chatStream}:restart-sidecar`,
         });
       } catch (error) {
-        showComposerActionError(error, 'Restart Failed');
+        showComposerActionError(error, jt('shell.runtime.restartFailed', 'Restart Failed'));
       }
     }
 
@@ -797,7 +797,7 @@
       if (isRetryRecoveryAction(action)) {
         const targetMessageId = resolveActionMessageId(payload?.contextNode, payload?.messageId);
         if (!targetMessageId) {
-          showComposerActionError(new Error('No assistant response is available to retry.'), 'Retry Unavailable');
+          showComposerActionError(new Error('No assistant response is available to retry.'), jt('shell.runtime.retryUnavailable', 'Retry Unavailable'));
           return;
         }
         await handleRegenerateMessage(targetMessageId, { failureRetry: true });
@@ -822,7 +822,7 @@
       if (action === 'lockdown_off') {
         const lockdownSessionId = String(payload?.sessionId || '').trim();
         if (!lockdownSessionId) {
-          showComposerActionError(new Error('No session was found to turn offline lockdown off for.'), 'Lockdown Off Failed');
+          showComposerActionError(new Error('No session was found to turn offline lockdown off for.'), jt('shell.runtime.lockdownOffFailed', 'Lockdown Off Failed'));
           return;
         }
         try {
@@ -838,7 +838,7 @@
             lockdown: false,
           });
         } catch (error) {
-          showComposerActionError(error, 'Lockdown Off Failed');
+          showComposerActionError(error, jt('shell.runtime.lockdownOffFailed', 'Lockdown Off Failed'));
         }
         return;
       }
@@ -850,8 +850,8 @@
         const approvalRef = String(payload?.approvalId || payload?.approval_id || payload?.callId || '').trim();
         const approvalKey = resolvePendingApprovalKey(approvalRef);
         if (!approvalKey) {
-          showToastMessage('No pending tool approval found to skip.', {
-            title: 'Skip Unavailable',
+          showToastMessage(jt('shell.runtime.skipUnavailableMessage', 'No pending tool approval found to skip.'), {
+            title: jt('shell.runtime.skipUnavailableTitle', 'Skip Unavailable'),
             tone: 'info',
             source: TOAST_SOURCE.chatStream,
             dedupeKey: `${TOAST_SOURCE.chatStream}:skip-tool-unavailable`,
@@ -869,8 +869,8 @@
         return;
       }
       if (!artifactId) {
-        showToastMessage('This artifact action is unavailable for the selected entry.', {
-          title: 'Artifact Action Unavailable',
+        showToastMessage(jt('shell.runtime.artifactActionUnavailableMessage', 'This artifact action is unavailable for the selected entry.'), {
+          title: jt('shell.runtime.artifactActionUnavailableTitle', 'Artifact Action Unavailable'),
           tone: 'info',
           source: TOAST_SOURCE.chatStream,
           dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-action-unavailable`,
@@ -879,8 +879,8 @@
       }
       const currentSessionId = String(payload?.sessionId || state.currentSessionId || '').trim();
       if (!currentSessionId) {
-        showToastMessage('Open a session before using artifact actions.', {
-          title: 'No Active Session',
+        showToastMessage(jt('shell.runtime.noActiveSessionMessage', 'Open a session before using artifact actions.'), {
+          title: jt('shell.runtime.noActiveSessionTitle', 'No Active Session'),
           tone: 'info',
           source: TOAST_SOURCE.chatStream,
           dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-action-no-session`,
@@ -890,8 +890,8 @@
       if (action === 'open') {
         const result = await windowRef.jennyShell.artifacts.openExternal(currentSessionId, artifactId);
         if (result && result.ok === false) {
-          showToastMessage(String(result.result || result.message || 'Open externally failed.'), {
-            title: 'Open External Failed',
+          showToastMessage(String(result.result || result.message || jt('shell.runtime.openExternallyFailed', 'Open externally failed.')), {
+            title: jt('shell.runtime.openExternalFailedTitle', 'Open External Failed'),
             tone: 'danger',
             source: TOAST_SOURCE.chatStream,
             dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-open-external-failed:${artifactId}`,
@@ -929,7 +929,7 @@
       const result = await refreshSessionSummaries(...arguments);
       pruneContextUsageCache();
       if (shouldSyncWorkspaceAfterSessionReload()) {
-        await syncWorkspaceFromStore();
+        await syncWorkspaceFromStore({ preserveCurrentSession: true });
       }
       return result;
     }

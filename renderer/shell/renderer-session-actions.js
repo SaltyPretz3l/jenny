@@ -21,6 +21,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var SESSION_DELETE_UNDO_MS_DEFAULT = 6000;
 
   function createSessionActionsController(deps) {
@@ -57,9 +59,35 @@
       dismissToast,
     });
 
+    // Load the sidebar-only helper without expanding the startup script list.
+    let actionsDisposed = false;
+    registerCleanup(() => { actionsDisposed = true; });
+    if (windowRef.document?.getElementById('conversationGroups')) {
+      windowRef.scriptLoaderUtils.ensureScript({
+        src: 'renderer/shell/renderer-sidebar-bulk-actions.js',
+        isReady: () => Boolean(windowRef.rendererSidebarBulkActions),
+        log: appendClientLog,
+      }).then(() => {
+        if (!actionsDisposed) windowRef.rendererSidebarBulkActions?.createSidebarBulkActions({
+          state, windowRef, callbacks: deps.callbacks,
+          scheduler: deleteUndoScheduler, undoWindowMs,
+        });
+      }).catch((error) => {
+        if (!actionsDisposed) appendClientLog('WARN', 'sessions.bulk_controls_unavailable', { message: String(error?.message || error) });
+      });
+    }
+
     function getSummary(sessionId) {
       return (Array.isArray(state.sessions) ? state.sessions : [])
         .find((session) => session?.id === sessionId) || null;
+    }
+
+    const metaPending = new Set();
+    state.ui.sidebarMetaPending = metaPending;
+    async function persistMeta(sessionId, patch) {
+      metaPending.add(sessionId);
+      try { return await windowRef.jennyShell.sessions.setMeta(sessionId, patch); }
+      finally { metaPending.delete(sessionId); }
     }
 
     function patchSummary(sessionId, patch) {
@@ -101,7 +129,7 @@
       }
       patchSummary(sessionId, { lockdown: nextLockdown });
       renderAll();
-      if (turnStopped) showToastMessage('Turn stopped: session locked.');
+      if (turnStopped) showToastMessage(jt('sidebar.sessionActions.turnStoppedLocked', 'Turn stopped: session locked.'));
       appendClientLog('INFO', 'sessions.offline_lockdown_updated', {
         sessionId,
         lockdown: nextLockdown,
@@ -110,7 +138,7 @@
     }
 
     function clipTitle(value) {
-      const normalized = String(value || 'New Chat').replace(/\s+/g, ' ').trim() || 'New Chat';
+      const normalized = String(value || jt('sidebar.sessionActions.newChat', 'New Chat')).replace(/\s+/g, ' ').trim() || jt('sidebar.sessionActions.newChat', 'New Chat');
       return normalized.length <= 40 ? normalized : `${normalized.slice(0, 37).trim()}...`;
     }
 
@@ -141,7 +169,7 @@
 
     function requestDeleteSession(sessionId) {
       const summary = getSummary(sessionId);
-      if (!summary || isSessionPendingDelete(sessionId)) {
+      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
         return false;
       }
       const title = clipTitle(summary.title);
@@ -150,8 +178,9 @@
       try {
         scheduled = deleteUndoScheduler.schedule([sessionId], {
           windowMs: undoWindowMs,
-          label: `delete "${title}"`,
+          label: jt('sidebar.sessionActions.deleteNamed', 'delete "{title}"', { title: title }),
           markPending: () => markPendingDelete(sessionId),
+          onDisposeCleanup: () => unmarkPendingDelete(sessionId),
           onUndo: () => {
             unmarkPendingDelete(sessionId);
             appendClientLog('INFO', 'sessions.delete_undone', { sessionId });
@@ -161,8 +190,8 @@
             if (current && buildActivityStamp(current) !== activityStamp) {
               unmarkPendingDelete(sessionId);
               appendClientLog('INFO', 'sessions.delete_canceled_by_activity', { sessionId });
-              showToastMessage(`"${title}" got new activity, so it was not deleted.`, {
-                title: 'Delete Canceled',
+              showToastMessage(jt('sidebar.sessionActions.deleteCanceledActivity', '"{title}" got new activity, so it was not deleted.', { title: title }), {
+                title: jt('sidebar.sessionActions.deleteCanceled', 'Delete Canceled'),
                 tone: 'info',
                 source: TOAST_SOURCE.sessionAction,
               });
@@ -176,20 +205,20 @@
           },
           onCommitError: (error) => {
             unmarkPendingDelete(sessionId);
-            showSessionActionError(error, 'Delete Failed');
+            showSessionActionError(error, jt('sidebar.sessionActions.deleteFailed', 'Delete Failed'));
           },
           buildToast: ({ onUndo }) => ({
-            message: `Deleted "${title}"`,
+            message: jt("sessionActions.scheduledValueForDeletion", "Scheduled \"{value1}\" for deletion", { value1: String(title) }),
             options: {
-              title: 'Chat Deleted',
+              title: jt("sessionActions.deleteChat", "Delete Chat"),
               tone: 'danger',
               durationMs: undoWindowMs,
               source: TOAST_SOURCE.sessionAction,
               actions: [
-                { id: 'session-delete-undo', label: 'Undo', kind: 'primary', onClick: onUndo },
+                { id: 'session-delete-undo', label: jt('sidebar.sessionActions.undo', 'Undo'), kind: 'primary', onClick: onUndo },
                 {
                   id: 'session-delete-now',
-                  label: 'Delete now',
+                  label: jt('sidebar.sessionActions.deleteNow', 'Delete now'),
                   kind: 'secondary',
                   onClick: () => deleteUndoScheduler.flush([sessionId]),
                 },
@@ -199,7 +228,7 @@
         });
       } catch (error) {
         unmarkPendingDelete(sessionId);
-        showSessionActionError(error, 'Delete Failed');
+        showSessionActionError(error, jt('sidebar.sessionActions.deleteFailed', 'Delete Failed'));
         return false;
       }
       return scheduled;
@@ -217,51 +246,51 @@
 
     async function togglePinSession(sessionId) {
       const summary = getSummary(sessionId);
-      if (!summary) return;
+      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId)) return;
       const nextPinned = !(summary.pinned === true);
       let updated;
       try {
-        updated = await windowRef.jennyShell.sessions.setMeta(sessionId, { pinned: nextPinned });
+        updated = await persistMeta(sessionId, { pinned: nextPinned });
       } catch (error) {
-        showSessionActionError(error, nextPinned ? 'Pin Failed' : 'Unpin Failed');
+        showSessionActionError(error, nextPinned ? jt('sidebar.sessionActions.pinFailed', 'Pin Failed') : jt('sidebar.sessionActions.unpinFailed', 'Unpin Failed'));
         return;
       }
-      if (!updated || typeof updated !== 'object' || !updated.id) {
+      if (!updated || typeof updated !== 'object' || updated.id !== sessionId) {
         showSessionMetaUnavailable();
         return;
       }
-      patchSummary(sessionId, { pinned: updated.pinned === true, archived_at: updated.archived_at || null });
+      patchSummary(sessionId, { pinned: updated.pinned === true });
       renderSessions();
       appendClientLog('INFO', 'sessions.meta_updated', { sessionId, pinned: updated.pinned === true });
     }
 
     async function toggleArchiveSession(sessionId) {
       const summary = getSummary(sessionId);
-      if (!summary) return;
+      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId)) return;
       const nextArchivedAt = summary.archived_at ? null : new Date().toISOString();
       let updated;
       try {
-        updated = await windowRef.jennyShell.sessions.setMeta(sessionId, { archived_at: nextArchivedAt });
+        updated = await persistMeta(sessionId, { archived_at: nextArchivedAt });
       } catch (error) {
-        showSessionActionError(error, nextArchivedAt ? 'Archive Failed' : 'Unarchive Failed');
+        showSessionActionError(error, nextArchivedAt ? jt('sidebar.sessionActions.archiveFailed', 'Archive Failed') : jt('sidebar.sessionActions.unarchiveFailed', 'Unarchive Failed'));
         return;
       }
-      if (!updated || typeof updated !== 'object' || !updated.id) {
+      if (!updated || typeof updated !== 'object' || updated.id !== sessionId) {
         showSessionMetaUnavailable();
         return;
       }
-      patchSummary(sessionId, { pinned: updated.pinned === true, archived_at: updated.archived_at || null });
+      patchSummary(sessionId, { archived_at: updated.archived_at || null });
       renderSessions();
       appendClientLog('INFO', 'sessions.meta_updated', { sessionId, archived: Boolean(updated.archived_at) });
       showToastMessage(
-        updated.archived_at ? `Archived "${clipTitle(summary.title)}"` : `Restored "${clipTitle(summary.title)}" from the archive`,
+        updated.archived_at ? jt('sidebar.sessionActions.archivedNamed', 'Archived "{title}"', { title: clipTitle(summary.title) }) : jt('sidebar.sessionActions.restoredNamed', 'Restored "{title}" from the archive', { title: clipTitle(summary.title) }),
         { tone: 'info', source: TOAST_SOURCE.sessionAction, dedupeKey: `${TOAST_SOURCE.sessionAction}:archive:${sessionId}` }
       );
     }
 
     function showSessionMetaUnavailable() {
-      showToastMessage('Pinning and archiving are not available with this backend mode.', {
-        title: 'Not Available',
+      showToastMessage(jt('sidebar.sessionActions.metaUnavailableMessage', 'Pinning and archiving are not available with this backend mode.'), {
+        title: jt('sidebar.sessionActions.notAvailable', 'Not Available'),
         tone: 'warning',
         source: TOAST_SOURCE.sessionAction,
         dedupeKey: `${TOAST_SOURCE.sessionAction}:meta-unavailable`,
@@ -287,11 +316,11 @@
       }
       const editor = inlineTitleEditor.startInlineTitleEdit({
         titleEl,
-        initialValue: summary.title || 'New Chat',
-        ariaLabel: 'Rename chat',
+        initialValue: summary.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title),
+        ariaLabel: jt('sidebar.sessionActions.renameChat', 'Rename chat'),
         onCommit: (value) => {
           Promise.resolve(renameSession(sessionId, value))
-            .catch((error) => showSessionActionError(error, 'Rename Failed'));
+            .catch((error) => showSessionActionError(error, jt('sidebar.sessionActions.renameFailed', 'Rename Failed')));
         },
         // renderSessions() suppresses structural rebuilds while the editor is
         // mounted; flush any update that queued up behind the edit.
@@ -311,7 +340,7 @@
 
     function openSessionRowMenu({ sessionId, anchorX, anchorY, trigger }) {
       const summary = getSummary(sessionId);
-      if (!summary || isSessionPendingDelete(sessionId)) {
+      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
         return false;
       }
       const pinned = summary.pinned === true;
@@ -324,7 +353,7 @@
       const overrideItems = typeof activateWorkspaceSession === 'function'
         ? [
           {
-            label: defaultNewTab ? 'Open in This Tab' : 'Open in New Tab',
+            label: defaultNewTab ? jt('sidebar.sessionActions.openInThisTab', 'Open in This Tab') : jt('sidebar.sessionActions.openInNewTab', 'Open in New Tab'),
             action: () => openSessionWithMode(sessionId, defaultNewTab ? 'replace' : 'new-tab'),
           },
           { separator: true },
@@ -337,21 +366,21 @@
         restoreFocusTo: trigger || windowRef.document.querySelector(
           `.conversation-item[data-session-id="${escapeSelectorValue(sessionId)}"] [data-session-action="menu"]`
         ),
-        onActionError: (error) => showSessionActionError(error, 'Session Action Failed'),
+        onActionError: (error) => showSessionActionError(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')),
         items: [
           ...overrideItems,
-          { label: pinned ? 'Unpin' : 'Pin', action: () => togglePinSession(sessionId) },
+          { label: pinned ? jt('sidebar.sessionActions.unpin', 'Unpin') : jt('sidebar.sessionActions.pin', 'Pin'), action: () => togglePinSession(sessionId) },
           ...(isOfflineLockdownEnabled()
             ? [{
-                label: 'Offline lockdown',
+                label: jt('sidebar.sessionActions.offlineLockdown', 'Offline lockdown'),
                 shortcutHint: lockdown ? 'On' : 'Off',
                 action: () => toggleOfflineLockdown(sessionId),
               }]
             : []),
-          { label: 'Rename', action: () => beginInlineRename(sessionId) },
-          { label: archived ? 'Unarchive' : 'Archive', action: () => toggleArchiveSession(sessionId) },
+          { label: jt('common.rename', 'Rename'), action: () => beginInlineRename(sessionId) },
+          { label: archived ? jt('sidebar.sessionActions.unarchive', 'Unarchive') : jt('sidebar.sessionActions.archive', 'Archive'), action: () => toggleArchiveSession(sessionId) },
           { separator: true },
-          { label: 'Delete', action: () => requestDeleteSession(sessionId) },
+          { label: jt('common.delete', 'Delete'), action: () => requestDeleteSession(sessionId) },
         ],
       });
       return true;
@@ -379,34 +408,33 @@
           currentSessionId: state.currentSessionId || null,
         });
       } catch (error) {
-        showSessionActionError(error, 'Sweep Failed');
+        showSessionActionError(error, jt('sidebar.sessionActions.sweepFailed', 'Sweep Failed'));
         return;
       }
       const candidateCount = Array.isArray(dryRun?.candidateIds) ? dryRun.candidateIds.length : 0;
       if (!candidateCount) {
-        showToastMessage('No empty chats to sweep.', {
-          title: 'Sweep Empty Chats',
+        showToastMessage(jt('sidebar.sessionActions.noEmptyChats', 'No empty chats to sweep.'), {
+          title: jt('sidebar.sessionActions.sweepEmptyChatsTitle', 'Sweep Empty Chats'),
           tone: 'info',
           source: TOAST_SOURCE.sessionAction,
           dedupeKey: `${TOAST_SOURCE.sessionAction}:sweep-empty`,
         });
         return;
       }
-      const plural = candidateCount === 1 ? '' : 's';
       showToastMessage(
-        `Sweeping will delete ${candidateCount} empty chat${plural} (untitled, no messages).`,
+        jtn('sidebar.sessionActions.sweepConfirmMessage', candidateCount, { count: candidateCount }, 'Sweeping will delete {count} empty chat (untitled, no messages).', 'Sweeping will delete {count} empty chats (untitled, no messages).'),
         {
-          title: 'Sweep Empty Chats',
+          title: jt('sidebar.sessionActions.sweepEmptyChatsTitle', 'Sweep Empty Chats'),
           tone: 'warning',
           durationMs: 10000,
           source: TOAST_SOURCE.sessionAction,
           actions: [
             {
               id: 'session-sweep-confirm',
-              label: `Delete ${candidateCount}`,
+              label: jt('sidebar.sessionActions.deleteCount', 'Delete {count}', { count: candidateCount }),
               kind: 'primary',
               onClick: () => {
-                runSweep().catch((error) => showSessionActionError(error, 'Sweep Failed'));
+                runSweep().catch((error) => showSessionActionError(error, jt('sidebar.sessionActions.sweepFailed', 'Sweep Failed')));
               },
             },
           ],
@@ -423,7 +451,7 @@
       await refreshSessions();
       renderSessions();
       appendClientLog('INFO', 'sessions.swept_empty', { deleted });
-      showToastMessage(`Swept ${deleted} empty chat${deleted === 1 ? '' : 's'}.`, {
+      showToastMessage(jtn('sidebar.sessionActions.sweptEmptyChats', deleted, { count: deleted }, 'Swept {count} empty chat.', 'Swept {count} empty chats.'), {
         tone: 'success',
         source: TOAST_SOURCE.sessionAction,
         dedupeKey: `${TOAST_SOURCE.sessionAction}:sweep-done`,
@@ -436,10 +464,10 @@
         anchorX,
         anchorY,
         restoreFocusTo: trigger,
-        onActionError: (error) => showSessionActionError(error, 'Session Action Failed'),
+        onActionError: (error) => showSessionActionError(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')),
         onHide: () => { if (trigger?.dataset) delete trigger.dataset.menuOpen; },
         items: [
-          { label: 'Sweep empty chats', action: () => sweepEmptyChats() },
+          { label: jt('sidebar.sessionActions.sweepEmptyChats', 'Sweep empty chats'), action: () => sweepEmptyChats() },
         ],
       });
       // The trigger rests at opacity 0 and only paints on sidebar hover/focus,

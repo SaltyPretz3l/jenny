@@ -16,6 +16,7 @@ from sidecar.ai.tools.builtins.filesystem import (
 from sidecar.ai.tools.builtins.filesystem import (
     workspace_relative_path,
 )
+from sidecar.ai.tools.hosted_file_io import open_regular_file
 
 MAX_RENDERED_LINE_CHARS = 500
 MAX_BRACE_EXPANSIONS = 32
@@ -138,7 +139,7 @@ def _search_without_context(
     returned_match_count = 0
     total_match_count = 0
     truncated_by_line_length = False
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+    with open_regular_file(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not compiled.search(line):
                 continue
@@ -182,7 +183,7 @@ def _search_with_context(  # noqa: PLR0913
     total_match_count = 0
     truncated_by_line_length = False
 
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+    with open_regular_file(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
         for line_number, line in enumerate(handle, start=1):
             is_match = compiled.search(line) is not None
             if is_match:

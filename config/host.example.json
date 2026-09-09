@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "host_mode": "server",
+  "host_execution_policy_version": 1,
+  "canonical_origin": "https://jenny.tailnet.ts.net",
+  "listen_host": "0.0.0.0",
+  "port": 8080,
+  "user_data_path": "/data",
+  "workspace_root": "/workspaces/default",
+  "secrets_dir": "/run/jenny-secrets",
+  "memory_path": "/data/sidecar-memory.db",
+  "log_path": "/data/logs",
+  "model_endpoint": {
+    "engine": "ollama",
+    "model": "qwen3.5:9b",
+    "api_url": "http://host.docker.internal:11434"
+  },
+  "resource_limits": {
+    "max_body_bytes": 1048576,
+    "max_header_bytes": 32768,
+    "max_response_bytes": 8388608,
+    "max_concurrent_requests": 32,
+    "request_timeout_ms": 120000
+  }
+}

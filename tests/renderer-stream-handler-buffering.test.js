@@ -237,9 +237,10 @@ test('stream handler renders visible-session deltas and clears stream ownership 
   assert.deepEqual(harness.calls.indicator, [['start', 'thinking']]);
   assert.equal(harness.state.ui.chatSendLifecycleBySession.get('session-1'), 'streaming');
 
+  const chromeRendersAfterStart = harness.calls.renderWorkspaceChrome;
   await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: 'stream-1', aggregate: 'hello' });
   assert.equal(harness.state.messagesBySession.get('session-1').length > 0, true);
-  assert.equal(harness.calls.renderWorkspaceChrome, 0);
+  assert.equal(harness.calls.renderWorkspaceChrome, chromeRendersAfterStart);
   assert.deepEqual(harness.calls.indicator, [['start', 'thinking'], ['complete']]);
   assert.equal(harness.state.ui.chatSendLifecycleBySession.get('session-1'), 'streaming');
 

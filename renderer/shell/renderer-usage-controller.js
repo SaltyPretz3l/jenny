@@ -7,6 +7,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (markupUtils) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const PAGE_SIZE = 50;
   const INTERACTIVE_LIMIT = 200;
   const REFRESH_INTERVAL_MS = 2000;
@@ -125,7 +127,7 @@
       if (dom.usageStats) dom.usageStats.innerHTML = statSkeleton;
       if (dom.usageByModel) dom.usageByModel.innerHTML = rowSkeleton;
       if (dom.usageRecentTurns) dom.usageRecentTurns.innerHTML = rowSkeleton;
-      if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = 'Loading usage…';
+      if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = jt('usage.loading', 'Loading usage…');
       paintActions();
     }
 
@@ -136,7 +138,7 @@
       const clear = dom.usageActions.querySelector?.('[data-usage-action="clear"]');
       if (clear && readOnly) {
         clear.disabled = true;
-        clear.title = 'Usage history is read-only.';
+        clear.title = jt('usage.readOnlyTitle', 'Usage history is read-only.');
       }
       if (clear && !state.snapshot?.retention?.retained_turns) clear.disabled = true;
     }
@@ -148,31 +150,31 @@
       let copy;
       let tone = 'neutral';
       if (persistence.read_only_reason) {
-        copy = 'usage-history.json could not be read. Existing rows are preserved and nothing new is being recorded.';
+        copy = jt('usage.retention.readFailed', 'usage-history.json could not be read. Existing rows are preserved and nothing new is being recorded.');
         tone = 'danger';
       } else if (Number(retention.retained_turns) >= Number(retention.max_turns) && Number(retention.max_turns) > 0) {
         const oldestMs = Date.parse(retention.oldest_at || '');
         const days = Number.isFinite(oldestMs) ? Math.max(1, Math.ceil((now() - oldestMs) / 86400000)) : 0;
-        copy = `Holding the newest ${utils.formatInteger(retention.max_turns)} turns. Totals cover the last ${days} days, not ${utils.formatInteger(retention.max_age_days)}.`;
+        copy = jt('usage.retention.atCapacity', 'Holding the newest {maxTurns} turns. Totals cover the last {days} days, not {maxAgeDays}.', { maxTurns: utils.formatInteger(retention.max_turns), days, maxAgeDays: utils.formatInteger(retention.max_age_days) });
         tone = 'warning';
       } else {
         const oldestMs = Date.parse(retention.oldest_at || '');
         const ageDays = Number.isFinite(oldestMs) ? Math.max(0, Math.floor((now() - oldestMs) / 86400000)) : 0;
-        copy = `Kept on this device: ${utils.formatInteger(retention.retained_turns)} of ${utils.formatInteger(retention.max_turns)} turns, oldest ${ageDays} ${ageDays === 1 ? 'day' : 'days'} ago.`;
+        copy = jtn('usage.retention.summary', ageDays, { retainedTurns: utils.formatInteger(retention.retained_turns), maxTurns: utils.formatInteger(retention.max_turns), ageDays }, 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} day ago.', 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} days ago.');
       }
       dom.usageRetentionSummary.textContent = copy;
       dom.usageRetentionSummary.dataset.tone = tone;
       if (dom.usageRecordWarning) {
         dom.usageRecordWarning.textContent = state.snapshot?.last_record_error
-          ? 'The most recent turn could not be saved.'
+          ? jt('usage.latestTurnSaveFailed', 'The most recent turn could not be saved.')
           : '';
       }
     }
 
     function paintEmpty() {
       if (dom.usageScope) dom.usageScope.hidden = true;
-      const empty = '<div class="usage-empty"><div class="empty-state-claim">Nothing measured yet.</div>'
-        + '<div class="empty-state-claim">Numbers appear here after your first retained turn.</div></div>';
+      const empty = '<div class="usage-empty"><div class="empty-state-claim">' + utils.escapeHtml(jt('usage.emptyTitle', 'Nothing measured yet.')) + '</div>'
+        + '<div class="empty-state-claim">' + utils.escapeHtml(jt('usage.emptyDescription', 'Numbers appear here after your first retained turn.')) + '</div></div>';
       if (dom.usageStats) dom.usageStats.innerHTML = empty;
       if (dom.usageByModel) dom.usageByModel.innerHTML = '';
       if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = '';
@@ -222,10 +224,10 @@
     function paintSnapshot() {
       if (!state.snapshot) return;
       const available = state.snapshot.available !== false;
-      if (dom.usageBadge) dom.usageBadge.textContent = available ? (state.snapshot.persistence?.durable ? 'Local' : 'Memory') : 'Unavailable';
+      if (dom.usageBadge) dom.usageBadge.textContent = available ? (state.snapshot.persistence?.durable ? jt('usage.localBadge', 'Local') : jt('usage.memoryBadge', 'Memory')) : jt('usage.unavailableBadge', 'Unavailable');
       if (!available && !state.snapshot.retention?.retained_turns) {
         if (dom.usageScope) dom.usageScope.hidden = true;
-        if (dom.usageStats) dom.usageStats.innerHTML = '<div class="usage-empty"><div class="empty-state-claim">Usage data is unavailable.</div></div>';
+        if (dom.usageStats) dom.usageStats.innerHTML = '<div class="usage-empty"><div class="empty-state-claim">' + utils.escapeHtml(jt('usage.unavailable', 'Usage data is unavailable.')) + '</div></div>';
         if (dom.usageByModel) dom.usageByModel.innerHTML = '';
         if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = '';
         if (dom.usageRecentTurns) dom.usageRecentTurns.innerHTML = '';
@@ -279,7 +281,7 @@
         if (!valid) logWarning('settings.usage_snapshot_unavailable', { reason: 'invalid_response' });
         paintSnapshot();
         if (state.snapshot.available === false) {
-          setStatus('Usage data is unavailable.');
+          setStatus(jt('usage.unavailable', 'Usage data is unavailable.'));
           logWarning('settings.usage_snapshot_unavailable', { reason: 'unavailable_result' });
         } else if (!options.silent) {
           setFilterStatus();
@@ -289,7 +291,7 @@
         if (epoch !== state.requestEpoch || !isVisible()) return null;
         state.snapshot = unavailableSnapshot();
         paintSnapshot();
-        setStatus('Usage data is unavailable.');
+        setStatus(jt('usage.unavailable', 'Usage data is unavailable.'));
         logWarning('settings.usage_snapshot_unavailable', { reason: 'transport_failure' });
         return state.snapshot;
       }
@@ -327,7 +329,7 @@
 
     function setFilterStatus() {
       setStatus(
-        `Showing ${Math.min(filteredRows().length, state.visibleCount)} of ${retainedCount()} turns.`,
+        jt('usage.filterStatus', 'Showing {visibleCount} of {retainedCount} turns.', { visibleCount: Math.min(filteredRows().length, state.visibleCount), retainedCount: retainedCount() }),
         { visuallyHidden: true }
       );
     }
@@ -368,7 +370,7 @@
 
     async function confirmClear() {
       if (typeof callbacks.confirmClear === 'function') return callbacks.confirmClear();
-      return windowRef?.confirm?.('Clear usage history? This permanently removes all retained local usage rows and totals.') === true;
+      return windowRef?.confirm?.(jt('usage.clearConfirm', 'Clear usage history? This permanently removes all retained local usage rows and totals.')) === true;
     }
 
     function actionIsCurrent(actionEpoch) {
@@ -397,13 +399,13 @@
         const result = await clear();
         if (!actionIsCurrent(actionEpoch)) return;
         if (!result?.ok) throw new Error('clear_failed');
-        setStatus(`Cleared ${utils.formatInteger(result.cleared_turn_count)} retained turns.`);
+        setStatus(jt('usage.clearSuccess', 'Cleared {count} retained turns.', { count: utils.formatInteger(result.cleared_turn_count) }));
         state.snapshot = null;
         state.lastPaintSignature = '';
         await refresh({ silent: true });
       } catch (_error) {
         if (actionIsCurrent(actionEpoch)) {
-          setStatus('Usage history could not be cleared.');
+          setStatus(jt('usage.clearFailed', 'Usage history could not be cleared.'));
           logWarning('settings.usage_clear_failed', { reason: 'operation_failed' });
         }
       } finally {
@@ -438,10 +440,10 @@
         if (!actionIsCurrent(actionEpoch)) return;
         if (saved?.canceled) return;
         if (!saved || saved.canceled !== false) throw new Error('save_failed');
-        setStatus(`Exported ${(result.rows || []).length} turns.`);
+        setStatus(jt('usage.exportSuccess', 'Exported {count} turns.', { count: (result.rows || []).length }));
       } catch (_error) {
         if (actionIsCurrent(actionEpoch)) {
-          setStatus('Usage export could not be saved.');
+          setStatus(jt('usage.exportFailed', 'Usage export could not be saved.'));
           logWarning('settings.usage_export_failed', { reason: 'operation_failed' });
         }
       } finally {

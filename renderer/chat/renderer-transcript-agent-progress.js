@@ -11,7 +11,7 @@
     root.rendererSubagentMonitorView || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (agentStepUtils, subagentView) {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const resolveAgentStepDisplay = typeof agentStepUtils.resolveAgentStepDisplay === 'function'
     ? agentStepUtils.resolveAgentStepDisplay
     : function fallbackResolve() { return { state: 'pending', dot: 'pending' }; };
@@ -47,12 +47,12 @@
     }
     const lastStep = steps[steps.length - 1];
     const wrapperDisplay = resolveAgentStepDisplay(lastStep);
-    const label = 'Companion task';
+    const label = jt('chat.thinking.companionTask', 'Companion task');
 
     const stepsHtml = steps.map((step) => {
       const display = resolveAgentStepDisplay(step);
       const stage = humanizeStage(step && step.stage) || 'Working';
-      const summary = String((step && step.summary) || '').trim() || 'Working on it.';
+    const summary = String((step && step.summary) || '').trim() || jt('chat.thinking.working', 'Working on it.');
       const percent = Number.isFinite(Number(step && step.percent))
         ? Math.min(100, Math.max(0, Math.round(Number(step.percent))))
         : null;

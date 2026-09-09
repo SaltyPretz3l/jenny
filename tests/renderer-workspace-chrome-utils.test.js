@@ -65,7 +65,7 @@ test('workspace chrome controller renders the rail with active, streaming, appro
   assert.equal(tabs.length, 2);
   assert.equal(tabs[1].classList.contains('active'), true);
   assert.equal(tabs[0].querySelector('.workspace-rail-indicator').textContent, 'Streaming');
-  assert.equal(tabs[1].querySelector('.workspace-rail-indicator').textContent, 'Approval');
+  assert.equal(tabs[1].querySelector('.workspace-rail-indicator').textContent, 'Approval needed');
   assert.equal(doc.querySelector('[data-workspace-close="session-2"]').disabled, true);
   assert.ok(doc.querySelector('[data-workspace-links="session-2"]'));
 
@@ -108,8 +108,8 @@ test('workspace chrome controller exposes sidebar runtime state without visible 
   assert.equal(sessionTwo.dataset.sessionDominantState, 'streaming');
   assert.equal(sessionThree.dataset.sessionDominantState, 'approval');
   assert.equal(sessionOne.getAttribute('aria-label'), 'Open session One. Status: Open, Linked 2');
-  assert.equal(sessionTwo.getAttribute('aria-label'), 'Open session Two. Status: Open, Streaming');
-  assert.equal(sessionThree.getAttribute('aria-label'), 'Open session Three. Status: Approval, Linked 1');
+  assert.equal(sessionTwo.getAttribute('aria-label'), 'Open session Two. Status: Streaming');
+  assert.equal(sessionThree.getAttribute('aria-label'), 'Open session Three. Status: Approval needed, Linked 1');
 });
 
 test('session presentation resolver keeps dominant status separate from linked context', () => {
@@ -121,9 +121,17 @@ test('session presentation resolver keeps dominant status separate from linked c
   });
 
   assert.equal(presentation.dominantState, 'approval');
-  assert.equal(presentation.railIndicatorLabel, 'Approval');
+  assert.equal(presentation.railIndicatorLabel, 'Approval needed');
   assert.equal(presentation.linkedCount, 3);
-  assert.deepEqual(presentation.badgeLabels, ['Open', 'Streaming', 'Approval', 'Linked 3']);
+  assert.deepEqual(presentation.badgeLabels, ['Approval needed', 'Linked 3']);
+});
+
+test('authoritative attention overrides obsolete approval entries after terminal settlement', () => {
+  const presentation = resolveSessionPresentation('session', {
+    openIds: ['session'], approvalIds: ['session'], attentionStates: new Map(),
+  });
+  assert.equal(presentation.dominantState, 'open');
+  assert.equal(presentation.railIndicatorLabel, '');
 });
 
 test('sidebar badge render writes collapsed status data attributes', (t) => {
@@ -150,10 +158,10 @@ test('sidebar badge render writes collapsed status data attributes', (t) => {
   const approval = doc.querySelector('[data-session-id="session-2"]');
   assert.equal(streaming.dataset.sessionDominantState, 'streaming');
   assert.equal(streaming.dataset.sessionLinkedCount, '2');
-  assert.equal(streaming.getAttribute('aria-label'), 'Open session One. Status: Open, Streaming, Linked 2');
+  assert.equal(streaming.getAttribute('aria-label'), 'Open session One. Status: Streaming, Linked 2');
   assert.equal(approval.dataset.sessionDominantState, 'approval');
   assert.equal(approval.dataset.sessionLinkedCount, '0');
-  assert.equal(approval.getAttribute('aria-label'), 'Open session Two. Status: Open, Approval');
+  assert.equal(approval.getAttribute('aria-label'), 'Open session Two. Status: Approval needed');
 });
 
 test('sidebar runtime badge patches retain pin/outbox labels and skip unchanged DOM writes', (t) => {
@@ -169,7 +177,7 @@ test('sidebar runtime badge patches retain pin/outbox labels and skip unchanged 
   const rows = doc.querySelectorAll('[data-session-id]');
   controller.renderSidebarBadges(rows, ['session-1'], ['session-1'], [], {});
   const open = doc.querySelector('[data-session-open]');
-  assert.match(open.getAttribute('aria-label'), /Status: Open, Streaming, Pinned, 1 queued send failed/);
+  assert.match(open.getAttribute('aria-label'), /Status: Streaming, Pinned, 1 queued send failed/);
   assert.equal(doc.querySelector('.conversation-state-badge'), null);
   const originalSetAttribute = open.setAttribute.bind(open);
   let attributeWrites = 0;

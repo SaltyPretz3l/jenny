@@ -33,7 +33,8 @@
   runtimeHealthUtils
 ) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var markupCache = new WeakMap();
   var SOURCE_NAMES = ['electron', 'renderer', 'sidecar'];
   var MAX_CORRELATION_CHARS = 160;
@@ -133,7 +134,7 @@
 
   function formatNumber(value) {
     var number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString('en-US') : '0';
+    return Number.isFinite(number) ? number.toLocaleString(globalThis.jennyI18n?.tag?.()) : '0';
   }
 
   function formatMetricMs(value) {
@@ -176,8 +177,8 @@
   function runOption(run, label) {
     if (!run) return '';
     var suffix = run.legacy
-      ? ' · legacy history'
-      : label === 'Prior run' && run.started_at
+      ? jt('diagnostics.run.legacyHistory', ' · legacy history')
+      : (label === 'Prior run' || label === jt('diagnostics.run.prior', 'Prior run')) && run.started_at
         ? ' · ' + formatCompactTime(run.started_at, true)
         : '';
     return '<option value="' + escapeHtml(run.run_id) + '">' + escapeHtml(label + suffix) + '</option>';
@@ -187,7 +188,7 @@
     var select = document.getElementById('diagnosticsRunSelect');
     if (!select) return;
     var snapshot = state.diagnosticsSnapshot || {};
-    var markup = runOption(snapshot.active_run, 'Current run') + runOption(snapshot.prior_run, 'Prior run');
+    var markup = runOption(snapshot.active_run, jt('diagnostics.run.current', 'Current run')) + runOption(snapshot.prior_run, jt('diagnostics.run.prior', 'Prior run'));
     if (select.dataset.optionsSignature !== markup) {
       select.innerHTML = markup;
       select.dataset.optionsSignature = markup;
@@ -235,29 +236,29 @@
           ? 'ok'
           : 'pending';
     var headline = unavailable
-      ? 'Runtime unavailable'
+      ? jt('diagnostics.overall.runtimeUnavailable', 'Runtime unavailable')
       : tone === 'ok'
         ? 'Ready'
         : tone === 'error'
-          ? 'Action required'
+          ? jt('diagnostics.overall.actionRequired', 'Action required')
           : tone === 'warn'
             ? integrity.complete === false
-              ? 'Partial evidence'
+              ? jt('diagnostics.overall.partialEvidence', 'Partial evidence')
               : sourceGap
-                ? 'Degraded source coverage'
-                : 'Warnings detected'
+                ? jt('diagnostics.overall.degradedSourceCoverage', 'Degraded source coverage')
+                : jt('diagnostics.overall.warningsDetected', 'Warnings detected')
             : phase === 'starting'
               ? 'Starting'
               : humanize(phase);
     var summary = integrity.complete === false
-      ? 'Some evidence is partial. Review Source integrity before drawing conclusions.'
+      ? jt('diagnostics.partialEvidenceSummary', 'Some evidence is partial. Review Source integrity before drawing conclusions.')
       : sourceGap
-        ? 'One or more expected sources have not been observed in this ready runtime.'
+        ? jt('diagnostics.missingExpectedSources', 'One or more expected sources have not been observed in this ready runtime.')
         : issues.length
-          ? issues.length + ' grouped issue' + (issues.length === 1 ? '' : 's') + ' need review.'
+          ? jtn('diagnostics.groupedIssuesNeedReview', issues.length, { count: issues.length }, '{count} grouped issue need review.', '{count} grouped issues need review.')
           : unavailable
-            ? 'The runtime is not available. Inspect recent issues and Activity for the failure path.'
-            : 'No WARN or ERROR events in the selected run.';
+            ? jt('diagnostics.runtimeUnavailableSummary', 'The runtime is not available. Inspect recent issues and Activity for the failure path.')
+            : jt('diagnostics.noWarnOrErrorEvents', 'No WARN or ERROR events in the selected run.');
     return { tone: tone, headline: headline, summary: summary };
   }
 
@@ -291,8 +292,8 @@
         + '<td>' + formatNumber(source.count || 0) + '</td>'
         + '<td><span class="diagnostics-source-state">' + escapeHtml(humanize(state)) + '</span>'
         + (dropped ? '<span class="diagnostics-source-drop">' + dropped + ' dropped</span>' : '') + '</td>'
-        + '<td><time datetime="' + escapeHtml(source.last_seen || '') + '" title="' + escapeHtml(source.last_seen || 'No event observed') + '">'
-        + escapeHtml(source.last_seen ? formatCompactTime(source.last_seen) : 'Not observed') + '</time></td>'
+        + '<td><time datetime="' + escapeHtml(source.last_seen || '') + '" title="' + escapeHtml(source.last_seen || jt('diagnostics.source.noEventObserved', 'No event observed')) + '">'
+        + escapeHtml(source.last_seen ? formatCompactTime(source.last_seen) : jt('diagnostics.source.notObserved', 'Not observed')) + '</time></td>'
         + '</tr>';
     }).join('');
     var reasons = Array.isArray(integrity.partial_reasons) ? integrity.partial_reasons : [];
@@ -300,12 +301,12 @@
     var integrityCopy = reasons.length
       ? reasons.map(function (reason) { return humanize(reason); }).join(' · ')
       : integrity.complete === true
-        ? 'No known gaps'
-        : 'Evidence completeness has not been confirmed';
+        ? jt('diagnostics.source.noKnownGaps', 'No known gaps')
+        : jt('diagnostics.source.completenessUnconfirmed', 'Evidence completeness has not been confirmed');
     paintMarkup(sources,
       '<div class="diagnostics-source-table-shell"><table class="diagnostics-source-table">'
-      + '<caption class="sr-only">Diagnostic source integrity</caption>'
-      + '<thead><tr><th scope="col">Source</th><th scope="col">Events</th><th scope="col">Capture</th><th scope="col">Last seen</th></tr></thead>'
+      + '<caption class="sr-only">' + escapeHtml(jt('diagnostics.source.integrityCaption', 'Diagnostic source integrity')) + '</caption>'
+      + '<thead><tr><th scope="col">Source</th><th scope="col">Events</th><th scope="col">Capture</th><th scope="col">' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div>'
       + '<div class="diagnostics-integrity-summary" data-tone="' + integrityTone + '">'
       + '<div><span>Integrity</span><strong>' + (integrity.complete === true ? 'Complete' : 'Partial') + '</strong></div>'
@@ -316,7 +317,7 @@
     var issueList = document.getElementById('diagnosticsIssueList');
     if (!issueList) return;
     if (!issues.length) {
-      paintMarkup(issueList, '<div class="diagnostics-empty"><strong>No actionable issues</strong><p>The selected run has no WARN or ERROR events.</p></div>');
+      paintMarkup(issueList, '<div class="diagnostics-empty"><strong>' + escapeHtml(jt('diagnostics.issues.noneActionable', 'No actionable issues')) + '</strong><p>' + escapeHtml(jt('diagnostics.issues.noWarnOrError', 'The selected run has no WARN or ERROR events.')) + '</p></div>');
       return;
     }
     var rows = issues.slice(0, 20).map(function (issue) {
@@ -325,7 +326,7 @@
         return String(pair[1] || '').trim();
       });
       var correlations = correlationPairs.length
-        ? '<div class="diagnostics-issue-correlations" aria-label="Correlation identifiers">'
+        ? '<div class="diagnostics-issue-correlations" aria-label="' + escapeHtml(jt('diagnostics.issues.correlationIdentifiers', 'Correlation identifiers')) + '">'
           + correlationPairs.map(function (pair) {
             var safeValue = safeCorrelationValue(pair[1]);
             return '<span><span>' + escapeHtml(humanize(pair[0].replace('_id', ''))) + '</span><code title="'
@@ -333,12 +334,12 @@
           }).join('') + '</div>'
         : '';
       var remediation = issue.remediation
-        ? '<p class="diagnostics-remediation"><span>Recorded remediation</span>' + escapeHtml(issue.remediation) + '</p>'
+        ? '<p class="diagnostics-remediation"><span>' + escapeHtml(jt('diagnostics.issues.recordedRemediation', 'Recorded remediation')) + '</span>' + escapeHtml(issue.remediation) + '</p>'
         : '';
       var inspect = typeof actionButton === 'function'
         ? actionButton({
           id: 'inspect-diagnostic-issue',
-          label: 'Inspect activity',
+          label: jt('diagnostics.inspectActivity', 'Inspect activity'),
           variant: 'ghost',
           size: 'sm',
           dataset: { issue: encodeURIComponent(issue.key) },
@@ -348,17 +349,17 @@
       return '<article class="diagnostics-issue" role="listitem" data-severity="' + escapeHtml(issue.severity) + '">'
         + '<span class="diagnostics-issue-level" data-label="Level">' + escapeHtml(issue.severity) + '</span>'
         + '<div class="diagnostics-issue-copy" data-label="Issue"><strong><code>' + escapeHtml(issue.event) + '</code></strong>'
-        + (message ? '<p>' + escapeHtml(message) + '</p>' : '<p class="diagnostics-muted">No additional message recorded.</p>')
+        + (message ? '<p>' + escapeHtml(message) + '</p>' : '<p class="diagnostics-muted">' + escapeHtml(jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.')) + '</p>')
         + correlations + remediation + '</div>'
         + '<div class="diagnostics-issue-meta" data-label="Component"><code>' + escapeHtml(issue.component) + '</code>'
         + (issue.error_code ? '<span>' + escapeHtml(issue.error_code) + '</span>' : '') + '</div>'
-        + '<time data-label="Last seen" datetime="' + escapeHtml(issue.ts || '') + '" title="' + escapeHtml(issue.ts || 'Unknown time') + '">'
+        + '<time data-label="Last seen" datetime="' + escapeHtml(issue.ts || '') + '" title="' + escapeHtml(issue.ts || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
         + escapeHtml(issue.ts ? formatCompactTime(issue.ts) : 'Unknown') + '</time>'
         + '<span class="diagnostics-issue-count" data-label="Count">' + formatNumber(issue.count) + '×</span>'
         + '<div class="diagnostics-issue-action">' + inspect + '</div></article>';
     }).join('');
     paintMarkup(issueList,
-      '<div class="diagnostics-issue-header" aria-hidden="true"><span>Level</span><span>Issue</span><span>Component</span><span>Last seen</span><span>Count</span><span></span></div>'
+      '<div class="diagnostics-issue-header" aria-hidden="true"><span>Level</span><span>Issue</span><span>Component</span><span>' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</span><span>Count</span><span></span></div>'
       + rows);
   }
 
@@ -370,33 +371,33 @@
     var backendPhase = String(status.backend?.phase || '').toLowerCase();
     var backendUnavailable = ['failed', 'unavailable', 'stopped', 'error', 'crashed'].includes(backendPhase);
     var unavailableFacets = [];
-    if (status.phase_percentiles?.available === false) unavailableFacets.push('phase latency');
-    if (status.tool_observability?.available === false) unavailableFacets.push('tool latency');
+    if (status.phase_percentiles?.available === false) unavailableFacets.push(jt('diagnostics.performance.phaseLatencyFacet', 'phase latency'));
+    if (status.tool_observability?.available === false) unavailableFacets.push(jt('diagnostics.performance.toolLatencyFacet', 'tool latency'));
     if (anomalies) {
       var anomalyMarkup;
       if (items.length) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="warn"><strong>' + items.length + ' operation' + (items.length === 1 ? '' : 's') + ' over target</strong>'
+        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="warn"><strong>' + escapeHtml(jtn('diagnostics.performance.operationsOverTarget', items.length, { count: items.length }, '{count} operation over target', '{count} operations over target')) + '</strong>'
           + '<ul>' + items.slice(0, 4).map(function (item) {
             return '<li><code>' + escapeHtml(item.id || item.kind || 'operation') + '</code><span>'
               + escapeHtml(formatMetricMs(item.observed_ms)) + ' observed · ' + escapeHtml(formatMetricMs(item.threshold_ms)) + ' target</span></li>';
           }).join('') + '</ul></div>';
       } else if (backendUnavailable) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>Performance evidence unavailable</strong>'
-          + '<p>Latency sampling is unavailable until the backend recovers.</p></div>';
+        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable')) + '</strong>'
+          + '<p>' + escapeHtml(jt('diagnostics.performance.backendUnavailable', 'Latency sampling is unavailable until the backend recovers.')) + '</p></div>';
       } else if (!slow || slow.available === false) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>Performance evidence unavailable</strong>'
-          + '<p>Slow-operation evidence could not be loaded for this run.</p></div>';
+        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable')) + '</strong>'
+          + '<p>' + escapeHtml(jt('diagnostics.performance.slowEvidenceUnavailable', 'Slow-operation evidence could not be loaded for this run.')) + '</p></div>';
       } else if (unavailableFacets.length) {
         var allUnavailable = unavailableFacets.length === 2;
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>Performance evidence '
-          + (allUnavailable ? 'unavailable' : 'partial') + '</strong><p>'
-          + escapeHtml(humanize(unavailableFacets.join(' and '))) + ' evidence could not be loaded for this run.</p></div>';
+        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>'
+          + escapeHtml(allUnavailable ? jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable') : jt('diagnostics.performance.evidencePartial', 'Performance evidence partial')) + '</strong><p>'
+          + escapeHtml(jt('diagnostics.performance.facetsUnavailable', '{facets} evidence could not be loaded for this run.', { facets: humanize(unavailableFacets.join(' and ')) })) + '</p></div>';
       } else if (!hasSamples) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>No performance samples yet</strong>'
-          + '<p>Run a local chat or tool to collect latency evidence.</p></div>';
+        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.noSamples', 'No performance samples yet')) + '</strong>'
+          + '<p>' + escapeHtml(jt('diagnostics.performance.collectEvidenceHint', 'Run a local chat or tool to collect latency evidence.')) + '</p></div>';
       } else {
-        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="ok"><strong>No performance anomalies</strong>'
-          + '<p>No recorded phase or tool sample exceeded its latency target.</p></div>';
+        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="ok"><strong>' + escapeHtml(jt('diagnostics.performance.noAnomalies', 'No performance anomalies')) + '</strong>'
+          + '<p>' + escapeHtml(jt('diagnostics.performance.noExceededTargets', 'No recorded phase or tool sample exceeded its latency target.')) + '</p></div>';
       }
       paintMarkup(anomalies, anomalyMarkup);
     }
@@ -404,15 +405,15 @@
     if (!budgetHost) return;
     var budgets = status.budgets || null;
     var budgetRows = [];
-    if (budgets?.token_headroom != null) budgetRows.push(['Token headroom', formatNumber(budgets.token_headroom), Number(budgets.token_headroom) > 0 ? 'ok' : 'warn']);
-    if (budgets?.tool_quota_remaining != null) budgetRows.push(['Tool quota remaining', formatNumber(budgets.tool_quota_remaining), Number(budgets.tool_quota_remaining) > 0 ? 'ok' : 'warn']);
-    if (Number.isFinite(Number(budgets?.cost_remaining_usd))) budgetRows.push(['Budget remaining', '$' + Number(budgets.cost_remaining_usd).toFixed(2), Number(budgets.cost_remaining_usd) > 0 ? 'ok' : 'warn']);
+    if (budgets?.token_headroom != null) budgetRows.push([jt('diagnostics.budgets.tokenHeadroom', 'Token headroom'), formatNumber(budgets.token_headroom), Number(budgets.token_headroom) > 0 ? 'ok' : 'warn']);
+    if (budgets?.tool_quota_remaining != null) budgetRows.push([jt('diagnostics.budgets.toolQuotaRemaining', 'Tool quota remaining'), formatNumber(budgets.tool_quota_remaining), Number(budgets.tool_quota_remaining) > 0 ? 'ok' : 'warn']);
+    if (Number.isFinite(Number(budgets?.cost_remaining_usd))) budgetRows.push([jt('diagnostics.budgets.budgetRemaining', 'Budget remaining'), '$' + Number(budgets.cost_remaining_usd).toFixed(2), Number(budgets.cost_remaining_usd) > 0 ? 'ok' : 'warn']);
     var budgetMarkup = budgetRows.length
       ? '<dl class="diagnostics-budget-list">' + budgetRows.map(function (row) {
         return '<div data-tone="' + row[2] + '"><dt>' + escapeHtml(row[0]) + '</dt><dd>' + escapeHtml(row[1]) + '</dd></div>';
       }).join('') + '</dl>'
-      : '<div class="diagnostics-compact-empty"><strong>Resource budgets</strong><p>'
-        + escapeHtml(budgets?.available === false ? 'Budget evidence is unavailable.' : 'No resource budget counters are available for this run.')
+      : '<div class="diagnostics-compact-empty"><strong>' + escapeHtml(jt('diagnostics.budgets.heading', 'Resource budgets')) + '</strong><p>'
+        + escapeHtml(budgets?.available === false ? jt('diagnostics.budgets.evidenceUnavailable', 'Budget evidence is unavailable.') : jt('diagnostics.budgets.noCounters', 'No resource budget counters are available for this run.'))
         + '</p></div>';
     paintMarkup(budgetHost, budgetMarkup);
   }
@@ -530,10 +531,10 @@
   function workspaceFacetRow(facet) {
     if (!facet) return unavailableFacet('Workspace');
     var blockers = Array.isArray(facet.blockers) ? facet.blockers : [];
-    if (!String(facet.root || '').trim()) return ['Workspace', 'Not configured', 'warn'];
-    if (facet.exists !== true) return ['Workspace', 'Configured root unavailable', 'warn'];
+    if (!String(facet.root || '').trim()) return ['Workspace', jt('diagnostics.inventory.notConfigured', 'Not configured'), 'warn'];
+    if (facet.exists !== true) return ['Workspace', jt('diagnostics.inventory.configuredRootUnavailable', 'Configured root unavailable'), 'warn'];
     if (blockers.length) {
-      return ['Workspace', 'Available with ' + blockers.length + ' blocker' + (blockers.length === 1 ? '' : 's'), 'warn'];
+      return ['Workspace', jtn('diagnostics.inventory.availableWithBlockers', blockers.length, { count: blockers.length }, 'Available with {count} blocker', 'Available with {count} blockers'), 'warn'];
     }
     return ['Workspace', 'Available', 'ok'];
   }
@@ -552,7 +553,7 @@
     var keys = preferences ? Object.keys(preferences) : [];
     if (keys.length) {
       var on = keys.filter(function (key) { return preferences[key] === true; }).length;
-      clauses.push(on + ' of ' + keys.length + ' tool prefs on');
+      clauses.push(jt('diagnostics.inventory.toolPrefsOn', '{enabled} of {total} tool prefs on', { enabled: on, total: keys.length }));
     }
     return ['Shell', clauses.join(' · ') || 'Configured', 'ok'];
   }
@@ -577,7 +578,7 @@
     var lifecycle = isRecord(scheduler.lifecycle) ? scheduler.lifecycle : {};
     var phase = String(lifecycle.phase || 'unknown');
     var count = Number(lifecycle.qualifyingTaskCount || 0);
-    var clauses = [humanize(phase), count + ' enabled task' + (count === 1 ? '' : 's')];
+    var clauses = [humanize(phase), jtn('diagnostics.inventory.enabledTaskCount', count, { count: count }, '{count} enabled task', '{count} enabled tasks')];
     if (lifecycle.reason) clauses.push(String(lifecycle.reason));
     if (lifecycle.error) clauses.push(String(lifecycle.error));
     return ['Scheduler', clauses.join(' · '), phase === 'failed' ? 'warn' : 'ok'];
@@ -599,11 +600,11 @@
     var recovery = String(platform.recovery?.classification || '').trim();
     return [
       ['Plugins', clauses.join(' · '), platform.read_only ? 'warn' : 'ok'],
-      ['Recovery', humanize(recovery || 'not required'), recovery === 'recovery_failed' ? 'warn' : 'ok'],
+      ['Recovery', humanize(recovery || jt('diagnostics.inventory.recoveryNotRequired', 'not required')), recovery === 'recovery_failed' ? 'warn' : 'ok'],
       sources
-        ? ['Distribution', 'rev ' + String(distribution.revision ?? 'not persisted') + ' · '
-          + sources + ' catalog source' + (sources === 1 ? '' : 's'), 'ok']
-        : ['Distribution', 'No catalog sources', 'muted'],
+        ? ['Distribution', 'rev ' + String(distribution.revision ?? jt('diagnostics.inventory.notPersisted', 'not persisted')) + ' · '
+          + jtn('diagnostics.inventory.catalogSourceCount', sources, { count: sources }, '{count} catalog source', '{count} catalog sources'), 'ok']
+        : ['Distribution', jt('diagnostics.inventory.noCatalogSources', 'No catalog sources'), 'muted'],
     ];
   }
 
@@ -612,13 +613,14 @@
   function chromiumSandboxRow(status) {
     var facet = status && status.runtime ? status.runtime.chromium_sandbox : null;
     if (!facet || typeof facet !== 'object') return null;
-    if (facet.sandboxed === true) return ['Chromium sandbox', 'On', 'ok'];
+    var label = jt('diagnostics.runtime.chromiumSandbox', 'Chromium sandbox');
+    if (facet.sandboxed === true) return [label, jt('diagnostics.runtime.sandboxOn', 'On'), 'ok'];
     if (facet.sandboxed !== false) {
-      return ['Chromium sandbox', 'Unknown · Electron did not report its command line', 'warn'];
+      return [label, jt('diagnostics.runtime.sandboxUnknown', 'Unknown · Electron did not report its command line'), 'warn'];
     }
-    return ['Chromium sandbox', facet.package_kind === 'appimage'
-      ? 'Off · this system restricts unprivileged user namespaces; install the .deb for full sandboxing'
-      : 'Off · launched with --no-sandbox', 'warn'];
+    return [label, facet.package_kind === 'appimage'
+      ? jt('diagnostics.runtime.sandboxOffAppImage', 'Off · this system restricts unprivileged user namespaces; install the .deb for full sandboxing')
+      : jt('diagnostics.runtime.sandboxOffFlag', 'Off · launched with --no-sandbox'), 'warn'];
   }
 
   // The host is aria-live; a stamp that changes on every refresh would force the
@@ -638,8 +640,8 @@
     var error = String(state.harness?.error || '').trim();
     var snapshot = state.harness?.snapshot;
     if (error || !snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-      paintMarkup(host, '<div class="diagnostics-compact-empty" data-tone="warn"><strong>Runtime inventory unavailable</strong><p>'
-        + escapeHtml(error || 'No runtime inventory has been collected yet.') + '</p></div>');
+      paintMarkup(host, '<div class="diagnostics-compact-empty" data-tone="warn"><strong>' + escapeHtml(jt('diagnostics.inventory.runtimeUnavailable', 'Runtime inventory unavailable')) + '</strong><p>'
+        + escapeHtml(error || jt('diagnostics.inventory.noneCollected', 'No runtime inventory has been collected yet.')) + '</p></div>');
       return;
     }
     var sandbox = chromiumSandboxRow(state.diagnosticsStatus);
@@ -669,7 +671,7 @@
   }
 
   function activityRowAriaLabel(entry, timestamp, eventName, message) {
-    var boundedMessage = String(message || 'No additional message');
+    var boundedMessage = String(message || jt('diagnostics.activity.noAdditionalMessage', 'No additional message'));
     if (boundedMessage.length > 320) boundedMessage = boundedMessage.slice(0, 319) + '…';
     return [
       'Time ' + (timestamp || 'unknown'),
@@ -691,13 +693,13 @@
       + ' data-log-index="' + escapeHtml(id) + '" data-entry-id="' + escapeHtml(id) + '"'
       + ' data-level="' + escapeHtml(String(entry.level || 'INFO').toLowerCase()) + '"'
       + ' tabindex="' + (focusable || selected ? '0' : '-1') + '" aria-selected="' + selected + '">'
-      + '<time data-label="Time" datetime="' + escapeHtml(timestamp) + '" title="' + escapeHtml(timestamp || 'Unknown time') + '">'
+      + '<time data-label="Time" datetime="' + escapeHtml(timestamp) + '" title="' + escapeHtml(timestamp || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
       + escapeHtml(formatCompactTime(timestamp)) + '</time>'
       + '<span class="log-entry-level" data-label="Level">' + escapeHtml(entry.level || 'INFO') + '</span>'
       + '<span class="log-entry-source" data-label="Source">' + escapeHtml(entry.layer || entry.source || 'electron') + '</span>'
       + '<code class="log-entry-event" data-label="Event">' + escapeHtml(eventName) + '</code>'
       + '<span class="log-entry-message' + (message ? '' : ' diagnostics-muted') + '" data-label="Message">'
-      + (message ? escapeHtml(message) : '<span aria-hidden="true">—</span><span class="sr-only">No additional message</span>') + '</span>'
+      + (message ? escapeHtml(message) : '<span aria-hidden="true">—</span><span class="sr-only">' + escapeHtml(jt('diagnostics.activity.noAdditionalMessage', 'No additional message')) + '</span>') + '</span>'
       + '</article>';
   }
 
@@ -733,10 +735,10 @@
       return;
     }
     var clear = typeof actionButton === 'function'
-      ? actionButton({ id: 'clear-diagnostics-scope', domId: 'diagnosticsClearScope', label: 'Clear scope', variant: 'ghost', size: 'sm' })
+      ? actionButton({ id: 'clear-diagnostics-scope', domId: 'diagnosticsClearScope', label: jt('diagnostics.clearScope', 'Clear scope'), variant: 'ghost', size: 'sm' })
       : '';
     paintMarkup(scope,
-      '<div><span>Issue scope</span><strong>' + escapeHtml(view.issueScope.event) + '</strong><small>'
+      '<div><span>' + escapeHtml(jt('diagnostics.activity.issueScope', 'Issue scope')) + '</span><strong>' + escapeHtml(view.issueScope.event) + '</strong><small>'
       + escapeHtml(view.issueScope.component + (view.issueScope.error_code ? ' · ' + view.issueScope.error_code : ''))
       + '</small></div>' + clear);
   }
@@ -746,7 +748,7 @@
     var filtered = filterEntries(state, entries);
     var list = document.getElementById('logList');
     var label = document.getElementById('logResultsLabel');
-    if (label) label.textContent = filtered.length + ' of ' + entries.length + ' events';
+    if (label) label.textContent = jt('diagnostics.eventCount', '{filtered} of {total} events', { filtered: filtered.length, total: entries.length });
     renderScope(view);
 
     var activeRunId = String(state.diagnosticsSnapshot?.active_run?.run_id || '');
@@ -770,12 +772,12 @@
     ].join('|');
     if (cache.filterAnnouncementSignature !== filterSignature) {
       cache.filterAnnouncementSignature = filterSignature;
-      announce(filtered.length + ' matching event' + (filtered.length === 1 ? '' : 's') + '.', 'activity|' + filterSignature + '|' + filtered.length);
+      announce(jtn('diagnostics.activity.matchingEventCount', filtered.length, { count: filtered.length }, '{count} matching event.', '{count} matching events.'), 'activity|' + filterSignature + '|' + filtered.length);
     }
 
     if (!filtered.length) {
       if (cache.signature !== filterSignature || cache.ids.length) {
-        paintMarkup(list, '<div class="diagnostics-empty"><strong>No matching activity</strong><p>Adjust the run or filters, or clear the active issue scope.</p></div>');
+        paintMarkup(list, '<div class="diagnostics-empty"><strong>' + escapeHtml(jt('diagnostics.activity.noMatches', 'No matching activity')) + '</strong><p>' + escapeHtml(jt('diagnostics.activity.adjustFiltersHint', 'Adjust the run or filters, or clear the active issue scope.')) + '</p></div>');
       }
       cache.signature = filterSignature;
       cache.ids = [];
@@ -837,10 +839,10 @@
       ? actionButton({
         id: 'close-log-detail',
         domId: 'diagnosticsCloseDetail',
-        label: 'Close inspector',
-        ariaLabel: 'Close inspector and return to activity',
-        title: 'Close inspector and return to activity',
-        trustedHtml: '<span class="diagnostics-detail-close-wide">Close inspector</span><span class="diagnostics-detail-close-narrow">Back to activity</span>',
+        label: jt('diagnostics.closeInspector', 'Close inspector'),
+        ariaLabel: jt('diagnostics.closeInspectorAndReturn', 'Close inspector and return to activity'),
+        title: jt('diagnostics.closeInspectorAndReturn', 'Close inspector and return to activity'),
+        trustedHtml: '<span class="diagnostics-detail-close-wide">' + escapeHtml(jt('diagnostics.closeInspector', 'Close inspector')) + '</span><span class="diagnostics-detail-close-narrow">' + escapeHtml(jt('diagnostics.backToActivity', 'Back to activity')) + '</span>',
         variant: 'ghost',
         size: 'sm',
       })
@@ -854,21 +856,21 @@
       ? codeBlock.codeblockTruncated({
         code: JSON.stringify(details, null, 2),
         language: 'json',
-        label: 'Redacted attributes',
+        label: jt('diagnostics.redactedAttributes', 'Redacted attributes'),
         copyable: true,
         copyIcon: true,
         copyId: 'diagnostics-detail-' + id.replace(/[^a-zA-Z0-9_-]/g, '-'),
-        ariaLabel: 'Redacted structured event attributes',
+        ariaLabel: jt('diagnostics.redactedStructuredAttributes', 'Redacted structured event attributes'),
         className: 'diagnostics-detail-code',
         maxChars: 16384,
       })
-      : '<div class="diagnostics-compact-empty"><p>Structured attributes unavailable.</p></div>';
+      : '<div class="diagnostics-compact-empty"><p>' + escapeHtml(jt('diagnostics.detail.structuredAttributesUnavailable', 'Structured attributes unavailable.')) + '</p></div>';
     paintMarkup(panel,
       '<header class="diagnostics-detail-header"><div><span class="diagnostics-detail-header-level" data-level="'
       + escapeHtml(String(entry.level || 'INFO').toLowerCase()) + '">' + escapeHtml(entry.level || 'INFO') + '</span><h3><code>'
       + escapeHtml(entry.event || 'event') + '</code></h3></div>' + close + '</header>'
       + '<section class="diagnostics-detail-section"><h4>Summary</h4><dl class="diagnostics-detail-list">'
-      + detailField('Message', message || 'No additional message recorded.')
+      + detailField('Message', message || jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.'))
       + detailField('Time', formatDetailTime(entry.ts))
       + detailField('Component', entry.component || 'unknown', true)
       + detailField('Run', entry.run_id, true)
@@ -880,7 +882,7 @@
       + detailField('Level', entry.level || 'INFO')
       + '</dl></section>'
       + (correlationMarkup ? '<section class="diagnostics-detail-section"><h4>Correlation</h4><dl class="diagnostics-detail-list">' + correlationMarkup + '</dl></section>' : '')
-      + '<section class="diagnostics-detail-section"><h4>Structured data</h4>' + codeMarkup + '</section>');
+      + '<section class="diagnostics-detail-section"><h4>' + escapeHtml(jt('diagnostics.detail.structuredData', 'Structured data')) + '</h4>' + codeMarkup + '</section>');
   }
 
   function scrollLogsToBottom(list) {

@@ -220,7 +220,7 @@ test('collapsed chips retain canonical runtime state when the expanded list show
   });
   window.rendererTopNavShellController.patchChatsStripRuntime();
   assert.equal(chip.dataset.sessionDominantState, 'approval');
-  assert.equal(doc.getElementById('chatsStripPeekState').textContent, 'Approval');
+  assert.equal(doc.getElementById('chatsStripPeekState').textContent, 'Approval needed');
 });
 
 test('the strip hides on expand and on panel-less views, and returns on chat', async (t) => {

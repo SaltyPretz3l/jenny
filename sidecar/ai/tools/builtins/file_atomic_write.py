@@ -6,13 +6,15 @@ import os
 import stat as stat_module
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, write_hosted_bytes_atomic
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity, is_link_object
 
 if TYPE_CHECKING:
+    from sidecar.ai.tools.builtins.file_history import CheckpointInfo
     from sidecar.ai.tools.workspace import WorkspaceGuard
 
 _NO_EXPECTATION = object()
@@ -62,6 +64,27 @@ def write_bytes_atomic_if_matches(
     )
 
 
+def write_hosted_bytes_after_read(path: Path, content: bytes, *, expected: bytes | None) -> None:
+    """Bind a hosted mutation to the bytes validated before checkpoint work."""
+    if not write_bytes_atomic_if_matches(path, content, expected_current_bytes=expected):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_IO_FAILED,
+            message=("File changed after validation; no replacement was applied. "
+                     "Re-read before retrying."),
+            retryable=False, error_details={"effects": "none", "content_changed": "true"},
+        )
+
+
+def write_edit_bytes_after_read(
+    path: Path, content: bytes, *, expected: bytes, workspace: WorkspaceGuard,
+) -> None:
+    """Apply an edit through the host-specific mutation contract."""
+    if hosted_file_io_enabled():
+        write_hosted_bytes_after_read(path, content, expected=expected)
+    else:
+        write_bytes_atomic(path, content, workspace=workspace)
+
+
 def _write_bytes_atomic(
     path: Path,
     content: bytes,
@@ -70,6 +93,9 @@ def _write_bytes_atomic(
     expected_current_bytes: bytes | None | object,
     mode: int | None,
 ) -> bool:
+    if hosted_file_io_enabled():
+        return write_hosted_bytes_atomic(path, content, expected=expected_current_bytes,
+                                        no_expectation=_NO_EXPECTATION, mode=mode)
     try:
         parent_identity, leaf_identity, target_mode = _prepare_atomic_target(
             path,
@@ -279,4 +305,38 @@ def _failure(message: str, *, retryable: bool = True) -> ToolExecutionFailure:
     return ToolExecutionFailure(code=CMP_TOOL_IO_FAILED, message=message, retryable=retryable)
 
 
-__all__ = ["write_bytes_atomic", "write_bytes_atomic_if_matches"]
+__all__ = [
+    "build_write_metadata", "mutation_failure_metadata", "write_bytes_atomic",
+    "write_bytes_atomic_if_matches", "write_edit_bytes_after_read",
+    "write_hosted_bytes_after_read",
+]
+
+
+def mutation_failure_metadata(error: ToolExecutionFailure, relative_path: str,
+                              journal: Any, prepared: Any) -> dict[str, object]:
+    metadata: dict[str, object] = {"path": relative_path}
+    applied = error.effects == "applied_durability_uncertain"
+    if applied:
+        metadata.update({"changed": True, "effects": error.effects})
+    if prepared is not None and journal is not None:
+        metadata["workspace_change_set"] = (journal.mark_applied(prepared) if applied
+            else journal.mark_failed_sequence(prepared, prepared.sequences[0]))
+    return metadata
+
+
+def build_write_metadata(
+    *,
+    path: str,
+    bytes_written: int,
+    checkpoint: CheckpointInfo | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "path": path,
+        "bytes_written": bytes_written,
+        "checkpoint_created": False,
+    }
+    if checkpoint and checkpoint.created:
+        metadata["checkpoint_created"] = True
+        metadata["checkpoint_version"] = checkpoint.version
+        metadata["checkpoint_display_path"] = checkpoint.display_path
+    return metadata

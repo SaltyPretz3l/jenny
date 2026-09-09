@@ -18,7 +18,7 @@
   root.rendererSetupSceneCapabilities = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -26,7 +26,7 @@
     ? resolveDependency('inventoryToggleSwitch', '../../inventory/toggle-switch') : null;
   var toggleSwitch = toggleModule
     ? (typeof toggleModule === 'function' ? toggleModule : toggleModule.toggleSwitch) : null;
-  var initToggleHandlers = toggleModule && toggleModule.initToggleHandlers;
+  var asyncFence = resolveDependency('rendererAsyncFence', '../../shared/async-fence');
 
   // Each field drives both rendering and Save read-back.
   // target: which patch bucket the value lands in ('tools' or 'featureOverrides').
@@ -35,21 +35,21 @@
   // workspace mutation require the user to opt in before Save.
   var FIELDS = [
     { id: 'capPythonToggle', key: 'pythonRuntime', target: 'tools', section: 'local', defaultChecked: true,
-      label: 'Python runtime', description: 'Local · Runs Python for data work and quick scripts.' },
+      label: jt('setup.capabilities.pythonRuntime', 'Python runtime'), description: jt('setup.capabilities.pythonRuntimeDescription', 'Local · Runs Python for data work and quick scripts.') },
     { id: 'capImageReadToggle', key: 'imageRead', target: 'tools', section: 'local', defaultChecked: true,
-      label: 'Image reading', description: 'Local · Lets Jenny inspect images you share.' },
+      label: jt('setup.capabilities.imageReading', 'Image reading'), description: jt('setup.capabilities.imageReadingDescription', 'Local · Lets Jenny inspect images you share.') },
     { id: 'capTodoToggle', key: 'todo', target: 'tools', section: 'local', defaultChecked: true,
-      label: 'To-do tracking', description: 'Local · Tracks multi-step work as a checklist.' },
+      label: jt('setup.capabilities.todoTracking', 'To-do tracking'), description: jt('setup.capabilities.todoTrackingDescription', 'Local · Tracks multi-step work as a checklist.') },
     { id: 'capWebToggle', key: 'web', target: 'tools', section: 'network', defaultChecked: false,
-      label: 'Web search', description: 'Network · Sends your query to a search service.' },
+      label: jt('setup.capabilities.webSearch', 'Web search'), description: jt('setup.capabilities.webSearchDescription', 'Network · Sends your query to a search service.') },
     { id: 'capBrowserToggle', key: 'browser', target: 'tools', section: 'network', defaultChecked: false,
-      label: 'Web browsing', description: 'Network · Opens and reads web pages.' },
+      label: jt('setup.capabilities.webBrowsing', 'Web browsing'), description: jt('setup.capabilities.webBrowsingDescription', 'Network · Opens and reads web pages.') },
   ];
 
   var SECTIONS = [
-    { key: 'local', title: 'Local computation' },
-    { key: 'network', title: 'Network access' },
-    { key: 'workspace', title: 'Workspace changes' },
+    { key: 'local', title: jt('setup.capabilities.localComputation', 'Local computation') },
+    { key: 'network', title: jt('setup.capabilities.networkAccess', 'Network access') },
+    { key: 'workspace', title: jt('setup.capabilities.workspaceChanges', 'Workspace changes') },
   ];
 
   function escapeHtml(value) {
@@ -58,12 +58,12 @@
       : String(value == null ? '' : value);
   }
 
-  function renderGroup(section) {
+  function renderGroup(section, draft, disabled) {
     if (!toggleSwitch) return '';
     var toggles = FIELDS
       .filter(function (f) { return f.section === section.key; })
       .map(function (f) {
-        return toggleSwitch({ id: f.id, label: f.label, description: f.description, checked: f.defaultChecked === true });
+        return toggleSwitch({ id: f.id, label: f.label, description: f.description, checked: draft[f.key], disabled: disabled });
       })
       .join('');
     if (!toggles) return '';
@@ -74,10 +74,11 @@
       + '</section>';
   }
 
-  function buildBodyHtml() {
+  function buildBodyHtml(draft, disabled, errorText) {
     return ''
       + '<div class="setup-scene-body setup-cap-body">'
-      + SECTIONS.map(renderGroup).join('')
+      + (errorText ? '<p role="alert">' + escapeHtml(errorText) + '</p>' : '')
+      + SECTIONS.map(function (section) { return renderGroup(section, draft, disabled); }).join('')
       + '</div>';
   }
 
@@ -91,6 +92,13 @@
     var showToastMessage = typeof d.showToastMessage === 'function' ? d.showToastMessage : function () {};
     var showShellErrorToast = typeof d.showShellErrorToast === 'function' ? d.showShellErrorToast : function () {};
     var appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : function () {};
+    var getFeatureSettings = d.getFeatureSettings;
+    var gate = asyncFence.createGenerationGate();
+    var fence = asyncFence.createDisposalFence();
+    var draft = {};
+    var loading = false;
+    var loadError = '';
+    var revisit = d.state && d.state.steps && d.state.steps.capabilities === 'done';
 
     var modalId = 'setup-capabilities';
     var rootEl = null;
@@ -101,8 +109,7 @@
       var tools = {};
       var featureOverrides = {};
       FIELDS.forEach(function (f) {
-        var el = rootEl && rootEl.querySelector('[data-inv-toggle="' + f.id + '"]');
-        var on = el ? el.getAttribute('aria-checked') === 'true' : f.defaultChecked === true;
+        var on = draft[f.key] === true;
         if (f.target === 'tools') {
           tools[f.key] = on;
         } else {
@@ -113,38 +120,84 @@
     }
 
     function render() {
-      if (!rootEl) return;
+      if (!rootEl || fence.isDisposed()) return;
       var actions = [
-        { id: 'cancel', label: 'Cancel', variant: 'secondary', disabled: saveInFlight },
-        { id: 'save', label: 'Save', variant: 'primary', disabled: saveInFlight },
-        { id: 'skip', label: 'Skip for now', variant: 'ghost', disabled: saveInFlight },
+        { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary', disabled: saveInFlight },
+        { id: 'save', label: loading ? jt("models.library.loading", "Loading…") : jt('common.save', 'Save'), variant: 'primary', disabled: saveInFlight || loading || !!loadError },
+        { id: 'skip', label: jt('setup.capabilities.skipForNow', 'Skip for now'), variant: 'ghost', disabled: saveInFlight },
       ];
+      if (loadError) actions.push({ id: 'retry', label: jt("common.retry", "Retry"), variant: 'secondary' });
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Tools & capabilities',
+        title: jt('setup.capabilities.title', 'Tools & capabilities'),
         eyebrow: sceneUtils.setupStepEyebrow('capabilities'),
-        summary: 'Review what Jenny may do. Network access and file changes stay off unless you enable them.',
-        bodyHtml: buildBodyHtml(),
+        summary: jt('setup.capabilities.summary', 'Review what Jenny may do. Network access and file changes stay off unless you enable them.'),
+        bodyHtml: buildBodyHtml(draft, saveInFlight || loading || !!loadError, loadError),
         actions: actions,
       }) : '';
       rootEl.innerHTML = html;
     }
 
+    function isCurrent(token) {
+      return !fence.isDisposed() && gate.isCurrent(token);
+    }
+
+    function validSettings(result) {
+      return result && result.ok !== false && FIELDS.every(function (f) {
+        return result[f.target] && typeof result[f.target][f.key] === 'boolean';
+      });
+    }
+
+    async function loadSettings() {
+      if (loading) return;
+      loading = true;
+      loadError = '';
+      var token = gate.capture();
+      render();
+      try {
+        if (typeof getFeatureSettings !== 'function') throw new Error('Settings bridge unavailable');
+        var result = await getFeatureSettings();
+        if (!isCurrent(token)) return;
+        if (!validSettings(result)) throw new Error('Invalid settings response');
+        FIELDS.forEach(function (f) { draft[f.key] = result[f.target][f.key]; });
+      } catch (_error) {
+        if (!isCurrent(token)) return;
+        loadError = jt("sceneCapabilities.couldNotLoadSavedPermissionsRetryBeforeMakingChanges", "Could not load saved permissions. Retry before making changes.");
+        appendClientLog('WARN', 'setup.capabilities_load_failed', { reason: 'settings_unavailable' });
+      }
+      loading = false;
+      render();
+    }
+
+    function handleToggle(event) {
+      if (loading || saveInFlight || loadError || fence.isDisposed()) return;
+      var detail = event.detail || {};
+      var field = FIELDS.find(function (f) { return f.id === detail.id; });
+      if (field && typeof detail.checked === 'boolean') draft[field.key] = detail.checked;
+    }
+
     async function handleSave() {
-      if (saveInFlight) return;
+      if (saveInFlight || loading || loadError || fence.isDisposed()) return;
       saveInFlight = true;
+      var token = gate.capture();
       var patch = readToggles();
       render();
       try {
-        await persistFeatureSettings(patch);
+        var result = await persistFeatureSettings(patch);
+        if (!isCurrent(token)) return;
+        if (!validSettings(result) || !FIELDS.every(function (f) {
+          return result[f.target][f.key] === patch[f.target][f.key];
+        })) throw new Error('Permissions were not acknowledged');
         await markStep('capabilities', 'done');
-        showToastMessage('Capabilities saved.');
+        if (!isCurrent(token)) return;
+        showToastMessage(jt('setup.capabilities.saved', 'Capabilities saved.'));
         closeModal();
-      } catch (error) {
+      } catch (_error) {
+        if (!isCurrent(token)) return;
         appendClientLog('WARN', 'setup.capabilities_save_failed', {
-          message: error && error.message ? error.message : String(error),
+          reason: 'save_not_completed',
         });
-        showShellErrorToast('Could not save capabilities.', { title: 'Setup Step Failed' });
+        showShellErrorToast(jt('setup.capabilities.saveFailed', 'Could not save capabilities.'), { title: jt('setup.capabilities.failureTitle', 'Setup Step Failed') });
         if (rootEl) {
           saveInFlight = false;
           render();
@@ -153,14 +206,27 @@
     }
 
     async function handleSkip() {
+      if (saveInFlight || fence.isDisposed()) return;
+      var token = gate.capture();
+      saveInFlight = true;
+      render();
       try {
         await markStep('capabilities', 'skipped');
-      } catch (_error) { /* markStep already reports the persistence failure */ }
-      closeModal();
+        if (isCurrent(token)) closeModal();
+      } catch (_error) {
+        if (!isCurrent(token)) return;
+        saveInFlight = false;
+        render();
+      }
     }
 
     return {
       mount: function mount(rootElement) {
+        gate.bump();
+        fence = asyncFence.createDisposalFence();
+        loading = false;
+        loadError = '';
+        FIELDS.forEach(function (f) { draft[f.key] = f.defaultChecked === true; });
         saveInFlight = false;
         rootEl = rootElement;
         render();
@@ -169,6 +235,7 @@
               cancel: closeModal,
               save: handleSave,
               skip: handleSkip,
+              retry: loadSettings,
               __onError: function onError(error) {
                 appendClientLog('WARN', 'setup.capabilities_action_failed', {
                   message: error && error.message ? error.message : String(error),
@@ -176,11 +243,15 @@
               },
             })
           : null;
-        if (typeof initToggleHandlers === 'function') {
-          initToggleHandlers(rootEl);
-        }
+        // Inventory owns the document-level click handler; a local handler
+        // would flip every click twice. Only observe its semantic event here.
+        rootEl.addEventListener('inv-toggle-change', handleToggle);
+        if (revisit) loadSettings();
       },
       dispose: function dispose() {
+        fence.dispose();
+        gate.bump();
+        if (rootEl) rootEl.removeEventListener('inv-toggle-change', handleToggle);
         if (typeof unbindClicks === 'function') {
           unbindClicks();
           unbindClicks = null;

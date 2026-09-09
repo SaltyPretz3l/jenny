@@ -5,6 +5,7 @@
   }
   root.rendererTranscriptActionsUtils = factory(root.rendererUnsavedReplyActions || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (unsavedReplyActions) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createTranscriptActionRenderer(deps) {
     const { buildMessageActionModel, escapeHtml } = deps || {};
 
@@ -34,7 +35,7 @@
       }
       if (action === 'branch') {
         return `
-          <svg viewBox="0 0 16 16" aria-hidden="true">
+          <svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 2v3.5a3.5 3.5 0 0 0 3.5 3.5H12"></path>
             <path d="M8.5 5.5 12 9l-3.5 3.5"></path>
             <path d="M4 14V2"></path>
@@ -51,19 +52,19 @@
 
     function describeAction(action) {
       if (action === 'copy') {
-        return 'Copy message to clipboard';
+        return jt('chat.transcript.copyMessageToClipboard', 'Copy message to clipboard');
       }
       if (action === 'elaborate') {
-        return 'Ask Jenny to elaborate';
+        return jt('chat.transcript.askJennyToElaborate', 'Ask Jenny to elaborate');
       }
       if (action === 'regenerate') {
-        return 'Regenerate this response';
+        return jt('chat.transcript.regenerateResponse', 'Regenerate this response');
       }
       if (action === 'edit') {
-        return 'Edit your message';
+        return jt('chat.transcript.editYourMessage', 'Edit your message');
       }
       if (action === 'branch') {
-        return 'Branch from here';
+        return jt('chat.transcript.branchFromHere', 'Branch from here');
       }
       return action.charAt(0).toUpperCase() + action.slice(1);
     }
@@ -81,13 +82,13 @@
       const tooltip = disabled && reason
         ? reason
         : action === 'copy'
-          ? 'Copy message'
+          ? jt('chat.transcript.copyMessage', 'Copy message')
           : action === 'elaborate'
-            ? 'Ask for more detail'
+            ? jt('chat.transcript.askForMoreDetail', 'Ask for more detail')
             : action === 'edit'
-              ? 'Edit and resend (Enter)'
+              ? jt('chat.transcript.editAndResend', 'Edit and resend (Enter)')
               : action === 'branch'
-                ? 'Branch from here (Ctrl+Shift+B)'
+                ? jt('chat.transcript.branchFromHereShortcut', 'Branch from here (Ctrl+Shift+B)')
                 : description;
 
       return `
@@ -116,7 +117,7 @@
 
       const visibleMetaLabel = String(metaLabel || '').trim();
       const meta = actionModel.showMeta || visibleMetaLabel
-        ? `<div class="chat-hover-meta">${escapeHtml(visibleMetaLabel)}</div>`
+        ? `<div class="chat-hover-meta" tabindex="0" title="${escapeHtml(visibleMetaLabel)}" aria-label="${escapeHtml(visibleMetaLabel)}">${escapeHtml(visibleMetaLabel)}</div>`
         : '<div class="chat-hover-meta chat-hover-meta-empty" aria-hidden="true"></div>';
       const actions = ['edit', 'branch', 'regenerate', 'copy', 'elaborate']
         .map((action) => renderMessageActionButton(message, action, actionModel.actions[action]))

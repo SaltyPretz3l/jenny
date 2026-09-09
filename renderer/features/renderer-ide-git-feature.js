@@ -15,6 +15,8 @@
   }
   root.rendererIdeGitFeature = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -101,8 +103,8 @@
       try {
         head = await store.getFileAtHead({ path: normalized });
       } catch (error) {
-        showShellErrorToast(`Could not read ${normalized} from the last commit.`, {
-          title: 'Source Control', dedupeKey: `ide:githead:${normalized}`,
+        showShellErrorToast(jt('ide.git.lastCommitReadFailed', 'Could not read {path} from the last commit.', { path: normalized }), {
+          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:githead:${normalized}`,
         });
         appendClientLog('WARN', 'ide.git_head_read_failed', {
           message: String((error && error.message) || error || '').slice(0, 200),
@@ -112,8 +114,8 @@
       const missingAtHead = head && head.found === false
         && (head.reason === 'no_head' || head.reason === 'not_found');
       if (!head || head.ok === false || (head.found !== true && !missingAtHead)) {
-        showShellErrorToast(`Could not read ${normalized} from the last commit.`, {
-          title: 'Source Control', dedupeKey: `ide:githead:${normalized}`,
+        showShellErrorToast(jt('ide.git.lastCommitReadFailed', 'Could not read {path} from the last commit.', { path: normalized }), {
+          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:githead:${normalized}`,
         });
         appendClientLog('WARN', 'ide.git_head_read_failed', {
           reason: String(head?.reason || 'invalid_response').slice(0, 80),
@@ -123,8 +125,8 @@
       if (head.found) headContent = normalizeDiffText(head.content);
       const api = getWorkspaceFsApi();
       if (!api || typeof api.readFile !== 'function') {
-        showShellErrorToast(`Could not read ${normalized} to compare with the last commit.`, {
-          title: 'Source Control', dedupeKey: `ide:gitdiff:${normalized}`,
+        showShellErrorToast(jt('ide.git.lastCommitCompareReadFailed', 'Could not read {path} to compare with the last commit.', { path: normalized }), {
+          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:gitdiff:${normalized}`,
         });
         appendClientLog('WARN', 'ide.git_head_disk_read_failed', { reason: 'bridge_unavailable' });
         return false;
@@ -139,8 +141,8 @@
         if (store.getDecoration(normalized) === 'deleted') {
           modified = '';
         } else {
-          showShellErrorToast(`Could not read ${normalized} to compare with the last commit.`, {
-            title: 'Source Control',
+          showShellErrorToast(jt('ide.git.lastCommitCompareReadFailed', 'Could not read {path} to compare with the last commit.', { path: normalized }), {
+            title: jt('ide.git.sourceControl', 'Source Control'),
             dedupeKey: `ide:gitdiff:${normalized}`,
           });
           appendClientLog('WARN', 'ide.git_head_disk_read_failed', {
@@ -150,7 +152,7 @@
         }
       }
       const id = `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}head/${normalized}`;
-      const label = `${fileNameOf(normalized)} (vs HEAD)`;
+      const label = jt('ide.git.vsHeadLabel', '{file} (vs HEAD)', { file: fileNameOf(normalized) });
       await editorHost.openDiffDocument({ id, label, languagePath: normalized, original: headContent, modified });
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
       editorHost.activateDocument(id);
@@ -173,14 +175,12 @@
       const untracked = store.getDecoration?.(normalized) === 'untracked';
       const approved = confirmDialog && typeof confirmDialog.confirm === 'function'
         ? await confirmDialog.confirm({
-          title: 'Discard changes?',
+          title: jt('ide.git.discardChangesTitle', 'Discard changes?'),
           message: untracked
-            ? `Discard "${fileNameOf(normalized)}"? It was never committed, so the file is moved to the recycle bin${dirty ? ' and unsaved editor changes are lost' : ''}.`
-            : dirty
-              ? `Discard changes to "${fileNameOf(normalized)}"? Unsaved editor changes will also be lost. This cannot be undone.`
-              : `Discard changes to "${fileNameOf(normalized)}"? This restores the last committed version and cannot be undone.`,
-          confirmLabel: 'Discard Changes',
-          cancelLabel: 'Keep Editing',
+            ? (dirty ? jt('ide.git.discardUntrackedDirtyMessage', 'Discard "{file}"? It was never committed, so the file is moved to the recycle bin and unsaved editor changes are lost.', { file: fileNameOf(normalized) }) : jt('ide.git.discardUntrackedMessage', 'Discard "{file}"? It was never committed, so the file is moved to the recycle bin.', { file: fileNameOf(normalized) }))
+            : (dirty ? jt('ide.git.discardDirtyMessage', 'Discard changes to "{file}"? Unsaved editor changes will also be lost. This cannot be undone.', { file: fileNameOf(normalized) }) : jt('ide.git.discardMessage', 'Discard changes to "{file}"? This restores the last committed version and cannot be undone.', { file: fileNameOf(normalized) })),
+          confirmLabel: jt('ide.git.discardChanges', 'Discard Changes'),
+          cancelLabel: jt('ide.git.keepEditing', 'Keep Editing'),
           variant: 'danger',
         })
         : false;
@@ -191,8 +191,8 @@
       const hasOpenBuffer = editorHost?.hasDocument?.(normalized) === true;
       const reloadSnapshot = hasOpenBuffer ? lifecycle?.captureGitDiscard?.(normalized) : null;
       if (hasOpenBuffer && !reloadSnapshot) {
-        showShellErrorToast(`Could not safely prepare the open editor for "${fileNameOf(normalized)}". Nothing was discarded.`, {
-          title: 'Source Control', dedupeKey: `ide:discard-preflight:${normalized}`,
+        showShellErrorToast(jt('ide.git.discardPrepareFailed', 'Could not safely prepare the open editor for "{file}". Nothing was discarded.', { file: fileNameOf(normalized) }), {
+          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard-preflight:${normalized}`,
         });
         return false;
       }
@@ -207,8 +207,8 @@
           // unreachable, trash failed, directory) — prefer it over the guess.
           const specific = String(result?.message || '').trim();
           showShellErrorToast(
-            specific || `Could not discard changes to “${fileNameOf(normalized)}”. The file may be locked or in use.`,
-            { title: 'Source Control', dedupeKey: `ide:discard:${normalized}` },
+          specific || jt('ide.git.discardFileFailed', 'Could not discard changes to “{file}”. The file may be locked or in use.', { file: fileNameOf(normalized) }),
+            { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard:${normalized}` },
           );
           return false;
         }
@@ -233,8 +233,8 @@
         }
         if (!reloaded) {
           showShellErrorToast(
-            `The file was restored on disk, but the open editor for "${fileNameOf(normalized)}" changed before it could reload. Review or reopen the file.`,
-            { title: 'Source Control', dedupeKey: `ide:discard-reload:${normalized}` },
+            jt('ide.git.editorReloadChanged', 'The file was restored on disk, but the open editor for "{file}" changed before it could reload. Review or reopen the file.', { file: fileNameOf(normalized) }),
+            { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard-reload:${normalized}` },
           );
           return false;
         }
@@ -277,8 +277,8 @@
         const count = Array.isArray(paths) ? paths.length : 0;
         const verb = action === 'unstage' ? 'unstage' : 'stage';
         showShellErrorToast(
-          `Could not ${verb} the selected file${count === 1 ? '' : 's'}. The file may be locked or in use.`,
-          { title: 'Source Control', dedupeKey: `ide:${action}:${count === 1 ? paths[0] : 'batch'}` },
+          jtn('ide.git.selectedFilesMutationFailed', count, { action: verb, count }, 'Could not {action} the selected file. The file may be locked or in use.', 'Could not {action} the selected files. The file may be locked or in use.'),
+          { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:${action}:${count === 1 ? paths[0] : 'batch'}` },
         );
       }
       return result;
@@ -336,17 +336,17 @@
         ? result.diff
         : '';
       if (!diffText.trim()) {
-        showShellErrorToast('Could not load this commit’s changes.', {
-          title: 'Source Control',
+        showShellErrorToast(jt('ide.git.commitChangesLoadFailed', 'Could not load this commit’s changes.'), {
+          title: jt('ide.git.sourceControl', 'Source Control'),
           dedupeKey: `ide:commitdiff:${rev}`,
         });
         return { opened: false };
       }
       const body = result.truncated === true
-        ? `${diffText}\n\n… diff truncated (large commit).`
+        ? jt('ide.git.truncatedCommitDiff', '{diff}\n\n… diff truncated (large commit).', { diff: diffText })
         : diffText;
       const id = `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}commit/${rev}`;
-      const label = `Commit ${rev.slice(0, 7)}`;
+      const label = jt('ide.git.commitLabel', 'Commit {ref}', { ref: rev.slice(0, 7) });
       // placeholderText switches the diff tab into its read-only <pre> rendering
       // (the unified diff text is itself a diff, so a two-pane editor is wrong).
       await editorHost.openDiffDocument({ id, label, placeholderText: body });

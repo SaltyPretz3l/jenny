@@ -4,6 +4,15 @@ const { JSDOM } = require('jsdom');
 
 const view = require('../renderer/shell/model-library/model-library-view.js');
 
+const MODEL_MERGE_PATH = require.resolve('../renderer/shell/model-library/model-library-merge.js');
+const MODEL_VIEW_PATH = require.resolve('../renderer/shell/model-library/model-library-view.js');
+
+test.afterEach(() => {
+  delete globalThis.jennyI18n;
+  delete require.cache[MODEL_MERGE_PATH];
+  delete require.cache[MODEL_VIEW_PATH];
+});
+
 function card(overrides = {}) {
   return {
     key: 'acme/model:q6',
@@ -169,6 +178,28 @@ test('fitState exclusively controls row bar tone and unknown fit omits the bar',
   const unknownFit = unknown.querySelector('.model-row-fit');
   assert.equal(unknownFit.querySelector('.inv-progress'), null);
   assert.equal(unknownFit.textContent, 'Not in catalog · fit unknown');
+});
+
+test('localized installed models missing from the catalog keep the combined unknown-fit label', () => {
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  i18n.load({ tag: 'qps-ploc', strings: {
+    'models.library.merge.notInCatalog': '[Nøţ ïñ çåţåļøğ]',
+    'models.library.notInCatalogFitUnknown': '[Nøţ ïñ çåţåļøğ · fïţ űñķñøŵñ]',
+  } });
+  globalThis.jennyI18n = i18n;
+  delete require.cache[MODEL_MERGE_PATH];
+  delete require.cache[MODEL_VIEW_PATH];
+  const localizedMerge = require(MODEL_MERGE_PATH);
+  const localizedView = require(MODEL_VIEW_PATH);
+  const projection = localizedMerge.mergeModelLibrary({
+    installed: [{ id: 'private/model:q4', sizeBytes: 4096, engineType: 'ollama' }],
+    recommendations: [],
+    hardware: { gpu: { type: 'cuda', name: 'Test GPU', vram_mb: 16384 } },
+  });
+
+  const root = fragment(localizedView.buildModelRow(projection.cards[0], {}));
+
+  assert.equal(root.querySelector('.model-row-fit').textContent, '[Nøţ ïñ çåţåļøğ · fïţ űñķñøŵñ]');
 });
 
 test('fitSource estimated/observed append a suffix to the row and card fit text', () => {

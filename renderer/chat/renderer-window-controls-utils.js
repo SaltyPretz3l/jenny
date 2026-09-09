@@ -5,6 +5,7 @@
   }
   root.rendererWindowControlsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function applyWindowStateToControls(documentRef, state) {
     const doc = documentRef || (typeof document !== 'undefined' ? document : null);
     if (!doc || typeof doc.querySelector !== 'function') {
@@ -15,7 +16,7 @@
       return;
     }
     const maximized = state && state.maximized === true;
-    const label = maximized ? 'Restore window' : 'Maximize window';
+    const label = maximized ? jt('titlebar.window.restoreTitle', 'Restore window') : jt('titlebar.window.maximizeTitle', 'Maximize window');
     maximizeButton.setAttribute('aria-label', label);
     maximizeButton.setAttribute('title', label);
     maximizeButton.textContent = maximized ? '❐' : '□';
