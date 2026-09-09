@@ -51,7 +51,7 @@ cat >"$scratch/host.json" <<'JSON'
 JSON
 chmod 0444 "$scratch/host.json"
 docker volume create "$volume" >/dev/null
-docker network create --internal "$network" >/dev/null
+docker network create "$network" >/dev/null
 # Readiness requires the configured engine to initialize. Reuse the bounded
 # model fixture rather than depending on an absent Ollama server or a real model.
 docker run -d --name "$model" --network "$network" --network-alias model \
