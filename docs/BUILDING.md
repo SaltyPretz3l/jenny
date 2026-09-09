@@ -301,7 +301,9 @@ that release. A tag or an unpublished draft does not change the latest download.
 
 #### What a friend downloads
 
-The current public release provides the Windows installer only. macOS stays
+Jenny 1.1.0 provides the Windows installer and experimental Linux AppImage/deb
+packages. Linux CI verifies the glibc floor and packaged-app startup; native
+installed-format and upgrade checks remain outstanding. macOS stays
 experimental until native CI, Apple Silicon install/launch, and public artifact
 links are verified. Signing and real-hardware testing status must be recorded
 separately from artifact availability; automatic macOS updates remain disabled.
