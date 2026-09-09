@@ -5,8 +5,8 @@ last_reviewed: 2026-09-09
 
 # 01 — First chat with Jenny
 
-This guide follows the 1.1 source candidate. The published 1.0.0 installer may
-have different labels; see the [release notes](../../RELEASE_NOTES.md).
+This guide follows Jenny 1.1.0. Older versions may have different labels;
+see the [release notes](../../RELEASE_NOTES.md).
 Setup time depends mainly on whether you need to download a model.
 
 ## Before you start

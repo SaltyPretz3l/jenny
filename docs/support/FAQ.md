@@ -45,10 +45,11 @@ disconnected machine, transfer an installer obtained on another machine.
 
 ### Can I run Jenny on macOS or Linux?
 
-Windows is the supported desktop platform. The published 1.0.0 release contains
-Windows assets only. Experimental Linux x64 AppImage/deb and Apple Silicon
-dmg/zip builds are candidates for 1.1.0; check the actual
-[release assets](https://github.com/SaltyPretz3l/jenny/releases) before downloading.
+Windows is the supported desktop platform. Jenny 1.1.0 provides a Windows
+installer and experimental Linux x64 AppImage/deb packages. macOS remains
+source-only pending Apple Silicon installation/launch qualification; no Mac
+installer is published. See the
+[release assets](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0).
 
 Linux targets glibc 2.35 or newer (Ubuntu 22.04+, with compatible distributions
 as candidates). Installed-format, upgrade and bare-metal checks remain separate
@@ -67,7 +68,7 @@ to English. Report wording problems with the language and screen name.
 
 The chat sidebar supports multiselect, bulk archive/restore, and confirmed
 deletion with Undo. Waiting indicators distinguish approvals, plan review and
-questions that need your input. See the [unreleased changelog](../../RELEASE_NOTES.md).
+questions that need your input. See the [release changelog](../../RELEASE_NOTES.md).
 
 ### Does Auto run mean Jenny can work unsupervised?
 

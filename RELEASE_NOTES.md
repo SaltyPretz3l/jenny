@@ -1,11 +1,11 @@
 # Release Notes
 
-## 1.1.0 - unreleased
+## 1.1.0 - 2026-09-09
 
-First feature update after 1.0.0, available as source ahead of installer publication.
-This section describes integrated
-source, not a published installer. Platform assets, signing state and final
-qualification will be recorded when the release is cut.
+First feature update after 1.0.0. The
+[1.1.0 release](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0)
+provides the Windows installer and experimental Linux x64 AppImage/deb packages.
+macOS remains source-only pending hardware qualification.
 
 ### Highlights
 
@@ -105,10 +105,13 @@ connector changes include Astra profile metadata; no bundled connector is promis
 
 ### Qualification and known limits
 
-Windows remains the supported desktop platform. This draft has no 1.1.0
-installer, asset hashes or publication date. Linux and macOS remain experimental.
-Real installed-app upgrade, persistence, language/RTL and visual-preview gates
-must be recorded before making release claims.
+Windows remains the supported desktop platform. The exact CI-built package
+passed local packaged-app startup, sidecar initialize/trust and native-host
+provenance checks using a temporary profile. Installed 1.0-to-1.1 upgrade,
+interrupted-download/cache recovery, dirty-buffer/active-work cancellation,
+existing-profile persistence and language/RTL visual acceptance were not rerun
+in this publication task. Real-model visual-preview quality and native-speaker
+translation review remain unqualified.
 
 Docker Desktop localhost/browser and desktop-worker proof is recorded using
 deterministic model fixtures; actual-model, packaged, native Linux/macOS,
@@ -123,7 +126,83 @@ apart from discovery.
 
 Release uploads are restricted to drafts. The broken private attestation
 workflow is retired; this does not establish replacement artifact attestation.
-Final release notes must state the actual signing, asset and qualification status.
+The signing, asset and qualification record below describes the shipped files.
+
+### Release evidence — 2026-09-09
+
+- **Source:** public `v1.1.0` at `e2bcc8ca247e756149bbfde3832fa0d2e980db5a`,
+  merged in [PR #7](https://github.com/SaltyPretz3l/jenny/pull/7).
+  The installer builds from this clean tag, including the final gate fixes.
+- **Builder:** [public release run 34355928734](https://github.com/SaltyPretz3l/jenny/actions/runs/34355928734).
+  Windows Server 2025 image `20260907.229.1`, Node 22.23.2, npm 10.9.8,
+  Python 3.11.9, PyInstaller 6.19.0. Node dependencies use `npm ci`; Python
+  build/runtime locks use hashes, the project installs without build isolation,
+  and `pip check` passed. `SOURCE_DATE_EPOCH` was unset; no reproducibility claim.
+- **Windows:** installer and product version 1.1.0; exact CI artifacts passed
+  local `smoke_packaged_flow.py --existing-artifacts --composition dev` on
+  Windows with a throwaway profile. Sidecar integrity, framed initialize,
+  native hosts, packaged launch resolution and application exit all passed.
+  The launcher selected `packaged-binary`, without a source-Python fallback.
+  Managed CPython 3.13.14, resource manifests and wheel closure also passed
+  the checker against the actual packaged resources.
+- **Source freshness:** 1,714 bundled tracked files match the tag byte-for-byte;
+  one README differs only in Windows line endings. The generated native-host
+  provenance records the release commit and matches the actual binary.
+- **Sidecar:** `resources/sidecar/manifest.json`; API `2026-08-17`, source commit
+  as above, `git_dirty=false`, artifact `sidecar.exe`, SHA256
+  `59fd945cf2ba6eae76f053b81ac7a3ee5028089e05893da58c6545fc20dca048`.
+- **Signing:** unsigned Windows installer (`Get-AuthenticodeSignature`:
+  `NotSigned`); SmartScreen warnings are expected. Notarization is not
+  applicable to the shipped Windows/Linux assets. Artifact attestation is
+  unavailable; hashes are integrity checks, not publisher signatures.
+- **Linux:** experimental AppImage/deb build passed in Ubuntu 22.04 with the
+  glibc 2.35 floor, managed-Python verification and unprivileged packaged-app
+  smoke. Downloaded packages independently match tag/version, sizes, SHA512
+  updater metadata and SHA256SUMS. Installed-format upgrades and bare-metal
+  acceptance were not performed in this release task.
+- **macOS:** no assets published. The experimental build failed during signing
+  setup because an empty certificate setting resolved to the checkout directory.
+  Native artifact verification and Apple Silicon install/launch remain blocked.
+- **Source gates:** [portable CI](https://github.com/SaltyPretz3l/jenny/actions/runs/34355132419)
+  and [hosted qualification](https://github.com/SaltyPretz3l/jenny/actions/runs/34355132403)
+  passed on the merged PR head. Public `test:dist` passed 11 Node suites and
+  78 Python tests. Real Docker setup, persistence, browser, cancellation and
+  offline-command recovery passed locally and in Linux CI using model fixtures.
+- **Manual matrix/failure drills:** owner-recorded full-gate and packaged-Windows
+  evidence from the integrated source was reused. This task did not rerun the
+  full manual matrix, real-model quality checks or installed-user upgrade and
+  failure drills. Focused release contract tests and the actual packaged smoke
+  passed; the missing manual coverage remains explicit above.
+- **SBOM/resources:** `dist/sidecar-sbom.json` and the packaged
+  `resources/python-embed/python-embed-manifest.json` and
+  `resources/python-runtime-wheels/wheelhouse-manifest.json` are retained in
+  the release run's `jenny-installer-windows-latest` CI artifact. Its sidecar
+  manifest records all lock and managed-runtime source fingerprints.
+- **Dependency audit:** the integrated Node lock reports four advisories:
+  `@humanfs/node` (moderate), `@xmldom/xmldom`, `fast-uri` and `js-yaml` (high).
+  Dependency updates are separate follow-up work. A fresh Python advisory sweep
+  was deferred; hash-locked installation and `pip check` are not an advisory scan.
+- **Release decision:** publish the verified Windows installer and experimental
+  Linux assets after all build/upload jobs finish, under the owner's explicit
+  1.1.0 publication authorization. Updates and installation remain user initiated.
+  Preserve profiles on reinstall; export data before any manual downgrade and
+  verify schema compatibility. Fix a shipped defect with a higher version;
+  never replace the published tag or installer bytes.
+
+### 1.1.0 download checksums
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 195ef481bc0ef360fc5f2b676bbfbfff46a25929a9602d38040e4aea71b6b607 |
+| dist/Jenny-Setup-x64.exe.blockmap | 9366239838079b47dcef5c42bb21841d2f03800376f9c230f95cb4a81b5d4fec |
+| dist/Jenny-amd64.deb | b40c5ca6d1625d167bd9cc07c3fa74d917bfeae67d02bf7014e1b81e320a54e5 |
+| dist/Jenny-x86_64.AppImage | b2ea78c9d17affa330d460afff6984f1854b7a9148d129f17eb0e5a8cc701130 |
+| dist/SHA256SUMS-linux.txt | d60fc92e938193b3bc728aad2b8b065a5b99cba59f47d817ec02bc6688b808b0 |
+| dist/SHA256SUMS-windows.txt | 931f5fbdf0f84ecdc87f28afc8aecc3fce8029d3c8e715bd25aed206e01cc3ee |
+| dist/latest-linux.yml | d05e9dc4ebeaaa5677caef0c3f49a74cf6a1ecd8b3549074b5028fd333025fdc |
+| dist/latest.yml | f7f81c08160da1387e836e374c5b48ef3065e531c3577e6fda279d9cae2176ee |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.0.0 - 2026-09-06
 
@@ -319,6 +398,14 @@ the public repository (`github.com/SaltyPretz3l/jenny`).
   brace-expansion overrides now select 1.1.16/2.1.2 for
   `GHSA-3jxr-9vmj-r5cp`. No `npm audit fix` or new override was used.
 
+### Historical 1.0.0 asset hashes
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 308f288dc9b2e5ae690d6858f7b38fac8ba328b814c1f9685bffa3b2fe576582 |
+| dist/Jenny-Setup-x64.exe.blockmap | 06426fdd76dafc10aa68ac5b188799b90136a85efe34680bca7033280c975e97 |
+| dist/latest.yml | 479ac264661f9973e3d00ab5a6512238cf714060c15ad561488aa396d3f0deb2 |
+
+
 ## 0.9.0 - Released 2026-07-22
 
 > **Published 2026-07-22** as the first public installer:
@@ -434,11 +521,3 @@ Rollback/reinstall decision: promote; rollback = delete the GitHub release + tag
 Known deviations: unsigned installers; Windows-only; published from a local builder instead of CI; owner GUI smoke + manual matrix pending
 Release decision: promote (owner instruction to publish, 2026-07-22)
 ```
-
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
-| File | SHA256 |
-| --- | --- |
-| dist/Jenny-Setup-x64.exe | 308f288dc9b2e5ae690d6858f7b38fac8ba328b814c1f9685bffa3b2fe576582 |
-| dist/Jenny-Setup-x64.exe.blockmap | 06426fdd76dafc10aa68ac5b188799b90136a85efe34680bca7033280c975e97 |
-| dist/latest.yml | 479ac264661f9973e3d00ab5a6512238cf714060c15ad561488aa396d3f0deb2 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->

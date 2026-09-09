@@ -74,7 +74,7 @@ build.
 **Open Anyway** next to the blocked-app notice. On older macOS, right-click
 **Jenny.app** → **Open** → **Open**. If neither option appears, clear the
 quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
-The published 1.0.0 release has no Mac installer; use this guidance only for
+The published 1.1.0 release has no Mac installer; use this guidance only for
 an actual experimental build whose provenance you have verified. Mac installation
 remains manual and the managed Python tool is unavailable on macOS.
 

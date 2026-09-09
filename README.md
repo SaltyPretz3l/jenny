@@ -6,17 +6,17 @@ With a local model, Jenny processes your prompts locally and saves conversations
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## 1.1 preview
+## Jenny 1.1.0
 
-The next feature release is being prepared as **1.1.0**. Integrated source adds
-19 interface languages with Arabic RTL, an optional 24-hour clock, bulk chat
+**[Jenny 1.1.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0)**
+with 19 interface languages and Arabic RTL, an optional 24-hour clock, bulk chat
 management, clearer waiting states, improved artifact/preview workflows and
-explicit update controls. See the [unreleased notes](RELEASE_NOTES.md).
+explicit update controls. See the [release notes](RELEASE_NOTES.md).
 
-The latest published installer remains 1.0.0 until a new release is published.
-Source support, downloadable assets and platform qualification are listed
-separately below. Translations are model-authored and may fall back to English
-for newer copy.
+Windows is the supported desktop platform. This release also provides
+experimental Linux x64 AppImage/deb packages; macOS remains source-only pending
+hardware qualification. Translations are model-authored and newer copy may fall
+back to English.
 
 ## Demo
 
@@ -74,12 +74,11 @@ The current public release has no macOS installer. The Apple Silicon build pipel
 
 ### Linux (experimental)
 
-Linux packages are candidates for 1.1.0; the published 1.0.0 release has no
-Linux package. Run from source until a release provides verified assets
-(see **Running from source** below). When available, download **`Jenny-x86_64.AppImage`** or
-**`Jenny-amd64.deb`** from the
-[releases page](https://github.com/SaltyPretz3l/jenny/releases) (they are
-listed only for releases whose Linux build succeeded).
+Jenny 1.1.0 includes experimental **`Jenny-x86_64.AppImage`** and
+**`Jenny-amd64.deb`** packages on the
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0).
+Native CI verified the glibc floor and packaged-app startup. Installed-format,
+upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
 distributions with glibc 2.35 or newer.
 
