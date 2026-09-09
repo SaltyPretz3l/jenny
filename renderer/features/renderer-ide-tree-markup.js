@@ -6,6 +6,7 @@
   }
   root.rendererIdeTreeMarkup = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
 
@@ -112,10 +113,10 @@
       const field = textField({
         className: 'ide-tree-edit-field',
         value: initialName || '',
-        placeholder: mode === 'create-directory' ? 'folder name' : 'file name',
+        placeholder: mode === 'create-directory' ? jt('ide.tree.folderNamePlaceholder', 'folder name') : jt('ide.tree.fileNamePlaceholder', 'file name'),
         ariaLabel: mode === 'rename'
-          ? 'New name'
-          : mode === 'create-directory' ? 'New folder name' : 'New file name',
+          ? jt('ide.tree.newName', 'New name')
+          : mode === 'create-directory' ? jt('ide.tree.newFolderName', 'New folder name') : jt('ide.tree.newFileName', 'New file name'),
         maxLength: 255,
         dataset: { 'ide-tree-edit-control': '1' },
       });
@@ -156,7 +157,7 @@
           gitBadge = '<span class="ide-tree-git-dot" aria-hidden="true"></span>';
         } else {
           classes.push(`ide-tree-row--git-${gitState}`);
-          gitBadge = `<span class="ide-tree-git-badge" aria-label="git: ${escapeHtml(gitState)}">`
+          gitBadge = `<span class="ide-tree-git-badge" aria-label="${escapeHtml(jt('ide.tree.gitStatus', 'git: {status}', { status: gitState }))}">`
             + `${GIT_TREE_BADGE[gitState] || 'M'}</span>`;
         }
       }
@@ -206,7 +207,7 @@
         }
       }
       if (truncatedDirs.has(dirPath)) {
-        markup += buildStatusRow('Folder list truncated.', depth);
+        markup += buildStatusRow(jt('ide.tree.folderListTruncated', 'Folder list truncated.'), depth);
       }
       return markup;
     }
@@ -216,7 +217,7 @@
         return '';
       }
       const showGenerated = getIde().showGenerated === true;
-      const generatedTitle = showGenerated ? 'Hide generated directories' : 'Show generated directories';
+      const generatedTitle = showGenerated ? jt('ide.tree.hideGeneratedDirectories', 'Hide generated directories') : jt('ide.tree.showGeneratedDirectories', 'Show generated directories');
       const svgOpen = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"'
         + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
       const newFileSvg = `${svgOpen}<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9h5M8 6.5v5"/></svg>`;
@@ -227,21 +228,21 @@
       const buttons = [
         {
           className: `ide-tree-header-button ide-tree-generated-toggle${showGenerated ? ' ide-tree-generated-toggle--active' : ''}`,
-          label: 'Generated', ariaPressed: showGenerated,
+          label: jt('ide.tree.generated', 'Generated'), ariaPressed: showGenerated,
           ariaLabel: generatedTitle, title: generatedTitle,
           dataset: { 'ide-tree-action': 'toggle-generated' },
         },
-        { ariaLabel: 'Refresh Explorer', title: 'Refresh', trustedHtml: refreshSvg, dataset: { 'ide-tree-action': 'refresh' } },
-        { ariaLabel: 'Collapse All Folders', title: 'Collapse All', trustedHtml: collapseSvg, dataset: { 'ide-tree-action': 'collapse-all' } },
+        { ariaLabel: jt('ide.tree.refreshExplorer', 'Refresh Explorer'), title: jt('common.refresh', 'Refresh'), trustedHtml: refreshSvg, dataset: { 'ide-tree-action': 'refresh' } },
+        { ariaLabel: jt('ide.tree.collapseAllFolders', 'Collapse All Folders'), title: jt('ide.tree.collapseAll', 'Collapse All'), trustedHtml: collapseSvg, dataset: { 'ide-tree-action': 'collapse-all' } },
       ];
       if (isQolEnabled()) {
         const sortMode = EXPLORER_SORT_MODES.includes(getIde().explorerSortMode)
           ? getIde().explorerSortMode
           : 'name';
-        const sortTitle = `Sort: ${sortMode} — click to change`;
+        const sortTitle = jt('ide.tree.sortTitle', 'Sort: {mode} — click to change', { mode: sortMode });
         buttons.unshift(
-          { ariaLabel: 'New File', title: 'New File', trustedHtml: newFileSvg, dataset: { 'ide-tree-action': 'new-file' } },
-          { ariaLabel: 'New Folder', title: 'New Folder', trustedHtml: newFolderSvg, dataset: { 'ide-tree-action': 'new-folder' } },
+          { ariaLabel: jt('ide.tree.newFile', 'New File'), title: jt('ide.tree.newFile', 'New File'), trustedHtml: newFileSvg, dataset: { 'ide-tree-action': 'new-file' } },
+          { ariaLabel: jt('ide.tree.newFolder', 'New Folder'), title: jt('ide.tree.newFolder', 'New Folder'), trustedHtml: newFolderSvg, dataset: { 'ide-tree-action': 'new-folder' } },
           { ariaLabel: sortTitle, title: sortTitle, trustedHtml: sortSvg, dataset: { 'ide-tree-action': 'cycle-sort' } }
         );
       }
@@ -262,7 +263,7 @@
         if (rootNeedsChoose && hasChooseRoot() && typeof actionButton === 'function') {
           body += '<div class="ide-tree-choose-root">'
             + actionButton({
-              label: 'Choose Folder',
+              label: jt('ide.tree.chooseFolder', 'Choose Folder'),
               variant: 'primary',
               dataset: { 'ide-tree-choose-root': '1' },
             })
@@ -271,13 +272,13 @@
       } else {
         body = buildChildrenMarkup('', 0);
         if (!body) {
-          body = buildStatusRow('Workspace is empty - right-click to create a file.', 0);
+          body = buildStatusRow(jt('ide.tree.emptyWorkspace', 'Workspace is empty - right-click to create a file.'), 0);
         }
       }
       return buildTreeHeaderMarkup()
         + (isQolEnabled()
-          ? `<div class="ide-tree ide-tree--qol" role="tree" aria-label="Workspace files" aria-multiselectable="true">${body}</div>`
-          : `<div class="ide-tree" role="tree" aria-label="Workspace files">${body}</div>`);
+          ? `<div class="ide-tree ide-tree--qol" role="tree" aria-label="${escapeHtml(jt('ide.tree.workspaceFiles', 'Workspace files'))}" aria-multiselectable="true">${body}</div>`
+          : `<div class="ide-tree" role="tree" aria-label="${escapeHtml(jt('ide.tree.workspaceFiles', 'Workspace files'))}">${body}</div>`);
     }
 
     return {

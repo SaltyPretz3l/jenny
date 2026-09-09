@@ -6,9 +6,10 @@
   }
   root.rendererIdeTreeImport = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
   const TREE_DRAG_PATHS_MIME = 'application/x-jenny-tree-paths';
-  const IMPORT_ERROR = 'Imported files could not be resolved to disk paths.';
+  const IMPORT_ERROR = jt('ide.treeImport.unresolvedPaths', 'Imported files could not be resolved to disk paths.');
   function noop() {}
 
   function hasType(transfer, type) {
@@ -143,7 +144,7 @@
         await getWorkspaceFsApi()?.cancelImport?.({ importId });
       } catch (error) {
         if (!disposed && importId === activeImportId) {
-          showError(boundedMessage(error, 'Import cancellation failed.'), {
+      showError(boundedMessage(error, jt('ide.treeImport.cancellationFailed', 'Import cancellation failed.')), {
             dedupeKey: 'ide:tree:import-cancel',
           });
         }
@@ -169,10 +170,10 @@
       stripStatus = doc.createElement('span');
       stripCancel = doc.createElement('span');
       stripCancel.className = 'ide-tree-import-strip-cancel';
-      stripCancel.textContent = 'Cancel';
+      stripCancel.textContent = jt('common.cancel', 'Cancel');
       stripCancel.setAttribute('role', 'button');
       stripCancel.setAttribute('tabindex', '0');
-      stripCancel.setAttribute('aria-label', 'Cancel import');
+      stripCancel.setAttribute('aria-label', jt('ide.treeImport.cancelLabel', 'Cancel import'));
       stripCancel.addEventListener('click', requestCancel);
       stripCancel.addEventListener('keydown', handleCancelKeydown);
       stripNode.append(stripStatus, stripCancel);
@@ -188,8 +189,8 @@
       const currentName = nameOf(progress.current_name || '');
       const scanning = progress.phase === 'scanning' || total === 0;
       stripStatus.textContent = scanning
-        ? `Scanning… ${completed} found${currentName ? ` · ${currentName}` : ''}`
-        : `Importing… ${completed}/${total}${currentName ? ` · ${currentName}` : ''}`;
+        ? (currentName ? jt('ide.treeImport.scanningCurrent', 'Scanning… {completed} found · {name}', { completed, name: currentName }) : jt('ide.treeImport.scanning', 'Scanning… {completed} found', { completed }))
+        : (currentName ? jt('ide.treeImport.importingCurrent', 'Importing… {completed}/{total} · {name}', { completed, total, name: currentName }) : jt('ide.treeImport.importing', 'Importing… {completed}/{total}', { completed, total }));
       const percent = Math.min(100, Math.max(0, Number(progress.percent) || 0));
       stripNode.style.setProperty('--ide-tree-import-progress', `${percent}%`);
     }
@@ -232,16 +233,16 @@
       const warningNames = [...new Set(warnings.map((warning) => String(warning?.name || '').trim()).filter(Boolean))];
       const files = Math.max(0, Number(totals.files) || 0);
       const summary = totals.truncated === true
-        ? `more than ${files} files / more than ${formatMegabytes(totals.bytes)} MB (the preview was cut short)`
-        : `${files} files / ${formatMegabytes(totals.bytes)} MB`;
+        ? jt('ide.treeImport.previewTruncated', 'more than {count} files / more than {size} MB (the preview was cut short)', { count: files, size: formatMegabytes(totals.bytes) })
+        : jt('ide.treeImport.previewSummary', '{count} files / {size} MB', { count: files, size: formatMegabytes(totals.bytes) });
       const details = [summary];
-      if (sensitive) details.push('includes sensitive-looking items');
-      if (warningNames.length) details.push(`Warnings: ${warningNames.join(', ')}`);
+      if (sensitive) details.push(jt('ide.treeImport.includesSensitiveItems', 'includes sensitive-looking items'));
+      if (warningNames.length) details.push(jt('ide.treeImport.warnings', 'Warnings: {warnings}', { warnings: warningNames.join(', ') }));
       return {
         dialog: {
-          title: 'Import external items?',
+          title: jt('ide.treeImport.confirmTitle', 'Import external items?'),
           message: `${details.join('. ')}.`,
-          confirmLabel: 'Import',
+          confirmLabel: jt('ide.treeImport.confirmLabel', 'Import'),
           sensitive,
         },
         allowLargeTree: large,
@@ -291,11 +292,11 @@
       if (result?.cancelled === true) {
         const kept = Math.max(0, Number(progress.completed_files) || Number(result?.totals?.files) || 0);
         const total = Math.max(kept, Number(progress.total_files) || Number(preview.files) || kept);
-        showToast(`Import cancelled — kept ${kept} of ${total}`);
+        showToast(jt('ide.treeImport.cancelled', 'Import cancelled — kept {kept} of {total}', { kept, total }));
         return;
       }
       if (result?.ok === false) {
-        showError(boundedMessage(result?.message || result, 'Import failed.'), {
+      showError(boundedMessage(result?.message || result, jt('ide.treeImport.failed', 'Import failed.')), {
           dedupeKey: 'ide:tree:import',
         });
         return;
@@ -308,7 +309,7 @@
         selection.replace?.(paths, firstPath);
         revealPath(firstPath, { focus: false });
       }
-      showToast(`Imported ${imported.length} items${skipped.length ? `, ${skipped.length} skipped` : ''}`);
+      showToast(skipped.length ? jt('ide.treeImport.completedWithSkipped', 'Imported {count} items, {skipped} skipped', { count: imported.length, skipped: skipped.length }) : jt('ide.treeImport.completed', 'Imported {count} items', { count: imported.length }));
     }
 
     async function startImport(files, destination, generation, rootEpoch) {
@@ -324,7 +325,7 @@
         const preview = await api?.previewImport?.({ sources });
         if (importIsStale(generation, rootEpoch)) return;
         if (!preview || preview.ok === false) {
-          showError(boundedMessage(preview?.message, 'Import preview failed.'), {
+      showError(boundedMessage(preview?.message, jt('ide.treeImport.previewFailed', 'Import preview failed.')), {
             dedupeKey: 'ide:tree:import',
           });
           return;
@@ -365,12 +366,12 @@
         try {
           result = await api?.importExternal?.(payload);
         } catch (error) {
-          result = { ok: false, message: boundedMessage(error, 'Import failed.') };
+        result = { ok: false, message: boundedMessage(error, jt('ide.treeImport.failed', 'Import failed.')) };
         }
         await finishImport(result, generation, rootEpoch);
       } catch (error) {
         if (!importIsStale(generation, rootEpoch)) {
-          showError(boundedMessage(error, 'Import failed.'), { dedupeKey: 'ide:tree:import' });
+      showError(boundedMessage(error, jt('ide.treeImport.failed', 'Import failed.')), { dedupeKey: 'ide:tree:import' });
         }
       } finally {
         if (activeImportId === 'pending' || activeImportId === importId) resetActiveImport();

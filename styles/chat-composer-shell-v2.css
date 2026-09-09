@@ -36,7 +36,7 @@
 
 .composer-tools-popover {
   bottom: calc(100% + var(--space-3));
-  right: 0;
+  inset-inline-end: 0;
   min-width: 260px;
 }
 
@@ -216,7 +216,7 @@
 
 .inv-plan-ring {
   gap: var(--space-1);
-  padding-right: var(--space-2);
+  padding-inline-end: var(--space-2);
 }
 
 .inv-plan-ring .inv-chip-label {
@@ -345,7 +345,7 @@
 
 .composer-model-popover {
   bottom: calc(100% + var(--space-3));
-  right: 0;
+  inset-inline-end: 0;
   min-width: 300px;
   max-width: 340px;
 }
@@ -390,7 +390,7 @@
   color: var(--text-primary);
   font: inherit;
   font-size: var(--font-size-xs);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   border-radius: 0;
 }
@@ -540,7 +540,7 @@
  * render-pipeline contract for show/hide — keep it. */
 .chat-jump-cluster {
   position: absolute;
-  right: var(--space-4);
+  inset-inline-end: var(--space-4);
   bottom: var(--space-4);
   display: inline-flex;
   flex-direction: column;
@@ -557,7 +557,7 @@
 .composer-gear .composer-gear-dot {
   position: absolute;
   top: 2px;
-  right: 2px;
+  inset-inline-end: 2px;
   width: 6px;
   height: 6px;
 }

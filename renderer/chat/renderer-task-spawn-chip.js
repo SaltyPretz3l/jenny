@@ -16,6 +16,7 @@
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, taskBriefUtils, inventoryChip, inventoryActionButton) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const normalizeId = typeof stringUtils.normalizeId === 'function'
     ? stringUtils.normalizeId
@@ -76,13 +77,13 @@
     if (linkedSessionId) {
       return `<div class="jenny-task-spawn-strip jenny-task-spawn-strip--used" data-task-id="${escapeHtml(taskId)}">`
         + titleChip
-        + '<span class="jenny-task-spawn-state">Session drafted</span>'
-        + action('Open session', 'open', { 'session-id': linkedSessionId })
-        + action('Mark done', 'done')
+        + '<span class="jenny-task-spawn-state">' + escapeHtml(jt('chat.taskSpawn.sessionDrafted', 'Session drafted')) + '</span>'
+        + action(jt('tasks.rail.openSession', 'Open session'), 'open', { 'session-id': linkedSessionId })
+        + action(jt('chat.taskSpawn.markDone', 'Mark done'), 'done')
         + '</div>';
     }
     const showAction = typeof globalThis.rendererTaskRailActions?.open === 'function'
-      ? action('Show in Tasks', 'show')
+      ? action(jt('chat.taskSpawn.showInTasks', 'Show in Tasks'), 'show')
       : '';
     return `<div class="jenny-task-spawn-strip" data-task-id="${escapeHtml(taskId)}">`
       + titleChip

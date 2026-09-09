@@ -6,6 +6,8 @@
   }
   root.rendererIdeTreeClipboard = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function noop() {}
 
   function filterAncestorPaths(paths) {
@@ -111,9 +113,9 @@
 
     function reportFailure(error, path, dest) {
       const message = isExistsError(error)
-        ? `A file named ${nameOf(path)} already exists in ${dest || 'the workspace root'}.`
-        : String(error?.message || error || 'Could not paste the item.');
-      showError(message, { title: 'Workspace', dedupeKey: 'ide:tree:paste' });
+        ? jt('ide.clipboard.fileExists', 'A file named {name} already exists in {destination}.', { name: nameOf(path), destination: dest || jt('ide.clipboard.workspaceRoot', 'the workspace root') })
+        : String(error?.message || error || jt('ide.clipboard.pasteFailed', 'Could not paste the item.'));
+      showError(message, { title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:paste' });
     }
 
     async function copyEntry(from, to) {
@@ -147,15 +149,13 @@
           if (didMove !== false) restored += 1;
         } catch (error) {
           if (undoIsStale(context)) return;
-          showError(String(error?.message || error || 'Could not restore an item.'), {
-            title: 'Workspace', dedupeKey: 'ide:tree:move-undo',
+        showError(String(error?.message || error || jt('ide.clipboard.restoreFailed', 'Could not restore an item.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:move-undo',
           });
         }
       }
       if (undoIsStale(context)) return;
-      showUndoToast(restored === moves.length
-        ? `Restored ${moves.length} ${moves.length === 1 ? 'item' : 'items'}`
-        : `Restored ${restored} of ${moves.length}`);
+      showUndoToast(restored === moves.length ? jtn('ide.clipboard.restoredItems', moves.length, { count: moves.length }, 'Restored {count} item', 'Restored {count} items') : jt('ide.clipboard.restoredPartial', 'Restored {restored} of {total}', { restored, total: moves.length }));
     }
 
     async function undoCopies(copies, context) {
@@ -169,15 +169,15 @@
           if (didDelete !== false) restored += 1;
         } catch (error) {
           if (undoIsStale(context)) return;
-          showError(String(error?.message || error || 'Could not restore an item.'), {
-            title: 'Workspace', dedupeKey: 'ide:tree:copy-undo',
+        showError(String(error?.message || error || jt('ide.clipboard.restoreFailed', 'Could not restore an item.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:copy-undo',
           });
         }
       }
       if (undoIsStale(context)) return;
       showUndoToast(restored === copies.length
-        ? `Restored ${copies.length} ${copies.length === 1 ? 'item' : 'items'}`
-        : `Restored ${restored} of ${copies.length}`);
+        ? jtn('ide.clipboard.restoredItems', copies.length, { count: copies.length }, 'Restored {count} item', 'Restored {count} items')
+        : jt('ide.clipboard.restoredPartial', 'Restored {restored} of {total}', { restored, total: copies.length }));
     }
 
     async function paste(destDirOverride) {
@@ -186,7 +186,7 @@
       const operationEpoch = active.epoch;
       const dest = resolveDestination(destDirOverride);
       if (active.mode === 'cut' && active.paths.every((path) => parentDirOf(path) === dest)) {
-        onNotify('Items are already here.');
+      onNotify(jt('ide.clipboard.itemsAlreadyHere', 'Items are already here.'));
         return;
       }
       const kinds = renderedKinds();
@@ -225,12 +225,12 @@
       const count = succeeded.length;
       if (active.mode === 'cut') {
         showUndoToast(
-          `Moved ${count} ${count === 1 ? 'item' : 'items'} to ${dest ? `${dest}/` : 'the workspace root'}`,
+          jtn('ide.clipboard.movedItems', count, { count, destination: dest ? `${dest}/` : jt('ide.clipboard.workspaceRoot', 'the workspace root') }, 'Moved {count} item to {destination}', 'Moved {count} items to {destination}'),
           () => undoMoves(succeeded, undoContext)
         );
       } else {
         showUndoToast(
-          `Copied ${count} ${count === 1 ? 'item' : 'items'}`,
+          jtn('ide.clipboard.copiedItems', count, { count }, 'Copied {count} item', 'Copied {count} items'),
           () => undoCopies(succeeded, undoContext)
         );
       }
@@ -263,8 +263,8 @@
       const undoContext = { generation: operationGeneration, rootEpoch: operationEpoch };
       showUndoToast(
         succeeded.length === 1
-          ? `Duplicated ${nameOf(succeeded[0].from)}`
-          : `Duplicated ${succeeded.length} items`,
+          ? jt('ide.clipboard.duplicatedName', 'Duplicated {name}', { name: nameOf(succeeded[0].from) })
+          : jt('ide.clipboard.duplicatedItems', 'Duplicated {count} items', { count: succeeded.length }),
         () => undoCopies(succeeded, undoContext)
       );
     }

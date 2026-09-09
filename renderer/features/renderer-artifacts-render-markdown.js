@@ -12,6 +12,7 @@
   }
   root.rendererArtifactsRenderMarkdown = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function renderMarkdownUnavailableState(surface, note, body, isError, deps) {
     const { escapeHtml, setDetailNote } = deps;
@@ -27,22 +28,22 @@
     if (state.artifacts.lastError) {
       return {
         note: state.artifacts.lastError,
-        body: 'Artifact load failed. Use Reveal or Open External to inspect the file outside Jenny.',
+        body: jt('artifacts.markdown.loadFailedBody', 'Artifact load failed. Use Reveal or Open External to inspect the file outside Jenny.'),
         isError: true,
       };
     }
     const status = String(artifact?.status || '').trim().toLowerCase();
     if (status && status !== 'available') {
       return {
-        note: 'Markdown artifact is unavailable in local storage.',
-        body: 'This Markdown artifact is unavailable. Use Reveal or Open External if the file still exists.',
+        note: jt('artifacts.markdown.unavailableNote', 'Markdown artifact is unavailable in local storage.'),
+        body: jt('artifacts.markdown.unavailableBody', 'This Markdown artifact is unavailable. Use Reveal or Open External if the file still exists.'),
         isError: true,
       };
     }
     if (!editable && !String(content || '').trim()) {
       return {
-        note: 'Markdown artifact is read-only or too large for inline rendering.',
-        body: 'This Markdown artifact cannot be rendered inline. Use Reveal or Open External to inspect the file.',
+        note: jt('artifacts.markdown.readOnlyOrTooLargeNote', 'Markdown artifact is read-only or too large for inline rendering.'),
+        body: jt('artifacts.markdown.cannotRenderInlineBody', 'This Markdown artifact cannot be rendered inline. Use Reveal or Open External to inspect the file.'),
         isError: false,
       };
     }
@@ -65,7 +66,7 @@
     } = deps;
     const mode = getArtifactDocumentViewMode(surface.key);
     const content = getPreferredEditorValue();
-    const title = artifact.title || file?.title || 'Markdown Artifact';
+    const title = artifact.title || file?.title || jt('artifacts.markdown.defaultTitle', 'Markdown Artifact');
     const unavailable = getMarkdownUnavailableState(artifact, content, editable, deps);
     if (unavailable && !state.artifacts.loading) {
       renderMarkdownUnavailableState(surface, unavailable.note, unavailable.body, unavailable.isError, deps);
@@ -74,20 +75,20 @@
     if (state.artifacts.lastError) {
       setDetailNote(surface, state.artifacts.lastError, true);
     } else if (state.artifacts.loading) {
-      setDetailNote(surface, 'Loading Markdown artifact...');
+      setDetailNote(surface, jt('artifacts.markdown.loading', 'Loading Markdown artifact...'));
     } else if (mode === 'source') {
       setDetailNote(
         surface,
         editable
-          ? 'Editing Markdown source. Save writes back to the session scratch file.'
-          : 'Viewing read-only Markdown source.'
+          ? jt('artifacts.markdown.editingSourceNote', 'Editing Markdown source. Save writes back to the session scratch file.')
+          : jt('artifacts.markdown.viewingReadOnlySourceNote', 'Viewing read-only Markdown source.')
       );
     } else {
       setDetailNote(
         surface,
         editable
-          ? 'Reading rendered Markdown. Switch to source to edit this artifact.'
-          : 'Read-only rendered Markdown artifact.'
+          ? jt('artifacts.markdown.readingRenderedNote', 'Reading rendered Markdown. Switch to source to edit this artifact.')
+          : jt('artifacts.markdown.readOnlyRenderedNote', 'Read-only rendered Markdown artifact.')
       );
     }
 

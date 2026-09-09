@@ -1,6 +1,7 @@
 async function stopRuntimeWithDependencies({
   shellConfigService,
   systemStats,
+  unattendedGuard = systemStats?.unattendedGuard,
   schedulerService,
   backendService,
   clearSuggestionCacheImpl,
@@ -11,13 +12,18 @@ async function stopRuntimeWithDependencies({
   shutdownStepCount = 7,
   shutdownDoneStepIndex = 6,
   shutdownStepIndexByPhase = {},
+  signal,
 } = {}) {
+  if (signal?.aborted) return;
   try {
     if (
       shellConfigService
       && typeof shellConfigService.flushPendingWorkspaceWrite === 'function'
     ) {
       shellConfigService.flushPendingWorkspaceWrite();
+    }
+    if (unattendedGuard) {
+      unattendedGuard.stop();
     }
     if (systemStats) {
       systemStats.stop();
@@ -27,14 +33,17 @@ async function stopRuntimeWithDependencies({
     }
     clearSuggestionCacheImpl(suggestionCacheValue);
     if (backendService) {
+      await backendService.commandSandbox?.close();
       await backendService.stop({
         ollamaShutdownScope: 'any_local',
         onProgress: (phase, detail) => {
+          if (signal?.aborted) return;
           const idx = shutdownStepIndexByPhase[phase] ?? 0;
           emitLifecycleProgressImpl('shutdown', phase, detail, idx, shutdownStepCount);
         },
       });
     }
+    if (signal?.aborted) return;
     emitLifecycleProgressImpl(
       'shutdown',
       'done',
@@ -43,6 +52,7 @@ async function stopRuntimeWithDependencies({
       shutdownStepCount
     );
   } catch (error) {
+    if (signal?.aborted) return;
     logImpl('ERROR', 'backend.stop_failed', { message: String(error.message || error) });
     if (backendService) {
       try {
@@ -51,6 +61,7 @@ async function stopRuntimeWithDependencies({
         // best effort
       }
     }
+    if (signal?.aborted) return;
     emitLifecycleProgressImpl(
       'shutdown',
       'done',
@@ -60,7 +71,7 @@ async function stopRuntimeWithDependencies({
       String(error.message || error)
     );
   } finally {
-    runEmergencyShutdownImpl();
+    if (!signal?.aborted) runEmergencyShutdownImpl();
   }
 }
 

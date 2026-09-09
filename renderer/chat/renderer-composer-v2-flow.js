@@ -5,7 +5,7 @@
   }
   root.rendererComposerV2Flow = factory(root.rendererComposerV2Model || {});
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerV2Model) {
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const _stringUtils = typeof globalThis !== 'undefined' && typeof globalThis.stringUtils !== 'undefined' ? globalThis.stringUtils
     : typeof require === 'function' ? require('../shared/string-utils')
     : { normalizeString: function (v) { return String(v || '').trim(); }, normalizeId: function (v) { return String(v || '').trim(); } };
@@ -69,11 +69,19 @@
       patchSessionSummary,
       queueInteractiveComposerFocus,
       renderComposerInteractivePanel,
-      startPromptSend,
+      startPromptSend: rawStartPromptSend,
       state,
       windowRef,
     } = deps;
     const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
+    const startPromptSend = async (prompt, options) => {
+      const runModeControl = globalThis.rendererRunModeControl;
+      if (
+        runModeControl?.currentRunMode?.() === 'auto'
+        && !await runModeControl.confirmAutoRun?.()
+      ) return;
+      return rawStartPromptSend(prompt, options);
+    };
     function touchInteractiveDraft(draft) {
       if (!draft || typeof draft !== 'object') {
         return draft;
@@ -107,7 +115,7 @@
           limitBytes: PASTE_REJECT_BYTES,
         });
         if (typeof setComposerStatusNotice === 'function') {
-          setComposerStatusNotice('Paste is too large. Keep pasted text under 1 MB.', {
+          setComposerStatusNotice(jt('composer.paste.tooLarge', 'Paste is too large. Keep pasted text under 1 MB.'), {
             tone: 'warning',
             owner: PASTE_NOTICE_OWNER,
           });
@@ -120,7 +128,7 @@
           warnBytes: PASTE_WARN_BYTES,
         });
         if (typeof setComposerStatusNotice === 'function') {
-          setComposerStatusNotice('Large paste added. Jenny may take longer to respond.', {
+          setComposerStatusNotice(jt('composer.paste.largeAdded', 'Large paste added. Jenny may take longer to respond.'), {
             tone: 'warning',
             owner: PASTE_NOTICE_OWNER,
           });

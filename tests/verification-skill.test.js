@@ -46,6 +46,9 @@ test('bundled verification skill is discoverable with the expected metadata', ()
     'workspace_change_baseline',
     'workspace_change_delta',
     'run_command',
+    'run_temp_script',
+    'preview_test',
+    'ask_user',
     'web_search',
     'fetch_url',
   ]);

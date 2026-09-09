@@ -27,6 +27,22 @@
     return deepCloneJsonValue(value);
   }
 
+  function copyHomeMetadata(metadata, value) {
+    metadata.result_kind = 'home';
+    for (const key of ['action', 'status']) {
+      if (typeof value[key] !== 'string') continue;
+      const text = value[key].trim();
+      if (text.length <= 64) metadata[key] = text;
+    }
+    const calendar = cloneNoticePayload(value.calendar);
+    if (calendar) {
+      if (Array.isArray(calendar.instances)) calendar.instances = calendar.instances.slice(0, 40);
+      metadata.calendar = calendar;
+    }
+    const calendarReceipt = cloneNoticePayload(value.calendar_receipt);
+    if (calendarReceipt) metadata.calendar_receipt = calendarReceipt;
+  }
+
   function cloneSubagentReportMetadata(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const metadata = {};
@@ -43,6 +59,9 @@
         metadata.answers = deepCloneJsonValue(value.answers.slice(0, 8));
       }
     }
+    // Home calendar cards rebuild from these bounded persisted fields after a
+    // cold reopen; without them only the generic tool result remains.
+    if (resultKind === 'home') copyHomeMetadata(metadata, value);
     return Object.keys(metadata).length ? metadata : null;
   }
 

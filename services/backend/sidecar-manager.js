@@ -13,6 +13,7 @@ const {
 const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
 const { endSidecarInput } = require('./sidecar-client-shutdown');
 const { SidecarLogLineDecoder } = require('./sidecar-log-line-decoder');
+const { hostedSidecarEnvironment } = require('../host/sidecar-environment');
 
 // The managed sidecar is a *model-adjacent* child: it re-spawns Python workers
 // and, when the opt-in codex-cli engine is on, a vendor CLI. Cloning the whole
@@ -104,6 +105,7 @@ class SidecarManager extends EventEmitter {
     repoRoot,
     pythonExecutable,
     sandboxRoot,
+    runtimeHome = null,
     spawnImpl,
     logLevel = 'INFO',
     launchCommand,
@@ -125,6 +127,7 @@ class SidecarManager extends EventEmitter {
     super();
     this.mode = mode;
     this.repoRoot = resolveBackendRepoRoot(repoRoot);
+    this.runtimeHome = runtimeHome;
     this.pythonExecutable = resolvePythonExecutable(this.repoRoot, pythonExecutable);
     this.sandboxLayout = buildSandboxLayout(
       sandboxRoot || path.join(userDataPath, 'backend-sidecar')
@@ -239,8 +242,9 @@ class SidecarManager extends EventEmitter {
     if (!fs.existsSync(this.repoRoot)) {
       throw new Error(`Managed backend repo was not found at ${this.repoRoot}.`);
     }
+    const inheritedEnv = sanitizeSpawnEnv(process.env, { allow: SIDECAR_ALLOWED_ENV, allowOnly: true });
     const env = {
-      ...sanitizeSpawnEnv(process.env, { allow: SIDECAR_ALLOWED_ENV, allowOnly: true }),
+      ...(this.runtimeHome ? hostedSidecarEnvironment(inheritedEnv, this.runtimeHome) : inheritedEnv),
       PYTHONUNBUFFERED: '1',
       // Authoritative parent pid for the sidecar's parent-death watchdog
       // (sidecar/runtime/parent_watchdog.py): it self-exits if this process

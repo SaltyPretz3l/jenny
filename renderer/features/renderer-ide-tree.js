@@ -11,6 +11,7 @@
   }
   root.rendererIdeTree = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
   function noop() {}
@@ -140,7 +141,7 @@
       getRenderedRows: renderedRows, moveEntry, deleteEntry, getApi,
       getMutationContext: deps?.getMutationContext, refreshDirectory, render, showError,
       onNotify: (message) => showError(message, {
-        title: 'Workspace', dedupeKey: 'ide:tree:paste',
+        title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:paste',
       }),
       parentDirOf, nameOf, isQolEnabled, showUndoToast: deps?.showUndoToast,
     }) || {
@@ -156,7 +157,7 @@
       onBeginRename: beginRename,
       onDeleteSelection: deleteSelection,
       onNotify: (message) => showError(message, {
-        title: 'Workspace', dedupeKey: 'ide:tree:kbd',
+        title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:kbd',
       }),
       onClipboardCopy: clipboard.copy,
       onClipboardCut: clipboard.cut,
@@ -179,7 +180,7 @@
       }
       const api = getApi();
       if (typeof api?.listDirectory !== 'function') {
-        rootError = 'Workspace file access is unavailable in this shell mode.';
+        rootError = jt('ide.tree.fileAccessUnavailable', 'Workspace file access is unavailable in this shell mode.');
         render();
         return;
       }
@@ -204,8 +205,8 @@
         if (epoch !== rootEpoch) return;
         const noRoot = String(error?.code || '') === 'CMP-WORKSPACEFS-0001';
         const message = noRoot
-          ? 'Choose a workspace folder to browse and edit files.'
-          : 'Could not list this folder.';
+          ? jt('ide.tree.chooseFolderPrompt', 'Choose a workspace folder to browse and edit files.')
+          : jt('ide.tree.listFolderFailed', 'Could not list this folder.');
         if (dirPath === '') {
           rootError = message;
           rootNeedsChoose = noRoot;
@@ -406,8 +407,8 @@
       const rootEpochAtEntry = rootEpoch;
       const targets = renderedTargets();
       if (!targets.length && selection.size() > 0) {
-        showError('The selected items are no longer visible in the tree.', {
-          title: 'Workspace', dedupeKey: 'ide:tree:kbd',
+        showError(jt('ide.tree.selectedItemsNotVisible', 'The selected items are no longer visible in the tree.'), {
+          title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:kbd',
         });
         selection.replace(focusedPath ? [focusedPath] : [], focusedPath);
         render();
@@ -457,8 +458,8 @@
         anchorY: event.clientY,
         items,
         onActionError: (error) => {
-          showError(toMessage(error, 'The file operation failed.'), {
-            title: 'Workspace',
+      showError(toMessage(error, jt('ide.treeMutations.operationFailed', 'The file operation failed.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'),
             dedupeKey: 'ide:tree:op',
           });
         },
@@ -541,22 +542,22 @@
         const items = [];
         if (kind === 'directory') {
           items.push(
-            { label: 'New File', action: () => beginCreate(path, 'create-file') },
-            { label: 'New Folder', action: () => beginCreate(path, 'create-directory') },
+            { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(path, 'create-file') },
+            { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate(path, 'create-directory') },
             { separator: true }
           );
         }
         if (isQolEnabled() && kind !== 'directory') {
           const parentPath = parentDirOf(path);
           items.push(
-            { label: 'New File', action: () => beginCreate(parentPath, 'create-file') },
-            { label: 'New Folder', action: () => beginCreate(parentPath, 'create-directory') },
+            { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(parentPath, 'create-file') },
+            { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate(parentPath, 'create-directory') },
             { separator: true }
           );
         }
-        const deleteItem = { label: 'Delete', action: () => deleteEntry(path, kind) };
+        const deleteItem = { label: jt('common.delete', 'Delete'), action: () => deleteEntry(path, kind) };
         items.push(
-          { label: 'Rename', action: () => beginRename(path, kind) },
+          { label: jt('common.rename', 'Rename'), action: () => beginRename(path, kind) },
           deleteItem
         );
         const utilityItems = kind === 'directory'
@@ -573,24 +574,24 @@
           items.push(
             { separator: true },
             {
-              label: 'Cut', shortcutHint: 'Ctrl+X', action: () => {
+              label: jt('ide.tree.cut', 'Cut'), shortcutHint: 'Ctrl+X', action: () => {
                 seedClipboardTarget(); clipboard.cut();
               },
             },
             {
-              label: 'Copy', shortcutHint: 'Ctrl+C', action: () => {
+              label: jt('common.copy', 'Copy'), shortcutHint: 'Ctrl+C', action: () => {
                 seedClipboardTarget(); clipboard.copy();
               },
             },
             {
-              label: 'Duplicate', shortcutHint: 'Ctrl+D', action: () => {
+              label: jt('ide.tree.duplicate', 'Duplicate'), shortcutHint: 'Ctrl+D', action: () => {
                 seedClipboardTarget(); return clipboard.duplicate();
               },
             }
           );
           if (clipboard.hasContent()) {
             items.push({
-              label: 'Paste', shortcutHint: 'Ctrl+V',
+              label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V',
               action: () => clipboard.paste(kind === 'directory' ? path : parentDirOf(path)),
             });
           }
@@ -609,19 +610,19 @@
         return;
       }
       const items = [
-        { label: 'New File', action: () => beginCreate('', 'create-file') },
-        { label: 'New Folder', action: () => beginCreate('', 'create-directory') },
+        { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate('', 'create-file') },
+        { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate('', 'create-directory') },
         { separator: true },
       ];
       if (isQolEnabled() && clipboard.hasContent()) {
         items.push(
-          { label: 'Paste', shortcutHint: 'Ctrl+V', action: () => clipboard.paste('') },
+          { label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V', action: () => clipboard.paste('') },
           { separator: true }
         );
       }
       items.push(
-        { label: 'Refresh', action: () => refreshLoadedDirectories() },
-        { label: 'Collapse All', action: () => collapseAllDirs() },
+        { label: jt('common.refresh', 'Refresh'), action: () => refreshLoadedDirectories() },
+        { label: jt('ide.tree.collapseAll', 'Collapse All'), action: () => collapseAllDirs() },
         ...buildRootContextMenuItems()
       );
       showMenu(event, items);

@@ -720,3 +720,31 @@ test('a streaming-article rebuild replays the reasoning hand-off before re-stamp
   assert.equal(timeline.querySelector('article p')?.textContent, 'new', 'the streaming article was rebuilt in place');
   assert.deepEqual(calls, ['commit', 'replay', 'stamp']);
 });
+
+
+test('time format changes invalidate settled timestamp markup once in each direction', () => {
+  const previous = global.jennyI18n;
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  global.jennyI18n = i18n;
+  const cacheSizes = [];
+  const harness = createCacheCountingHarness([
+    { id: 'a1', role: 'assistant', kind: '', status: 'complete', content: 'settled' },
+  ], { onFullRender({ uiRuntime }) { cacheSizes.push(uiRuntime.threadRootMarkupCache?.size ?? 0); } });
+  try {
+    harness.uiRuntime.threadRootMarkupCache = new Map([['a1', { html: '1 PM' }]]);
+    harness.renderOnce();
+    i18n.setTimeFormat(true);
+    harness.renderOnce();
+    assert.equal(cacheSizes.at(-1), 0);
+    const renders = cacheSizes.length;
+    harness.renderOnce();
+    assert.equal(cacheSizes.length, renders);
+    harness.uiRuntime.threadRootMarkupCache.set('a1', { html: '13:00' });
+    i18n.setTimeFormat(false);
+    harness.renderOnce();
+    assert.equal(cacheSizes.length, renders + 1);
+    assert.equal(cacheSizes.at(-1), 0);
+  } finally {
+    global.jennyI18n = previous;
+  }
+});

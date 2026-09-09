@@ -213,8 +213,10 @@ state; it is not reported as a dead sidecar.
 ## 7. Other subsystems
 
 - **Skills** (`skills/`) — self-contained capability modules, each with a
-  `SKILL.md` (the six bundled skills: `verification-specialist`, `mermaid-artifact-workflow`,
-  `deep_research`, `claude_code_delegation`, `humanizer`, `meeting_notes`).
+  `SKILL.md` (the seven bundled skills: `verification-specialist`, `po-review`,
+  `deep_research`, `claude_code_delegation`, `humanizer`, `meeting_notes`, `insight`).
+  `/insight` returns an evidence-based retrospective on harness friction and workflow
+  from the visible conversation; it does not initiate diagnostics or fixes.
 - **Memory approval queue** — suggested memories are queued and require
   explicit save/dismiss, not auto-written (`memory.suggest`,
   `memory.pending.list`, `memory.pending.delete`; `sidecar/ai/memory/`).

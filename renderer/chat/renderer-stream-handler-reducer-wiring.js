@@ -6,6 +6,22 @@
   }
   root.rendererStreamHandlerReducerWiring = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // Accept only identities minted for this stream; absent or malformed
+  // authority leaves the caller's explicit compatibility fallback in charge.
+  function resolveAssistantSegmentIdentity(streamId, value) {
+    if (typeof value !== 'string' || !streamId) return null;
+    const messageId = value.trim();
+    const base = `assistant_${String(streamId).trim()}`;
+    if (messageId === base) return { messageId, segmentIndex: 0 };
+    const prefix = `${base}_seg`;
+    if (!messageId.startsWith(prefix)) return null;
+    const suffix = messageId.slice(prefix.length);
+    const segmentIndex = Number(suffix);
+    return /^(0|[1-9]\d*)$/.test(suffix) && Number.isSafeInteger(segmentIndex)
+      ? { messageId, segmentIndex }
+      : null;
+  }
+
   function createReducerWiring(options = {}) {
     const {
       streamSegmentState,
@@ -64,17 +80,10 @@
     function buildAssistantShellMessageId(streamId, segmentIndex) {
       const normalizedStreamId = normalizeId(streamId);
       const normalizedSegmentIndex = Number(segmentIndex) || 0;
-      // A stream_reset may carry main's authoritative id for the segment it
-      // hands over to (main spells index 0 as `_seg0`, the renderer's own
-      // scheme spells it as the bare base id). handleStreamReset latches that
-      // id together with the INDEX it names; honour it here so every caller —
-      // text deltas, reasoning phases — keys the segment the way main persists
-      // it. Matching on the latched index, not on segState.segmentIndex: that
-      // counter also advances at every tool boundary
-      // (renderer-stream-handler-tools.js, which clears the latch), and
-      // comparing against it made the latch answer for a segment it does not
-      // name. Any other index falls through to the renderer's own scheme, so a
-      // stale latch can never leak forward.
+      // Resets and tool boundaries latch main's exact identity together with
+      // its segment index. Pending messages and reducer events share this
+      // resolver so main's `_seg0` spelling cannot drift back to the local
+      // base id. A latch never answers for a different segment index.
       const segState = streamSegmentState.get(streamId);
       const authoritativeId = segState ? normalizeString(segState.authoritativeAssistantMessageId) : '';
       const latchedSegmentIndex = segState && segState.authoritativeAssistantSegmentIndex != null
@@ -447,5 +456,5 @@
     };
   }
 
-  return { createReducerWiring };
+  return { createReducerWiring, resolveAssistantSegmentIdentity };
 });

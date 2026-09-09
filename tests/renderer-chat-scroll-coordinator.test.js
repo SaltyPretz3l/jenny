@@ -124,9 +124,10 @@ test('wheel, keyboard, pointer, and natural bottom return classify reader intent
   harness.flush();
 
   harness.scrollContainer.dispatch('wheel', { ctrlKey: false });
-  assert.equal(harness.snapshots.intent.length, 1, 'intent reaches live follow before the presentation frame');
+  assert.equal(harness.snapshots.intent.length, 0, 'input alone does not detach the outer timeline');
   harness.scrollContainer.scrollTop = 200;
   harness.scrollContainer.dispatch('scroll');
+  assert.equal(harness.snapshots.intent.length, 1, 'outer movement reaches live follow before the presentation frame');
   let snapshot = harness.flush();
   assert.equal(snapshot.userInitiated, true);
   assert.equal(harness.state.ui.followLatest, false);

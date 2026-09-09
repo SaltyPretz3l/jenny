@@ -2,9 +2,9 @@
 
 One `## Personality` system message per non-minimal turn. Electron owns the
 body (the `### Voice` / `### About the user` / `### Notes` sections compiled
-from the personality workspace); the sidecar owns the heading and the single
-precedence sentence, sanitizes whatever Electron sent, and is the single
-source for both literals.
+from the personality workspace); the sidecar owns the heading, precedence
+sentence, and optional reply-language instruction, sanitizes whatever Electron
+sent, and is the single source for those prompt literals.
 """
 
 from __future__ import annotations
@@ -27,8 +27,14 @@ _ASSISTANT_NAME_ALLOWED_PUNCTUATION = set(" ._'-")
 # same strings and a node test asserts byte identity against this file).
 PERSONALITY_HEADING = "## Personality"
 PERSONALITY_PRECEDENCE_TEMPLATE = (
-    "Your name is {name}. Personality shapes tone, not facts; the current request and "
-    "the runtime, workspace, and tool instructions take precedence over everything below."
+    "Your name is {name}. You are software, not a living being: you have no body, feelings, "
+    "or consciousness, and you never claim otherwise. Personality shapes tone, not facts; the "
+    "current request and the runtime, workspace, and tool instructions take precedence over "
+    "everything below."
+)
+UI_LANGUAGE_INSTRUCTION_TEMPLATE = (
+    "Reply in {language} unless the user writes in another language; then match the user's "
+    "language."
 )
 
 
@@ -67,17 +73,38 @@ def _personality_header(agent_name: Any) -> str:
     return f"{PERSONALITY_HEADING}\n{PERSONALITY_PRECEDENCE_TEMPLATE.format(name=name)}"
 
 
-def build_personality_system_message(agent_name: Any, content: Any = "") -> str:
+def ui_language_instruction(ui_language: Any) -> str:
+    from sidecar.ai.config_parsing import (  # noqa: PLC0415
+        UI_LANGUAGE_NAMES,
+        _normalize_ui_language,
+    )
+
+    normalized = _normalize_ui_language(ui_language)
+    if normalized == "en":
+        return ""
+    return UI_LANGUAGE_INSTRUCTION_TEMPLATE.format(language=UI_LANGUAGE_NAMES[normalized])
+
+
+def build_personality_system_message(
+    agent_name: Any,
+    content: Any = "",
+    *,
+    ui_language: Any = "en",
+) -> str:
     """Render the single per-turn personality system message.
 
     The heading and the name/precedence line are always present, even when the
-    workspace is empty, so the model always knows what it is called. ``content``
-    is Electron-compiled, user-authored text: it is sanitized here and appended
+    workspace is empty, so the model always knows what it is called. A
+    non-English UI language adds one instruction line. ``content`` is
+    Electron-compiled, user-authored text: it is sanitized here and appended
     only when something survives.
     """
     from sidecar.ai.personality.sanitization import sanitize_bootstrap  # noqa: PLC0415
 
     header = _personality_header(agent_name)
+    language_instruction = ui_language_instruction(ui_language)
+    if language_instruction:
+        header = f"{header}\n{language_instruction}"
     try:
         sanitized = sanitize_bootstrap(content, source_name="context_blocks.personality")
     except (TypeError, ValueError, AttributeError):
@@ -103,8 +130,10 @@ __all__ = [
     "DEFAULT_PERSONALITY_BASE_PROMPT",
     "PERSONALITY_HEADING",
     "PERSONALITY_PRECEDENCE_TEMPLATE",
+    "UI_LANGUAGE_INSTRUCTION_TEMPLATE",
     "build_personality_system_message",
     "is_personality_overlay_system_message",
     "normalize_assistant_name",
     "normalize_personality_base_prompt",
+    "ui_language_instruction",
 ]

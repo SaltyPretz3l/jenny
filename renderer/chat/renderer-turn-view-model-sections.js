@@ -9,7 +9,7 @@
   root.rendererTurnViewModelSections = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const RAW_TERMINAL_SUBSTATUSES = Object.freeze({
     completed: 'completed',
     cancelled: 'cancelled',
@@ -99,7 +99,7 @@
       artifact_id: artifactId,
       session_id: normalizeId(source.session_id || source.sessionId),
       artifact_kind: normalizeId(source.artifact_kind || source.artifactKind).toLowerCase() || 'document',
-      title: String(source.title || source.file_name || source.fileName || 'Generated artifact').trim() || 'Generated artifact',
+      title: String(source.title || source.file_name || source.fileName || jt('artifacts.generated.defaultTitle', 'Generated artifact')).trim() || jt('artifacts.generated.defaultTitle', 'Generated artifact'),
       file_name: String(source.file_name || source.fileName || '').trim(),
       display_path: String(source.display_path || source.displayPath || '').trim(),
       absolute_path: String(source.absolute_path || source.absolutePath || '').trim(),

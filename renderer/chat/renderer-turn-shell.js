@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function isThreadCompatAnchor(node) {
     return Boolean(
       node
@@ -23,10 +24,10 @@
    */
   function describeMessageRole(role) {
     const normalized = String(role || '').trim().toLowerCase();
-    if (normalized === 'assistant') return 'Message from Jenny';
-    if (normalized === 'user') return 'Your message';
-    if (normalized === 'system') return 'System message';
-    if (normalized === 'tool') return 'Tool message';
+    if (normalized === 'assistant') return jt('chat.turnShell.messageFromJenny', 'Message from Jenny');
+    if (normalized === 'user') return jt('chat.turnShell.yourMessage', 'Your message');
+    if (normalized === 'system') return jt('chat.turnShell.systemMessage', 'System message');
+    if (normalized === 'tool') return jt('chat.turnShell.toolMessage', 'Tool message');
     return 'Message';
   }
 
@@ -330,8 +331,8 @@
         : null;
       if (!inventory || typeof inventory.buildSelectionHandleMarkup !== 'function') return '';
       const ariaLabel = role === 'assistant'
-        ? 'Select message from Jenny'
-        : 'Select your message';
+        ? jt('chat.turnShell.selectJennyMessage', 'Select message from Jenny')
+        : jt('chat.turnShell.selectYourMessage', 'Select your message');
       return inventory.buildSelectionHandleMarkup({
         messageId,
         selected: selected === true,

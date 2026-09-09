@@ -7,11 +7,12 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TOKEN_CLASSES = new Set([
     'tok-default', 'tok-comment', 'tok-string', 'tok-number', 'tok-keyword',
     'tok-type', 'tok-function', 'tok-delimiter', 'tok-invalid',
   ]);
-  const CHEVRON_GLYPH = '<svg class="file-diff-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+  const CHEVRON_GLYPH = '<svg class="file-diff-chevron icon-mirror-rtl" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
   const EXTERNAL_LINK_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"/><path d="M11 13l9 -9"/><path d="M15 4h5v5"/></svg>';
 
   function fallbackEscape(value) {
@@ -88,10 +89,10 @@
         let aria = '';
         if (marker === '+') {
           lineClass = 'diff-line-add'; gutter = String(newLine++); markerText = '+';
-          aria = ` aria-label="${escape(`Added line ${gutter}: ${content.slice(0, 240)}`)}"`;
+          aria = ` aria-label="${escape(jt('chat.fileDiff.addedLine', 'Added line {line}: {content}', { line: gutter, content: content.slice(0, 240) }))}"`;
         } else if (marker === '-') {
           lineClass = 'diff-line-remove'; gutter = String(oldLine++); markerText = '−';
-          aria = ` aria-label="${escape(`Removed line ${gutter}: ${content.slice(0, 240)}`)}"`;
+          aria = ` aria-label="${escape(jt('chat.fileDiff.removedLine', 'Removed line {line}: {content}', { line: gutter, content: content.slice(0, 240) }))}"`;
         } else if (marker === ' ') {
           lineClass = 'diff-line-context'; gutter = String(newLine++); oldLine += 1; markerText = ' ';
         } else {
@@ -135,7 +136,7 @@
 
   function buildCountsMarkup(settings, escape) {
     if (settings.truncated === true) {
-      return '<span class="file-diff-truncated">too large to show inline</span>';
+      return '<span class="file-diff-truncated">' + escape(jt('chat.fileDiff.tooLargeInline', 'too large to show inline')) + '</span>';
     }
     const counts = resolveCounts(settings);
     if (!counts) return '';
@@ -165,15 +166,15 @@
     const actionButton = typeof settings.actionButton === 'function' ? settings.actionButton : null;
     const toggle = expandable && actionButton
       ? actionButton({
-          plain: true, className: 'file-diff-toggle', ariaLabel: `${expanded ? 'Hide' : 'Show'} diff for ${path.slice(0, 240)}`,
-          title: `${expanded ? 'Hide' : 'Show'} diff`, ariaExpanded: expanded, ariaControls: bodyId,
+          plain: true, className: 'file-diff-toggle', ariaLabel: expanded ? jt('chat.fileDiff.hideForPath', 'Hide diff for {path}', { path: path.slice(0, 240) }) : jt('chat.fileDiff.showForPath', 'Show diff for {path}', { path: path.slice(0, 240) }),
+          title: expanded ? jt('chat.fileDiff.hide', 'Hide diff') : jt('chat.fileDiff.show', 'Show diff'), ariaExpanded: expanded, ariaControls: bodyId,
           dataset: { 'file-diff-toggle': '', 'diff-id': diffId }, trustedHtml: headContent,
         })
       : `<span class="file-diff-toggle file-diff-toggle--static">${headContent}</span>`;
     const changeId = String(settings.changeId || '').trim();
     const open = changeId && actionButton
       ? actionButton({
-          plain: true, className: 'file-diff-open', ariaLabel: 'Open in editor', title: 'Open in editor',
+          plain: true, className: 'file-diff-open', ariaLabel: jt('chat.fileDiff.openInEditor', 'Open in editor'), title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
           dataset: { 'jenny-open-change-diff': '', 'change-id': changeId }, trustedHtml: EXTERNAL_LINK_GLYPH,
         })
       : '';

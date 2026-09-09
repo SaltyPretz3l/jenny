@@ -6,6 +6,7 @@
   }
   root.rendererStreamHandlerSessionHelpers = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const streamBufferUtils = (typeof globalThis !== 'undefined' && globalThis.rendererStreamBufferUtils)
     || (typeof require === 'function' ? require('./renderer-stream-buffer-utils') : null);
   if (!streamBufferUtils
@@ -494,15 +495,15 @@
         return;
       }
       approvalToastSessionIds.add(normalizedSessionId);
-      safeShowToast('A background session is waiting for tool approval.', {
-        title: 'Approval Needed',
+      safeShowToast(jt('chat.sessionHelpers.backgroundApprovalWaiting', 'A background session is waiting for tool approval.'), {
+        title: jt('chat.sessionHelpers.approvalNeededTitle', 'Approval Needed'),
         tone: 'warning',
         sticky: true,
         source: TOAST_SOURCE.chatStream,
         dedupeKey: `${TOAST_SOURCE.chatStream}:approval:${normalizedSessionId}`,
         actions: [{
           id: `open_session_${normalizedSessionId}`,
-          label: 'Open Session',
+          label: jt('chat.sessionHelpers.openSession', 'Open Session'),
           kind: 'primary',
           onClick: () => activateApprovalSession(normalizedSessionId),
         }],

@@ -12,6 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -32,25 +34,25 @@
     var modelInputDisabled = status === 'running';
     var modelHtml = textField ? textField({
       id: 'setup-local-model-name',
-      label: 'Model name',
+      label: jt('setup.localModel.modelName', 'Model name'),
       value: viewState.model || '',
       placeholder: DEFAULT_MODEL_PLACEHOLDER,
       disabled: modelInputDisabled,
-      hint: 'Use any model tag your Ollama server can pull (e.g. hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M, batiai/gemma4-12b:q4).',
-    }) : '<p>No inventory text field available.</p>';
+      hint: jt('setup.localModel.modelTagHint', 'Use any model tag your Ollama server can pull (e.g. hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M, batiai/gemma4-12b:q4).'),
+    }) : '<p>' + escapeHtml(jt('setup.localModel.textFieldUnavailable', 'No inventory text field available.')) + '</p>';
     var actionsHtml = '';
     if (actionButton) {
       if (status === 'running') {
         actionsHtml = actionButton({
           id: 'cancelPull',
-          label: viewState.cancelInFlight ? 'Cancelling…' : (viewState.cancelFailed ? 'Retry cancel' : 'Cancel pull'),
+          label: viewState.cancelInFlight ? jt('setup.localModel.cancelling', 'Cancelling…') : (viewState.cancelFailed ? jt('setup.localModel.retryCancel', 'Retry cancel') : jt('setup.localModel.cancelPull', 'Cancel pull')),
           variant: 'danger',
           disabled: viewState.cancelInFlight,
         });
       } else {
         actionsHtml = actionButton({
           id: 'startPull',
-          label: status === 'failed' ? 'Try again' : 'Pull model',
+          label: status === 'failed' ? jt('setup.localModel.tryAgain', 'Try again') : jt('setup.localModel.pullModel', 'Pull model'),
           variant: 'primary',
           disabled: !viewState.model,
         });
@@ -63,16 +65,16 @@
         + progressBar({
             value: Math.max(0, Math.min(100, percent)),
             max: 100,
-            label: 'Pulling model',
+            label: jt('setup.localModel.pullingModel', 'Pulling model'),
             displayText: viewState.summary || 'Starting…',
           })
         + '</div>';
     }
     var statusBadge = '';
     if (status === 'completed' && badge) {
-      statusBadge = badge({ tone: 'success', text: 'Pull complete', size: 'sm' });
+      statusBadge = badge({ tone: 'success', text: jt('setup.localModel.pullCompleteBadge', 'Pull complete'), size: 'sm' });
     } else if (status === 'failed' && badge) {
-      statusBadge = badge({ tone: 'danger', text: 'Pull failed', size: 'sm' });
+      statusBadge = badge({ tone: 'danger', text: jt('setup.localModel.pullFailedBadge', 'Pull failed'), size: 'sm' });
     } else if (status === 'cancelled' && badge) {
       statusBadge = badge({ tone: 'muted', text: 'Cancelled', size: 'sm' });
     }
@@ -85,7 +87,7 @@
           ? '<p class="setup-scene-note">' + escapeHtml(viewState.summary) + '</p>'
           : '')
       + (viewState.cancelFailed
-          ? '<p class="setup-scene-note" role="status">Cancel was not confirmed. The pull may still be running.</p>'
+          ? '<p class="setup-scene-note" role="status">' + escapeHtml(jt('setup.localModel.cancelNotConfirmed', 'Cancel was not confirmed. The pull may still be running.')) + '</p>'
           : '')
       + '</div>';
   }
@@ -126,9 +128,8 @@
       model: '',
       status: detectedModel ? 'completed' : 'idle',  // idle | running | completed | failed | cancelled
       summary: detectedModel
-        ? (detectedCount > 0
-          ? detectedCount + ' installed local model' + (detectedCount === 1 ? ' was detected.' : 's were detected.')
-          : 'An installed local model was detected.')
+        ? (detectedCount > 0 ? jtn('setup.localModel.detectedCount', detectedCount, { count: detectedCount }, '{count} installed local model was detected.', '{count} installed local models were detected.')
+          : jt('setup.localModel.detected', 'An installed local model was detected.'))
         : '',
       percent: detectedModel ? 100 : 0,
       requestId: '',
@@ -153,13 +154,13 @@
       if (!rootEl) return;
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Pull a local model',
+        title: jt('setup.localModel.title', 'Pull a local model'),
         eyebrow: sceneUtils.setupStepEyebrow('localModel'),
-        summary: 'Stream a model to your local Ollama install.',
+        summary: jt('setup.localModel.summary', 'Stream a model to your local Ollama install.'),
         bodyHtml: buildBodyHtml(viewState),
         actions: viewState.status === 'running' ? [] : [
-          { id: 'close', label: viewState.status === 'completed' ? 'Done' : 'Close', variant: 'secondary' },
-          { id: 'skip', label: 'Skip for now', variant: 'ghost' },
+          { id: 'close', label: viewState.status === 'completed' ? jt('common.done', 'Done') : jt('common.close', 'Close'), variant: 'secondary' },
+          { id: 'skip', label: jt('setup.localModel.skipForNow', 'Skip for now'), variant: 'ghost' },
         ],
       }) : '';
       rootEl.innerHTML = html;
@@ -188,7 +189,7 @@
         viewState.percent = 100;
       } else if (payload.status === 'failed') {
         viewState.status = 'failed';
-        viewState.summary = payload.error || payload.label || payload.summary || 'Pull failed.';
+        viewState.summary = payload.error || payload.label || payload.summary || jt('setup.localModel.pullFailed', 'Pull failed.');
       } else if (payload.status === 'cancelled') {
         viewState.status = 'cancelled';
       } else if (payload.status === 'running') {
@@ -208,7 +209,7 @@
       }
       if (viewState.status === 'completed') {
         markStep('localModel', 'done').catch(function ignore() { /* toasted */ });
-        showToastMessage('Model pull complete.');
+        showToastMessage(jt('setup.localModel.pullComplete', 'Model pull complete.'));
       }
     }
 
@@ -222,7 +223,7 @@
     async function handleStartPull() {
       var model = readModelInput();
       if (!model) {
-        showShellErrorToast('Enter a model tag first.', { title: 'Setup Step' });
+        showShellErrorToast(jt('setup.localModel.enterModelTagFirst', 'Enter a model tag first.'), { title: jt('setup.localModel.stepTitle', 'Setup Step') });
         return;
       }
       viewState.model = model;
@@ -230,7 +231,7 @@
       viewState.status = 'running';
       viewState.cancelInFlight = false;
       viewState.cancelFailed = false;
-      viewState.summary = 'Starting Ollama pull.';
+      viewState.summary = jt('setup.localModel.startingOllamaPull', 'Starting Ollama pull.');
       viewState.percent = 5;
       operationGeneration += 1;
       var startGeneration = operationGeneration;
@@ -277,12 +278,12 @@
       viewState.cancelInFlight = false;
       if (!result || result.cancelled !== true) {
         viewState.cancelFailed = true;
-        viewState.summary = 'Jenny could not confirm cancellation. Progress updates will continue.';
+        viewState.summary = jt('setup.localModel.cancellationUnconfirmed', 'Jenny could not confirm cancellation. Progress updates will continue.');
         render();
         return false;
       }
       viewState.status = 'cancelled';
-      viewState.summary = result.summary || 'Ollama pull cancelled.';
+      viewState.summary = result.summary || jt('setup.localModel.pullCancelled', 'Ollama pull cancelled.');
       teardownPullSubscription();
       render();
       return true;

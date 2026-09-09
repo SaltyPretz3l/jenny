@@ -1,0 +1,105 @@
+services:
+  jenny:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: jenny-host:local
+    restart: unless-stopped
+    # Health status is an operator/reverse-proxy signal. Docker restart
+    # policies act on process exit and do not restart a merely unhealthy process.
+    healthcheck:
+      test: ["CMD", "node", "server/healthcheck.js", "--config", "/etc/jenny/host.json", "--ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 30s
+    user: "10001:10001"
+    group_add: ["10003"]
+    depends_on:
+      sandbox:
+        condition: service_healthy
+    read_only: true
+    ports:
+      # Default browser access is local to this computer. Remote access requires
+      # explicit private_https configuration and a private HTTPS proxy.
+      - "127.0.0.1:8080:8080"
+    command: ["--config", "/etc/jenny/host.json"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - jenny_control:/run/jenny-worker:ro
+      - jenny_profile:/data
+      - jenny_workspace:/workspaces/default
+      - ./config:/etc/jenny:ro
+      - ./secrets:/run/jenny-secrets:ro
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    privileged: false
+    pids_limit: 256
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+          pids: 256
+    labels:
+      com.jenny.host.execution_policy: "configured-offline-worker"
+      com.jenny.host.plugins: "disabled"
+      com.jenny.host.docker_socket: "absent"
+
+  sandbox:
+    image: jenny-host:local
+    # This trusted Python supervisor MUST be PID 1: its exit destroys the entire
+    # command namespace, including detached descendants. Do not add init:true.
+    entrypoint: [python3, -I, -c, "import sys; sys.path.insert(0, '/app'); from server.worker.supervisor import main; main()"]
+    user: "0:10003"
+    restart: unless-stopped
+    network_mode: none
+    ipc: private
+    read_only: true
+    privileged: false
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 2.0
+    mem_limit: 2g
+    memswap_limit: 2g
+    stop_grace_period: 10s
+    volumes:
+      - jenny_control:/run/jenny-worker
+      - jenny_workspace:/inputs:ro
+    tmpfs:
+      - /workspace:size=536870912,nr_inodes=16384,mode=0700,uid=10001,gid=10001,nosuid,nodev
+      - /tmp:size=67108864,nr_inodes=4096,mode=1777,nosuid,nodev
+    healthcheck:
+      test: [CMD, python3, -I, -c, "import sys; sys.path.insert(0, '/app'); from server.worker.health import main; main()"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      com.jenny.host.execution_policy: "offline-disposable-copy"
+      com.jenny.host.docker_socket: "absent"
+
+volumes:
+  jenny_control:
+  jenny_profile:
+  jenny_workspace:

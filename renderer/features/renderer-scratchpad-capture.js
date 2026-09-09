@@ -18,6 +18,7 @@
   root.rendererScratchpadCapture = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const MAX_CAPTURE_CHARS = 4000;
   const INPUT_ID = 'scratchpadCaptureInput';
@@ -30,7 +31,7 @@
     const textFieldImpl = typeof deps.textField === 'function' ? deps.textField : null;
     const showToastMessage = typeof deps.showToastMessage === 'function' ? deps.showToastMessage : noop;
     const appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : noop;
-
+    const escapeHtml = typeof deps.escapeHtml === 'function' ? deps.escapeHtml : (value) => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     let rootEl = null;
     let keydownHandler = null;
     let clickHandler = null;
@@ -49,8 +50,8 @@
       const field = textFieldImpl
         ? textFieldImpl({
           id: INPUT_ID,
-          ariaLabel: 'Note text',
-          placeholder: 'Jot a quick note…',
+          ariaLabel: jt('scratchpad.capture.noteLabel', 'Note text'),
+          placeholder: jt('scratchpad.capture.placeholder', 'Jot a quick note…'),
           maxLength: MAX_CAPTURE_CHARS,
           className: 'scratchpad-capture__field',
         })
@@ -58,10 +59,10 @@
       return ''
         + '<div class="scratchpad-capture__backdrop" data-capture-dismiss="1"></div>'
         + '<div class="scratchpad-capture__card" role="document">'
-        + '<div class="scratchpad-capture__title">Capture to scratchpad</div>'
+        + '<div class="scratchpad-capture__title">' + escapeHtml(jt('scratchpad.capture.title', 'Capture to scratchpad')) + '</div>'
         + field
         + '<div class="scratchpad-capture__status" data-capture-status aria-live="polite"></div>'
-        + '<div class="scratchpad-capture__hint">Enter to save · Esc to cancel</div>'
+        + '<div class="scratchpad-capture__hint">' + escapeHtml(jt('scratchpad.capture.keyboardHint', 'Enter to save · Esc to cancel')) + '</div>'
         + '</div>';
     }
 
@@ -73,7 +74,7 @@
       el.className = 'scratchpad-capture';
       el.setAttribute('role', 'dialog');
       el.setAttribute('aria-modal', 'true');
-      el.setAttribute('aria-label', 'Quick capture to scratchpad');
+      el.setAttribute('aria-label', jt('scratchpad.capture.dialogLabel', 'Quick capture to scratchpad'));
       el.hidden = true;
       el.innerHTML = buildMarkup();
       documentRef.body.appendChild(el);
@@ -163,7 +164,7 @@
       const input = getInput();
       const text = String((input && input.value) || '').trim();
       if (!text) {
-        setStatus('Type something to save.', true);
+        setStatus(jt('scratchpad.capture.emptyNote', 'Type something to save.'), true);
         return;
       }
       submitting = true;
@@ -175,11 +176,11 @@
         }
         submitting = false;
         if (result && result.ok) {
-          const detail = result.noteTitle ? `Added to ${result.noteTitle}.` : 'Added to scratchpad.';
-          showToastMessage(detail, { title: 'Scratchpad', tone: 'success' });
+          const detail = result.noteTitle ? jt('scratchpad.capture.addedToNote', 'Added to {title}.', { title: result.noteTitle }) : jt('scratchpad.capture.added', 'Added to scratchpad.');
+          showToastMessage(detail, { title: jt('scratchpad.title', 'Scratchpad'), tone: 'success' });
           close();
         } else {
-          setStatus((result && result.error) || 'Could not save the note.', true);
+          setStatus((result && result.error) || jt('scratchpad.capture.saveFailed', 'Could not save the note.'), true);
         }
       }).catch((error) => {
         if (disposed || token !== submitToken) {
@@ -189,7 +190,7 @@
         appendClientLog('WARN', 'scratchpad.capture_failed', {
           message: String((error && error.message) || error),
         });
-        setStatus('Could not save the note.', true);
+        setStatus(jt('scratchpad.capture.saveFailed', 'Could not save the note.'), true);
       });
     }
 

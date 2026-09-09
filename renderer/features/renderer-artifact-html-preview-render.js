@@ -26,12 +26,13 @@
   root.rendererArtifactHtmlPreviewRender = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Tabler geometry per the spec: player-play 11x11 for the strip label,
   // chevron-left/right 16x16 for the ghost stepper. All currentColor.
   const PLAY_GLYPH_SVG = '<svg class="artifact-html-preview-glyph" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16l13 -8z"></path></svg>';
-  const CHEVRON_LEFT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
-  const CHEVRON_RIGHT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
+  const CHEVRON_LEFT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
+  const CHEVRON_RIGHT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
 
   // Expando keys on the stable surface.previewContent node (survives its own
   // innerHTML reassignment across renders) — see the re-render-churn guard in
@@ -110,9 +111,9 @@
       trustedHtml: glyph,
     });
     return '<span class="artifact-html-preview-versions">'
-      + step('Previous version', CHEVRON_LEFT_SVG, info.prevId, info.index <= 1)
+      + step(jt('artifacts.htmlPreview.previousVersion', 'Previous version'), CHEVRON_LEFT_SVG, info.prevId, info.index <= 1)
       + `<span class="artifact-html-preview-count">v${escapeHtml(String(info.index))}/${escapeHtml(String(info.count))}</span>`
-      + step('Next version', CHEVRON_RIGHT_SVG, info.nextId, info.index >= info.count)
+      + step(jt('artifacts.htmlPreview.nextVersion', 'Next version'), CHEVRON_RIGHT_SVG, info.nextId, info.index >= info.count)
       + '</span>';
   }
 
@@ -154,18 +155,18 @@
       ? ''
       : '<div class="artifact-preview-mermaid-toolbar">'
         + deps.renderArtifactViewModeButton(kind, 'preview', true, 'Preview', state.artifacts?.loading, escapeHtml)
-        + deps.renderArtifactViewModeButton(kind, 'edit', false, editable ? 'Edit Source' : 'View Source', state.artifacts?.loading, escapeHtml)
+        + deps.renderArtifactViewModeButton(kind, 'edit', false, editable ? jt('artifacts.htmlPreview.editSource', 'Edit Source') : jt('artifacts.htmlPreview.viewSource', 'View Source'), state.artifacts?.loading, escapeHtml)
         + '</div>';
     surface.previewContent.innerHTML = (
       toolbar + '<div class="artifact-html-preview-strip">'
       + PLAY_GLYPH_SVG
-      + '<span class="artifact-html-preview-label" data-html-preview-label>Running…</span>'
+      + '<span class="artifact-html-preview-label" data-html-preview-label>' + jt('artifacts.htmlPreview.running', 'Running…') + '</span>'
       + buildVersionStepper(artifact, state, escapeHtml)
       + '</div>'
       + '<div class="artifact-html-preview-host" data-html-preview-host></div>'
     );
     if (typeof setDetailNote === 'function') {
-      setDetailNote(surface, 'Sandboxed live preview. Scripts run in an isolated frame with no network access.');
+      setDetailNote(surface, jt('artifacts.htmlPreview.sandboxedNote', 'Sandboxed live preview. Scripts run in an isolated frame with no network access.'));
     }
 
     const hostEl = surface.previewContent.querySelector('[data-html-preview-host]');
@@ -180,7 +181,7 @@
         const detail = typeof errorText === 'string' && errorText.trim()
           ? `: ${errorText.trim().slice(0, 200)}`
           : '';
-        labelEl.textContent = `Preview failed — showing code${detail}`;
+        labelEl.textContent = jt('artifacts.htmlPreview.failedShowingCode', 'Preview failed — showing code{detail}', { detail });
         labelEl.classList.add('artifact-html-preview-label--failed');
       }
       if (hostEl && hostEl.isConnected) {
@@ -198,7 +199,7 @@
       sizing: 'fill',
       onSuccess: () => {
         if (!failed && labelEl && labelEl.isConnected) {
-          labelEl.textContent = 'Live preview';
+          labelEl.textContent = jt('artifacts.htmlPreview.livePreview', 'Live preview');
         }
       },
       onFailure: (payload) => {

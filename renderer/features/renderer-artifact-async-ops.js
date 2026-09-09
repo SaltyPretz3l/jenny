@@ -12,6 +12,7 @@
   root.rendererArtifactAsyncOps = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function createArtifactAsyncOps(deps) {
     const noop = () => {};
@@ -40,11 +41,15 @@
     if (!state.artifacts || typeof state.artifacts !== 'object') state.artifacts = {};
 
     const inFlightDeletes = new Set();
+    const inFlightSaves = new Set();
+    function isSelectedArtifactSaving() {
+      return inFlightSaves.has(`${state.artifacts.selectedSessionId}::${state.artifacts.selectedArtifactId}`);
+    }
 
     function formatError(error, fallback) {
       return typeof toErrorMessage === 'function'
         ? toErrorMessage(error)
-        : String(error?.message || error || fallback || 'Unknown error.');
+        : String(error?.message || error || fallback || jt('common.unknownError', 'Unknown error.'));
     }
 
     // Resolves a token to an artifact object. getArtifactByTarget (owned by
@@ -90,6 +95,7 @@
       const isMermaidFile = isMermaidGeneratedArtifact(artifact);
       const token = artifactOperationTarget.capture(artifact.sessionId, artifact.id);
       state.artifacts.loading = true;
+      state.artifacts.loadState = 'loading';
       state.artifacts.lastError = '';
       renderArtifactsPanel();
       renderArtifactReviewPanel();
@@ -98,6 +104,7 @@
         const initialStatus = String(file.status || '').trim().toLowerCase();
         if (initialStatus !== 'available') {
           if (!artifactOperationTarget.isCurrent(token)) return;
+          state.artifacts.loadState = 'unavailable';
           state.artifacts.loadedArtifactId = file.artifactId;
           state.artifacts.loadedArtifactContent = '';
           state.artifacts.dirtyContent = '';
@@ -117,12 +124,13 @@
           : file;
         const resolvedStatus = String(resolvedArtifact.status || file.status || '').trim().toLowerCase();
         const canEditInline = resolvedArtifact.editable === true && resolvedStatus === 'available';
+        state.artifacts.loadState = canEditInline ? 'ready' : 'unavailable';
         const diskContent = String(payload?.content || '');
         // A stashed draft (left behind by a prior navigation away from this
         // exact artifact while it was dirty) takes priority over the fresh
         // disk read — that is the "defer, don't discard" contract. Single
         // use: once restored, the live editor owns it again.
-        restoredDraft = draftStore.take(artifact.sessionId, artifact.id);
+        restoredDraft = canEditInline ? draftStore.take(artifact.sessionId, artifact.id) : null;
         const content = restoredDraft != null ? restoredDraft : diskContent;
         state.artifacts.loadedArtifactId = file.artifactId;
         state.artifacts.loadedArtifactContent = diskContent;
@@ -141,7 +149,8 @@
           draftStore.stash(artifact.sessionId, artifact.id, restoredDraft);
         }
         resetLoadedState();
-        state.artifacts.lastError = formatError(error, 'Artifact load failed.');
+        state.artifacts.loadState = 'error';
+        state.artifacts.lastError = formatError(error, jt('artifacts.errors.loadFailed', 'Artifact load failed.'));
       } finally {
         if (!artifactOperationTarget.isDisposed() && artifactOperationTarget.isCurrent(token)) {
           state.artifacts.loading = false;
@@ -156,6 +165,10 @@
       const file = artifact?.generatedFile || null;
       if (!artifact || !isGeneratedFile(artifact) || !file || file.editable !== true) return;
       const token = artifactOperationTarget.capture(artifact.sessionId, artifact.id);
+      const opKey = `${artifact.sessionId}::${artifact.id}`;
+      if (inFlightSaves.has(opKey) || state.artifacts.loading || state.artifacts.loadedArtifactId !== file.artifactId
+        || ['error', 'unavailable'].includes(state.artifacts.loadState)) return;
+      inFlightSaves.add(opKey);
       const content = getPreferredEditorValue();
       state.artifacts.savePending = true;
       state.artifacts.lastError = '';
@@ -167,24 +180,26 @@
         // A late completion after the user navigated to a different artifact
         // must not overwrite that artifact's loaded/dirty content — the
         // save itself already succeeded on disk regardless.
-        if (artifactOperationTarget.isCurrent(token)) {
-          state.artifacts.loadedArtifactId = file.artifactId;
+        if (artifactOperationTarget.matchesSelection(token) && state.artifacts.loadedArtifactId === file.artifactId) {
+          // The editor remains writable during IO: commit the submitted baseline,
+          // never overwrite a newer live draft (including a leave/return journey).
           state.artifacts.loadedArtifactContent = content;
-          state.artifacts.dirtyContent = content;
           bumpArtifactDocumentRevision();
         }
+        draftStore.discardIfEqual?.(artifact.sessionId, artifact.id, content);
         invalidateSessionArtifacts(artifact.sessionId, { preserveLoaded: true });
-        showToastMessage?.('Artifact saved.', { title: 'Artifacts', tone: 'success' });
+        showToastMessage?.(jt('artifacts.notifications.saved', 'Artifact saved.'), { title: jt('artifacts.notifications.title', 'Artifacts'), tone: 'success' });
       } catch (error) {
         if (artifactOperationTarget.isDisposed()) return;
-        const message = formatError(error, 'Artifact save failed.');
+        const message = formatError(error, jt('artifacts.errors.saveFailed', 'Artifact save failed.'));
         if (artifactOperationTarget.isCurrent(token)) {
           state.artifacts.lastError = message;
         }
-        showToastMessage?.(message, { title: 'Artifact Save Failed', tone: 'danger' });
+        showToastMessage?.(message, { title: jt('artifacts.errors.saveTitle', 'Artifact Save Failed'), tone: 'danger' });
       } finally {
+        inFlightSaves.delete(opKey);
         if (!artifactOperationTarget.isDisposed()) {
-          state.artifacts.savePending = false;
+          state.artifacts.savePending = isSelectedArtifactSaving();
           renderArtifactsPanel();
           renderArtifactReviewPanel();
         }
@@ -195,6 +210,11 @@
       const artifact = getSelectedArtifact();
       const file = artifact?.generatedFile || null;
       if (!artifact || !isGeneratedFile(artifact) || !file) return;
+      if (isSelectedArtifactSaving()) return;
+      if (state.artifacts.loadState === 'error') {
+        loadGeneratedArtifactContent(artifact).catch(() => {});
+        return;
+      }
       state.artifacts.lastError = '';
       state.artifacts.dirtyContent = state.artifacts.loadedArtifactContent || '';
       bumpArtifactDocumentRevision();
@@ -214,7 +234,7 @@
         await window.jennyShell.artifacts.reveal(artifact.sessionId, file.artifactId);
       } catch (error) {
         if (artifactOperationTarget.isDisposed()) return;
-        showToastMessage?.(formatError(error, 'Reveal failed.'), { title: 'Reveal Failed', tone: 'danger' });
+        showToastMessage?.(formatError(error, jt('artifacts.errors.revealFailed', 'Reveal failed.')), { title: jt('artifacts.errors.revealTitle', 'Reveal Failed'), tone: 'danger' });
       }
     }
 
@@ -226,12 +246,12 @@
         const result = await window.jennyShell.artifacts.openExternal(artifact.sessionId, file.artifactId);
         if (artifactOperationTarget.isDisposed()) return;
         if (result && result.ok === false) {
-          const message = String(result.result || result.message || 'Open externally failed.');
-          showToastMessage?.(message, { title: 'Open External Failed', tone: 'danger' });
+          const message = String(result.result || result.message || jt('artifacts.errors.openExternalFailed', 'Open externally failed.'));
+          showToastMessage?.(message, { title: jt('artifacts.errors.openExternalTitle', 'Open External Failed'), tone: 'danger' });
         }
       } catch (error) {
         if (artifactOperationTarget.isDisposed()) return;
-        showToastMessage?.(formatError(error, 'Open externally failed.'), { title: 'Open External Failed', tone: 'danger' });
+        showToastMessage?.(formatError(error, jt('artifacts.errors.openExternalFailed', 'Open externally failed.')), { title: jt('artifacts.errors.openExternalTitle', 'Open External Failed'), tone: 'danger' });
       }
     }
 
@@ -260,10 +280,10 @@
         }
         renderArtifactsPanel();
         renderArtifactReviewPanel();
-        showToastMessage?.('Artifact deleted.', { title: 'Artifacts', tone: 'success' });
+        showToastMessage?.(jt('artifacts.notifications.deleted', 'Artifact deleted.'), { title: jt('artifacts.notifications.title', 'Artifacts'), tone: 'success' });
       } catch (error) {
         if (artifactOperationTarget.isDisposed()) return;
-        showToastMessage?.(formatError(error, 'Delete failed.'), { title: 'Delete Failed', tone: 'danger' });
+        showToastMessage?.(formatError(error, jt('artifacts.errors.deleteFailed', 'Delete failed.')), { title: jt('artifacts.errors.deleteTitle', 'Delete Failed'), tone: 'danger' });
       } finally {
         inFlightDeletes.delete(opKey);
       }
@@ -272,10 +292,12 @@
     function dispose() {
       artifactOperationTarget.dispose();
       inFlightDeletes.clear();
+      inFlightSaves.clear();
     }
 
     return {
       stashDirtyArtifactIfNeeded,
+      isSelectedArtifactSaving,
       loadGeneratedArtifactContent,
       saveSelectedArtifact,
       revertSelectedArtifact,

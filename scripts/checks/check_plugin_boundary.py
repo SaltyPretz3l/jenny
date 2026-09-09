@@ -60,6 +60,7 @@ GENERATED_NAME_MARKERS = ("generated-plugin-", "generated_plugin_")
 JS_CORE_ALLOWLIST: frozenset[str] = frozenset({
     "services/backend/local-engine-requests.js",
     "services/main/plugin-view-controller.js",
+    "services/main/plugins-bundled-install-wiring.js",  # Official inventory startup seam.
     "services/main/plugins-ipc-registration.js",
     "services/main/plugins-developer-profile.js",
     "services/main/plugin-stage8-registration.js",

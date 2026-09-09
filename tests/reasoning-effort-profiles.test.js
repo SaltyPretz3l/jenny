@@ -34,6 +34,24 @@ test('reasoning-effort-profiles.js prefixes stay in lockstep with model_name.py 
   );
 });
 
+test('Astra offers its supported efforts before catalog metadata arrives', () => {
+  assert.deepEqual(getReasoningEffortProfile(' GPT-6-ASTRA '), {
+    defaultEffort: 'medium', efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  });
+  assert.deepEqual(buildReasoningEffortOptions('gpt-6-astra').map((option) => option.value),
+    ['default', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(normalizeReasoningEffortForModel('ultra', 'gpt-6-astra'), 'max');
+  for (const value of [null, '', 'none', 'minimal', 'bogus', 3]) {
+    assert.equal(normalizeReasoningEffortForModel(value, 'gpt-6-astra'), 'default');
+  }
+  assert.equal(normalizeManagedReasoningEffortForModel('max', 'chatgpt', { modelId: 'gpt-6-astra' }), 'max');
+  assert.equal(normalizeManagedReasoningEffortForModel('none', '', { modelId: ' GPT-6-ASTRA ' }), 'default');
+  assert.deepEqual(getReasoningEffortProfile('gpt-6-astra', {
+    default_reasoning_effort: 'low', reasoning_efforts: ['low', 'medium'],
+  }), { defaultEffort: 'low', efforts: ['low', 'medium'] });
+  assert.equal(getReasoningEffortProfile('gpt-6-future'), null);
+});
+
 test('ChatGPT reasoning choices are model-specific and keep Use default distinct', () => {
   assert.deepEqual(
     buildReasoningEffortOptions('gpt-5.6-sol').map((option) => option.value),

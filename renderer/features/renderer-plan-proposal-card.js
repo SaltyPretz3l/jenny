@@ -5,6 +5,7 @@
   }
   root.rendererPlanProposalCard = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Compatibility renderer for historical persisted `plan_proposal` rows.
   // Current sidecars no longer emit proposals, so every row is inert and no
@@ -65,7 +66,7 @@
     if (!normalized) {
       return '';
     }
-    const lines = [`Jenny proposed a plan: ${normalized.title}`];
+    const lines = [jt('artifacts.planProposal.summary', 'Jenny proposed a plan: {title}', { title: normalized.title })];
     if (normalized.intro_text) {
       lines.push(normalized.intro_text);
     }
@@ -108,7 +109,7 @@
     return `
       <div class="ask-card ask-card-inert ask-card-proposal" data-plan-proposal-id="${esc(normalized.proposal_id)}" data-plan-proposal-inert="true">
         <div class="ask-card-header">
-          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>Jenny proposed</span>
+          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>${esc(jt('artifacts.planProposal.kicker', 'Jenny proposed'))}</span>
         </div>
         <div class="plan-proposal-title">${esc(normalized.title)}</div>
         ${normalized.intro_text ? `<div class="ask-card-intro">${esc(normalized.intro_text)}</div>` : ''}

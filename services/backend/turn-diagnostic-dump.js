@@ -175,7 +175,7 @@ async function _collectDiagnosticFiles(root) {
       const filePath = path.join(dir, child.name);
       try {
         const stat = await fs.promises.stat(filePath);
-        files.push({ filePath, mtimeMs: stat.mtimeMs });
+        files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
       } catch {
         // File disappeared during sweep.
       }
@@ -189,6 +189,7 @@ async function pruneTurnDiagnostics({
   now = new Date(),
   maxAgeDays = DEFAULT_DIAGNOSTIC_MAX_AGE_DAYS,
   maxFiles = DEFAULT_DIAGNOSTIC_MAX_FILES,
+  maxTotalBytes = Number.POSITIVE_INFINITY,
 } = {}) {
   const root = _trimmedOrNull(userDataPath) ? _diagnosticsRoot(userDataPath) : null;
   if (!root) {
@@ -219,6 +220,16 @@ async function pruneTurnDiagnostics({
     files.sort((a, b) => a.mtimeMs - b.mtimeMs);
     for (const entry of files.slice(0, files.length - cap)) {
       removedCount += await _safeRm(entry.filePath);
+    }
+  }
+  if (Number.isFinite(maxTotalBytes)) {
+    const remaining = await _collectDiagnosticFiles(root);
+    let total = remaining.reduce((sum, entry) => sum + entry.size, 0);
+    for (const entry of remaining.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+      if (total <= maxTotalBytes) break;
+      const removed = await _safeRm(entry.filePath);
+      if (removed) total -= entry.size;
+      removedCount += removed;
     }
   }
   return { removedCount };
@@ -337,7 +348,8 @@ async function dumpTurnDiagnostic({
   const filePath = path.join(dir, `${resolvedStreamId}.json`);
 
   try {
-    const sweep = await pruneTurnDiagnostics({ userDataPath });
+    const sweep = await pruneTurnDiagnostics({ userDataPath, ...(service?.hostMode === 'server'
+      ? { maxAgeDays: 7, maxTotalBytes: 100 * 1024 * 1024 } : {}) });
     if (sweep.removedCount > 0) {
       emitLog('INFO', 'logs.turn_diagnostic_swept', {
         removedCount: sweep.removedCount,

@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const noop = () => {};
 
   function bindComposerV2Decorations(ctx) {
@@ -73,11 +74,11 @@
         composerModelPillSlot.insertAdjacentHTML('afterbegin', inventoryRef.chip({
           id: 'composer-model',
           domId: 'composerModelPill',
-          label: 'Model',
+          label: jt('app.shell.model', 'Model'),
           hasPopup: true,
           ariaControls: 'composerModelPopover',
-          ariaLabel: 'Model and reasoning effort',
-          title: 'Model and reasoning effort',
+          ariaLabel: jt('app.shell.modelAndReasoningEffort', 'Model and reasoning effort'),
+          title: jt('app.shell.modelAndReasoningEffort', 'Model and reasoning effort'),
           className: 'composer-model-pill',
         }));
       } catch (error) {
@@ -140,7 +141,7 @@
           getMessagesForSession: (sessionId) => getSessionMessages(sessionId),
           getRetryAvailability: ({ failure }) =>
             chatShellController.getFailedPayloadRetryAvailability?.(failure?.payload_id)
-              || { available: false, reason: 'The original failed payload is unavailable.' },
+              || { available: false, reason: jt('app.shellBindings.failedPayloadUnavailable', 'The original failed payload is unavailable.') },
           onRetry: ({ failure }) => {
             Promise.resolve(chatShellController.retryFailedPayload?.(failure?.payload_id))
               .catch(() => { /* startPromptSend surfaces its own send errors */ });
@@ -410,7 +411,6 @@
       refreshDefaultChatTimelineBatch4Preference,
       refreshPendingMemories,
       refreshSnapshots,
-      refreshSuggestions,
       renderAll,
       runStartupAuditAutoSend,
       syncBackendActivityFromStatus,
@@ -469,11 +469,6 @@
             });
           });
         }
-        refreshSuggestions().catch((err) => {
-          appendClientLog('WARN', 'chat.reconcile_suggestions_failed', {
-            message: String(err?.message || err),
-          });
-        });
         await runStartupAuditAutoSend();
       }
       renderAll();
@@ -499,7 +494,6 @@
       queueDeferredStartupTask,
       queueStartupLazyHydration,
       refreshComposerToolToggles,
-      refreshSuggestions,
       refreshWorkspaceRootState,
       renderAll,
       runStartupAuditAutoSend,
@@ -562,13 +556,6 @@
           refreshComposerToolToggles().catch(() => {});
         }));
       }
-      queueDeferredStartupTask(
-        () => Promise.race([
-          refreshSuggestions().catch(() => {}),
-          new Promise((resolve) => windowRef.setTimeout(resolve, 4000)),
-        ]),
-        { event: 'suggestions.bootstrap_failed', rerender: false }
-      );
     } catch (error) {
       appendClientLog('ERROR', 'renderer.bootstrap_failed', {
         message: error?.message || String(error),
@@ -584,8 +571,8 @@
         // Best-effort only.
       }
       try {
-        showShellErrorToast('Jenny hit a startup problem, but the shell is opening so you can recover.', {
-          title: 'Startup Error',
+        showShellErrorToast(jt('app.shell.startupProblem', 'Jenny hit a startup problem, but the shell is opening so you can recover.'), {
+          title: jt('app.shell.startupErrorTitle', 'Startup Error'),
           source: constants.TOAST_SOURCE.chatStream,
           dedupeKey: `${constants.TOAST_SOURCE.chatStream}:startup-error`,
         });

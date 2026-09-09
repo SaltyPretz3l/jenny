@@ -23,7 +23,7 @@
   border: 0;
   background: transparent;
   color: var(--text-secondary);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 .file-diff-toggle--static { cursor: default; }
@@ -67,14 +67,14 @@
   display: inline-flex;
   flex: 0 0 auto;
   gap: var(--space-3);
-  margin-left: auto;
+  margin-inline-start: auto;
   font: var(--tl-font-meta)/1.4 var(--font-family-mono);
 }
 .file-diff-count-add { color: var(--tl-status-ok); }
 .file-diff-count-remove { color: var(--tl-status-error); }
 .file-diff-truncated {
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--text-decorative);
   font-size: var(--tl-font-meta);
   font-style: italic;
@@ -120,10 +120,10 @@
 .file-diff-body .diff-gutter {
   flex: 0 0 auto;
   min-width: 4ch;
-  padding-right: var(--space-3);
+  padding-right: var(--space-3); /* rtl:physical */
   color: var(--text-decorative);
   font-size: var(--tl-font-meta);
-  text-align: right;
+  text-align: right; /* rtl:physical */
   user-select: none;
 }
 .file-diff-body .diff-marker { flex: 0 0 1.5ch; text-align: center; user-select: none; }
@@ -132,7 +132,7 @@
 .file-diff-body .diff-line-context .diff-marker { color: transparent; }
 .file-diff-body .diff-content {
   flex: 1 1 auto;
-  padding-right: var(--space-6);
+  padding-right: var(--space-6); /* rtl:physical */
   color: var(--widget-tool-code-color);
   white-space: pre;
 }

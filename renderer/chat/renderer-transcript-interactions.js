@@ -5,6 +5,8 @@
   }
   root.rendererTranscriptInteractionsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const _stringUtils = typeof globalThis !== 'undefined' && typeof globalThis.stringUtils !== 'undefined'
     ? globalThis.stringUtils
     : typeof require === 'function' ? require('../shared/string-utils')
@@ -17,7 +19,6 @@
       },
     };
   const { normalizeString, normalizeId } = _stringUtils;
-
   function createTranscriptInteractionRenderer(deps) {
     const { escapeHtml, isInteractiveRecapExpanded } = deps || {};
 
@@ -185,7 +186,7 @@
         : (typeof isInteractiveRecapExpanded === 'function'
           ? isInteractiveRecapExpanded(recapModel.recapId, options?.sessionId)
           : false);
-      const summaryLabel = `Asked ${recapModel.askedCount} question${recapModel.askedCount === 1 ? '' : 's'} ...`;
+      const summaryLabel = jtn('chat.interactiveRecap.askedQuestions', recapModel.askedCount, { count: recapModel.askedCount }, 'Asked {count} question ...', 'Asked {count} questions ...');
       const panelId = `interactive-recap-panel-${toDomIdToken(recapModel.recapId) || 'default'}`;
       const detailsMarkup = recapModel.questionSummaries.length
         ? `
@@ -195,7 +196,7 @@
                   (summary) => `
                     <div class="interactive-recap-item" data-question-id="${escapeHtml(summary.questionId)}">
                       <div class="interactive-recap-question">${escapeHtml(summary.prompt || 'Question')}</div>
-                      <div class="interactive-recap-answer">${escapeHtml(summary.answerLabel || 'Pending response...')}</div>
+                      <div class="interactive-recap-answer">${escapeHtml(summary.answerLabel || jt('chat.interactiveRecap.pendingResponse', 'Pending response...'))}</div>
                     </div>
                   `
                 )
@@ -204,7 +205,7 @@
           `
         : `
             <div class="interactive-recap-empty">
-              ${escapeHtml(recapModel.isPartial ? 'Recap is still being prepared.' : 'No recap details available.')}
+              ${escapeHtml(recapModel.isPartial ? jt('chat.interactiveRecap.preparing', 'Recap is still being prepared.') : jt('chat.interactiveRecap.noDetails', 'No recap details available.'))}
             </div>
           `;
 
@@ -244,13 +245,13 @@
         message && message.proactive_suggestion && typeof message.proactive_suggestion === 'object'
           ? message.proactive_suggestion
           : null;
-      const title = String(suggestion?.title || message?.content || 'Proactive suggestion').trim();
+      const title = String(suggestion?.title || message?.content || jt('chat.proactiveSuggestion.defaultTitle', 'Proactive suggestion')).trim();
       const body = String(suggestion?.body || message?.content || '').trim();
       const promptSuggestion = String(suggestion?.promptSuggestion || '').trim();
 
       return `
         <div class="proactive-suggestion-block">
-          <div class="proactive-suggestion-kicker">Suggestion</div>
+          <div class="proactive-suggestion-kicker">${escapeHtml(jt('chat.proactiveSuggestion.kicker', 'Suggestion'))}</div>
           <div class="proactive-suggestion-title">${escapeHtml(title)}</div>
           <div class="chat-bubble proactive-suggestion-body">${escapeHtml(body)}</div>
           <div class="proactive-suggestion-actions">
@@ -262,10 +263,10 @@
                     type="button"
                     data-message-action="use-suggestion"
                     data-message-id="${escapeHtml(message.id)}"
-                    title="Copy this suggestion into the composer"
-                    aria-label="Use suggested prompt"
+                    title="${escapeHtml(jt('chat.proactiveSuggestion.copyTitle', 'Copy this suggestion into the composer'))}"
+                    aria-label="${escapeHtml(jt('chat.proactiveSuggestion.usePromptAriaLabel', 'Use suggested prompt'))}"
                   >
-                    Use Prompt
+                    ${escapeHtml(jt('chat.proactiveSuggestion.usePrompt', 'Use Prompt'))}
                   </button>
                 `
                 : ''
@@ -275,20 +276,20 @@
               type="button"
               data-message-action="save-suggestion"
               data-message-id="${escapeHtml(message.id)}"
-              title="Save this suggestion as an open loop"
-              aria-label="Save to open loops"
+              title="${escapeHtml(jt('chat.proactiveSuggestion.saveTitle', 'Save this suggestion as an open loop'))}"
+              aria-label="${escapeHtml(jt('chat.proactiveSuggestion.saveAriaLabel', 'Save to open loops'))}"
             >
-              Save
+              ${escapeHtml(jt('common.save', 'Save'))}
             </button>
             <button
               class="settings-secondary proactive-suggestion-action"
               type="button"
               data-message-action="later-suggestion"
               data-message-id="${escapeHtml(message.id)}"
-              title="Defer this suggestion into open loops"
-              aria-label="Save for later"
+              title="${escapeHtml(jt('chat.proactiveSuggestion.deferTitle', 'Defer this suggestion into open loops'))}"
+              aria-label="${escapeHtml(jt('chat.proactiveSuggestion.laterAriaLabel', 'Save for later'))}"
             >
-              Later
+              ${escapeHtml(jt('chat.proactiveSuggestion.later', 'Later'))}
             </button>
           </div>
         </div>

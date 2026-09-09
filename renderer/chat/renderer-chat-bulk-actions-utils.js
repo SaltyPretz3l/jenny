@@ -15,7 +15,8 @@
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, messageEditUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var MAX_RECOMMENDED_EXPORT_BYTES = 5 * 1024 * 1024;
   var MAX_HARD_EXPORT_BYTES = 250 * 1024 * 1024;
 
@@ -138,7 +139,7 @@
         && typeof conversationFormatUtils.buildJson === 'function') {
         return conversationFormatUtils;
       }
-      showToastMessage('Conversation export helpers are not available.', { tone: 'danger', title: action });
+      showToastMessage(jt('chat.bulkActions.exportHelpersUnavailable', 'Conversation export helpers are not available.'), { tone: 'danger', title: action });
       return null;
     }
 
@@ -146,14 +147,14 @@
       var bytes = byteLength(content);
       if (bytes > MAX_HARD_EXPORT_BYTES) {
         showToastMessage(
-          'Selected content exceeds 250 MB — refusing to export. Narrow the selection.',
+          jt('chat.bulkActions.exportTooLarge', 'Selected content exceeds 250 MB — refusing to export. Narrow the selection.'),
           { tone: 'danger', title: action }
         );
         return { ok: false, bytes };
       }
       if (bytes > MAX_RECOMMENDED_EXPORT_BYTES) {
         showToastMessage(
-          'Selected content is larger than 5 MB. The export may take a moment.',
+          jt('chat.bulkActions.exportLargeWarning', 'Selected content is larger than 5 MB. The export may take a moment.'),
           { tone: 'warning', title: action }
         );
       }
@@ -162,7 +163,7 @@
 
     function writeToClipboard(text, action, successMessage) {
       if (!jennyShellClipboard || typeof jennyShellClipboard.writeText !== 'function') {
-        showToastMessage('Clipboard bridge is not available.', { tone: 'danger', title: action });
+        showToastMessage(jt('chat.bulkActions.clipboardUnavailable', 'Clipboard bridge is not available.'), { tone: 'danger', title: action });
         return Promise.resolve(false);
       }
       return Promise.resolve()
@@ -177,7 +178,7 @@
             action,
             message: (error && error.message) || String(error),
           });
-          showToastMessage('Copy failed: ' + ((error && error.message) || String(error)), {
+          showToastMessage(jt('chat.bulkActions.copyFailed', 'Copy failed: {error}', { error: (error && error.message) || String(error) }).replace('{error}', function () { return String((error && error.message) || error); }), {
             tone: 'danger',
             title: action,
           });
@@ -206,16 +207,16 @@
     }
 
     function copyAsMarkdown() {
-      return runCopy({ action: 'Copy as Markdown', builder: 'buildMarkdown', formatLabel: 'Markdown' });
+      return runCopy({ action: jt('chat.bulkActions.copyAsMarkdown', 'Copy as Markdown'), builder: 'buildMarkdown', formatLabel: 'Markdown' });
     }
 
     function copyAsPlainText() {
-      return runCopy({ action: 'Copy as text', builder: 'buildPlainText', formatLabel: 'plain text' });
+    return runCopy({ action: jt('chat.bulkActions.copyAsText', 'Copy as text'), builder: 'buildPlainText', formatLabel: jt('chat.bulkActions.plainTextFormat', 'plain text') });
     }
 
     function saveFile(payload, action) {
       if (!jennyShellDialog || typeof jennyShellDialog.saveFile !== 'function') {
-        showToastMessage('Save-file bridge is not available.', { tone: 'danger', title: action });
+        showToastMessage(jt('chat.bulkActions.saveFileUnavailable', 'Save-file bridge is not available.'), { tone: 'danger', title: action });
         return Promise.resolve(null);
       }
       return Promise.resolve()
@@ -225,7 +226,7 @@
             appendClientLog('INFO', 'chat.bulk_export_canceled', { action });
             return result || { canceled: true };
           }
-          showToastMessage('Saved to ' + result.path, { tone: 'success', title: action });
+          showToastMessage(jt('chat.bulkActions.savedTo', 'Saved to {path}', { path: result.path }).replace('{path}', function () { return String(result.path); }), { tone: 'success', title: action });
           appendClientLog('INFO', 'chat.bulk_export', {
             action,
             path: result.path,
@@ -239,7 +240,7 @@
             message: (error && error.message) || String(error),
           });
           showToastMessage(
-            'Export failed: ' + ((error && error.message) || String(error)),
+            jt('chat.bulkActions.exportFailed', 'Export failed: {error}', { error: (error && error.message) || String(error) }).replace('{error}', function () { return String((error && error.message) || error); }),
             { tone: 'danger', title: action }
           );
           return null;
@@ -274,7 +275,7 @@
 
     function exportMarkdown() {
       return runExport({
-        action: 'Export Markdown',
+        action: jt('chat.bulkActions.exportMarkdown', 'Export Markdown'),
         extension: 'md',
         format: 'markdown',
         buildContent: function (utils, ids) {
@@ -286,7 +287,7 @@
 
     function exportPlainText() {
       return runExport({
-        action: 'Export plain text',
+        action: jt('chat.bulkActions.exportPlainText', 'Export plain text'),
         extension: 'txt',
         format: 'plain',
         buildContent: function (utils, ids) {
@@ -298,7 +299,7 @@
 
     function exportTurnEventJson() {
       return runExport({
-        action: 'Export turn-event JSON',
+        action: jt('chat.bulkActions.exportTurnEventJson', 'Export turn-event JSON'),
         extension: 'json',
         format: 'json',
         buildContent: function (utils, ids) {
@@ -316,8 +317,8 @@
       var sessionId = normalizeId(getCurrentSessionId());
       if (!sessionId) return Promise.resolve(null);
       if (!jennyShellSessions || typeof jennyShellSessions.exportSession !== 'function') {
-        showToastMessage('Session export bridge is not available.', {
-          tone: 'danger', title: 'Export Session JSON',
+        showToastMessage(jt('chat.bulkActions.sessionExportUnavailable', 'Session export bridge is not available.'), {
+          tone: 'danger', title: jt('chat.bulkActions.exportSessionJson', 'Export Session JSON'),
         });
         return Promise.resolve(null);
       }
@@ -325,8 +326,8 @@
       if (selectedIds.length) {
         try {
           showToastMessage(
-            'Session JSON exports the whole session, not just the selection.',
-            { tone: 'info', title: 'Export Session JSON' }
+            jt('chat.bulkActions.sessionExportIncludesAll', 'Session JSON exports the whole session, not just the selection.'),
+            { tone: 'info', title: jt('chat.bulkActions.exportSessionJson', 'Export Session JSON') }
           );
         } catch (_) { /* best-effort */ }
       }
@@ -334,25 +335,25 @@
         .then(function () { return jennyShellSessions.exportSession(sessionId); })
         .then(function (jsonString) {
           if (!jsonString) {
-            showToastMessage('Session export returned no data.', {
-              tone: 'danger', title: 'Export Session JSON',
+            showToastMessage(jt('chat.bulkActions.sessionExportNoData', 'Session export returned no data.'), {
+              tone: 'danger', title: jt('chat.bulkActions.exportSessionJson', 'Export Session JSON'),
             });
             return null;
           }
-          var guard = thresholdGuard(jsonString, 'Export Session JSON');
+          var guard = thresholdGuard(jsonString, jt('chat.bulkActions.exportSessionJson', 'Export Session JSON'));
           if (!guard.ok) return null;
           return saveFile({
             defaultName: buildDefaultName('json'),
             content: jsonString,
             format: 'session-json',
-          }, 'Export Session JSON');
+          }, jt('chat.bulkActions.exportSessionJson', 'Export Session JSON'));
         })
         .catch(function (error) {
           appendClientLog('ERROR', 'chat.session_export_failed', {
             message: (error && error.message) || String(error),
           });
-          showToastMessage('Export failed: ' + ((error && error.message) || String(error)), {
-            tone: 'danger', title: 'Export Session JSON',
+          showToastMessage(jt('chat.bulkActions.exportFailed', 'Export failed: {error}', { error: (error && error.message) || String(error) }).replace('{error}', function () { return String((error && error.message) || error); }), {
+            tone: 'danger', title: jt('chat.bulkActions.exportSessionJson', 'Export Session JSON'),
           });
           return null;
         });
@@ -378,8 +379,8 @@
       var sessionId = normalizeId(getCurrentSessionId());
       if (!sessionId) return Promise.resolve(null);
       if (!jennyShellSessions || typeof jennyShellSessions.editAndTruncate !== 'function') {
-        showToastMessage('Truncate bridge is not available.', {
-          tone: 'danger', title: 'Delete from here',
+        showToastMessage(jt('chat.bulkActions.truncateUnavailable', 'Truncate bridge is not available.'), {
+          tone: 'danger', title: jt('chat.bulkActions.deleteFromHere', 'Delete from here'),
         });
         return Promise.resolve(null);
       }
@@ -392,11 +393,7 @@
         ? messages.findIndex(function (message) { return normalizeId(message && message.id) === earliestId; })
         : -1;
       var truncateCount = earliestIndex >= 0 ? Math.max(messages.length - earliestIndex, 1) : 1;
-      var promptText = 'Delete '
-        + pluralizeMessage(truncateCount)
-        + ' from the earliest selected message onward? '
-        + String(ids.length)
-        + ' selected messages. This removes the earliest selected row and all later history, including unselected trailing messages.';
+      var promptText = jtn('chat.bulkActions.deleteConfirmPrompt', truncateCount, { count: truncateCount, selectedCount: ids.length }, 'Delete {count} message from the earliest selected message onward? {selectedCount} selected messages. This removes the earliest selected row and all later history, including unselected trailing messages.', 'Delete {count} messages from the earliest selected message onward? {selectedCount} selected messages. This removes the earliest selected row and all later history, including unselected trailing messages.');
       setBulkTruncateCommitting(true);
       pendingDeleteOperation = Promise.resolve()
         .then(function () { return confirmDelete(promptText); })
@@ -422,9 +419,8 @@
               if (selectionController && typeof selectionController.exitSelectMode === 'function') {
                 try { selectionController.exitSelectMode(); } catch (_e) { /* ignore */ }
               }
-              showToastMessage('Deleted ' + pluralizeMessage(truncateCount)
-                + ' from the earliest selection onward (' + ids.length + ' selected).', {
-                tone: 'success', title: 'Delete from here',
+              showToastMessage(jtn('chat.bulkActions.deletedFromSelection', truncateCount, { count: truncateCount, selectedCount: ids.length }, 'Deleted {count} message from the earliest selection onward ({selectedCount} selected).', 'Deleted {count} messages from the earliest selection onward ({selectedCount} selected).').replace('{count}', function () { return String(truncateCount); }).replace('{selectedCount}', function () { return String(ids.length); }), {
+                tone: 'success', title: jt('chat.bulkActions.deleteFromHere', 'Delete from here'),
               });
               try { renderAll(); } catch (_e) { /* ignore */ }
               return summary;
@@ -437,8 +433,8 @@
             earliestId,
             message: (error && error.message) || String(error),
           });
-          showToastMessage('Delete failed: ' + ((error && error.message) || String(error)), {
-            tone: 'danger', title: 'Delete from here',
+          showToastMessage(jt('chat.bulkActions.deleteFailed', 'Delete failed: {error}', { error: (error && error.message) || String(error) }).replace('{error}', function () { return String((error && error.message) || error); }), {
+            tone: 'danger', title: jt('chat.bulkActions.deleteFromHere', 'Delete from here'),
           });
           return null;
         })

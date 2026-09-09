@@ -41,7 +41,7 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
   const guardPolicy = (token = null) => managedPolicy?.guard?.(token) || { ok: true };
 
   const diagnostics = new FullHostDiagnostics({ log });
-  const consentWindow = new PluginConsentWindow({ BrowserWindow, ipcMain, session, baseDir: appRoot, log });
+  const consentWindow = new PluginConsentWindow({ BrowserWindow, ipcMain, session, baseDir: appRoot, shellConfigService: backendService.configService, log });
   const consent = new PluginHighConsequenceConsent({
     openPrompt: consentWindow.openPrompt.bind(consentWindow),
   });

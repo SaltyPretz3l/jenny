@@ -6,7 +6,8 @@
   root.rendererMonitorToolUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function fallbackNormalizeString(value) {
     return String(value || '').trim();
   }
@@ -59,12 +60,12 @@
     const timeoutLabel = monitor.timeoutMs > 0 ? `${Math.round(monitor.timeoutMs / 1000)}s` : '';
     const metaParts = [
       monitor.state,
-      timeoutLabel ? `timeout ${timeoutLabel}` : '',
+      timeoutLabel ? jt('chat.toolShell.monitorTimeout', 'timeout {duration}', { duration: timeoutLabel }) : '',
       monitor.persistent ? 'persistent' : '',
-      monitor.eventCount === 1 ? '1 event' : `${monitor.eventCount} events`,
-      monitor.droppedEventCount > 0 ? `${monitor.droppedEventCount} dropped` : '',
+      jtn('chat.toolShell.monitorEventCount', monitor.eventCount, { count: monitor.eventCount }, '{count} event', '{count} events'),
+      monitor.droppedEventCount > 0 ? jt('chat.toolShell.monitorDroppedCount', '{count} dropped', { count: monitor.droppedEventCount }) : '',
       monitor.terminalReason,
-      monitor.exitCode != null ? `exit ${monitor.exitCode}` : '',
+      monitor.exitCode != null ? jt('chat.toolShell.monitorExitCode', 'exit {code}', { code: monitor.exitCode }) : '',
     ].filter(Boolean);
     const eventLines = monitor.events.length
       ? monitor.events.map((event) => `
@@ -73,7 +74,7 @@
             <span class="tool-monitor-event-text">${escapeHtml(event.text)}</span>
           </div>
         `).join('')
-      : `<div class="tool-call-empty">${escapeHtml('No monitor events recorded yet.')}</div>`;
+      : `<div class="tool-call-empty">${escapeHtml(jt('chat.toolShell.noMonitorEvents', 'No monitor events recorded yet.'))}</div>`;
     return `
       <div class="tool-monitor-panel" data-monitor-state="${escapeHtml(monitor.state)}">
         <div class="tool-monitor-heading">

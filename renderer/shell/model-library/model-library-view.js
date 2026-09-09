@@ -29,6 +29,7 @@
 ) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   if (!formatUtils || typeof formatUtils.formatHumanSize !== 'function'
     || typeof inventoryBadge !== 'function'
     || typeof inventoryChip !== 'function'
@@ -99,9 +100,9 @@
   function formatDisk(card) {
     var sizeBytes = positiveNumber(card.sizeBytes);
     if (card.installed === true) {
-      return sizeBytes ? formatUtils.formatHumanSize(sizeBytes) : 'Size unknown';
+      return sizeBytes ? formatUtils.formatHumanSize(sizeBytes) : jt('models.library.sizeUnknown', 'Size unknown');
     }
-    return formatMbAsDownload(card.downloadSizeMb) || 'Disk size unknown';
+    return formatMbAsDownload(card.downloadSizeMb) || jt('models.library.diskSizeUnknown', 'Disk size unknown');
   }
 
   function actionSet(actions) {
@@ -146,18 +147,18 @@
         || (pending && (action === 'tune' || action === 'remove' || action === 'menu')));
     var name = String(card.displayName || card.tag || 'model');
     var config = {
-      use: { label: 'Use', variant: 'primary' },
-      unload: { label: 'Unload', variant: 'secondary' },
-      tune: { label: 'Tune', variant: 'secondary' },
-      remove: { label: 'Remove', variant: 'danger' },
-      pull: { label: 'Pull', variant: 'primary' },
-      cancel: { label: 'Cancel', variant: 'danger' },
-      menu: { label: '⋯', variant: 'ghost', ariaLabel: 'More actions for ' + name },
+      use: { label: jt('models.library.use', 'Use'), variant: 'primary' },
+      unload: { label: jt('models.library.unload', 'Unload'), variant: 'secondary' },
+      tune: { label: jt('models.library.tune', 'Tune'), variant: 'secondary' },
+      remove: { label: jt('common.remove', 'Remove'), variant: 'danger' },
+      pull: { label: jt('models.library.pull', 'Pull'), variant: 'primary' },
+      cancel: { label: jt('common.cancel', 'Cancel'), variant: 'danger' },
+      menu: { label: '⋯', variant: 'ghost', ariaLabel: jt('models.library.moreActionsFor', 'More actions for {model}', { model: name }) },
     }[action];
     var pendingUse = pending && action === 'use';
     return {
       id: action,
-      label: pendingUse ? 'Starting…' : config.label,
+      label: pendingUse ? jt('models.library.starting', 'Starting…') : config.label,
       variant: config.variant,
       size: 'sm',
       disabled: disabled,
@@ -205,7 +206,7 @@
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'llama-server' + (mtpOn ? ' \u00b7 MTP' : '') }));
     }
     if (model.accelerationEligible === true && !mtpOn) {
-      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'MTP ready' }));
+      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.mtpReady', 'MTP ready') }));
     }
     return badges;
   }
@@ -222,13 +223,13 @@
       badges.push(inventoryBadge({
         tone: 'default',
         size: 'sm',
-        text: card.fitState === 'fits' ? 'Best fit for your GPU' : 'Recommended',
+        text: card.fitState === 'fits' ? jt('models.library.bestFitForGpu', 'Best fit for your GPU') : jt('models.library.recommended', 'Recommended'),
       }));
     }
     badges.push.apply(badges, engineBadges(card));
     if (card.ollamaOnly === true) {
-      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'Ollama only' }));
-      badges.push('<span class="model-card-engine-note">Not available to the current engine</span>');
+      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.ollamaOnly', 'Ollama only') }));
+      badges.push('<span class="model-card-engine-note">' + escapeHtml(jt('models.library.currentEngineUnavailable', 'Not available to the current engine')) + '</span>');
     }
     return badges.length ? '<div class="model-card-badges">' + badges.join('') + '</div>' : '';
   }
@@ -245,9 +246,9 @@
       warningThreshold: 2,
       dangerThreshold: 2,
       displayText: (unknown
-        ? String(card.fitLabel || 'Fit unknown')
+        ? String(card.fitLabel || jt('models.library.fitUnknown', 'Fit unknown'))
         : String(card.fitLabel || '')) + fitSourceSuffix(card),
-      label: 'VRAM fit for ' + name,
+      label: jt('models.library.vramFitFor', 'VRAM fit for {model}', { model: name }),
       className: 'model-card-fit model-card-fit--' + mergeUtils.fitTone(card),
     });
   }
@@ -260,7 +261,7 @@
       pieces.push(inventoryProgressBar({
         value: percent,
         max: 100,
-        label: 'Pull progress for ' + String(card.displayName || card.tag || 'model'),
+        label: jt('models.library.pullProgressFor', 'Pull progress for {model}', { model: String(card.displayName || card.tag || 'model') }),
         displayText: pull.bytesText || Math.round(percent) + '%',
         // Thresholds above 1 suppress primitive tone; pull progress is neutral.
         warningThreshold: 2,
@@ -272,7 +273,7 @@
       }
     }
     if (pull.cancelFailed === true) {
-      pieces.push(inventoryBadge({ tone: 'danger', size: 'sm', text: 'Cancel failed' }));
+      pieces.push(inventoryBadge({ tone: 'danger', size: 'sm', text: jt('models.library.cancelFailed', 'Cancel failed') }));
     }
     return pieces.length ? '<div class="model-card-pull-state">' + pieces.join('') + '</div>' : '';
   }
@@ -286,7 +287,7 @@
       objectOrEmpty(opts.activation)
     );
     var tag = String(model.tag || '');
-    var name = String(model.displayName || model.tag || 'Local model');
+    var name = String(model.displayName || model.tag || jt('models.library.localModel', 'Local model'));
     var sourceInstalled = model.source === 'installed';
     var cloud = model.installed === true && Boolean(model.engineType)
       && !mergeUtils.isLocalEngine(model);
@@ -297,18 +298,18 @@
     var context = formatContext(model.contextLength);
 
     if (model.active === true) {
-      badges.push(inventoryBadge({ tone: 'pending', size: 'sm', text: 'Active' }));
+      badges.push(inventoryBadge({ tone: 'pending', size: 'sm', text: jt('models.library.activeBadge', 'Active') }));
     }
     if (model.recommended === true) {
       badges.push(inventoryBadge({
         tone: 'success',
         size: 'sm',
-        text: model.fitState === 'fits' ? 'Best fit' : 'Recommended',
+        text: model.fitState === 'fits' ? jt('models.library.bestFit', 'Best fit') : jt('models.library.recommended', 'Recommended'),
       }));
     }
     badges.push.apply(badges, engineBadges(model));
     if (model.ollamaOnly === true) {
-      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'Ollama only' }));
+      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.ollamaOnly', 'Ollama only') }));
     }
 
     if (!sourceInstalled && tag) meta.push(tag);
@@ -316,16 +317,16 @@
     if (model.quant) meta.push(String(model.quant));
     if (context) meta.push(context + ' context');
     if (cloud) {
-      meta.push('Hosted');
-      meta.push('no download');
+      meta.push(jt('models.library.hosted', 'Hosted'));
+      meta.push(jt('models.library.noDownload', 'no download'));
     } else if (model.installed === true) {
       meta.push(positiveNumber(model.sizeBytes)
         ? formatUtils.formatHumanSize(model.sizeBytes)
-        : 'Size unknown');
+        : jt('models.library.sizeUnknown', 'Size unknown'));
     } else {
-      meta.push(formatMbAsDownload(model.downloadSizeMb) || 'Disk size unknown');
+      meta.push(formatMbAsDownload(model.downloadSizeMb) || jt('models.library.diskSizeUnknown', 'Disk size unknown'));
     }
-    if (model.preferredLocal === true) meta.push('default for local inference');
+    if (model.preferredLocal === true) meta.push(jt('models.library.defaultForLocalInference', 'default for local inference'));
 
     var nameHtml = sourceInstalled
       ? '<code class="model-row-name model-row-name--tag" title="' + escapeHtml(tag) + '">'
@@ -333,7 +334,7 @@
       : '<span class="model-row-name" title="' + escapeHtml(tag) + '">'
         + escapeHtml(name) + '</span>';
     var engineNote = model.ollamaOnly === true
-      ? '<span class="model-card-engine-note">Not available to the current engine</span>'
+      ? '<span class="model-card-engine-note">' + escapeHtml(jt('models.library.currentEngineUnavailable', 'Not available to the current engine')) + '</span>'
       : '';
     var noteHtml = activation.status === 'idle' && activationMatches
       && String(activation.message || '').trim()
@@ -346,9 +347,9 @@
     } else if (model.fitState === 'unknown') {
       var unknownLabel = String(model.fitLabel || '').trim();
       fitHtml = '<span class="model-row-fit-text">'
-        + escapeHtml((unknownLabel && unknownLabel !== 'Not in catalog'
+        + escapeHtml((model.fitSource && unknownLabel
           ? unknownLabel
-          : 'Not in catalog · fit unknown') + fitSourceSuffix(model))
+          : jt('models.library.notInCatalogFitUnknown', 'Not in catalog · fit unknown')) + fitSourceSuffix(model))
         + '</span>';
     } else {
       fitHtml = '<span class="model-row-fit-text">'
@@ -381,7 +382,7 @@
       { status: 'idle', key: '', message: '' },
       objectOrEmpty(opts.activation)
     );
-    var name = String(model.displayName || model.tag || 'Local model');
+    var name = String(model.displayName || model.tag || jt('models.library.localModel', 'Local model'));
     var icon = Array.from(name.trim())[0] || '?';
     var stats = [
       model.params ? String(model.params) : '',
@@ -431,23 +432,23 @@
   function buildHardwareSummaryLine(hardware) {
     var profile = objectOrEmpty(hardware);
     if (profile.detected !== true) {
-      return '<div class="model-library-hardware-summary">Hardware not detected</div>';
+      return '<div class="model-library-hardware-summary">' + escapeHtml(jt('models.library.hardwareNotDetected', 'Hardware not detected')) + '</div>';
     }
     var parts = [];
     var unified = profile.type === 'metal' || profile.memoryArchitecture === 'unified';
     if (unified) {
-      parts.push(String(profile.name || 'Apple Silicon GPU'));
+      parts.push(String(profile.name || jt('models.library.appleSiliconGpu', 'Apple Silicon GPU')));
       if (positiveNumber(profile.unifiedMemoryMb)) {
-        parts.push(formatGb(profile.unifiedMemoryMb) + ' unified memory');
+        parts.push(jt('models.library.unifiedMemory', '{memory} unified memory', { memory: formatGb(profile.unifiedMemoryMb) }));
       }
     } else if (profile.type === 'cpu' || !positiveNumber(profile.vramMb)) {
-      parts.push('CPU inference');
+      parts.push(jt('models.library.cpuInference', 'CPU inference'));
     } else {
       parts.push(String(profile.name || 'GPU'));
       parts.push(formatGb(profile.vramMb) + ' VRAM');
     }
     if (positiveNumber(profile.ramAvailableMb)) {
-      parts.push(formatGb(profile.ramAvailableMb) + ' RAM available');
+      parts.push(jt('models.library.ramAvailable', '{memory} RAM available', { memory: formatGb(profile.ramAvailableMb) }));
     } else if (positiveNumber(profile.ramTotalMb)) {
       parts.push(formatGb(profile.ramTotalMb) + ' RAM');
     }
@@ -457,11 +458,11 @@
   function buildFilterChips(filter, counts) {
     var active = ['all', 'installed', 'recommended'].includes(filter) ? filter : 'all';
     var totals = objectOrEmpty(counts);
-    var allOptions = { id: 'all', label: 'All', pressed: active === 'all' };
-    var installedOptions = { id: 'installed', label: 'Installed', pressed: active === 'installed' };
+    var allOptions = { id: 'all', label: jt('models.library.all', 'All'), pressed: active === 'all' };
+    var installedOptions = { id: 'installed', label: jt('models.library.installed', 'Installed'), pressed: active === 'installed' };
     var recommendedOptions = {
       id: 'recommended',
-      label: 'Recommended',
+      label: jt('models.library.recommended', 'Recommended'),
       pressed: active === 'recommended',
     };
     if (Number.isInteger(totals.all) && totals.all >= 0) allOptions.count = totals.all;
@@ -471,7 +472,7 @@
     if (Number.isInteger(totals.recommended) && totals.recommended >= 0) {
       recommendedOptions.count = totals.recommended;
     }
-    return '<div class="model-library-filter-chips" role="group" aria-label="Filter models">'
+    return '<div class="model-library-filter-chips" role="group" aria-label="' + escapeHtml(jt('models.library.filterModels', 'Filter models')) + '">'
       + inventoryChip(allOptions)
       + inventoryChip(installedOptions)
       + inventoryChip(recommendedOptions)
@@ -529,7 +530,7 @@
         + buildHardwareSummaryLine(hardware)
         + buildFilterChips(filter, compactCounts)
         + '<div class="model-card-grid">'
-        + (cardHtml || '<div class="model-library-empty">No models match this filter.</div>')
+        + (cardHtml || '<div class="model-library-empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</div>')
         + '</div>'
         + '</div>';
     }
@@ -547,7 +548,7 @@
       + buildHardwareSummaryLine(hardware)
       + buildFilterChips(filter, counts)
       + '<div class="model-row-list">'
-      + (groupHtml || '<div class="model-library-empty">No models match this filter.</div>')
+      + (groupHtml || '<div class="model-library-empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</div>')
       + '</div>'
       + '</div>';
   }

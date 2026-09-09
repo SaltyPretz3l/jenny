@@ -6,7 +6,7 @@
 /* Per-row one-click revert affordance (a role="button" span, right-aligned). */
 .ide-changes-revert {
   flex-shrink: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 1px 7px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -52,7 +52,7 @@
 }
 
 .ide-diff-toolbar-actions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: flex;
   gap: 6px;
 }
@@ -67,7 +67,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 4px 2px 8px;
+  padding-block: 2px;
+  padding-inline-end: 4px;
+  padding-inline-start: 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--bg-surface);

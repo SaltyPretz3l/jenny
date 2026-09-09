@@ -5,6 +5,7 @@
   }
   root.rendererCompanionStateUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function toPlainObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   }
@@ -44,7 +45,7 @@
           }
         : {
             state: 'missing',
-            message: 'No workspace root is configured yet.',
+            message: jt('workspace.rootNudge.notConfiguredYet', 'No workspace root is configured yet.'),
           };
     return {
       workspaceRoot: String(source.workspaceRoot || '').trim(),
@@ -92,7 +93,7 @@
       id: String(source.id || '').trim(),
       kind: String(source.kind || '').trim() || 'note',
       status: String(source.status || '').trim() || 'active',
-      title: String(source.title || '').trim() || 'Open loop',
+      title: String(source.title || '').trim() || jt('companion.followUps.openLoop', 'Open loop'),
       body: String(source.body || '').trim(),
       followUpId: String(source.followUpId || '').trim(),
       sessionId: String(source.sessionId || '').trim(),

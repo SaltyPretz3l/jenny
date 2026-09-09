@@ -1,0 +1,103 @@
+{
+  "profile": "jenny-remote/v1",
+  "desktop_key": {
+    "public_raw": "SaPxCwtn0EVhQIJACsKEY97Q-iyXHc4_05oI4eR63hA",
+    "private_jwk": {
+      "key_ops": [
+        "deriveBits"
+      ],
+      "ext": true,
+      "crv": "X25519",
+      "d": "IOhXM_CY2XFF38--b8f8XTyNy6Fl0xlxks3PGd8Ijko",
+      "x": "SaPxCwtn0EVhQIJACsKEY97Q-iyXHc4_05oI4eR63hA",
+      "kty": "OKP"
+    }
+  },
+  "phone_key": {
+    "public_raw": "cth7FcfaLioDkWXN8PqZ-cvcg9-lMGHEa27v6IdFWxM",
+    "private_jwk": {
+      "key_ops": [
+        "deriveBits"
+      ],
+      "ext": true,
+      "crv": "X25519",
+      "d": "-Ko3_R0v8fbDq9gqJinsq_Q_4yA8bAFjOlWWnEzmXV0",
+      "x": "cth7FcfaLioDkWXN8PqZ-cvcg9-lMGHEa27v6IdFWxM",
+      "kty": "OKP"
+    }
+  },
+  "pairing_secret": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+  "relay_origin": "wss://relay.example:8443",
+  "route_id": "route_vector_1234567890",
+  "epoch": "epoch_vector_1234567890",
+  "connection_id": "connection_vector_123456",
+  "credential": {
+    "kind": "pairing",
+    "id": "pairing_vector_1234567890"
+  },
+  "transcript_hash": "k55tfZTbCMcOF53Fh_xpSJTfNXN3bIqQoA-_MhXky5Q",
+  "proof": "wJyA10GUTVgXPA4-Ig1uAOSKGQZVf8XunSkKvZvU-OE",
+  "frames": {
+    "d2p": {
+      "name": "d2p",
+      "header": {
+        "v": 1,
+        "route_id": "route_vector_1234567890",
+        "connection_id": "connection_vector_123456",
+        "epoch": "epoch_vector_1234567890",
+        "seq": 7
+      },
+      "plaintext": "eyJraW5kIjoiaGVsbG8iLCJkZXZpY2UiOiJwaG9uZSJ9",
+      "counter": 7,
+      "direction": 1,
+      "ciphertext": "7fFqAAC0FpVciIs_0gjapM0jN3F6iUggEYvL44PTDnh1WnHs-jvSdb3XJMA93TVVmQ"
+    },
+    "p2d": {
+      "name": "p2d",
+      "header": {
+        "v": 1,
+        "route_id": "route_vector_1234567890",
+        "connection_id": "connection_vector_123456",
+        "epoch": "epoch_vector_1234567890",
+        "seq": 11
+      },
+      "plaintext": "eyJraW5kIjoiaGVsbG8iLCJkZXZpY2UiOiJkZXNrdG9wIn0",
+      "counter": 11,
+      "direction": 2,
+      "ciphertext": "AhwJat6nKoCP9nNqTObyLdjxulp8j64QdpTZVeawgDuOa0SBPXBfIuozpGVGxhfxmCEm"
+    },
+    "high_d2p": {
+      "name": "high_d2p",
+      "header": {
+        "v": 1,
+        "route_id": "route_vector_1234567890",
+        "connection_id": "connection_vector_123456",
+        "epoch": "epoch_vector_1234567890",
+        "seq": 4294967301
+      },
+      "plaintext": "aGlnaCBjb3VudGVyIGRlc2t0b3AgdG8gcGhvbmU",
+      "counter": 4294967301,
+      "direction": 1,
+      "ciphertext": "ZR58xPk8DwGz8Lbh-8zsBpDol484GHPAIofrn4Xy2UFUGP_C6VZEG5HDHQBR"
+    },
+    "high_p2d": {
+      "name": "high_p2d",
+      "header": {
+        "v": 1,
+        "route_id": "route_vector_1234567890",
+        "connection_id": "connection_vector_123456",
+        "epoch": "epoch_vector_1234567890",
+        "seq": 4294967301
+      },
+      "plaintext": "aGlnaCBjb3VudGVyIHBob25lIHRvIGRlc2t0b3A",
+      "counter": 4294967301,
+      "direction": 2,
+      "ciphertext": "pUkudmnOPPzh6x_tvT0SocRxgYu-BUUF2Rg37s0j_C8AbxIW7WgBUOtiPRWy"
+    }
+  },
+  "route_credentials": {
+    "desktop_secret": "__79_Pv6-fj39vX08_Lx8O_u7ezr6uno5-bl5OPi4eA",
+    "route_id": "v1BLMfzEiC7qbrdTfdm9yyXO4-YcnsIb",
+    "route_token": "3c7HUQfiF29jEo_P2sqSZp3fYFce-U31cmBOg415BXw"
+  }
+}

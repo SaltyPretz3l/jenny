@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Buffer } = require('buffer');
+const { t } = require('./i18n-main');
 
 const LOG_TAIL_CHUNK_BYTES = 4096;
 
@@ -84,16 +85,18 @@ async function showSidecarCrashDialog({
   logTail = readSidecarLogTail(),
 } = {}) {
   const detailParts = [
-    String(appVersion || '').trim() ? `App version: ${String(appVersion).trim()}` : '',
+    String(appVersion || '').trim()
+      ? t('main.dialog.sidecarCrash.appVersion', 'App version: {version}', { version: String(appVersion).trim() })
+      : '',
     normalizeCrashDetail(detail),
-    logTail ? `Recent sidecar log lines:\n${logTail}` : '',
+    logTail ? t('main.dialog.sidecarCrash.recentLogs', 'Recent sidecar log lines:\n{logTail}', { logTail }) : '',
   ].filter(Boolean);
   return dialogImpl.showMessageBox(ownerWindow, {
     type: 'error',
-    title: 'Jenny Background Runtime Stopped',
-    message: "Jenny's managed sidecar exited unexpectedly.",
+    title: t('main.dialog.sidecarCrash.title', 'Jenny Background Runtime Stopped'),
+    message: t('main.dialog.sidecarCrash.message', "Jenny's managed sidecar exited unexpectedly."),
     detail: detailParts.join('\n\n'),
-    buttons: ['OK'],
+    buttons: [t('common.ok', 'OK')],
     defaultId: 0,
     noLink: true,
   });

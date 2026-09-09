@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "worker_version": 1,
+  "platform": "linux/amd64",
+  "base_image": "node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df",
+  "qualified_platforms": ["windows-x64"],
+  "source_files": [
+    "Dockerfile.worker",
+    "config/command-worker-image.json",
+    "server/worker/__init__.py",
+    "server/worker/supervisor.py",
+    "server/worker/job.py",
+    "server/worker/snapshot.py",
+    "server/worker/security.py",
+    "server/worker/protocol.py",
+    "server/worker/health.py",
+    "server/worker/relay.py"
+  ]
+}

@@ -31,6 +31,7 @@ function createMainWindowWithDeps({
   setMainWindow = () => {},
   getInitialAppZoomFactor = () => 1,
   getPortableAppearance = () => null,
+  getUiLanguage = () => 'en',
   revealWindowInactive = false,
   getWindowExitGuard = () => null,
 } = {}) {
@@ -190,9 +191,19 @@ function createMainWindowWithDeps({
   } catch (_error) {
     // Appearance projection is optional; the renderer falls back to storage.
   }
-  windowRef.loadFile(path.join(rootDir, 'index.html'), portableAppearance
-    ? { query: { jennyAppearance: JSON.stringify(portableAppearance) } }
-    : undefined);
+  const query = portableAppearance
+    ? { jennyAppearance: JSON.stringify(portableAppearance) }
+    : {};
+  try {
+    const uiLanguage = getUiLanguage();
+    if (typeof uiLanguage === 'string' && uiLanguage.length > 0) {
+      query.jennyUiLanguage = uiLanguage;
+    }
+  } catch (_error) {
+    // Language projection is optional; the renderer falls back to storage.
+  }
+  const loadOptions = Object.keys(query).length ? { query } : undefined;
+  windowRef.loadFile(path.join(rootDir, 'index.html'), loadOptions);
   log('INFO', 'window.created', {
     startupMs: getStartupElapsedMs(),
   });

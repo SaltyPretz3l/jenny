@@ -54,7 +54,10 @@ function makeShell(sessionId) {
           streamCounter += 1;
           state.sessions = [buildSession()];
           if (!state.messagesBySession.has(sessionId)) {
-            state.messagesBySession.set(sessionId, []);
+            state.messagesBySession.set(sessionId, [{
+              id: 'user_stream-rl-' + streamCounter, role: 'user',
+              content: _payload.visiblePrompt || _payload.prompt, status: 'complete',
+            }]);
           }
           return { sessionId, streamId: `stream-rl-${streamCounter}` };
         },
@@ -242,6 +245,12 @@ test('retried turn keeps text + approval block at the first tool event', async (
     approvalState: 'approved',
     durationMs: 20,
   });
+  // A terminal event follows canonical persistence in the real backend.
+  shell.__state.messagesBySession.set(sessionId,
+    window.__rendererState.messagesBySession.get(sessionId).map((message) => ({
+      ...message,
+      ...(message.id === assistant.id ? { content: PRE_TOOL_TEXT + '\n\nDone.', status: 'complete' } : {}),
+    })));
   await emit({
     type: 'complete',
     content: `${PRE_TOOL_TEXT}\n\nDone.`,

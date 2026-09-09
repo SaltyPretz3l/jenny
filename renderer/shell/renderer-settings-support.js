@@ -5,6 +5,7 @@
   }
   root.rendererSettingsSupport = factory(root.rendererSettingsFieldCopy || null);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (fieldCopyModule) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const getFieldCopy = fieldCopyModule && typeof fieldCopyModule.getSettingsFieldCopy === 'function'
     ? fieldCopyModule.getSettingsFieldCopy
     : function () { return null; };
@@ -62,7 +63,7 @@
     const text = s.busy ? (s.loadingModel ? 'Switching' : 'Unloading')
       : state === 'error' ? 'Error'
       : state === 'warn' ? 'Unavailable'
-      : (s.activeModel || 'Default backend');
+      : (s.activeModel || jt('settings.modelLibrary.defaultBackend', 'Default backend'));
     return { state, text };
   }
 
@@ -71,12 +72,12 @@
   // no dedicated container for this group this wave), appended after the
   // toggle-field rows. Visible only behind the web_search_providers flag.
   const WEB_SEARCH_PROVIDERS = Object.freeze([
-    Object.freeze({ value: 'duckduckgo', label: 'DuckDuckGo (default, no key)' }),
-    Object.freeze({ value: 'searxng', label: 'SearXNG (self-hosted URL)' }),
-    Object.freeze({ value: 'brave', label: 'Brave Search API' }),
-    Object.freeze({ value: 'tavily', label: 'Tavily' }),
-    Object.freeze({ value: 'serper', label: 'Serper.dev' }),
-    Object.freeze({ value: 'google_pse', label: 'Google Programmable Search' }),
+    Object.freeze({ value: 'duckduckgo', label: jt('settings.tools.webSearch.provider.duckDuckGo', 'DuckDuckGo (default, no key)') }),
+    Object.freeze({ value: 'searxng', label: jt('settings.tools.webSearch.provider.searxng', 'SearXNG (self-hosted URL)') }),
+    Object.freeze({ value: 'brave', label: jt('settings.tools.webSearch.provider.brave', 'Brave Search API') }),
+    Object.freeze({ value: 'tavily', label: jt('settings.tools.webSearch.provider.tavily', 'Tavily') }),
+    Object.freeze({ value: 'serper', label: jt('settings.tools.webSearch.provider.serper', 'Serper.dev') }),
+    Object.freeze({ value: 'google_pse', label: jt('settings.tools.webSearch.provider.googlePse', 'Google Programmable Search') }),
   ]);
   const WEB_SEARCH_PROVIDER_VALUES = WEB_SEARCH_PROVIDERS.map((entry) => entry.value);
   // Providers whose credential is a single secret-store key id matching the
@@ -129,26 +130,26 @@
     const parts = [];
     parts.push(selectFieldFn({
       id: 'webSearchProviderSelect',
-      label: 'Search provider',
+      label: jt('settings.tools.webSearch.providerLabel', 'Search provider'),
       value: webSearch.provider,
       options: WEB_SEARCH_PROVIDERS.map((entry) => ({ value: entry.value, label: entry.label })),
-      ariaLabel: 'Web search provider',
+      ariaLabel: jt('settings.tools.webSearch.providerAriaLabel', 'Web search provider'),
       dataset: { 'web-search-field': 'provider' },
     }));
     if (webSearch.provider === 'searxng') {
       parts.push(textFieldFn({
         id: 'webSearchSearxngUrlField',
-        label: 'SearXNG instance URL',
+        label: jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL'),
         value: webSearch.searxngUrl,
-        placeholder: 'https://searx.example.com',
-        ariaLabel: 'SearXNG instance URL',
+        placeholder: jt('settings.tools.webSearch.searxngUrlPlaceholder', 'https://searx.example.com'),
+        ariaLabel: jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL'),
         dataset: { 'web-search-field': 'searxngUrl' },
       }));
     }
     if (WEB_SEARCH_KEY_PROVIDERS.includes(webSearch.provider)) {
       parts.push(buildWebSearchKeyFieldMarkup({
         keyId: webSearch.provider,
-        label: 'API key',
+        label: jt('settings.tools.webSearch.apiKeyLabel', 'API key'),
         configured: configured[webSearch.provider] === true,
         textField: textFieldFn,
         actionButton: actionButtonFn,
@@ -157,7 +158,7 @@
       if (webSearch.provider === 'google_pse') {
         parts.push(buildWebSearchKeyFieldMarkup({
           keyId: 'google_pse_cx',
-          label: 'Search engine ID (cx)',
+          label: jt('settings.tools.webSearch.searchEngineIdLabel', 'Search engine ID (cx)'),
           configured: configured.google_pse_cx === true,
           textField: textFieldFn,
           actionButton: actionButtonFn,
@@ -165,17 +166,17 @@
         }));
       }
     }
-    const helpText = 'DuckDuckGo needs no configuration; other providers apply only when selected.';
+    const helpText = jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no configuration; other providers apply only when selected.');
     const testButton = typeof actionButtonFn === 'function' ? actionButtonFn({
       id: 'webSearchConnectionTest',
-      label: 'Test connection',
+      label: jt('settings.tools.webSearch.testConnection', 'Test connection'),
       variant: 'secondary',
       size: 'sm',
       dataset: { 'web-search-test': 'true' },
     }) : '';
     return `
       <div class="settings-group settings-group--flush" role="group" aria-labelledby="toolsWebSearchHeading" data-web-search-section="true">
-        <h4 class="settings-group-heading" id="toolsWebSearchHeading">Web search provider</h4>
+        <h4 class="settings-group-heading" id="toolsWebSearchHeading">${escapeHtmlFn(jt('settings.tools.webSearch.heading', 'Web search provider'))}</h4>
         ${parts.join('')}
         <div class="settings-actions">${testButton}</div>
         <div class="settings-note" data-web-search-test-status aria-live="polite"></div>
@@ -196,23 +197,23 @@
       label: source.label,
       value: '',
       type: 'password',
-      placeholder: source.configured === true ? 'Configured (hidden)' : 'Enter API key',
+      placeholder: source.configured === true ? jt('settings.tools.webSearch.configuredPlaceholder', 'Configured (hidden)') : jt('settings.tools.webSearch.enterApiKeyPlaceholder', 'Enter API key'),
       ariaLabel: source.label,
       dataset: { 'web-search-key-field': keyId },
     });
     const saveButtonMarkup = typeof source.actionButton === 'function'
       ? source.actionButton({
         id: `webSearchKeySave-${keyId}`,
-        label: 'Save key',
+        label: jt('settings.tools.webSearch.saveKey', 'Save key'),
         variant: 'secondary',
         size: 'sm',
-        ariaLabel: `Save ${source.label}`,
-        title: 'Save this API key',
+        ariaLabel: jt('settings.tools.webSearch.saveKeyAriaLabel', 'Save {label}', { label: source.label }),
+        title: jt('settings.tools.webSearch.saveKeyTitle', 'Save this API key'),
         dataset: { 'web-search-key-save': keyId },
       })
       : '';
     const hint = source.configured === true
-      ? `<span class="settings-note tools-config-field-help" data-web-search-key-hint="${escapeHtmlFn(keyId)}">Configured</span>`
+      ? `<span class="settings-note tools-config-field-help" data-web-search-key-hint="${escapeHtmlFn(keyId)}">${escapeHtmlFn(jt('common.configured', 'Configured'))}</span>`
       : '';
     return `
       <div class="tools-config-field-row" data-web-search-key-row="${escapeHtmlFn(keyId)}">
@@ -269,98 +270,113 @@
   const TOOL_CONFIG_TOGGLE_ID_PREFIX = 'settings-tool-config-';
   const RUN_MODES = Object.freeze(['ask', 'auto', 'plan']);
   const RUN_MODE_HELP = Object.freeze({
-    ask: 'Jenny asks before running tools that change things.',
-    auto: 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.',
-    plan: 'Read-only: Jenny plans first and presents it before acting.',
+    ask: jt('settings.runMode.help.ask', 'Jenny asks before running tools that change things.'),
+    auto: jt('runMode.help.auto', 'Tools run without asking. Python and explicit denies still ask; blocked commands are refused.'),
+    plan: jt('settings.runMode.help.plan', 'Read-only: Jenny plans first and presents it before acting.'),
+  });
+  const UI_LANGUAGE_TAGS = Object.freeze(['en', 'es', 'fr', 'de', 'it', 'pt-BR', 'nl', 'pl', 'ru', 'uk', 'tr', 'ar', 'hi', 'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW']);
+  const UI_LANGUAGE_LABELS = Object.freeze([
+    jt('settings.language.option.en', 'English'), jt('settings.language.option.es', 'Español (Spanish)'), jt('settings.language.option.fr', 'Français (French)'), jt('settings.language.option.de', 'Deutsch (German)'),
+    jt('settings.language.option.it', 'Italiano (Italian)'), jt('settings.language.option.ptBr', 'Português do Brasil (Brazilian Portuguese)'), jt('settings.language.option.nl', 'Nederlands (Dutch)'), jt('settings.language.option.pl', 'Polski (Polish)'),
+    jt('settings.language.option.ru', 'Русский (Russian)'), jt('settings.language.option.uk', 'Українська (Ukrainian)'), jt('settings.language.option.tr', 'Türkçe (Turkish)'), jt('settings.language.option.ar', 'العربية (Arabic)'),
+    jt('settings.language.option.hi', 'हिन्दी (Hindi)'), jt('settings.language.option.id', 'Bahasa Indonesia (Indonesian)'), jt('settings.language.option.vi', 'Tiếng Việt (Vietnamese)'), jt('settings.language.option.ja', '日本語 (Japanese)'),
+    jt('settings.language.option.ko', '한국어 (Korean)'), jt('settings.language.option.zhCn', '简体中文 (Simplified Chinese)'),
+    jt('settings.language.option.zhTw', '繁體中文 (Traditional Chinese)'),
+  ]);
+  const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
+  const SAFETY_MODE_LABELS = Object.freeze({
+    normal: jt('settings.safetyMode.option.normal', 'Normal'),
+    strict: jt('settings.safetyMode.option.strict', 'Strict'),
+    paranoid: jt('settings.safetyMode.option.paranoid', 'Paranoid'),
   });
   const DEFAULT_TOOL_CONFIG_FIELDS = Object.freeze([
     Object.freeze({
       key: 'imageRead',
-      label: 'Image and PDF reads',
+      label: jt('settings.tools.imageRead.label', 'Image and PDF reads'),
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: 'Allow read_file to expose image and PDF page-read affordances.',
+      helpText: jt('settings.tools.imageRead.description', 'Allow read_file to expose image and PDF page-read affordances.'),
       configFlag: 'tools_image_read_enabled',
       toolIds: Object.freeze(['read_file']),
     }),
     Object.freeze({
       key: 'fileTools',
-      label: 'File tools',
+      label: jt('settings.tools.fileTools.label', 'File tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: 'Allow workspace file tools. Availability still requires a workspace root.',
+      helpText: jt('settings.tools.fileTools.description', 'Allow workspace file tools. Availability still requires a workspace root.'),
       configFlag: '',
       toolIds: Object.freeze(['read_file', 'write_file', 'edit_file', 'delete_file', 'glob_files', 'grep_search', 'list_dir', 'create_artifact']),
     }),
     Object.freeze({
       key: 'richFiles',
-      label: 'Rich file tools',
+      label: jt('settings.tools.richFiles.label', 'Rich file tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: 'Allow read_file to return bounded structured inspection for PDF, spreadsheet, document, presentation, and notebook files.',
+      helpText: jt('settings.tools.richFiles.description', 'Allow read_file to return bounded structured inspection for PDF, spreadsheet, document, presentation, and notebook files.'),
       configFlag: 'tools_rich_files_enabled',
       toolIds: Object.freeze(['read_file']),
     }),
     Object.freeze({
       key: 'web',
-      label: 'Web tools',
+      label: jt('settings.tools.web.label', 'Web tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: 'Enable web_search and fetch_url for live web lookup.',
+      helpText: jt('settings.tools.web.description', 'Enable web_search and fetch_url for live web lookup.'),
       configFlag: 'tools_web_enabled',
       toolIds: Object.freeze(['web_search', 'fetch_url']),
     }),
     Object.freeze({
       key: 'pythonRuntime',
-      label: 'Python execution',
+      label: jt('settings.tools.pythonRuntime.label', 'Python execution'),
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: 'Enable resource-bounded local Python execution. It is not a filesystem or network sandbox and always requires approval.',
+      helpText: jt('settings.tools.pythonRuntime.description', 'Enable resource-bounded local Python execution. It is not a filesystem or network sandbox and always requires approval.'),
       configFlag: 'tools_python_runtime_enabled',
       toolIds: Object.freeze(['python_execute']),
     }),
     Object.freeze({
       key: 'worktree',
-      label: 'Worktree tools',
+      label: jt('settings.tools.worktree.label', 'Worktree tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: 'Enable Electron-local Git worktree setup tools.',
+      helpText: jt('settings.tools.worktree.description', 'Enable Electron-local Git worktree setup tools.'),
       configFlag: 'tools_worktree_enabled',
       toolIds: Object.freeze(['worktree_list', 'worktree_create', 'worktree_select', 'worktree_delete']),
     }),
     Object.freeze({
       key: 'subagents',
-      label: 'Delegated repository research',
+      label: jt('settings.tools.subagents.label', 'Delegated repository research'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: 'Bounded read-only repository research that may add model cost and latency.',
+      helpText: jt('settings.tools.subagents.description', 'Bounded read-only repository research that may add model cost and latency.'),
       configFlag: 'tools_subagents_enabled',
       toolIds: Object.freeze(['delegate']),
     }),
     Object.freeze({
       key: 'bash',
-      label: 'Terminal commands',
+      label: jt('settings.tools.bash.label', 'Terminal commands'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: 'Allow shell commands. Availability still requires a workspace root.',
+      helpText: jt('settings.tools.bash.description', 'Allow shell commands. Availability still requires a workspace root.'),
       configFlag: '',
       toolIds: Object.freeze(['run_command', 'run_temp_script', 'check_background_job', 'stop_background_job']),
     }),
     Object.freeze({
       key: 'lsp',
-      label: 'LSP code intelligence',
+      label: jt('settings.tools.lsp.label', 'LSP code intelligence'),
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: 'Enable read-only language-server diagnostics, symbols, definitions, and references.',
+      helpText: jt('settings.tools.lsp.description', 'Enable read-only language-server diagnostics, symbols, definitions, and references.'),
       configFlag: 'tools_lsp_enabled',
       toolIds: Object.freeze(['lsp']),
     }),
@@ -506,6 +522,60 @@
 
   const normalizeDefaultRunMode = normalizeRunMode;
 
+  function normalizeUiLanguageTag(value) {
+    if (typeof value !== 'string') return 'en';
+    const normalized = value.toLowerCase();
+    return UI_LANGUAGE_TAGS.find((tag) => tag.toLowerCase() === normalized) || 'en';
+  }
+  function normalizeSafetyMode(value) {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return SAFETY_MODES.includes(normalized) ? normalized : 'normal';
+  }
+  function normalizeUnattendedGuardMinutes(value) {
+    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return 10;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 10;
+    return parsed === 0 ? 0 : Math.min(120, Math.max(1, Math.trunc(parsed)));
+  }
+  function buildUiLanguageFieldMarkup(options) {
+    const source = isPlainObject(options) ? options : {};
+    const selectField = typeof source.selectField === 'function' ? source.selectField : getInventoryFn('selectField', 'inventorySelectField');
+    if (typeof selectField !== 'function') return '';
+    const copy = getFieldCopy('uiLanguageSelect');
+    const hint = jt('settings.language.hint', 'Applies after you restart Jenny. Translations other than English are machine-drafted previews; report anything odd.');
+    const tags = Array.isArray(globalThis.jennyI18n?.SUPPORTED_TAGS) ? globalThis.jennyI18n.SUPPORTED_TAGS : UI_LANGUAGE_TAGS;
+    return selectField({ id: 'uiLanguageSelect', label: copy?.label || jt('settings.language.label', 'Language'),
+      value: normalizeUiLanguageTag(source.value), options: tags.map((tag, index) => ({ value: tag, label: UI_LANGUAGE_LABELS[index] || tag })),
+      hint, ariaLabel: copy?.label || jt('settings.language.label', 'Language'), title: hint, tooltip: hint, dataset: { 'ui-language': 'true' } })
+      + selectField({ id: 'use24HourTimeSelect', label: jt('settings.timeFormat.label', '24-hour time'),
+        hint: jt('settings.timeFormat.description', 'Use 00:00–23:59 throughout Jenny and in the time context given to the model.'),
+        value: source.use24HourTime === true ? 'true' : 'false',
+        options: [{ value: 'false', label: jt('common.off', 'Off') }, { value: 'true', label: jt('common.on', 'On') }] });
+  }
+
+  function buildSafetyModeFieldMarkup(options) {
+    const source = isPlainObject(options) ? options : {};
+    const selectField = typeof source.selectField === 'function' ? source.selectField : getInventoryFn('selectField', 'inventorySelectField');
+    if (typeof selectField !== 'function') return '';
+    const copy = getFieldCopy('safetyModeSelect');
+    const hint = jt('settings.safetyMode.hint', 'Normal: the run mode decides which tools ask. Strict: also removes web search and browsing tools. Paranoid: every tool call asks, even in Auto. Applies from the next turn.');
+    return `<div class="settings-group settings-group--flush" data-safety-mode-field>${selectField({ id: 'safetyModeSelect', label: copy?.label || jt('settings.safetyMode.label', 'Safety mode'),
+      value: normalizeSafetyMode(source.value), options: SAFETY_MODES.map((mode) => ({ value: mode, label: SAFETY_MODE_LABELS[mode] })),
+      hint, ariaLabel: copy?.label || jt('settings.safetyMode.label', 'Safety mode'), title: hint, tooltip: hint, dataset: { 'safety-mode': 'true' } })}</div>`;
+  }
+
+  function buildUnattendedGuardFieldMarkup(options) {
+    const source = isPlainObject(options) ? options : {};
+    const numberInput = typeof source.numberInput === 'function' ? source.numberInput : getInventoryFn('numberInput', 'inventoryNumberInput');
+    if (typeof numberInput !== 'function') return '';
+    const copy = getFieldCopy('unattendedGuardMinutesInput');
+    const label = copy?.label || jt('settings.unattendedGuard.label', 'Pause Auto mode when you step away (minutes)');
+    const hint = jt('settings.unattendedGuard.hint', 'In Auto mode, if you have not touched the keyboard or mouse for this many minutes, the next tool call asks for approval instead of running. 0 turns the guard off. Approvals time out after 10 minutes.');
+    return '<div class="settings-group settings-group--flush" data-unattended-guard-field>' + numberInput({ id: 'unattendedGuardMinutesInput', label, value: normalizeUnattendedGuardMinutes(source.value), min: 0, max: 120,
+      step: 1, fallback: 10, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'unattended-guard-minutes': 'true' } })
+      + `<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
+  }
+
   function buildDefaultRunModeFieldMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     const selectField = typeof source.selectField === 'function'
@@ -514,18 +584,18 @@
     if (typeof selectField !== 'function') return '';
     const copy = getFieldCopy('defaultRunModeSelect');
     const hint = RUN_MODES.map((mode) => `${mode[0].toUpperCase()}${mode.slice(1)}: ${RUN_MODE_HELP[mode]}`)
-      .concat('Applies to new chats; the composer switcher changes the current chat.')
+      .concat(jt('settings.runMode.appliesToNewChats', 'Applies to new chats; the composer switcher changes the current chat.'))
       .join(' ');
     return `<div class="settings-group settings-group--flush" data-default-run-mode-field>${selectField({
       id: 'defaultRunModeSelect',
-      label: copy ? copy.label : 'Default run mode for new sessions',
+      label: copy ? copy.label : jt('settings.runMode.defaultLabel', 'Default run mode for new sessions'),
       value: normalizeDefaultRunMode(source.value),
       options: RUN_MODES.map((mode) => ({
         value: mode,
         label: `${mode[0].toUpperCase()}${mode.slice(1)}`,
       })),
       hint,
-      ariaLabel: copy ? copy.label : 'Default run mode for new sessions',
+      ariaLabel: copy ? copy.label : jt('settings.runMode.defaultLabel', 'Default run mode for new sessions'),
       dataset: { 'default-run-mode': 'true' },
     })}</div>`;
   }
@@ -537,6 +607,25 @@
     if (!target) return null;
     const value = typeof target.value === 'string' ? target.value.trim().toLowerCase() : '';
     return RUN_MODES.includes(value) ? { value } : null;
+  }
+
+  function resolveUiLanguageChangeEvent(event) {
+    const target = event?.target?.closest?.('[data-ui-language]');
+    if (!target) return null;
+    const value = normalizeUiLanguageTag(target.value);
+    return UI_LANGUAGE_TAGS.includes(target.value) ? { value } : null;
+  }
+
+  function resolveSafetyModeChangeEvent(event) {
+    const target = event?.target?.closest?.('[data-safety-mode]');
+    if (!target) return null;
+    const value = normalizeSafetyMode(target.value);
+    return SAFETY_MODES.includes(String(target.value).trim().toLowerCase()) ? { value } : null;
+  }
+
+  function resolveUnattendedGuardChangeEvent(event) {
+    const target = event?.target?.closest?.('[data-unattended-guard-minutes]');
+    return target ? { value: normalizeUnattendedGuardMinutes(target.value) } : null;
   }
 
   function encodeToolConfigToggleKey(key) {
@@ -558,13 +647,13 @@
       : defaultEscapeHtml;
     const renderToggle = getToggleSwitchRenderer(source.toggleSwitch);
     if (!renderToggle) {
-      return `<div class="settings-note">${escapeHtml('Tool controls are unavailable right now.')}</div>`;
+      return `<div class="settings-note">${escapeHtml(jt('settings.tools.controlsUnavailable', 'Tool controls are unavailable right now.'))}</div>`;
     }
     const tools = isPlainObject(source.tools) ? source.tools : {};
     const availability = isPlainObject(source.availability) ? source.availability : {};
     const fields = normalizeToolConfigFields(source.fields);
     if (!fields.length) {
-      return `<div class="settings-note">${escapeHtml('No optional tool capabilities are configured.')}</div>`;
+      return `<div class="settings-note">${escapeHtml(jt('settings.tools.noConfiguredCapabilities', 'No optional tool capabilities are configured.'))}</div>`;
     }
     return fields.map((field) => {
       const id = `${TOOL_CONFIG_TOGGLE_ID_PREFIX}${encodeToolConfigToggleKey(field.key)}`;
@@ -579,7 +668,7 @@
         noteParts.push(field.helpText);
       }
       if (disabled) {
-        noteParts.push('Currently blocked by runtime availability.');
+        noteParts.push(jt('settings.tools.blockedByRuntime', 'Currently blocked by runtime availability.'));
       }
       const noteMarkup = noteParts.length
         ? `<div class="settings-note tools-config-field-help">${escapeHtml(noteParts.join(' '))}</div>`
@@ -611,7 +700,7 @@
     const renderToggle = getToggleSwitchRenderer(source.toggleSwitch);
     const fields = Array.isArray(source.fields) ? source.fields : [];
     if (!renderToggle) {
-      return `<div class="settings-note">${escapeHtml('Controls are unavailable right now.')}</div>`;
+      return `<div class="settings-note">${escapeHtml(jt('settings.shell.controlsUnavailable', 'Controls are unavailable right now.'))}</div>`;
     }
     return fields
       .filter((field) => isPlainObject(field) && normalizeString(field.id))
@@ -682,19 +771,19 @@
     const parts = [];
     parts.push(textFieldFn({
       id: 'compactionPromptField',
-      label: promptCopy ? promptCopy.label : 'Custom summarization prompt',
+      label: promptCopy ? promptCopy.label : jt('settings.context.customSummarizationPromptLabel', 'Custom summarization prompt'),
       value: source.customPromptValue || '',
-      placeholder: 'Leave empty to use the built-in prompt',
+      placeholder: jt('settings.context.customSummarizationPromptPlaceholder', 'Leave empty to use the built-in prompt'),
       multiline: true,
       hint: promptCopy ? promptCopy.description : '',
-      ariaLabel: promptCopy ? promptCopy.label : 'Custom summarization prompt',
+      ariaLabel: promptCopy ? promptCopy.label : jt('settings.context.customSummarizationPromptLabel', 'Custom summarization prompt'),
       disabled,
       dataset: { 'compaction-field': 'customPrompt' },
     }));
     if (typeof actionButtonFn === 'function') {
       parts.push('<div class="settings-inline-actions">' + actionButtonFn({
         id: 'reset-compaction-prompt',
-        label: 'Reset guidance',
+        label: jt('settings.context.resetGuidance', 'Reset guidance'),
         variant: 'secondary',
         disabled: disabled || !String(source.customPromptValue || '').trim(),
       }) + '</div>');
@@ -764,7 +853,7 @@
               windowsOnly: true,
               workspaceRootStatus: {
                 state: 'missing',
-                message: 'No workspace root is configured yet.',
+                message: jt('settings.tools.workspaceNotConfigured', 'No workspace root is configured yet.'),
               },
             },
             tools: {},
@@ -790,11 +879,16 @@
             }
           : {
               state: 'missing',
-              message: 'No workspace root is configured yet.',
+              message: jt('settings.tools.workspaceNotConfigured', 'No workspace root is configured yet.'),
             };
     return {
       path: String(source.path || source.workspaceRoot || '').trim(),
       status,
+      // Settings normalizes shared renderer state; retain the coordinator's
+      // identity so rendering settings cannot invalidate later change reviews.
+      rootId: String(source.rootId ?? source.context?.rootId ?? '').trim(),
+      generation: Number.isSafeInteger(source.generation ?? source.context?.generation)
+        ? (source.generation ?? source.context.generation) : 0,
     };
   }
 
@@ -858,6 +952,10 @@
     encodeToolConfigToggleKey,
     decodeToolConfigToggleKey,
     getToolConfigFieldsForRender,
+    UI_LANGUAGE_TAGS,
+    buildUiLanguageFieldMarkup,
+    buildSafetyModeFieldMarkup,
+    buildUnattendedGuardFieldMarkup,
     buildDefaultRunModeFieldMarkup,
     buildToolConfigFieldListMarkup,
     buildSettingsToggleListMarkup,
@@ -866,6 +964,12 @@
     resolveToolConfigToggleEvent,
     normalizeRunMode,
     normalizeDefaultRunMode,
+    normalizeUiLanguageTag,
+    normalizeSafetyMode,
+    normalizeUnattendedGuardMinutes,
+    resolveUiLanguageChangeEvent,
+    resolveSafetyModeChangeEvent,
+    resolveUnattendedGuardChangeEvent,
     resolveDefaultRunModeChangeEvent,
     normalizeFeatureState,
     normalizeWorkspaceRootState,

@@ -47,7 +47,7 @@
   gap: 1px;
   min-width: 0;
   padding: var(--space-1);
-  border-left: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
 }
 
 .cal-week__allday-cell--weekend {
@@ -57,10 +57,10 @@
 .cal-week__allday-label {
   display: grid;
   align-items: center;
-  padding-right: var(--space-2);
+  padding-inline-end: var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-  text-align: right;
+  text-align: end;
 }
 
 .cal-allday-chip .cal-event {
@@ -74,7 +74,7 @@
   background: color-mix(in srgb, var(--cal-event-hue, var(--state-muted)) 14%, transparent);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
-  text-align: left;
+  text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -91,7 +91,7 @@
 
 .cal-week__allday-pop {
   top: calc(100% + var(--space-1));
-  left: var(--space-1);
+  inset-inline-start: var(--space-1);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -119,7 +119,7 @@
 
 .cal-week__hour {
   position: absolute;
-  right: var(--space-2);
+  inset-inline-end: var(--space-2);
   transform: translateY(-50%);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -130,7 +130,7 @@
 .cal-week__day {
   position: relative;
   height: 1440px;
-  border-left: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -151,8 +151,8 @@
 
 .cal-week__offhours {
   position: absolute;
-  right: 0;
-  left: 0;
+  inset-inline-end: 0;
+  inset-inline-start: 0;
   z-index: 1;
   background: color-mix(in srgb, var(--bg-base) 45%, transparent);
   pointer-events: none;
@@ -190,7 +190,7 @@
   background: var(--cal-event-bg);
   color: var(--cal-event-fg);
   font-size: var(--font-size-xs);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -223,7 +223,7 @@
 .cal-event__marker {
   position: absolute;
   top: 1px;
-  right: var(--space-1);
+  inset-inline-end: var(--space-1);
   font-size: var(--font-size-xs);
 }
 
@@ -233,8 +233,8 @@
 
 .cal-week__now-line {
   position: absolute;
-  right: 0;
-  left: 0;
+  inset-inline-end: 0;
+  inset-inline-start: 0;
   z-index: 3;
   height: 2px;
   background: var(--home-live-accent);
@@ -244,7 +244,7 @@
 .cal-week__now-line::before {
   position: absolute;
   top: 50%;
-  left: -4px;
+  inset-inline-start: -4px;
   width: 7px;
   height: 7px;
   transform: translateY(-50%);

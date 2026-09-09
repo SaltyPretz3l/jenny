@@ -21,6 +21,7 @@ const {
   registerFeatureIpcHandlers: registerFeatureIpcHandlersWithDeps,
 } = require('../feature-settings-service');
 const { registerPluginsRuntime } = require('./plugins-ipc-registration');
+const { registerRemoteIpc } = require('./remote-ipc-registration');
 const { registerChatGptPlanUsageIpc } = require('./chatgpt-plan-usage-ipc');
 const { registerClientLogIpcHandler } = require('./client-log-forwarding');
 const { createWindowExitGuard } = require('./window-exit-guard');
@@ -30,6 +31,7 @@ const {
   unauthorizedIpcResult,
 } = require('./ipc-sender-authorization');
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('../ipc-contract');
+const { t } = require('../i18n-main');
 const { WorkspaceIdeService } = require('../workspace-ide-service');
 const { WorkspaceImportService } = require('../workspace-import-service');
 const { VersionedWorkspaceFileService } = require('../versioned-workspace-file-service');
@@ -245,7 +247,7 @@ function registerKnowledgeIpcHandlers(
         return { ok: false, reason: 'picker_unavailable' };
       }
       const result = await dialog.showOpenDialog(getOwnerWindow(), {
-        title: 'Add Knowledge Folder',
+        title: t('main.dialog.knowledge.addFolder', 'Add Knowledge Folder'),
         properties: ['openDirectory'],
       });
       if (result.canceled || !Array.isArray(result.filePaths) || !result.filePaths[0]) {
@@ -356,6 +358,9 @@ function registerMainIpcHandlers({
       : createTrustedSenderAuthorizer({ getMainWindow, log }),
     unauthorizedResult: unauthorizedIpcResult,
   };
+  require('./command-sandbox-ipc-registration').registerCommandSandboxIpc(ipcMain, {
+    service: backendService.commandSandbox, authorization: workspaceAuthorization,
+  });
   registerWorkspaceIpcHandlers(ipcMain, shellConfigService, {
     authorization: workspaceAuthorization,
     getRootContext: () => backendService.workspaceRootCoordinator?.captureContext?.() || null,
@@ -627,16 +632,24 @@ function registerMainIpcHandlers({
   } else if (typeof app?.once === 'function') {
     app.once('will-quit', disposeExclusiveGpu);
   }
-  registerPluginsRuntime(ipcMain, {
+  const remoteLifecycle = getMainLifecycle?.();
+  const remoteIpc = registerRemoteIpc(ipcMain, { backendService,
+    secureStore: backendService?.secureStore || null, shellConfigService, env: processRef.env,
+    mainLifecycle: remoteLifecycle, getMainWindow, sendBridgeEvent, log });
+  const pluginsRuntime = registerPluginsRuntime(ipcMain, {
     app,
     backendService,
     processRef,
     getMainWindow,
     getMainLifecycle,
-    sendBridgeEvent,
+    sendBridgeEvent: remoteIpc.wrapBridgeEvents(sendBridgeEvent),
     showItemInFolderImpl,
     log,
   });
+  remoteIpc.attachPluginService(pluginsRuntime?.service || null);
+  if (typeof remoteLifecycle?.registerShutdownTask === 'function') {
+    remoteLifecycle.registerShutdownTask(remoteIpc.teardown);
+  } else if (typeof app?.once === 'function') app.once('will-quit', remoteIpc.teardown);
   // Composed AFTER registerPluginsRuntime so backendService.chatgptAuthService
   // (Stage 7 provider auth owner) already exists to attach the sign-out clear.
   const teardownChatgptPlanUsageIpc = registerChatGptPlanUsageIpc(ipcMain, {
@@ -705,7 +718,7 @@ function registerMainIpcHandlers({
     'sessions.list': () => backendService.listSessions(),
     'sessions.create': (_, payload) => backendService.createSession(payload),
     'sessions.rename': (_, sessionId, title) => backendService.renameSession(sessionId, title),
-    'sessions.delete': (_, sessionId) => backendService.deleteSession(sessionId),
+    'sessions.delete': (_, sessionId, options) => backendService.deleteSession(sessionId, options),
     'sessions.getMessages': (_, sessionId) => backendService.getSessionMessages(sessionId),
     'sessions.setPreferences': (_, sessionId, preferences) =>
       backendService.setSessionPreferences(sessionId, preferences),
@@ -784,7 +797,7 @@ function registerMainIpcHandlers({
         return {
           status: 'failed',
           code: 'setup_unavailable',
-          message: 'Setup service is unavailable.',
+          message: t('main.setup.unavailable', 'Setup service is unavailable.'),
         };
       }
       const model = String((payload && payload.model) || '').trim();
@@ -801,7 +814,7 @@ function registerMainIpcHandlers({
         return {
           status: 'failed',
           code: 'model_in_use',
-          message: `"${model}" is the currently loaded model. Unload it before deleting.`,
+          message: t('main.models.loadedModelDeleteBlocked', '"{model}" is the currently loaded model. Unload it before deleting.', { model }),
         };
       }
       return setupService.deleteOllamaModel(payload);

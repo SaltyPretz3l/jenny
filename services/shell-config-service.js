@@ -41,6 +41,7 @@ const {
   normalizeOfflineIntelligence,
   normalizePreferredEngineType,
   normalizeRunMode,
+  normalizeSafetyMode,
   normalizeSetupState,
   normalizeReminder,
   normalizeSkillSettings,
@@ -48,6 +49,8 @@ const {
   normalizeState,
   normalizeTipsSettings,
   normalizeToolsSettings,
+  normalizeUiLanguage,
+  normalizeUnattendedGuardMinutes,
   normalizeValidWorkspaceSessionIds,
   normalizeWebSearchSettings,
   normalizeWatcherGlobs,
@@ -143,6 +146,7 @@ class ShellConfigService extends EventEmitter {
     this._newerConfigVersion = 0;
     this._blockedConfigWriteLoggedForVersion = 0;
     const initialRawState = this.store.read({});
+    this._freshInstall = !Object.keys(initialRawState || {}).length;
     const initialVersion = normalizeConfigVersion(initialRawState?.version);
     const workspaceIdeDropCounts = collectWorkspaceIdeDropCounts(
       initialRawState?.workspaceIde || initialRawState?.workspace_ide,
@@ -299,6 +303,10 @@ class ShellConfigService extends EventEmitter {
     return cloneState(this.state);
   }
 
+  isFreshInstall() {
+    return this._freshInstall;
+  }
+
   getWorkspaceState() {
     return {
       activeSessionId: this.state.workspace.activeSessionId,
@@ -310,7 +318,17 @@ class ShellConfigService extends EventEmitter {
     return {
       ...this.state.chatUi,
       defaultRunMode: normalizeRunMode(this.state.defaultRunMode),
+      uiLanguage: normalizeUiLanguage(this.state.uiLanguage),
+      use24HourTime: this.state.use24HourTime === true,
+      safetyMode: normalizeSafetyMode(this.state.safetyMode),
+      unattendedGuardMinutes: normalizeUnattendedGuardMinutes(
+        this.state.unattendedGuardMinutes
+      ),
     };
+  }
+
+  getUiLanguage() {
+    return normalizeUiLanguage(this.state.uiLanguage);
   }
 
   getWindowUiState() {
@@ -576,8 +594,23 @@ class ShellConfigService extends EventEmitter {
   }
 
   updateChatUiSettings(patch = {}) {
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'use24HourTime')) {
+      const use24HourTime = patch.use24HourTime === true;
+      if (use24HourTime !== this.state.use24HourTime) {
+        this._writeState({ ...this.state, use24HourTime }, 'time_format_updated');
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'defaultRunMode')) {
       this.updateDefaultRunMode(patch.defaultRunMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'uiLanguage')) {
+      this.updateUiLanguage(patch.uiLanguage);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'safetyMode')) {
+      this.updateSafetyMode(patch.safetyMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'unattendedGuardMinutes')) {
+      this.updateUnattendedGuardMinutes(patch.unattendedGuardMinutes);
     }
     this._updateNormalizedSection(
       patch,
@@ -692,6 +725,15 @@ class ShellConfigService extends EventEmitter {
       safeEmitLog(this._logger, 'WARN', 'shell_config.workspace_flush_deferred', {});
     }
     return this.getWorkspaceState();
+  }
+
+  updateCommandSandbox(patch) {
+    if (!patch || Object.keys(patch).length !== 1 || typeof patch.enabled !== 'boolean') {
+      throw Object.assign(new Error('sandbox_settings_invalid'), { reason: 'sandbox_settings_invalid' });
+    }
+    const result = this._commitState({ ...this.state, commandSandbox: { enabled: patch.enabled } }, 'command_sandbox_updated');
+    if (!result.persisted) throw Object.assign(new Error('sandbox_config_write_failed'), { reason: 'sandbox_config_write_failed' });
+    return result.snapshot.commandSandbox;
   }
 
   updateFeatureSettings(patch = {}) {
@@ -856,6 +898,27 @@ class ShellConfigService extends EventEmitter {
     return this._writeState(
       { ...this.state, defaultRunMode },
       'default_run_mode_updated'
+    );
+  }
+
+  updateUiLanguage(value) {
+    const uiLanguage = normalizeUiLanguage(value);
+    if (uiLanguage === this.state.uiLanguage) return this.getState();
+    return this._writeState({ ...this.state, uiLanguage }, 'ui_language_updated');
+  }
+
+  updateSafetyMode(value) {
+    const safetyMode = normalizeSafetyMode(value);
+    if (safetyMode === this.state.safetyMode) return this.getState();
+    return this._writeState({ ...this.state, safetyMode }, 'safety_mode_updated');
+  }
+
+  updateUnattendedGuardMinutes(value) {
+    const unattendedGuardMinutes = normalizeUnattendedGuardMinutes(value);
+    if (unattendedGuardMinutes === this.state.unattendedGuardMinutes) return this.getState();
+    return this._writeState(
+      { ...this.state, unattendedGuardMinutes },
+      'unattended_guard_minutes_updated'
     );
   }
 

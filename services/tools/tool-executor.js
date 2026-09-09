@@ -442,7 +442,6 @@ class ToolExecutor {
       const durationMs = Date.now() - startTime;
       const isError = result.isError || false;
       const errorCode = isError ? normalizeToolErrorCode(result) : '';
-
       this._logger('DEBUG', 'tool.execution_completed', {
         callId,
         toolName,
@@ -450,7 +449,6 @@ class ToolExecutor {
         isError,
         errorCode,
       });
-
       return {
         callId,
         toolName,
@@ -460,6 +458,8 @@ class ToolExecutor {
         approvalState,
         durationMs,
         metadata: this._mergePolicyDecisionMetadata(result.metadata, policyDecision),
+        ...(toolName === 'preview_test' && tool.category === 'builtin' && input?.screenshot === true && !isError
+          ? { previewImage: result.previewImage } : {}),
         errorCode,
       };
     } catch (error) {

@@ -105,7 +105,7 @@
   color: var(--text-muted);
   font-size: var(--tl-font-meta);
   white-space: nowrap;
-  text-align: right;
+  text-align: end;
 }
 
 .tool-kv-row--block .tool-kv-value--block {
@@ -182,7 +182,7 @@
 .python-table-output td {
   border: 1px solid var(--widget-tool-border);
   padding: var(--space-2) var(--space-4);
-  text-align: left;
+  text-align: start;
 }
 
 .python-output-error {
@@ -380,7 +380,7 @@
   padding: var(--space-5) var(--space-7);
   color: color-mix(in srgb, var(--widget-tool-color) 74%, white 8%);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
@@ -403,8 +403,8 @@
   flex: 0 0 auto;
   width: 9px;
   height: 9px;
-  margin-left: var(--space-1);
-  border-right: 1.5px solid currentColor;
+  margin-inline-start: var(--space-1);
+  border-right: 1.5px solid currentColor; /* rtl:physical */
   border-bottom: 1.5px solid currentColor;
   transform: rotate(45deg);
   transform-origin: center;
@@ -472,8 +472,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding-left: var(--space-6);
-  border-left: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
+  padding-inline-start: var(--space-6);
+  border-inline-start: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
 }
 
 .interactive-recap-question {
@@ -489,8 +489,10 @@
 }
 
 .interactive-recap-empty {
-  padding: var(--space-3) 0 var(--space-1) var(--space-6);
-  border-left: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
+  padding-block: var(--space-3) var(--space-1);
+  padding-inline-start: var(--space-6);
+  padding-inline-end: 0;
+  border-inline-start: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
   color: color-mix(in srgb, var(--widget-tool-color) 64%, white 8%);
   font-size: calc(12.5px * var(--chat-zoom-factor, 1));
   line-height: 1.4;
@@ -564,7 +566,7 @@
 }
 
 .tool-result-row .tool-result-duration {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* Combined tool card (.tool-call-row .tool-result-body) styling lives in
@@ -640,7 +642,7 @@
 }
 
 .approval-gap-row .tool-approval-block {
-  padding-left: var(--space-5);
+  padding-inline-start: var(--space-5);
 }
 
 @media (prefers-reduced-motion: reduce) {

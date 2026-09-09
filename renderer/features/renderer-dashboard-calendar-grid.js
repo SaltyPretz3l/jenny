@@ -16,12 +16,13 @@
   }
   root.rendererDashboardCalendarGrid = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const {
     addLocalDays, formatLocalDate, formatTimeShort, parseLocalDateTime, startOfLocalDay,
   } = windowRef.rendererDashboardWidgetsCore
     || (typeof require === 'function' ? require('./renderer-dashboard-widgets-core') : {});
-
   const MINUTES_PER_DAY = 1440;
   const MIN_BLOCK_PX = 18;
   const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -80,17 +81,17 @@
 
   function formatWeekRangeLabel(weekStart) {
     const weekEnd = addLocalDays(weekStart, 6);
-    const startLabel = `${weekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+    const startLabel = `${weekStart.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric' })}`;
     const endLabel = weekStart.getMonth() === weekEnd.getMonth()
       ? String(weekEnd.getDate())
-      : weekEnd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      : weekEnd.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric' });
     return `${startLabel} – ${endLabel}`;
   }
 
   // Full, unabbreviated date for screen-reader labels ("Monday, June 9") so a
   // day column/header announces its date rather than the bare "Mon 9" text.
   function formatFullDateLabel(date) {
-    return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    return date.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long', month: 'long', day: 'numeric' });
   }
 
   // Greedy interval lane packing: blocks sorted by start claim the first free
@@ -148,14 +149,14 @@
     if (readonly) {
       dataset['cal-readonly'] = '1';
     }
-    const title = String(instance.title || '').trim() || '(no title)';
+    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
     // Recurrence-unsupported (↻) and approximate-time (~) hints share one
     // corner marker; the title carries the full reason for assistive tech.
     const markerGlyphs = `${instance.recurrenceUnsupported === true ? '↻' : ''}`
       + `${instance.tzApprox === true ? '~' : ''}`;
     const markerTitle = [
-      instance.recurrenceUnsupported === true ? 'Recurrence only partially supported' : '',
-      instance.tzApprox === true ? 'Approximate time (unrecognized feed time zone)' : '',
+      instance.recurrenceUnsupported === true ? jt('dashboard.calendar.agenda.partialRecurrence', 'Recurrence only partially supported') : '',
+      instance.tzApprox === true ? jt('dashboard.calendar.agenda.approximateFeedTime', 'Approximate time (unrecognized feed time zone)') : '',
     ].filter(Boolean).join('; ');
     const marker = markerGlyphs
       ? `<span class="cal-event__marker" title="${escapeHtml(markerTitle)}">${markerGlyphs}</span>`
@@ -243,15 +244,15 @@
     const popoverId = `calAllDayPop-${dayKey}`;
     const count = overflow.length;
     return visibleMarkup + chip({
-      label: `+${count} more`,
+      label: jt('dashboard.calendar.grid.moreCount', '+{count} more', { count }),
       hasPopup: true,
       ariaControls: popoverId,
-      ariaLabel: `${count} more all-day event${count === 1 ? '' : 's'} on ${fullLabel}`,
-      title: `${count} more all-day event${count === 1 ? '' : 's'} on ${fullLabel}`,
+      ariaLabel: jtn('dashboard.calendar.grid.moreAllDayEvents', count, { count, date: fullLabel }, '{count} more all-day event on {date}', '{count} more all-day events on {date}'),
+      title: jtn('dashboard.calendar.grid.moreAllDayEvents', count, { count, date: fullLabel }, '{count} more all-day event on {date}', '{count} more all-day events on {date}'),
       className: 'cal-week__allday-more',
     }) + popover({
       domId: popoverId,
-      ariaLabel: `More all-day events on ${fullLabel}`,
+      ariaLabel: jt('dashboard.calendar.grid.moreAllDayEventsOn', 'More all-day events on {date}', { date: fullLabel }),
       className: 'cal-week__allday-pop',
       trustedHtml: overflow.map((instance) => buildAllDayChip(actionButton, instance)).join(''),
     });
@@ -327,7 +328,7 @@
 
     const allDayCells = days.map((day) =>
       `<div class="cal-week__allday-cell${day.getDay() === 0 || day.getDay() === 6 ? ' cal-week__allday-cell--weekend' : ''}" role="gridcell"`
-      + ` aria-label="${escapeHtml(`All-day events, ${formatFullDateLabel(day)}`)}"`
+      + ` aria-label="${escapeHtml(jt('dashboard.calendar.grid.allDayEventsLabel', 'All-day events, {date}', { date: formatFullDateLabel(day) }))}"`
       + ` data-cal-day="${formatLocalDate(day)}">`
       + buildAllDayChips(allDayDeps, day, safeInstances)
       + '</div>'
@@ -351,8 +352,8 @@
     // failure or a bare grid.
     const scrollBody = isEmpty
       ? '<div class="cal-week__empty">'
-        + '<span class="cal-week__empty-title">No events this week</span>'
-        + '<span class="cal-week__empty-hint">Use New or press n to add one</span>'
+        + '<span class="cal-week__empty-title">' + escapeHtml(jt('dashboard.calendar.grid.noEventsThisWeek', 'No events this week')) + '</span>'
+        + '<span class="cal-week__empty-hint">' + escapeHtml(jt('dashboard.calendar.grid.addEventHint', 'Use New or press n to add one')) + '</span>'
         + '</div>'
       : '<div class="cal-week__scroll" data-cal-scroll="1" role="presentation">'
         + `<div class="cal-week__canvas" role="row">${buildHourGutter()}${dayColumns}</div>`
@@ -360,7 +361,7 @@
 
     return ''
       + `<div class="cal-week" role="grid"`
-      + ` aria-label="${escapeHtml(`Week calendar, ${formatWeekRangeLabel(weekStart)}`)}"`
+      + ` aria-label="${escapeHtml(jt('dashboard.calendar.grid.weekLabel', 'Week calendar, {range}', { range: formatWeekRangeLabel(weekStart) }))}"`
       + ` data-week-start="${formatLocalDate(weekStart)}">`
       + '<div class="cal-week__header" role="row">'
       + '<div class="cal-week__gutter-spacer" role="presentation"></div>'

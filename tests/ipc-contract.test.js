@@ -89,6 +89,27 @@ test('llamaServer invoke descriptors use the seven canonical unique channels', (
   assert.equal(new Set(channels).size, channels.length);
 });
 
+test('remote control descriptors use the eleven canonical unique channels', () => {
+  const expected = {
+    'remote.getState': ['invoke', 'remote:get-state'],
+    'remote.enable': ['invoke', 'remote:enable'],
+    'remote.disable': ['invoke', 'remote:disable'],
+    'remote.openPairing': ['invoke', 'remote:open-pairing'],
+    'remote.revokeDevice': ['invoke', 'remote:revoke-device'],
+    'remote.forgetAll': ['invoke', 'remote:forget-all'],
+    'remote.setRelay': ['invoke', 'remote:set-relay'],
+    'remote.shareSession': ['invoke', 'remote:share-session'],
+    'remote.unshareSession': ['invoke', 'remote:unshare-session'],
+    'remote.takeControl': ['invoke', 'remote:take-control'],
+    'remote.onStateChanged': ['subscribe', 'remote:state-changed'],
+  };
+  for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
+    assert.equal(getBridgeChannel(methodPath, kind), channel);
+  }
+  assert.equal(new Set(Object.values(expected).map((entry) => entry[1])).size, 11);
+});
+
 test('registerIpcInvokeHandlers registers only descriptor-backed invoke channels', () => {
   const registrations = [];
   const ipcMainLike = {

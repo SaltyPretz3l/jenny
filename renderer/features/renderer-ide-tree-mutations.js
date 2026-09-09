@@ -6,6 +6,7 @@
   }
   root.rendererIdeTreeMutations = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -97,8 +98,8 @@
       }
       const name = String(rawValue || '').trim();
       if (!isQolEnabled() && !isValidEntryName(name)) {
-        showError('Enter a valid file or folder name (no path separators).', {
-          title: 'Workspace',
+        showError(jt('ide.treeMutations.invalidName', 'Enter a valid file or folder name (no path separators).'), {
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:name',
         });
         return;
@@ -123,9 +124,9 @@
         ? api?.createFile
         : edit.mode === 'create-directory' ? api?.createDirectory : api?.rename;
       if (typeof operation !== 'function') {
-        const message = 'Workspace file access is unavailable; nothing was changed.';
+        const message = jt('ide.treeMutations.fileAccessUnavailableForChange', 'Workspace file access is unavailable; nothing was changed.');
         showError(message, {
-          title: 'Workspace',
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:no-bridge',
         });
         if (isQolEnabled()) editSession.paintError?.(message, { edit });
@@ -166,9 +167,9 @@
       } catch (error) {
         if (preflight) cancelMutationPreflight(preflight);
         if (editEpoch !== getRootEpoch()) return;
-        const message = toMessage(error, 'The file operation failed.');
+        const message = toMessage(error, jt('ide.treeMutations.operationFailed', 'The file operation failed.'));
         showError(message, {
-          title: 'Workspace',
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:op',
         });
         if (isQolEnabled()) editSession.paintError?.(message, { edit });
@@ -182,8 +183,8 @@
       const deleteEpoch = getRootEpoch();
       const api = getApi();
       if (typeof api?.delete !== 'function') {
-        showError('Workspace file access is unavailable; nothing was deleted.', {
-          title: 'Workspace',
+        showError(jt('ide.treeMutations.fileAccessUnavailableForDelete', 'Workspace file access is unavailable; nothing was deleted.'), {
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:no-bridge',
         });
         return false;
@@ -193,8 +194,8 @@
         context = await captureMutationContext();
       } catch (error) {
         if (deleteEpoch !== getRootEpoch()) return false;
-        showError(toMessage(error, 'The workspace root is unavailable.'), {
-          title: 'Workspace', dedupeKey: 'ide:tree:delete-context',
+        showError(toMessage(error, jt('ide.treeMutations.rootUnavailable', 'The workspace root is unavailable.')), {
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'), dedupeKey: 'ide:tree:delete-context',
         });
         return false;
       }
@@ -208,8 +209,8 @@
         if (deleteEpoch !== getRootEpoch()) { cancelMutationPreflight(preflight); return false; }
       } catch (error) {
         cancelMutationPreflight(preflight);
-        showError(toMessage(error, 'Could not delete the item.'), {
-          title: 'Workspace',
+        showError(toMessage(error, jt('ide.treeMutations.deleteFailed', 'Could not delete the item.')), {
+          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:delete',
         });
         appendClientLog('WARN', 'ide.tree_delete_failed', { message: String(error?.message || error || '') });

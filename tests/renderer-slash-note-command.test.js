@@ -3,6 +3,13 @@ const assert = require('node:assert/strict');
 
 const { createNoteCommandHandler } = require('../renderer/chat/renderer-slash-note-command.js');
 
+const NOTE_COMMAND_PATH = require.resolve('../renderer/chat/renderer-slash-note-command.js');
+
+test.afterEach(() => {
+  delete globalThis.jennyI18n;
+  delete require.cache[NOTE_COMMAND_PATH];
+});
+
 function harness(overrides = {}) {
   const toasts = [];
   const logs = [];
@@ -51,13 +58,32 @@ test('an error result is surfaced to the user', async () => {
   assert.deepEqual(toasts, [['Could not save the note.', { title: 'Scratchpad', tone: 'warning' }]]);
 });
 
-test('the allowlisted note-full failure stays actionable', async () => {
+test('the stable note-full failure stays actionable', async () => {
   const { deps, toasts } = harness({
-    captureToScratchpad: () => Promise.resolve({ error: 'This note is full — switch to another note.' }),
+    captureToScratchpad: () => Promise.resolve({ code: 'note_full', error: 'This note is full — switch to another note.' }),
   });
   const result = await createNoteCommandHandler(deps)({ args: 'hello' });
   assert.equal(result.code, 'note_full');
   assert.match(toasts[0][0], /note is full/i);
+});
+
+test('the stable note_full code survives translated action copy', async () => {
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  i18n.load({ tag: 'qps-ploc', strings: {
+    'dashboard.scratchpad.actions.noteFull': '[Nøţę fűļļ]',
+    'composer.slash.scratchpadTitle': '[Scråtchpad]',
+  } });
+  globalThis.jennyI18n = i18n;
+  delete require.cache[NOTE_COMMAND_PATH];
+  const { createNoteCommandHandler: createLocalizedHandler } = require(NOTE_COMMAND_PATH);
+  const { deps, toasts } = harness({
+    captureToScratchpad: () => Promise.resolve({ code: 'note_full', error: '[Nøţę fűļļ]' }),
+  });
+
+  const result = await createLocalizedHandler(deps)({ args: 'hello' });
+
+  assert.equal(result.code, 'note_full');
+  assert.deepEqual(toasts, [['[Nøţę fűļļ]', { title: '[Scråtchpad]', tone: 'warning' }]]);
 });
 
 test('a thrown capture is logged and toasts a friendly failure', async () => {

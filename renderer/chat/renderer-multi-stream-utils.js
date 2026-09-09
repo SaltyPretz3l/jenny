@@ -451,6 +451,43 @@
       return [...pending];
     }
 
+    // Attention is presentation only: a waiting request still owns its stream.
+    // Read only the requested sessions and their current turn, never history lists.
+    function getSessionAttentionStates(sessionIds) {
+      const state = getState();
+      const ids = new Set((sessionIds || []).map(normalizeToken).filter(Boolean));
+      const attention = new Map();
+      for (const approval of state?.pendingToolApprovals?.values?.() || []) {
+        const id = normalizeToken(approval?.sessionId);
+        const streamId = normalizeToken(approval?.streamId);
+        const activeStreamId = getStreamIdForSession(id);
+        if (!ids.has(id) || (streamId && (isStreamFinalized(streamId)
+          || (activeStreamId && activeStreamId !== streamId)))) continue;
+        const kind = approval?.toolName === 'exit_plan_mode' ? 'plan_review' : 'approval';
+        if (attention.get(id) !== 'approval') attention.set(id, kind);
+      }
+      for (const id of ids) {
+        const streamId = getStreamIdForSession(id);
+        if (attention.has(id) || !streamId || isStreamFinalized(streamId)) continue;
+        const messages = state?.messagesBySession?.get?.(id) || [];
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const message = messages[index];
+          if (message?.role === 'user') break;
+          const tool = message?.tool_call;
+          if (message?.kind === 'tool_use' && tool?.parent_stream_id === streamId
+            && tool.status === 'pending_approval') {
+            attention.set(id, tool.tool_name === 'exit_plan_mode' ? 'plan_review' : 'approval');
+            break;
+          }
+          if (message?.kind === 'tool_use' && tool?.parent_stream_id === streamId
+            && tool.status === 'pending_user_input' && !tool.user_questions_stale) {
+            attention.set(id, 'input_needed');
+          }
+        }
+      }
+      return attention;
+    }
+
     function dispose() {
       activeStreamsBySession.clear();
       streamSessionById.clear();
@@ -499,6 +536,7 @@
       getActiveStreamIdForCancel,
       isCancelStreamRefused,
       getApprovalPendingSessionIds,
+      getSessionAttentionStates,
       dispose,
     };
   }

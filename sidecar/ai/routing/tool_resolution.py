@@ -7,6 +7,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from sidecar.ai.context.builder import looks_like_current_info_request
+from sidecar.ai.execution_policy import (
+    ELECTRON_TOOL_BRIDGE_SERVER_NAME,
+    desktop_policy_is_enforced,
+)
+from sidecar.ai.host_policy import host_execution_worker_enabled
 from sidecar.ai.tools.assembly import (
     ToolAssemblyContext,
     tool_preference_set,
@@ -19,13 +24,13 @@ from sidecar.ai.tools.catalog import (
     MANAGED_SIDECAR_SURFACE,
     build_tool_catalog,
     electron_owned_manifest_entries,
+    manifest_tool_entry,
 )
 from sidecar.ai.tools.tool_search import hidden_unexposed_tool_names
 from sidecar.runtime.chat_models import ChatRequestContext
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
-ELECTRON_TOOL_BRIDGE_SERVER_NAME = "electron_tool_bridge"
 
 
 def _config_bool(config: Any, key: str) -> bool:
@@ -49,10 +54,19 @@ def _electron_bridge_runtime_descriptors(config: Any) -> tuple[Any, ...]:
     no error anywhere. ``ask_user`` fell through exactly that hole while the
     plan-mode prompt was instructing the model to call it.
     """
-    if not _config_bool(config, "electron_tool_bridge_enabled"):
+    sandbox = desktop_policy_is_enforced(config)
+    if not _config_bool(config, "electron_tool_bridge_enabled") and not sandbox:
         return ()
+    entries = list(electron_owned_manifest_entries())
+    has_run_command = any(
+        str(entry.get("name") or "").strip() == "run_command" for entry in entries
+    )
+    if sandbox and not has_run_command:
+        run_command_entry = manifest_tool_entry("run_command")
+        if run_command_entry is not None:
+            entries.append(run_command_entry)
     descriptors: list[Any] = []
-    for entry in electron_owned_manifest_entries():
+    for entry in entries:
         name = str(entry.get("name") or "").strip()
         if not name:
             continue
@@ -84,6 +98,28 @@ def _electron_bridge_runtime_descriptors(config: Any) -> tuple[Any, ...]:
                 source_kind="builtin",
                 tool_family=str(entry.get("tool_family") or "runtime").strip() or "runtime",
                 server_tool_name=name,
+            )
+        )
+    # ``run_command`` remains sidecar-owned for desktop compatibility. In the
+    # v2 hosted profile its descriptor is redirected to the Electron bridge;
+    # the builtin MCP handler is kept disabled at the direct-dispatch seam.
+    if host_execution_worker_enabled(config) and "run_command" not in {
+        str(item.name or "").strip() for item in descriptors
+    }:
+        entry = manifest_tool_entry("run_command") or {}
+        descriptors.append(
+            SimpleNamespace(
+                name="run_command",
+                description=str(entry.get("description") or "").strip(),
+                input_schema=entry.get("parameters")
+                if isinstance(entry.get("parameters"), dict)
+                else {"type": "object", "properties": {}},
+                side_effecting=True,
+                read_only=False,
+                server_name=ELECTRON_TOOL_BRIDGE_SERVER_NAME,
+                source_kind="builtin",
+                tool_family="shell",
+                server_tool_name="run_command",
             )
         )
     return tuple(descriptors)

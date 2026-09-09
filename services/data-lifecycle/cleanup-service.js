@@ -194,8 +194,19 @@ function listUnknownUserDataChildren(userDataPath) {
 }
 
 async function cleanupJennyData(options = {}) {
+  // Validate the filesystem targets first so an invalid request cannot delete
+  // the pairing record and then throw without a receipt.
   const targets = buildCleanupTargets(options);
   const results = [];
+  if (typeof options.secureStore?.deleteRemoteControlRecord === 'function') {
+    const target = { kind: 'remote_control', name: 'remote control pairing record' };
+    try {
+      await Promise.resolve(options.secureStore.deleteRemoteControlRecord());
+      results.push(cleanupResult(target, 'removed'));
+    } catch (error) {
+      results.push(cleanupResult(target, 'retained', boundedFsReason(error, 'remove_failed')));
+    }
+  }
   for (const target of targets) {
     if (!validateCleanupTarget(target)) {
       results.push(cleanupResult(target, 'retained', 'unsafe_target'));

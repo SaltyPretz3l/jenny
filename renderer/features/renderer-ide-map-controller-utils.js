@@ -41,6 +41,7 @@
   root.rendererIdeMapControllerUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRefForOwnership = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -209,14 +210,14 @@
 
   function formatCount(value) {
     const count = Number(value);
-    return Number.isFinite(count) && count >= 0 ? Math.floor(count).toLocaleString('en-US') : '0';
+    return Number.isFinite(count) && count >= 0 ? Math.floor(count).toLocaleString(globalThis.jennyI18n?.tag?.()) : '0';
   }
 
   function formatBytes(value) {
     const bytes = Number(value);
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-    if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MiB`;
-    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KiB`;
+    if (bytes >= 1024 * 1024) return jt('ide.map.bytesMib', '{count} MiB', { count: Math.round(bytes / (1024 * 1024)) });
+    if (bytes >= 1024) return jt('ide.map.bytesKib', '{count} KiB', { count: Math.round(bytes / 1024) });
     return `${Math.floor(bytes)} B`;
   }
 
@@ -230,41 +231,41 @@
     const parts = [];
     if (enumeration.truncated === true || reasons.includes('enumeration_limit')) {
       const label = enumeration.reason === 'time_limit'
-        ? 'Enumeration time limit'
+        ? jt('ide.map.enumerationTimeLimit', 'Enumeration time limit')
         : enumeration.reason === 'file_limit'
-          ? 'Enumeration file limit'
+          ? jt('ide.map.enumerationFileLimit', 'Enumeration file limit')
           : enumeration.reason === 'directory_limit'
-            ? 'Enumeration directory limit'
+            ? jt('ide.map.enumerationDirectoryLimit', 'Enumeration directory limit')
             : enumeration.reason === 'entry_limit'
-              ? 'Enumeration entry limit'
+              ? jt('ide.map.enumerationEntryLimit', 'Enumeration entry limit')
               : enumeration.reason === 'io_error'
                 ? 'Enumeration I/O errors'
-                : 'Enumeration incomplete';
-      parts.push(`${label} after ${formatCount(enumeration.filesScanned)} files (${formatCount(enumeration.entriesScanned)} entries)`);
+                : jt('ide.map.enumerationIncomplete', 'Enumeration incomplete');
+      parts.push(jt('ide.map.enumerationStoppedAfter', '{label} after {files} files ({entries} entries)', { label, files: formatCount(enumeration.filesScanned), entries: formatCount(enumeration.entriesScanned) }));
     }
     if (reasons.includes('content_byte_limit')) {
-      parts.push(`Dependency content analyzed for ${formatCount(budget.dependencyFilesAnalyzed)}/${formatCount(budget.dependencyFilesEligible)} files (${formatBytes(budget.contentByteLimit)} cap)`);
+      parts.push(jt('ide.map.dependencyContentAnalyzed', 'Dependency content analyzed for {analyzed}/{eligible} files ({cap} cap)', { analyzed: formatCount(budget.dependencyFilesAnalyzed), eligible: formatCount(budget.dependencyFilesEligible), cap: formatBytes(budget.contentByteLimit) }));
     }
     if (Number(budget.contentReadFailures) > 0) {
-      parts.push(`${formatCount(budget.contentReadFailures)} content read failures`);
+      parts.push(jt('ide.map.contentReadFailures', '{count} content read failures', { count: formatCount(budget.contentReadFailures) }));
     }
     const labels = {
-      file_limit: 'File limit reached',
-      git_scope_limit: 'Git scope limited',
-      cochange_commit_limit: 'Co-change history limited',
-      bucket_limit: 'Ignored-file buckets limited',
-      node_limit: 'Graph node limit reached',
-      edge_limit: 'Graph edge limit reached',
-      cochange_pair_limit: 'Co-change pair limit reached',
-      bulk_commit_skipped: 'Large commits omitted from co-change analysis',
+      file_limit: jt('ide.map.fileLimitReached', 'File limit reached'),
+      git_scope_limit: jt('ide.map.gitScopeLimited', 'Git scope limited'),
+      cochange_commit_limit: jt('ide.map.cochangeHistoryLimited', 'Co-change history limited'),
+      bucket_limit: jt('ide.map.ignoredBucketsLimited', 'Ignored-file buckets limited'),
+      node_limit: jt('ide.map.graphNodeLimitReached', 'Graph node limit reached'),
+      edge_limit: jt('ide.map.graphEdgeLimitReached', 'Graph edge limit reached'),
+      cochange_pair_limit: jt('ide.map.cochangePairLimitReached', 'Co-change pair limit reached'),
+      bulk_commit_skipped: jt('ide.map.largeCommitsOmitted', 'Large commits omitted from co-change analysis'),
     };
     for (const reason of reasons) {
       if (reason === 'enumeration_limit' || reason === 'content_byte_limit') continue;
       const label = labels[reason];
       if (label && !parts.includes(label)) parts.push(label);
     }
-    if (parts.length === 0) parts.push('Some files or links were omitted by scan limits');
-    return `Partial map · ${parts.join(' · ')}`;
+    if (parts.length === 0) parts.push(jt('ide.map.scanLimitsOmittedItems', 'Some files or links were omitted by scan limits'));
+    return jt('ide.map.partial', 'Partial map · {details}', { details: parts.join(' · ') });
   }
 
   // Structural render key for one applied scan. renderAtlas tears down and
@@ -294,7 +295,7 @@
     const partialStatus = buildPartialMapStatus(graph && graph.meta);
     const truncated = Boolean(partialStatus);
     return {
-      message: `Map updated · ${fileCount} files · ${linkCount} links · ${cycleCount} cycles${truncated ? ' · partial scan' : ''}`,
+      message: truncated ? jt('ide.map.status.updatedPartial', 'Map updated · {fileCount} files · {linkCount} links · {cycleCount} cycles · partial scan', { fileCount, linkCount, cycleCount }) : jt('ide.map.status.updated', 'Map updated · {fileCount} files · {linkCount} links · {cycleCount} cycles', { fileCount, linkCount, cycleCount }),
       partialStatus,
     };
   }

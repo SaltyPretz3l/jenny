@@ -14,6 +14,7 @@
       normalizeId,
       normalizeString,
       streamSegmentState,
+      buildAssistantShellMessageId,
       MESSAGE_STATUS,
       appendClientLog,
       getSessionMessages,
@@ -88,7 +89,7 @@
       return message;
     }
 
-    function findPendingStreamEntryIndex(messages, pendingId, canonicalMessageId, streamId) {
+    function findPendingStreamEntryIndex(messages, pendingId, canonicalMessageId, streamId, requireCanonicalId = false) {
       const normalizedPendingId = normalizeId(pendingId);
       const normalizedCanonicalMessageId = normalizeId(canonicalMessageId);
       const normalizedStreamId = normalizeId(streamId);
@@ -98,14 +99,16 @@
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         const messageId = normalizeId(message?.id);
-        if (pendingIndex === -1 && normalizedPendingId && messageId === normalizedPendingId) {
+        if (pendingIndex === -1 && normalizedPendingId && messageId === normalizedPendingId
+          && (!requireCanonicalId || messageId === normalizedCanonicalMessageId)) {
           pendingIndex = index;
         }
         if (canonicalIndex === -1 && normalizedCanonicalMessageId && messageId === normalizedCanonicalMessageId) {
           canonicalIndex = index;
         }
         if (
-          streamIndex === -1
+          !requireCanonicalId
+          && streamIndex === -1
           && normalizedStreamId
           && normalizeString(message?.role) === 'assistant'
           && normalizeId(message?.streamId) === normalizedStreamId
@@ -141,10 +144,14 @@
       const sessionMessages = getSessionMessages(payload.sessionId);
       const segState = streamSegmentState.get(payload.streamId);
       const segIndex = segState ? segState.segmentIndex : 0;
-      const messageId = segIndex === 0
-        ? `assistant_${payload.streamId}`
-        : `assistant_${payload.streamId}_seg${segIndex}`;
-      const existingIndex = findPendingStreamEntryIndex(sessionMessages, pendingId, messageId, payload.streamId);
+      const messageId = typeof buildAssistantShellMessageId === 'function'
+        ? buildAssistantShellMessageId(payload.streamId, segIndex)
+        : segIndex === 0 ? `assistant_${payload.streamId}` : `assistant_${payload.streamId}_seg${segIndex}`;
+      // A reset can leave an emptied shell under the pre-reset spelling.
+      // With authority present, stream membership alone cannot identify the tail.
+      const requireCanonicalId = Boolean(segState?.authoritativeAssistantMessageId)
+        && segState.authoritativeAssistantSegmentIndex === segIndex;
+      const existingIndex = findPendingStreamEntryIndex(sessionMessages, pendingId, messageId, payload.streamId, requireCanonicalId);
       if (existingIndex !== -1) {
         state.pendingStreams.set(payload.streamId, sessionMessages[existingIndex].id);
         return existingIndex;

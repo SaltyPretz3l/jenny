@@ -1,5 +1,130 @@
 # Release Notes
 
+## 1.1.0 - unreleased
+
+First feature update after 1.0.0, available as source ahead of installer publication.
+This section describes integrated
+source, not a published installer. Platform assets, signing state and final
+qualification will be recorded when the release is cut.
+
+### Highlights
+
+- **19 interface languages.** English, Spanish, French, German, Italian,
+  Brazilian Portuguese, Dutch, Polish, Russian, Ukrainian, Turkish, Arabic,
+  Hindi, Indonesian, Vietnamese, Japanese, Korean, Simplified Chinese and
+  Traditional Chinese. First-run language selection follows the operating
+  system; Settings > Appearance > Language overrides it. Arabic mirrors the
+  shell while code, paths and terminal output stay left-to-right. Restart to
+  apply a language/direction change. Missing translations fall back to English.
+- **Optional 24-hour time.** Settings > Appearance > 24-hour time uses
+  00:00–23:59 across the shell and in time context sent on subsequent model
+  requests. Turning it off restores each surface's prior formatting defaults.
+- **Conversation management.** Multiselect, bulk archive/restore and confirmed
+  deletion with Undo; busy-session protection; distinct approval, plan-review
+  and input-needed states across session lists, chips and tabs.
+- **More useful chat results.** Calendar agendas and receipts survive reopening;
+  artifact editing retains drafts and offers recovery after failed operations;
+  tool results and turn metadata are clearer.
+- **Visual preview feedback.** `preview_test` with screenshot enabled can send
+  the generated page's pixels to the active vision-capable local model in the
+  same turn. Text-only models receive a limitation; Jenny does not switch models.
+  Successful image delivery is not itself proof of a completed visual review.
+- **Clearer supervision.** A one-time acknowledgement explains that Jenny is
+  software and that tool use should be supervised. Auto run asks once per
+  session and shows an Auto indicator. The unattended guard defaults to
+  10 minutes of system inactivity; Settings > Tools exposes its timeout and
+  normal/strict/paranoid safety modes.
+- **Explicit updates.** Settings > About & Updates checks published stable
+  GitHub releases only when requested. Download and installation are explicit,
+  with recovery actions and manual-install guidance where needed. No background
+  update checks, automatic downloads or install-on-quit.
+
+### Experimental platforms and command isolation
+
+- **Linux x64:** AppImage and deb packaging with an Ubuntu 22.04/glibc 2.35
+  floor, managed Python execution, verified Ollama installation and corrected
+  child-process environments. AppImage sandbox status is visible; prefer deb
+  on systems where AppImage cannot use the Chromium sandbox.
+- **Docker browser setup:** guided localhost access to an authenticated,
+  persistent browser host using an existing model server. Other devices require
+  explicitly configured private HTTPS. No public hosted service or prebuilt
+  image is promised.
+- **Offline command workers:** hosted policy-2 foreground commands require
+  one-off approval. The optional desktop Docker command sandbox defaults off
+  and uses the current desktop tool policy. Commands use a disposable Linux
+  workspace copy without network access; command-written files are discarded.
+  Typed file tools are the durable write path. Terminal, background-service,
+  Git/LSP, executable-plugin and third-party MCP parity is not provided.
+- **macOS:** stronger native build/asset verification; experimental and dependent
+  on successful native build and hardware qualification. The previous release
+  did not contain Mac assets.
+
+### Fixes and smaller improvements
+
+- Mermaid diagrams render and re-theme correctly; the Workspace terminal loads
+  through the AMD loader; edit results expand to their actual diff.
+- Queued sends retain captured context; slash-command completion preserves
+  arguments and waits for explicit send, with improved keyboard/IME handling.
+- Streaming respects assistant/tool segment boundaries, preserves tool detail
+  and handles scroll anchors and unread navigation more consistently.
+- Session promotion preserves tabs and navigation; turn metadata avoids invented
+  completion dates or model attribution.
+- Artifact load/save/delete races, retry states, empty content and focus recovery
+  are handled more consistently.
+- Setup permission reads/saves report failure and allow retry; runtime health
+  refreshes reliably; shutdown checks ownership before stopping model processes.
+- Preview helpers load only when needed, keeping the sidecar startup import
+  graph bounded; corrected CI fixtures exercise the intended transport and
+  renderer behavior.
+- Routine workspace retention no longer prematurely closes another live turn's
+  mutation change set. Existing terminal records are not automatically reopened.
+- New-session suggestion chips are removed. New `/insight` and `/po-review` skills
+  support harness retrospectives and product review; existing skill guidance
+  and prose-field spellcheck coverage are improved.
+- Five seeded real-app replay clips and refreshed installation/support guides.
+  The demo recordings are not live-model performance evidence.
+
+### Migration notes and optional integrations
+
+Shell config v52 added `uiLanguage`, `safetyMode` and `unattendedGuardMinutes`.
+Schema v53 adds the optional `commandSandbox` setting; existing profiles default
+off. `use24HourTime` is additive and defaults false. Canonical session schema
+remains 20 and `API_VERSION` remains `2026-08-17`. Hosted API/config and worker
+contracts have their own versions; follow the hosting migration instructions
+instead of sharing a live desktop profile.
+
+Preview screenshot storage is capped at four images per session and 32 per
+workspace, each at most 2 MiB. At capacity, saving is refused while transient
+model delivery continues. Jenny does not automatically delete screenshots.
+Removing a saved capture frees a slot.
+
+Remote-control core and official-package infrastructure are integrated, but the
+current public source export excludes plugin packages and the relay/portal tree.
+This is not a public Remote Control availability announcement. Optional ChatGPT
+connector changes include Astra profile metadata; no bundled connector is promised.
+
+### Qualification and known limits
+
+Windows remains the supported desktop platform. This draft has no 1.1.0
+installer, asset hashes or publication date. Linux and macOS remain experimental.
+Real installed-app upgrade, persistence, language/RTL and visual-preview gates
+must be recorded before making release claims.
+
+Docker Desktop localhost/browser and desktop-worker proof is recorded using
+deterministic model fixtures; actual-model, packaged, native Linux/macOS,
+backup/restore and optional private-HTTPS/mobile gates remain distinct.
+
+The 18 translations are model-authored, not native-speaker certified; newer
+updater copy can still fall back to English. The unattended guard retains the
+exception for user-pre-granted calls; unanswered approval uses the existing
+10-minute timeout. Setting the idle timeout to 0 disables the guard.
+Strict mode removes web tools; paranoid requires approval for executable tools
+apart from discovery.
+
+Release uploads are restricted to drafts. The broken private attestation
+workflow is retired; this does not establish replacement artifact attestation.
+Final release notes must state the actual signing, asset and qualification status.
+
 ## 1.0.0 - 2026-09-06
 
 Jenny 1.0 — the first stable release, and the first release published from
@@ -74,9 +199,9 @@ the public repository (`github.com/SaltyPretz3l/jenny`).
   release gates. The packaged app carries no plugin bundles and no
   restricted-host/full-host supervisor binaries (nothing consumes them
   without plugins).
-- **Best-effort macOS build (experimental)** — an unsigned, untested arm64
-  dmg+zip is published with each release; auto-update stays disabled on
-  macOS. Because the app is unsigned, Gatekeeper blocks the first launch:
+- **Best-effort macOS build pipeline (experimental)** — the 1.0.0 macOS
+  build failed and no dmg or zip was published. The pipeline targeted unsigned,
+  untested arm64 artifacts; auto-update stayed disabled on macOS. Because the app is unsigned, Gatekeeper blocks the first launch:
   approve it under **System Settings -> Privacy & Security -> Open Anyway**
   (on older macOS versions, right-click the app -> **Open** also works).
   The macOS build has not been exercised on real hardware, and the sandboxed

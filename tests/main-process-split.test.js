@@ -61,6 +61,9 @@ test('main process root delegates coupled Electron wiring to services/main owner
   assert.match(mainSource, /require\('\.\/services\/main\/data-lifecycle-startup'\)/);
   assert.match(mainSource, /workspaceProcessServices = registerIpcHandlers\(\) \|\| \{\}/);
   assert.match(mainSource, /getWorkspaceTestRunnerService: \(\) => workspaceProcessServices\.workspaceTestRunnerService \|\| null/);
+  assert.match(mainSource, /stopRuntime: \(context\) => stopRuntimeBeforeQuit\(context\)/);
+  assert.match(mainSource, /onEmergencyShutdown: runEmergencyRuntimeShutdownSync/);
+  assert.match(mainSource, /getRuntimeShutdownController\(\)\.stopRuntimeBeforeQuit\(context\)/);
 
   assert.doesNotMatch(mainSource, /^function createBackendService\(/m);
   assert.doesNotMatch(mainSource, /^function createRuntimeServices\(/m);

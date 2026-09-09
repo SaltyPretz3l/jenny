@@ -17,6 +17,7 @@
   }
   root.rendererIdeTestRunnerWiring = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const EMPTY_STATE = { configs: [], history: { byConfig: {} }, activeRun: null, activeConfigId: null };
 
   function asObject(value) {
@@ -57,7 +58,7 @@
       }
       const api = getApi();
       if (!api) {
-        return { ok: false, code: '', message: 'Test runner is unavailable.' };
+        return { ok: false, code: '', message: jt('ide.testRunner.unavailable', 'Test runner is unavailable.') };
       }
       try {
         const result = await fn(api);
@@ -82,7 +83,7 @@
     function callMutationAndToast(fn, failureMessage, dedupeKey) {
       return callMutation(fn, failureMessage).then((outcome) => {
         if (!outcome.ok) {
-          showShellErrorToast(outcome.message, { title: 'Test Runner', dedupeKey });
+          showShellErrorToast(outcome.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey });
         }
         return outcome;
       });
@@ -95,12 +96,12 @@
         actions: {
           runConfig: (configId) => callMutationAndToast(
             (api) => api.run({ configId }),
-            'Could not start the test run.',
+        jt('ide.testRunner.startFailed', 'Could not start the test run.'),
             `ide:test-runner:run:${configId}`
           ),
           abort: () => callMutationAndToast(
             (api) => api.abort(),
-            'Could not stop the test run.',
+        jt('ide.testRunner.stopFailed', 'Could not stop the test run.'),
             'ide:test-runner:abort'
           ),
           // WIDE-032: a typed result ({ok, configs} or {ok:false, code, message})
@@ -111,8 +112,8 @@
           saveConfigs: (configs) => {
             const api = getApi();
             if (!api || typeof api.saveConfigs !== 'function') {
-              const unavailable = { ok: false, code: '', message: 'Test runner is unavailable.' };
-              showShellErrorToast(unavailable.message, { title: 'Test Runner', dedupeKey: 'ide:test-runner:save' });
+              const unavailable = { ok: false, code: '', message: jt('ide.testRunner.unavailable', 'Test runner is unavailable.') };
+              showShellErrorToast(unavailable.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
               return Promise.resolve(unavailable);
             }
             return Promise.resolve(api.saveConfigs(configs))
@@ -122,7 +123,7 @@
                   return {
                     ok: false,
                     code: String(obj.error.code || ''),
-                    message: String(obj.error.message || 'Could not save the test configurations.'),
+          message: String(obj.error.message || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
                   };
                 }
                 return refresh().then(() => ({
@@ -136,13 +137,13 @@
               .catch((error) => ({
                 ok: false,
                 code: '',
-                message: String(error?.message || error || 'Could not save the test configurations.'),
+        message: String(error?.message || error || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
               }))
               // Normalized save failures are toasted after the panel receives
               // its rollback outcome.
               .then((outcome) => {
                 if (!outcome.ok) {
-                  showShellErrorToast(outcome.message, { title: 'Test Runner', dedupeKey: 'ide:test-runner:save' });
+                  showShellErrorToast(outcome.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
                 }
                 return outcome;
               });

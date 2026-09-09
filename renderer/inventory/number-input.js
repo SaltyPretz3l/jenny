@@ -11,7 +11,7 @@
   root.inventoryNumberInput = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -80,7 +80,7 @@
     var label = escapeHtml(o.label || '');
     var tooltip = typeof o.tooltip === 'string' ? escapeHtml(o.tooltip) : null;
     var suffix = escapeHtml(o.suffix || '');
-    var ariaLabel = escapeHtml(o.ariaLabel || o.label || 'Number input');
+    var ariaLabel = escapeHtml(o.ariaLabel || o.label || jt('inventory.numberInput.inputLabel', 'Number input'));
     var cls = 'inv-number-input';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;

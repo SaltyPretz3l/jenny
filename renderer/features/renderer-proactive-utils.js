@@ -5,6 +5,7 @@
   }
   root.rendererProactiveUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function createProactiveManager(deps) {
     const { state } = deps;
@@ -32,7 +33,7 @@
               }
             : {
                 state: 'missing',
-                message: 'Workspace-dependent proactive behaviors are blocked until a workspace root is configured.',
+                message: jt('workspace.rootNudge.proactiveBlocked', 'Workspace-dependent proactive behaviors are blocked until a workspace root is configured.'),
               },
         reminders: Array.isArray(proactive.reminders)
           ? proactive.reminders.map((reminder) => ({

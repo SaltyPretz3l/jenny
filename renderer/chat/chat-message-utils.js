@@ -20,6 +20,7 @@
     mergeReasoningEntriesInto,
   } = _reasoningEntryMergeUtils;
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const STREAMING_STATUS = 'streaming';
   const COMPLETE_STATUS = 'complete';
   const ERROR_STATUS = 'error';
@@ -346,7 +347,7 @@
     let finalizedAt = source.finalizedAt || null;
 
     if (role === 'assistant') {
-      finalizedAt = status === STREAMING_STATUS ? null : String(finalizedAt || timestamp || '');
+      finalizedAt = status === STREAMING_STATUS ? null : String(finalizedAt || '');
     } else {
       finalizedAt = finalizedAt ? String(finalizedAt) : null;
     }
@@ -405,7 +406,40 @@
     return '';
   }
 
-  function buildAssistantMetaLabel(message, formatTime) {
+  function isValidTimestamp(value) {
+    return Boolean(value) && Number.isFinite(new Date(value).valueOf());
+  }
+
+  function resolveFooterMessage(message, turnMessages, turn) {
+    if (!turn) return message;
+    const candidates = (turnMessages || []).filter((item) => !item.kind || item.kind === 'assistant_error');
+    const latest = candidates.at(-1) || message;
+    const error = candidates.findLast((item) => item.kind === 'assistant_error');
+    const outcome = error || latest;
+    const event = (turn.events || []).findLast((item) =>
+      ['complete', 'error', 'assistant_error'].includes(item.kind)
+      || ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(item.type || item.payload?.canonical_event_type));
+    const eventType = event?.type || event?.payload?.canonical_event_type;
+    const status = event?.terminal_status || event?.payload?.terminal_status
+      || ({ turn_cancelled: 'cancelled', turn_completed: 'complete', turn_failed: 'error' }[eventType] || '')
+      || event?.status || (event?.kind === 'complete' ? 'complete' : event ? 'error' : '')
+      || outcome.terminal_status || turn.status || outcome.status;
+    const eventFinalizedAt = event && [
+      event.completed_at,
+      event.payload?.completed_at,
+      event.ts,
+    ].find(isValidTimestamp);
+    return {
+      ...outcome, role: 'assistant', kind: '',
+      status: normalizeStatus(status), terminal_status: status,
+      finalizedAt: event
+        ? (eventFinalizedAt || (isValidTimestamp(outcome.finalizedAt) ? outcome.finalizedAt : ''))
+        : outcome.finalizedAt,
+    };
+  }
+
+  function buildAssistantMetaLabel(message, formatTime, turnMessages, turn) {
+    message = resolveFooterMessage(message, turnMessages, turn);
     const kind = String(message && message.kind || '');
     if (
       !message ||
@@ -420,14 +454,23 @@
     // User stops retain coarse error status but display "Stopped"; include per-turn model provenance because a conversation may span model switches.
     const terminalStatus = String(message.terminal_status || message.recovery_class || '').trim().toLowerCase();
     const cancelled = terminalStatus === 'cancelled' || terminalStatus === 'canceled';
-    const prefix = message.status === ERROR_STATUS ? (cancelled ? 'Stopped' : 'Failed') : 'Completed';
-    const terminalTime = message.finalizedAt || message.timestamp || '';
-    const formattedTime = terminalTime
-      ? String(typeof formatTime === 'function' ? formatTime(terminalTime) : terminalTime)
-      : '';
-    const base = formattedTime ? `${prefix} ${formattedTime}` : prefix;
-    const modelUsed = String(message.model_used || '').trim();
-    return modelUsed ? `${base} · ${modelUsed}` : base;
+    const prefix = cancelled ? jt('chat.footer.stopped', 'Stopped')
+      : message.status === ERROR_STATUS ? jt('chat.footer.failed', 'Failed')
+        : message.status === 'unknown' ? jt('chat.footer.statusUnknown', 'Status unknown')
+          : jt('chat.footer.completed', 'Completed');
+    const terminalTime = isValidTimestamp(message.finalizedAt) ? message.finalizedAt : '';
+    const fallbackTime = isValidTimestamp(message.timestamp) ? message.timestamp : '';
+    const time = terminalTime || fallbackTime;
+    const formattedTime = time ? String(typeof formatTime === 'function' ? formatTime(time) : time) : '';
+    const base = formattedTime
+      ? `${prefix}${terminalTime ? '' : ' · ' + jt('chat.footer.messageTime', 'message time')} ${formattedTime}`
+      : `${prefix} · ${jt('chat.footer.timeUnknown', 'time unknown')}`;
+    const provenance = (turnMessages || [message]).filter((item) => !item.kind || item.kind === 'assistant_error');
+    const models = [...new Set(provenance.map((item) => String(item.model_used || '').trim()).filter(Boolean))];
+    if (!models.length || provenance.some((item) => !String(item.model_used || '').trim())) {
+      models.push(jt('chat.footer.modelUnknown', 'Model unknown'));
+    }
+    return `${base} · ${models.join(', ')}`;
   }
 
   return {

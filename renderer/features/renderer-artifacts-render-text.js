@@ -17,6 +17,7 @@
   }
   root.rendererArtifactsRenderText = factory(root.rendererDiffHunksRender || {}, root.inventoryActionButton);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (diffHunksRender, actionButton) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const renderDiffHunks = typeof diffHunksRender.renderDiffHunks === 'function'
     ? diffHunksRender.renderDiffHunks
     : function noHunks() { return ''; };
@@ -77,20 +78,20 @@
     if (typeof actionButton !== 'function') return '';
     return actionButton({
       plain: true,
-      label: 'Wrap',
+      label: jt('artifacts.text.wrap', 'Wrap'),
       className: 'artifact-output-wrap',
-      ariaLabel: 'Wrap long lines',
-      title: 'Wrap long lines',
+      ariaLabel: jt('artifacts.text.wrapLongLines', 'Wrap long lines'),
+      title: jt('artifacts.text.wrapLongLines', 'Wrap long lines'),
       ariaPressed: true,
       dataset: { 'artifact-output-wrap': '' },
     });
   }
 
-  function renderOutputViewer(bodyHtml, bodyClass = '') {
+  function renderOutputViewer(bodyHtml, bodyClass = '', escapeHtml) {
     return '<div class="artifact-output-viewer is-wrapped">'
       + '<div class="artifact-output-toolbar"><span class="artifact-output-label">Output</span>'
       + renderWrapButton() + '</div>'
-      + '<div class="artifact-output-body' + (bodyClass ? ' ' + bodyClass : '') + '" role="region" aria-label="Tool output">'
+      + '<div class="artifact-output-body' + (bodyClass ? ' ' + bodyClass : '') + '" role="region" aria-label="' + escapeHtml(jt('artifacts.text.toolOutputLabel', 'Tool output')) + '">'
       + bodyHtml + '</div></div>';
   }
 
@@ -106,8 +107,8 @@
     });
   }
 
-  function setV3Output(previewContent, bodyHtml, bodyClass) {
-    previewContent.innerHTML = renderOutputViewer(bodyHtml, bodyClass);
+  function setV3Output(previewContent, bodyHtml, bodyClass, escapeHtml) {
+    previewContent.innerHTML = renderOutputViewer(bodyHtml, bodyClass, escapeHtml);
     bindWrapControl(previewContent);
   }
 
@@ -118,28 +119,28 @@
     surface.previewContent.classList.remove('hidden');
     const diff = artifact.diff && typeof artifact.diff === 'object' ? artifact.diff : null;
     if (diff) {
-      setDetailNote(surface, 'File change captured from the tool run. Read-only in the artifact panel.');
+      setDetailNote(surface, jt('artifacts.text.fileChangeReadOnlyNote', 'File change captured from the tool run. Read-only in the artifact panel.'));
       const addLabel = `+${diff.additions || 0}`;
       const delLabel = `-${diff.deletions || 0}`;
       // truncated covers more than size caps (diff_generation_failed, binary,
       // decode_error, ...) — only the line_limit family is "too large".
       const truncationReason = String(diff.truncation_reason || '').trim();
       const truncatedNote = !truncationReason || truncationReason === 'line_limit'
-        ? 'Diff too large to display'
-        : 'Diff unavailable';
+        ? jt('artifacts.text.diffTooLarge', 'Diff too large to display')
+        : jt('artifacts.text.diffUnavailable', 'Diff unavailable');
       const summaryHtml = diff.truncated
         ? `<div class="diff-summary"><span class="diff-summary-note">${escapeHtml(truncatedNote)}</span> <span class="diff-summary-add">${escapeHtml(addLabel)}</span> <span class="diff-summary-remove">${escapeHtml(delLabel)}</span></div>`
         : `<div class="diff-summary"><span class="diff-summary-add">${escapeHtml(addLabel)}</span> <span class="diff-summary-remove">${escapeHtml(delLabel)}</span></div>`;
       const hunksHtml = diff.truncated ? '' : renderDiffHunks(diff.hunks, escapeHtml);
       const statusLine = artifact.outputText ? `<div class="diff-status">${escapeHtml(artifact.outputText)}</div>` : '';
       const bodyHtml = `${summaryHtml}${hunksHtml ? `<div class="diff-container">${hunksHtml}</div>` : ''}${statusLine}`;
-      if (isV3Enabled(deps)) setV3Output(surface.previewContent, bodyHtml, 'artifact-output-body--structured');
+      if (isV3Enabled(deps)) setV3Output(surface.previewContent, bodyHtml, 'artifact-output-body--structured', escapeHtml);
       else surface.previewContent.innerHTML = bodyHtml;
       return;
     }
-    setDetailNote(surface, 'Transcript-derived tool output. Read-only in the artifact panel.');
+    setDetailNote(surface, jt('artifacts.text.transcriptOutputReadOnlyNote', 'Transcript-derived tool output. Read-only in the artifact panel.'));
     const output = String(prettyPrintJson(artifact.outputText || artifact.previewText || ''));
-    if (isV3Enabled(deps)) setV3Output(surface.previewContent, renderOutputRows(output, escapeHtml));
+    if (isV3Enabled(deps)) setV3Output(surface.previewContent, renderOutputRows(output, escapeHtml), '', escapeHtml);
     else surface.previewContent.innerHTML = `<pre class="artifact-preview-pre">${escapeHtml(output)}</pre>`;
   }
 

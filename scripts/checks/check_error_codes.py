@@ -12,6 +12,7 @@ DOCS_REGISTRY = ROOT / "docs" / "operations" / "error-codes.md"
 CANONICAL_FILES = {
     (SIDECAR / "ai" / "error_codes.py").resolve(),
     (SERVICES / "backend" / "error-codes.js").resolve(),
+    (SERVICES / "remote" / "remote-contracts.js").resolve(),
 }
 
 _CMP_CODE_PATTERN = r"CMP-[A-Z]+(?:-[A-Z0-9]+)+"

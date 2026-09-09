@@ -2,6 +2,8 @@
   if (typeof module === 'object' && module.exports) { module.exports = factory(globalThis); return; }
   root.rendererMemorySettingsUtils = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const MAX_RENDERED_MEMORIES = 200;
   const MAX_STATUS_REASONS = 8;
   const MAX_STATUS_REASON_INPUTS = 32;
@@ -74,31 +76,31 @@
   }
 
   function buildMemoryHealthMessages(status) {
-    if (!status) return ['Memory health details are unavailable.'];
+    if (!status) return [jt('memory.health.detailsUnavailable', 'Memory health details are unavailable.')];
     const messages = [];
     for (const reason of status.degradedReasons) {
       if (reason === 'CMP-MEM-0008') {
         const count = status.counts.quarantined || 0;
-        messages.push(`${count} memory ${count === 1 ? 'record needs' : 'records need'} review in Diagnostics.`);
+        messages.push(jtn('memory.health.recordsNeedReview', count, { count }, '{count} memory record needs review in Diagnostics.', '{count} memory records need review in Diagnostics.'));
       } else if (reason === 'CMP-MEM-0007') {
         const capacity = status.storage.capacityBytes;
         messages.push(capacity === null
-          ? 'Memory storage has reached its capacity; open Diagnostics for repair guidance.'
-          : `Memory storage has reached its ${Math.ceil(capacity / (1024 * 1024))} MB capacity.`);
+          ? jt('memory.health.capacityReached', 'Memory storage has reached its capacity; open Diagnostics for repair guidance.')
+          : jt('memory.health.capacityReachedMb', 'Memory storage has reached its {capacity} MB capacity.', { capacity: Math.ceil(capacity / (1024 * 1024)) }));
       } else if (reason === 'recall_index_unavailable') {
-        messages.push('Fast recall indexing is unavailable; bounded fallback recall remains active.');
+        messages.push(jt('memory.health.recallIndexUnavailable', 'Fast recall indexing is unavailable; bounded fallback recall remains active.'));
       } else if (reason === 'recall_partial') {
-        messages.push('The most recent recall completed with partial results.');
+        messages.push(jt('memory.health.recallPartial', 'The most recent recall completed with partial results.'));
       } else {
-        messages.push('Memory health needs attention; open Diagnostics for details.');
+        messages.push(jt('memory.health.needsAttention', 'Memory health needs attention; open Diagnostics for details.'));
       }
     }
     if (!status.available && !messages.length) {
       messages.push(status.repairRequired
-        ? 'Memory is unavailable and requires repair; open Diagnostics for guidance.'
-        : 'Memory health details are unavailable.');
+        ? jt('memory.health.repairRequired', 'Memory is unavailable and requires repair; open Diagnostics for guidance.')
+        : jt('memory.health.detailsUnavailable', 'Memory health details are unavailable.'));
     } else if (!status.available && !messages.includes('Memory health details are unavailable.')) {
-      messages.unshift('Memory health details are unavailable.');
+      messages.unshift(jt('memory.health.detailsUnavailable', 'Memory health details are unavailable.'));
     }
     return [...new Set(messages)];
   }
@@ -159,46 +161,46 @@
       const focusSnapshot = captureControlFocus(dom);
       if (dom.memoryCapturePreferenceHost && typeof toggleSwitch === 'function') {
         dom.memoryCapturePreferenceHost.innerHTML = toggleSwitch({
-          id: 'memoryCaptureSuggestions', label: 'Offer local memory suggestions',
+          id: 'memoryCaptureSuggestions', label: jt('memory.settings.captureSuggestionsLabel', 'Offer local memory suggestions'),
           checked: state.features?.memory?.captureSuggestions !== false,
-          description: 'At most one suggestion per completed turn; approval is always required.',
+          description: jt('memory.settings.captureSuggestionsDescription', 'At most one suggestion per completed turn; approval is always required.'),
           descriptionId: 'memoryCaptureSuggestionsDescription',
         });
       }
       if (dom.pendingMemorySortHost && typeof selectField === 'function') {
         dom.pendingMemorySortHost.innerHTML = selectField({
-          id: 'pendingMemorySort', label: 'Sort', value: state.memoryManager.pendingSort,
-          options: [{ value: 'newest', label: 'Newest' }, { value: 'oldest', label: 'Oldest' }, { value: 'confidence', label: 'Highest confidence' }],
+          id: 'pendingMemorySort', label: jt('memory.settings.sortLabel', 'Sort'), value: state.memoryManager.pendingSort,
+          options: [{ value: 'newest', label: jt('memory.sort.newest', 'Newest') }, { value: 'oldest', label: jt('memory.sort.oldest', 'Oldest') }, { value: 'confidence', label: jt('memory.sort.highestConfidence', 'Highest confidence') }],
         });
       }
       if (dom.memoryKindFilterHost && typeof selectField === 'function') {
-        dom.memoryKindFilterHost.innerHTML = selectField({ id: 'memoryManagerKindFilter', label: 'Kind', value: state.memoryManager.filter, options: kindOptions });
+        dom.memoryKindFilterHost.innerHTML = selectField({ id: 'memoryManagerKindFilter', label: jt('memory.settings.kindLabel', 'Kind'), value: state.memoryManager.filter, options: kindOptions });
       }
       if (dom.memorySearchHost && typeof textField === 'function') {
-        dom.memorySearchHost.innerHTML = textField({ id: 'memoryManagerSearchInput', label: 'Search', value: state.memoryManager.searchQuery, placeholder: 'Search approved memories', maxLength: 120 });
+        dom.memorySearchHost.innerHTML = textField({ id: 'memoryManagerSearchInput', label: jt('memory.settings.searchLabel', 'Search'), value: state.memoryManager.searchQuery, placeholder: jt('memory.settings.searchPlaceholder', 'Search approved memories'), maxLength: 120 });
       }
       restoreControlFocus(dom, focusSnapshot);
     }
 
     function provenanceMarkup(memory, { allowRemove = false, identity = '' } = {}) {
       if (memory.provenance === 'source_removed') {
-        return '<p class="memory-provenance memory-provenance--removed">Source removed; memory retained.</p>';
+        return '<p class="memory-provenance memory-provenance--removed">' + escapeHtml(jt('memory.provenance.sourceRemoved', 'Source removed; memory retained.')) + '</p>';
       }
       const excerpt = String(memory.source_excerpt || '').slice(0, 240);
       const session = String(memory.session_id || '').slice(0, 80);
       const date = String(memory.updated_at || memory.created_at || '').slice(0, 64);
       if (!excerpt && !session && !date) return '';
       const panelId = `memory-source-${safeDomId(identity || memory.id || memory.content_fingerprint)}`;
-      const triggerText = `Source · ${date ? date.slice(0, 10) : 'Date unavailable'}`;
+      const triggerText = jt('memory.provenance.sourceDate', 'Source · {date}', { date: date ? date.slice(0, 10) : jt('memory.provenance.dateUnavailable', 'Date unavailable') });
       const trigger = typeof collapsible.trigger === 'function'
         ? collapsible.trigger({ id: panelId, className: 'memory-provenance-trigger', children: escapeHtml(triggerText) })
         : '';
       const content = '<div class="memory-provenance-meta">'
-        + `<span>${escapeHtml(date || 'Date unavailable')}</span>`
-        + (session ? `<span>Session ${escapeHtml(session)}</span>` : '')
+        + `<span>${escapeHtml(date || jt('memory.provenance.dateUnavailable', 'Date unavailable'))}</span>`
+        + (session ? `<span>${escapeHtml(jt('memory.provenance.session', 'Session {session}', { session }))}</span>` : '')
         + '</div>'
         + (excerpt ? `<q>${escapeHtml(excerpt)}</q>` : '')
-        + (allowRemove ? button({ id: `remove-provenance-${safeDomId(memory.id)}`, label: 'Remove source', variant: 'ghost', size: 'sm', dataset: { 'memory-action': 'remove-provenance', 'memory-id': String(memory.id) } }) : '');
+        + (allowRemove ? button({ id: `remove-provenance-${safeDomId(memory.id)}`, label: jt('memory.actions.removeSource', 'Remove source'), variant: 'ghost', size: 'sm', dataset: { 'memory-action': 'remove-provenance', 'memory-id': String(memory.id) } }) : '');
       const panel = typeof collapsible.content === 'function'
         ? collapsible.content({ id: panelId, className: 'memory-provenance-panel', children: content })
         : content;
@@ -218,13 +220,13 @@
       const title = deps.getFieldValue(memory, 'title');
       const lessonText = deps.getFieldValue(memory, 'lesson_text');
       const actions = editing
-        ? button({ id: `save-memory-${memory.id}`, label: pendingAction === 'save' ? 'Saving…' : 'Save', variant: 'primary', disabled: Boolean(pendingAction) || !deps.hasDraftChanges(memory), dataset: { 'memory-action': 'save', 'memory-id': String(memory.id) } })
-          + button({ id: `cancel-memory-${memory.id}`, label: 'Cancel', variant: 'ghost', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'cancel', 'memory-id': String(memory.id) } })
-        : button({ id: `edit-memory-${memory.id}`, label: 'Edit', variant: 'secondary', size: 'sm', dataset: { 'memory-action': 'edit', 'memory-id': String(memory.id) } })
-          + button({ id: `delete-memory-${memory.id}`, label: pendingAction === 'delete' ? 'Deleting…' : 'Delete', variant: 'danger', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'delete', 'memory-id': String(memory.id) } });
+        ? button({ id: `save-memory-${memory.id}`, label: pendingAction === 'save' ? jt('memory.actions.saving', 'Saving…') : jt('common.save', 'Save'), variant: 'primary', disabled: Boolean(pendingAction) || !deps.hasDraftChanges(memory), dataset: { 'memory-action': 'save', 'memory-id': String(memory.id) } })
+          + button({ id: `cancel-memory-${memory.id}`, label: jt('common.cancel', 'Cancel'), variant: 'ghost', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'cancel', 'memory-id': String(memory.id) } })
+        : button({ id: `edit-memory-${memory.id}`, label: jt('common.edit', 'Edit'), variant: 'secondary', size: 'sm', dataset: { 'memory-action': 'edit', 'memory-id': String(memory.id) } })
+          + button({ id: `delete-memory-${memory.id}`, label: pendingAction === 'delete' ? jt('memory.actions.deleting', 'Deleting…') : jt('common.delete', 'Delete'), variant: 'danger', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'delete', 'memory-id': String(memory.id) } });
       const body = editing && typeof textField === 'function'
-        ? textField({ id: `memoryTitle${memory.id}`, label: 'Title', value: title, maxLength: 120, spellcheck: true, dataset: { 'memory-draft-field': 'title', 'memory-id': String(memory.id) } })
-          + textField({ id: `memoryLesson${memory.id}`, label: 'Memory', value: lessonText, maxLength: 240, multiline: true, spellcheck: true, dataset: { 'memory-draft-field': 'lesson_text', 'memory-id': String(memory.id) } })
+        ? textField({ id: `memoryTitle${memory.id}`, label: jt('memory.settings.titleLabel', 'Title'), value: title, maxLength: 120, spellcheck: true, dataset: { 'memory-draft-field': 'title', 'memory-id': String(memory.id) } })
+          + textField({ id: `memoryLesson${memory.id}`, label: jt('memory.settings.memoryLabel', 'Memory'), value: lessonText, maxLength: 240, multiline: true, spellcheck: true, dataset: { 'memory-draft-field': 'lesson_text', 'memory-id': String(memory.id) } })
         : `<div class="memory-record-heading">${kindBadge(memory.lesson_kind)}<strong class="memory-record-title">${escapeHtml(memory.title)}</strong></div><p>${escapeHtml(memory.lesson_text)}</p>`;
       return `<article class="memory-record" role="listitem" data-memory-id="${memory.id}"><div class="memory-record-main">`
         + body + provenanceMarkup(memory, { allowRemove: true, identity: `approved-${memory.id}` })
@@ -238,8 +240,8 @@
       return `<article class="memory-record" role="listitem" data-pending-memory-key="${escapeHtml(key)}"><div class="memory-record-main">`
         + `<div class="memory-record-heading">${kindBadge(candidate.lesson_kind)}<strong class="memory-record-title">${escapeHtml(candidate.title)}</strong></div><p>${escapeHtml(candidate.lesson_text)}</p>`
         + provenanceMarkup(candidate, { identity }) + `</div><div class="memory-record-actions">`
-        + button({ id: `approve-${safeDomId(key)}`, label: pendingAction === 'approve' ? 'Approving…' : 'Approve', variant: 'primary', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'approve', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
-        + button({ id: `dismiss-${safeDomId(key)}`, label: pendingAction === 'discard' ? 'Dismissing…' : 'Dismiss', variant: 'ghost', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'discard', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
+        + button({ id: `approve-${safeDomId(key)}`, label: pendingAction === 'approve' ? jt('memory.actions.approving', 'Approving…') : jt('memory.actions.approve', 'Approve'), variant: 'primary', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'approve', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
+        + button({ id: `dismiss-${safeDomId(key)}`, label: pendingAction === 'discard' ? jt('memory.actions.dismissing', 'Dismissing…') : jt('common.dismiss', 'Dismiss'), variant: 'ghost', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'discard', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
         + '</div></article>';
     }
 
@@ -259,25 +261,25 @@
       const degraded = Boolean(status && (status.degradedReasons.length || status.repairRequired)) || listUnavailable;
       const loading = state.memoryManager.statusLoading === true && !state.memoryManager.statusLoaded;
       settingsFoundation.applyBadgeState?.(dom.memoryBadge, loading
-        ? { state: 'loading', srLabel: 'Loading memory status' }
+        ? { state: 'loading', srLabel: jt('memory.settings.loadingStatusLabel', 'Loading memory status') }
         : status?.available
-          ? { state: degraded ? 'warn' : 'success', text: listUnavailable ? 'Partial' : `${approved} saved` }
+          ? { state: degraded ? 'warn' : 'success', text: listUnavailable ? 'Partial' : jt('memory.settings.savedCount', '{count} saved', { count: approved }) }
           : { state: 'error', text: 'Unavailable' });
       const tone = status?.available && !allListsUnavailable ? (degraded ? 'warning' : 'success') : 'danger';
       const message = loading
-        ? 'Loading memory status...'
+        ? jt('memory.settings.loadingStatus', 'Loading memory status...')
         : allListsUnavailable
-          ? 'Memory data is unavailable.'
-          : `${approved} approved · ${pending} pending${listUnavailable ? ' · partially available' : status?.available ? '' : ' · health details unavailable'}`;
+          ? jt('memory.settings.dataUnavailable', 'Memory data is unavailable.')
+          : jt('memory.settings.countSummary', '{approved} approved · {pending} pending{availability}', { approved, pending, availability: listUnavailable ? jt('memory.settings.partiallyAvailableSuffix', ' · partially available') : status?.available ? '' : jt('memory.settings.healthUnavailableSuffix', ' · health details unavailable') });
       if (typeof settingsSupport.renderStatusRowContainer === 'function') {
         settingsSupport.renderStatusRowContainer(dom.memorySummary, settingsSupport.buildSettingsSummaryModel({
-          tone, label: 'Memory', message, badgeText: status?.available ? (degraded ? 'Degraded' : 'Ready') : 'Unavailable', spinner: loading,
+          tone, label: jt('memory.settings.summaryLabel', 'Memory'), message, badgeText: status?.available ? (degraded ? 'Degraded' : 'Ready') : 'Unavailable', spinner: loading,
         }), escapeHtml);
       } else if (dom.memorySummary) {
         dom.memorySummary.textContent = message;
       }
       const healthMessages = loading || (status?.available && !degraded) ? [] : buildMemoryHealthMessages(status);
-      if (listUnavailable) healthMessages.push('Some memory records could not be loaded.');
+      if (listUnavailable) healthMessages.push(jt('memory.health.recordsLoadFailed', 'Some memory records could not be loaded.'));
       if (dom.memoryHealthNote) {
         dom.memoryHealthNote.hidden = healthMessages.length === 0;
         dom.memoryHealthNote.innerHTML = healthMessages.length
@@ -339,14 +341,14 @@
       const filtered = filteredAll.slice(0, approvedLimit);
       const pending = pendingAll.slice(0, pendingLimit);
       renderStatus(dom, memories.length, pendingAll.length);
-      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = state.memoryManager.loading ? 'Loading approved memories…' : state.memoryManager.unavailable ? state.memoryManager.status : memories.length && !filtered.length ? 'No approved memories match these filters.' : state.memoryManager.status;
-      if (dom.pendingMemoryStatus) dom.pendingMemoryStatus.textContent = state.memoryManager.pendingLoading ? 'Loading pending review…' : state.memoryManager.pendingStatus;
-      if (dom.approvedMemoryList) dom.approvedMemoryList.innerHTML = filtered.length ? filtered.map(approvedMarkup).join('') : '<div class="memory-page-empty" role="listitem">No approved memories to show.</div>';
-      if (dom.pendingMemoryList) dom.pendingMemoryList.innerHTML = pending.length ? pending.map(pendingMarkup).join('') : '<div class="memory-page-empty" role="listitem">No pending candidates to review.</div>';
+      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = state.memoryManager.loading ? jt('memory.settings.loadingApproved', 'Loading approved memories…') : state.memoryManager.unavailable ? state.memoryManager.status : memories.length && !filtered.length ? jt('memory.settings.noApprovedMatches', 'No approved memories match these filters.') : state.memoryManager.status;
+      if (dom.pendingMemoryStatus) dom.pendingMemoryStatus.textContent = state.memoryManager.pendingLoading ? jt('memory.settings.loadingPending', 'Loading pending review…') : state.memoryManager.pendingStatus;
+      if (dom.approvedMemoryList) dom.approvedMemoryList.innerHTML = filtered.length ? filtered.map(approvedMarkup).join('') : `<div class="memory-page-empty" role="listitem">${jt('memory.settings.noApproved', 'No approved memories to show.')}</div>`;
+      if (dom.pendingMemoryList) dom.pendingMemoryList.innerHTML = pending.length ? pending.map(pendingMarkup).join('') : `<div class="memory-page-empty" role="listitem">${jt('memory.settings.noPending', 'No pending candidates to review.')}</div>`;
       if (dom.approvedMemoryMoreHost) dom.approvedMemoryMoreHost.innerHTML = filtered.length < filteredAll.length
-        ? button({ id: 'show-more-approved-memories', label: `Show ${Math.min(MAX_RENDERED_MEMORIES, filteredAll.length - filtered.length)} more`, variant: 'secondary', dataset: { 'memory-page-action': 'show-more-approved' } }) : '';
+        ? button({ id: 'show-more-approved-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, filteredAll.length - filtered.length) }), variant: 'secondary', dataset: { 'memory-page-action': 'show-more-approved' } }) : '';
       if (dom.pendingMemoryMoreHost) dom.pendingMemoryMoreHost.innerHTML = pending.length < pendingAll.length
-        ? button({ id: 'show-more-pending-memories', label: `Show ${Math.min(MAX_RENDERED_MEMORIES, pendingAll.length - pending.length)} more`, variant: 'secondary', dataset: { 'memory-page-action': 'show-more-pending' } }) : '';
+        ? button({ id: 'show-more-pending-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, pendingAll.length - pending.length) }), variant: 'secondary', dataset: { 'memory-page-action': 'show-more-pending' } }) : '';
       applyPendingFocus(dom);
     }
 

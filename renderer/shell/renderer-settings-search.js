@@ -36,6 +36,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (sectionRegistry, fieldCopy, textField, asyncFence) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var registry = sectionRegistry || {};
   var copy = fieldCopy || {};
 
@@ -182,8 +183,8 @@
     var field = typeof textField === 'function'
       ? textField({
         id: SEARCH_INPUT_ID,
-        ariaLabel: 'Search settings',
-        placeholder: 'Search settings…',
+        ariaLabel: jt('settings.search.ariaLabel', 'Search settings'),
+        placeholder: jt('settings.search.placeholder', 'Search settings…'),
         className: 'settings-search-input rail-search-field',
         dataset: { 'settings-search-input': 'true' },
       })
@@ -192,7 +193,7 @@
       + '<div class="settings-search" data-settings-search>'
       + field
       + '<ul class="settings-search-results" id="' + SEARCH_RESULTS_ID + '" role="listbox"'
-      + ' aria-label="Settings search results" hidden></ul>'
+      + ' aria-label="' + escapeHtml(jt('settings.search.resultsAria', 'Settings search results')) + '" hidden></ul>'
       // UIUX-038: a dedicated, always-present status region for the
       // no-results case -- kept OUT of the listbox (whose children must be
       // role="option") so it announces via aria-live without breaking the
@@ -354,7 +355,7 @@
       var queryActive = !!(rawQuery && rawQuery.trim());
       if (statusEl) {
         statusEl.textContent = (queryActive && !hits.length)
-          ? 'No settings match "' + rawQuery.trim() + '".'
+          ? jt('settings.search.noMatches', 'No settings match "{query}".', { query: rawQuery.trim() })
           : '';
       }
       if (!resultsEl) {

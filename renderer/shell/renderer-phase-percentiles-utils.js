@@ -6,6 +6,7 @@
   }
   root.rendererPhasePercentilesUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const PHASE_ORDER = [
     'click_to_optimistic_render',
     'optimistic_render_to_context_assembly_started',
@@ -19,15 +20,15 @@
   ];
 
   const PHASE_LABELS = {
-    click_to_optimistic_render: 'Click to optimistic render',
-    optimistic_render_to_context_assembly_started: 'Optimistic render to assembly start',
-    context_assembly_elapsed_no_memory_git: 'Context assembly, no memory/Git',
-    context_assembly_elapsed_memory_git: 'Context assembly, memory/Git',
-    context_assembly_completed_to_sidecar_request_sent: 'Assembly complete to sidecar sent',
-    sidecar_request_sent_to_provider_request_start: 'Sidecar sent to provider start',
-    provider_request_start_to_first_chunk: 'Provider start to first chunk',
-    first_chunk_to_first_visible_token: 'First chunk to first visible token',
-    completion_to_terminal_persist: 'Completion to terminal persist',
+    click_to_optimistic_render: jt('diagnostics.phases.clickToOptimisticRender', 'Click to optimistic render'),
+    optimistic_render_to_context_assembly_started: jt('diagnostics.phases.optimisticRenderToAssemblyStart', 'Optimistic render to assembly start'),
+    context_assembly_elapsed_no_memory_git: jt('diagnostics.phases.contextAssemblyNoMemoryGit', 'Context assembly, no memory/Git'),
+    context_assembly_elapsed_memory_git: jt('diagnostics.phases.contextAssemblyMemoryGit', 'Context assembly, memory/Git'),
+    context_assembly_completed_to_sidecar_request_sent: jt('diagnostics.phases.assemblyCompleteToSidecarSent', 'Assembly complete to sidecar sent'),
+    sidecar_request_sent_to_provider_request_start: jt('diagnostics.phases.sidecarSentToProviderStart', 'Sidecar sent to provider start'),
+    provider_request_start_to_first_chunk: jt('diagnostics.phases.providerStartToFirstChunk', 'Provider start to first chunk'),
+    first_chunk_to_first_visible_token: jt('diagnostics.phases.firstChunkToFirstVisibleToken', 'First chunk to first visible token'),
+    completion_to_terminal_persist: jt('diagnostics.phases.completionToTerminalPersist', 'Completion to terminal persist'),
   };
 
   function defaultEscapeHtml(value) {
@@ -167,7 +168,7 @@
       status.active_model,
       modelList.active_model,
       offline.preferredLocalModel,
-      'no active model'
+      jt('diagnostics.phases.noActiveModel', 'no active model')
     );
     const backendPhase = firstNonEmpty(backend.phase, status.phase, 'unknown');
     const backendUnavailable = ['failed', 'unavailable', 'stopped', 'error', 'crashed']
@@ -211,18 +212,18 @@
               : sampleCount > 0
                 ? 'Live'
                 : 'Pending',
-      summary: `Runtime health: ${engine} / ${model}; backend ${backendPhase}.`,
+      summary: jt('diagnostics.phases.runtimeHealthSummary', 'Runtime health: {engine} / {model}; backend {phase}.', { engine, model, phase: backendPhase }),
       status: lastError
-        ? `Last error: ${lastError}`
+        ? jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError })
         : sampleCount > 0
-          ? `Snapshot ${generatedAt}. Provider start to first chunk P50 ${providerP50}; first chunk to first visible token P50 ${visibleP50}.`
+          ? jt('diagnostics.phases.snapshotSummary', 'Snapshot {generatedAt}. Provider start to first chunk P50 {providerP50}; first chunk to first visible token P50 {visibleP50}.', { generatedAt, providerP50, visibleP50 })
           : backendUnavailable
-            ? 'Latency evidence is unavailable until the backend recovers.'
-            : 'No latency samples recorded for this run.',
+            ? jt('diagnostics.phases.latencyUnavailableUntilRecovery', 'Latency evidence is unavailable until the backend recovers.')
+            : jt('diagnostics.phases.noSamplesRecorded', 'No latency samples recorded for this run.'),
       sampleHint: backendUnavailable
-        ? 'Latency sampling is unavailable until the backend recovers.'
-        : 'Send a local chat to populate the live ring buffers.',
-      recoveryLabel: degraded ? 'Retry backend status' : 'Open Models',
+        ? jt('diagnostics.phases.samplingUnavailableUntilRecovery', 'Latency sampling is unavailable until the backend recovers.')
+        : jt('diagnostics.phases.sendLocalChatHint', 'Send a local chat to populate the live ring buffers.'),
+      recoveryLabel: degraded ? jt('diagnostics.phases.retryBackendStatus', 'Retry backend status') : jt('diagnostics.phases.openModels', 'Open Models'),
       recoverySection: 'models',
     };
     if (state.loading) {
@@ -257,9 +258,9 @@
 
     if (paneDom.diagnosticsBadge) {
       const badgeText = state.loading
-        ? 'Refreshing'
+        ? jt('diagnostics.phases.refreshing', 'Refreshing')
         : state.error
-          ? 'Error'
+          ? jt('diagnostics.phases.error', 'Error')
           : health.badge;
       paneDom.diagnosticsBadge.textContent = badgeText;
       paneDom.diagnosticsBadge.dataset.tone = ({
@@ -279,21 +280,21 @@
     }
     if (paneDom.diagnosticsSummary) {
       paneDom.diagnosticsSummary.textContent = state.loading
-        ? 'Refreshing live phase percentiles...'
+        ? jt('diagnostics.phases.refreshingLive', 'Refreshing live phase percentiles...')
         : state.error
-          ? `Phase percentiles unavailable: ${String(state.error || 'refresh failed').trim()}`
+          ? jt('diagnostics.phases.unavailableDetail', 'Phase percentiles unavailable: {error}', { error: String(state.error || 'refresh failed').trim() })
           : sampleCount > 0
-            ? `${health.summary} ${sampleCount} samples across ${phaseCount} phases.`
+            ? jt('diagnostics.phases.summaryWithSamples', '{summary} {sampleCount} samples across {phaseCount} phases.', { summary: health.summary, sampleCount, phaseCount })
             : `${health.summary} ${health.sampleHint}`;
     }
     if (paneDom.phasePercentilesTable) {
       const markup = state.loading
-        ? '<div class="phase-percentiles-empty"><strong>Loading latency samples…</strong></div>'
+        ? '<div class="phase-percentiles-empty"><strong>' + escapeHtml(jt('diagnostics.phases.loadingSamples', 'Loading latency samples…')) + '</strong></div>'
         : state.error
-          ? '<div class="phase-percentiles-empty" data-tone="error"><strong>Phase latency unavailable</strong><p>'
-            + escapeHtml(String(state.error || 'Refresh failed').trim()) + '</p></div>'
+          ? '<div class="phase-percentiles-empty" data-tone="error"><strong>' + escapeHtml(jt('diagnostics.phases.latencyUnavailable', 'Phase latency unavailable')) + '</strong><p>'
+            + escapeHtml(String(state.error || jt('diagnostics.phases.refreshFailed', 'Refresh failed')).trim()) + '</p></div>'
           : sampleCount === 0
-            ? '<div class="phase-percentiles-empty"><strong>No latency samples yet</strong><p>'
+            ? '<div class="phase-percentiles-empty"><strong>' + escapeHtml(jt('diagnostics.phases.noSamplesYet', 'No latency samples yet')) + '</strong><p>'
               + escapeHtml(health.sampleHint) + '</p></div>'
             : [
               '<table class="phase-percentiles-table">',

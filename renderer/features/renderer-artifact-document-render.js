@@ -6,6 +6,7 @@
   root.rendererArtifactDocumentRender = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const CALLOUT_TYPES = new Set(['important', 'caution', 'warning', 'note', 'tip']);
   const OUTLINE_MIN_HEADINGS = 3;
@@ -15,19 +16,19 @@
   const DOCUMENT_HINTS = [
     {
       kind: 'review',
-      label: 'Review',
+      label: jt('artifacts.document.review', 'Review'),
       minMatches: 3,
       headings: ['scope of review', 'issues found', 'what looks good', 'summary'],
     },
     {
       kind: 'plan',
-      label: 'Plan',
+      label: jt('artifacts.document.plan', 'Plan'),
       minMatches: 3,
       headings: ['user review required', 'proposed changes', 'verification plan'],
     },
     {
       kind: 'walkthrough',
-      label: 'Walkthrough',
+      label: jt('artifacts.document.walkthrough', 'Walkthrough'),
       minMatches: 3,
       headings: ['goal', 'context', 'steps', 'decision points', 'troubleshooting'],
     },
@@ -70,7 +71,7 @@
       normalizeMode(input.mode),
       normalizeSurfaceKey(input.surfaceKey),
       input.editable === false ? 'readonly' : 'editable',
-      str(input.title || 'Markdown Artifact'),
+      str(input.title || jt('artifacts.document.markdownTitle', 'Markdown Artifact')),
       str(input.artifactId || input.artifact_id || ''),
       String(contentLength),
       str(input.contentRevision || input.content_revision || input.revision || input.modifiedAt || input.updatedAt || ''),
@@ -94,13 +95,13 @@
       return (
         '<details class="artifact-document-outline-shell artifact-document-outline-compact" data-artifact-document-outline-shell hidden>'
         + '<summary class="artifact-document-outline-summary">Outline</summary>'
-        + '<nav class="artifact-document-outline" data-artifact-document-outline aria-label="Document outline"></nav>'
+        + '<nav class="artifact-document-outline" data-artifact-document-outline aria-label="' + escapeHtml(jt('artifacts.document.outlineLabel', 'Document outline')) + '"></nav>'
         + '</details>'
       );
     }
     return (
       '<aside class="artifact-document-outline-shell artifact-document-outline-rail" data-artifact-document-outline-shell data-artifact-document-outline-visible="false" aria-hidden="true">'
-      + '<nav class="artifact-document-outline" data-artifact-document-outline aria-label="Document outline"></nav>'
+      + '<nav class="artifact-document-outline" data-artifact-document-outline aria-label="' + escapeHtml(jt('artifacts.document.outlineLabel', 'Document outline')) + '"></nav>'
       + '</aside>'
     );
   }
@@ -128,7 +129,7 @@
     const escape = typeof deps.escapeHtml === 'function' ? deps.escapeHtml : escapeHtml;
     const mode = normalizeMode(input.mode);
     const surfaceKey = normalizeSurfaceKey(input.surfaceKey);
-    const title = str(input.title || 'Markdown Artifact').trim() || 'Markdown Artifact';
+    const title = str(input.title || jt('artifacts.document.markdownTitle', 'Markdown Artifact')).trim() || jt('artifacts.document.markdownTitle', 'Markdown Artifact');
     const content = str(input.content);
     const markdownHtml = mode === 'source'
       ? ''
@@ -138,14 +139,14 @@
 
     return (
       `<div class="artifact-document" data-artifact-document="markdown" data-artifact-document-mode="${escape(mode)}" data-artifact-document-surface="${escape(surfaceKey)}">`
-      + '<div class="artifact-document-toolbar" aria-label="Markdown artifact view mode">'
+      + '<div class="artifact-document-toolbar" aria-label="' + escape(jt('artifacts.document.viewModeLabel', 'Markdown artifact view mode')) + '">'
       + '<span class="artifact-document-kind-badge" data-artifact-document-kind-badge hidden>Document</span>'
       + '<span class="artifact-document-toolbar-spacer" aria-hidden="true"></span>'
       + renderModeButton('read', mode, 'Read', false)
-      + renderModeButton('source', mode, input.editable === false ? 'View Source' : 'Edit Source', sourceDisabled)
+      + renderModeButton('source', mode, input.editable === false ? jt('artifacts.document.viewSource', 'View Source') : jt('artifacts.document.editSource', 'Edit Source'), sourceDisabled)
       + '</div>'
       + `<div class="artifact-document-reader-chrome" data-artifact-document-reader-chrome${sourceHiddenAttr}>`
-      + `<div class="artifact-document-progress" data-artifact-document-progress role="progressbar" aria-label="Reading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"${sourceHiddenAttr}>`
+      + `<div class="artifact-document-progress" data-artifact-document-progress role="progressbar" aria-label="${escape(jt('artifacts.document.readingProgress', 'Reading progress'))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"${sourceHiddenAttr}>`
       + '<span class="artifact-document-progress-bar" data-artifact-document-progress-bar style="width: 0%"></span>'
       + '</div>'
       + '<div class="artifact-document-reader-layout">'
@@ -154,7 +155,7 @@
       + markdownHtml
       + '</article>'
       + '</div>'
-      + `<button class="artifact-document-back-to-top" type="button" data-artifact-document-back-to-top${sourceHiddenAttr}>Back to top</button>`
+      + `<button class="artifact-document-back-to-top" type="button" data-artifact-document-back-to-top${sourceHiddenAttr}>${escape(jt('artifacts.document.backToTop', 'Back to top'))}</button>`
       + '</div>'
       + '</div>'
     );
@@ -231,9 +232,9 @@
       button.className = 'artifact-document-code-copy';
       button.type = 'button';
       button.dataset.artifactDocumentCopyCode = 'true';
-      button.setAttribute('aria-label', 'Copy code');
-      button.title = 'Copy code';
-      button.textContent = 'Copy';
+      button.setAttribute('aria-label', jt('artifacts.document.copyCode', 'Copy code'));
+      button.title = jt('artifacts.document.copyCode', 'Copy code');
+      button.textContent = jt('common.copy', 'Copy');
       header.appendChild(button);
     }
   }
@@ -285,7 +286,7 @@
       heading.setAttribute('tabindex', '-1');
       return {
         id,
-        text: text || `Section ${index + 1}`,
+        text: text || jt('artifacts.document.sectionFallback', 'Section {number}', { number: index + 1 }),
         level: Number(String(heading.tagName || '').replace(/[^0-9]/g, '')) || 2,
       };
     });
@@ -371,7 +372,7 @@
     if (!badge) return hint;
     const hintDef = DOCUMENT_HINTS.find((entry) => entry.kind === hint) || null;
     badge.hidden = !hintDef;
-    badge.textContent = hintDef ? hintDef.label : 'Document';
+    badge.textContent = hintDef ? hintDef.label : jt('artifacts.document.defaultBadge', 'Document');
     return hint;
   }
 

@@ -14,7 +14,19 @@ from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from sidecar.ai.config import resolve_operation_ledger_root
-from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
+from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_IO_FAILED
+from sidecar.ai.execution_policy import (
+    DesktopExecutionPolicyError,
+    desktop_policy_from_cli,
+    desktop_tool_decision,
+)
+from sidecar.ai.host_policy import (
+    HOST_EXECUTION_POLICY_VERSION,
+    HostPolicyError,
+    host_policy_from_cli,
+    host_tool_decision,
+)
+from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
     install_termination_handler,
@@ -55,6 +67,7 @@ from sidecar.ai.tools.contracts import (
     ToolHandlerResult,
     validate_tool_arguments,
 )
+from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io
 from sidecar.ai.tools.phase_trace import PHASE_NAMES, PhaseTrace
 from sidecar.ai.tools.plan_artifact_policy import strip_plan_artifact_write_arg
 from sidecar.ai.tools.registry import build_tool_bindings
@@ -107,6 +120,9 @@ TRANSPORT_ARGUMENT_KEYS: tuple[str, ...] = (
 
 def _default_tools(  # noqa: PLR0913
     *,
+    host_mode: str = "desktop",
+    host_execution_policy_version: int | None = None,
+    desktop_execution_policy_version: int | None = None,
     workspace_root_present: bool = True,
     pre_change_snapshot_root: str | None = None,
     glob_enabled: bool = True,
@@ -158,7 +174,12 @@ def _default_tools(  # noqa: PLR0913
     skills_disabled_ids: tuple[str, ...] = (),
     skills_auto_index: str = "auto",
 ) -> dict[str, BuiltinTool]:
+    host_policy = host_policy_from_cli(host_mode, host_execution_policy_version)
+    desktop_policy = desktop_policy_from_cli(desktop_execution_policy_version)
     config = {
+        "host_mode": host_policy.mode,
+        "host_execution_policy_version": host_policy.version,
+        "desktop_execution_policy_version": desktop_policy.version,
         "pre_change_snapshot_root": pre_change_snapshot_root,
         "tools_glob_enabled": glob_enabled,
         "tools_grep_enabled": grep_enabled,
@@ -214,7 +235,10 @@ def _default_tools(  # noqa: PLR0913
             "git_tracking": git_tracking_enabled,
         },
     }
-    bindings = build_tool_bindings(config=config, include_shell=shell_enabled)
+    bindings = build_tool_bindings(
+        config=config,
+        include_shell=shell_enabled and not desktop_policy.enforced,
+    )
     bindings["operation_status"] = lambda arguments, workspace: operation_status_tool(
         arguments,
         workspace,
@@ -349,9 +373,18 @@ def _error_response(
     }
 
 
-def _handle_tools_list(message_id: Any, tools: dict[str, BuiltinTool]) -> dict[str, Any]:
+def _handle_tools_list(
+    message_id: Any,
+    tools: dict[str, BuiltinTool],
+    host_config: Any | None = None,
+) -> dict[str, Any]:
     payload = []
     for tool in sorted(tools.values(), key=lambda item: item.name):
+        allowed, _reason = host_tool_decision(tool.name, host_config)
+        if allowed:
+            allowed, _reason = desktop_tool_decision(tool.name, host_config)
+        if not allowed:
+            continue
         descriptor = {
             "name": tool.name,
             "description": tool.description,
@@ -493,6 +526,7 @@ def _handle_tools_call(  # noqa: PLR0911
     tools: dict[str, BuiltinTool],
     workspace: WorkspaceGuard,
     params: dict[str, Any],
+    host_config: Any | None = None,
 ) -> dict[str, Any]:
     name = params.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -504,6 +538,31 @@ def _handle_tools_call(  # noqa: PLR0911
     tool = tools.get(name.strip())
     if tool is None:
         return _error_response(message_id, CMP_MCP_TOOL_NOT_FOUND, f"unknown tool: {name}")
+    allowed = all((host_tool_decision(tool.name, host_config)[0],
+                   desktop_tool_decision(tool.name, host_config)[0]))
+    if not allowed:
+        return _error_response(
+            message_id,
+            CMP_MCP_TOOL_NOT_FOUND,
+            "tool is unavailable in the hosted execution policy",
+        )
+    if (
+        tool.name == "run_command"
+        and (
+            (host_config.get("host_mode") if isinstance(host_config, dict)
+             else getattr(host_config, "host_mode", None)) == "server"
+        )
+        and (
+            (host_config.get("host_execution_policy_version") if isinstance(host_config, dict)
+             else getattr(host_config, "host_execution_policy_version", None))
+            == HOST_EXECUTION_POLICY_VERSION
+        )
+    ):
+        return _error_response(
+            message_id,
+            CMP_TOOL_DISABLED,
+            "hosted run_command requires the Electron execution worker bridge",
+        )
     raw_arguments = params.get("arguments")
     arguments = strip_plan_artifact_write_arg(raw_arguments)
     call_arguments, ledger_key, trace_id = ledger_call_arguments(arguments)
@@ -663,6 +722,7 @@ def _dispatch_message(
     payload: dict[str, Any],
     tools: dict[str, BuiltinTool],
     workspace: WorkspaceGuard,
+    host_config: Any | None = None,
 ) -> dict[str, Any]:
     message_id = payload.get("id")
     method = payload.get("method")
@@ -684,12 +744,12 @@ def _dispatch_message(
             },
         )
     if method == "tools/list":
-        return _handle_tools_list(message_id, tools)
+        return _handle_tools_list(message_id, tools, host_config)
     if method == "tools/call":
         params = payload.get("params")
         if not isinstance(params, dict):
             params = {}
-        return _handle_tools_call(message_id, tools, workspace, params)
+        return _handle_tools_call(message_id, tools, workspace, params, host_config)
     return _error_response(message_id, CMP_MCP_PROTOCOL_FAILED, f"unknown method: {method}")
 
 
@@ -714,11 +774,16 @@ def _build_workspace_guard(args: argparse.Namespace) -> WorkspaceGuard:
         )
 
         store = WorkspaceMutationJournalStore.from_version_root(recovery_root)
-        # WO-26: close the "retention only runs on the next delete/write" gap --
-        # one bounded startup pass here, then again after every journal commit
-        # (the store fires `on_commit`; both share `run_recovery_maintenance`).
-        # Neither is a timer: this runs once per subprocess start, and the hook
-        # only fires on an already-happening commit write.
+        # Reconcile abandoned journals before this subprocess accepts tools.
+        # Commit maintenance must preserve other live or approval-paused turns.
+        # Both retention paths are bounded and best-effort; neither uses a timer.
+        try:
+            store.reconcile_workspace(root)
+        except (OSError, ValueError) as error:
+            logger.warning(
+                "workspace_retention_maintenance_reconcile_failed",
+                extra={"reason": type(error).__name__},
+            )
         store.on_commit = lambda *_ids: run_recovery_maintenance(store, root)
         run_recovery_maintenance(store, root)
         mutation_journal = MutationChangeSetLifecycle(store, root)
@@ -734,136 +799,21 @@ def _parse_bool_arg(value: object) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace-root", dest="workspace_root", default=None)
-    parser.add_argument(
-        "--operation-ledger-root", dest="operation_ledger_root", default=""
-    )
-    parser.add_argument(
-        "--pre-change-snapshot-root",
-        dest="pre_change_snapshot_root",
-        default="",
-    )
-    parser.add_argument(
-        "--workspace-recovery-root", dest="workspace_recovery_root", default=""
-    )
-    parser.add_argument("--glob-enabled", dest="glob_enabled", default="1")
-    parser.add_argument("--grep-enabled", dest="grep_enabled", default="1")
-    parser.add_argument("--edit-enabled", dest="edit_enabled", default="1")
-    parser.add_argument("--delete-file-enabled", dest="delete_file_enabled", default="1")
-    parser.add_argument("--move-file-enabled", dest="move_file_enabled", default="1")
-    parser.add_argument("--shell-enabled", dest="shell_enabled", default="0")
-    # SECURITY: gate the shell-security classifier and git-operation telemetry
-    # that live in run_command's subprocess handler. Default off so a stale
-    # launcher never silently claims guardrails it did not forward.
-    parser.add_argument("--shell-security-enabled", dest="shell_security_enabled", default="0")
-    parser.add_argument("--git-tracking-enabled", dest="git_tracking_enabled", default="0")
-    parser.add_argument("--web-enabled", dest="web_enabled", default="0")
-    parser.add_argument("--web-rate-limit-per-min", dest="web_rate_limit_per_min", default="30")
-    parser.add_argument("--web-max-fetch-bytes", dest="web_max_fetch_bytes", default="1048576")
-    parser.add_argument(
-        "--web-allow-private-addresses",
-        dest="web_allow_private_addresses",
-        default="0",
-    )
-    parser.add_argument(
-        "--web-search-provider",
-        dest="web_search_provider",
-        default="duckduckgo",
-    )
-    # No CLI arg for provider API keys: argv is visible in process listings,
-    # so key-based providers are configurable only through the managed sidecar
-    # config channel (RuntimeConfig.tools_web_search_provider_keys).
-    parser.add_argument("--web-searxng-url", dest="web_searxng_url", default="")
-    parser.add_argument("--image-read-enabled", dest="image_read_enabled", default="0")
-    parser.add_argument("--max-search-file-bytes", dest="max_search_file_bytes", default="2097152")
-    parser.add_argument("--max-edit-file-bytes", dest="max_edit_file_bytes", default="2097152")
-    parser.add_argument("--python-runtime-enabled", dest="python_runtime_enabled", default="0")
-    parser.add_argument(
-        "--python-runtime-timeout-seconds",
-        dest="python_runtime_timeout_seconds",
-        default="30",
-    )
-    parser.add_argument(
-        "--python-runtime-max-memory-mb",
-        dest="python_runtime_max_memory_mb",
-        default="512",
-    )
-    parser.add_argument(
-        "--python-runtime-interpreter",
-        dest="python_runtime_interpreter",
-        default="",
-    )
-    parser.add_argument("--python-runtime-root", dest="python_runtime_root", default="")
-    parser.add_argument(
-        "--python-runtime-bundled-python",
-        dest="python_runtime_bundled_python",
-        default="",
-    )
-    parser.add_argument(
-        "--python-runtime-wheelhouse-dir",
-        dest="python_runtime_wheelhouse_dir",
-        default="",
-    )
-    parser.add_argument("--todo-enabled", dest="todo_enabled", default="0")
-    parser.add_argument("--connections-enabled", dest="connections_enabled", default="1")
-    parser.add_argument(
-        "--connections-engine-type", dest="connections_engine_type", default="mock"
-    )
-    parser.add_argument(
-        "--connections-engine-host", dest="connections_engine_host", default=""
-    )
-    parser.add_argument(
-        "--connections-mcp-server",
-        dest="connections_mcp_servers",
-        action="append",
-        nargs=3,
-        default=[],
-    )
-    parser.add_argument("--mermaid-enabled", dest="mermaid_enabled", default="0")
-    parser.add_argument(
-        "--workspace-manifest-enabled",
-        dest="workspace_manifest_enabled",
-        default="0",
-    )
-    parser.add_argument("--rich-files-enabled", dest="rich_files_enabled", default="0")
-    parser.add_argument("--knowledge-enabled", dest="knowledge_enabled", default="0")
-    # Repeatable: one flag per registered knowledge root. Roots are paths, not
-    # secrets, so argv delivery matches --workspace-root.
-    parser.add_argument(
-        "--knowledge-root",
-        dest="knowledge_roots",
-        action="append",
-        default=[],
-    )
-    parser.add_argument("--distill-enabled", dest="distill_enabled", default="1")
-    parser.add_argument("--lsp-enabled", dest="lsp_enabled", default="0")
-    parser.add_argument(
-        "--lsp-command-typescript",
-        dest="lsp_command_typescript",
-        default="",
-    )
-    parser.add_argument("--lsp-command-python", dest="lsp_command_python", default="")
-    parser.add_argument("--load-skill-enabled", dest="load_skill_enabled", default="1")
-    # Skill scope roots are paths, not secrets, so argv delivery matches
-    # --workspace-root / --knowledge-root; the tool re-validates every read
-    # against these roots regardless of what a caller requests.
-    parser.add_argument("--skill-bundled-root", dest="skills_bundled_root", default="")
-    parser.add_argument("--skill-bundled-enabled", dest="skills_bundled_enabled", default="1")
-    parser.add_argument("--skill-user-root", dest="skills_user_root", default="")
-    parser.add_argument("--skill-user-enabled", dest="skills_user_enabled", default="1")
-    parser.add_argument("--skill-project-root", dest="skills_project_root", default="")
-    parser.add_argument("--skill-project-enabled", dest="skills_project_enabled", default="1")
-    parser.add_argument(
-        "--skill-disabled-id", dest="skills_disabled_ids", action="append", default=[]
-    )
-    parser.add_argument(
-        "--skill-auto-index",
-        dest="skills_auto_index",
-        choices=("auto", "on", "off"),
-        default="auto",
-    )
+    parser = build_argument_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        host_policy = host_policy_from_cli(
+            args.host_mode,
+            args.host_execution_policy_version,
+        )
+        desktop_policy = desktop_policy_from_cli(args.desktop_execution_policy_version)
+    except (HostPolicyError, DesktopExecutionPolicyError):
+        parser.error("invalid execution policy")
+    host_config = {
+        "host_mode": host_policy.mode,
+        "host_execution_policy_version": host_policy.version,
+        "desktop_execution_policy_version": desktop_policy.version,
+    }
     ledger_root_arg = str(args.operation_ledger_root or "").strip()
     configure_operation_ledger(
         ledger_root_arg if ledger_root_arg else resolve_operation_ledger_root()
@@ -875,6 +825,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     except OperationLedgerUnavailable:
         pass
     workspace = _build_workspace_guard(args)
+    configure_hosted_file_io(
+        str(workspace.root) if workspace.root is not None else None,
+        enabled=host_policy.mode == "server",
+    )
     glob_enabled = _parse_bool_arg(args.glob_enabled)
     grep_enabled = _parse_bool_arg(args.grep_enabled)
     edit_enabled = _parse_bool_arg(args.edit_enabled)
@@ -910,6 +864,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         if token
     )[:256]
     tools = _default_tools(
+        host_mode=host_policy.mode,
+        host_execution_policy_version=host_policy.version,
+        desktop_execution_policy_version=desktop_policy.version,
         workspace_root_present=workspace.root is not None,
         pre_change_snapshot_root=str(args.pre_change_snapshot_root).strip() or None,
         glob_enabled=glob_enabled,
@@ -991,7 +948,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     _error_response(None, CMP_MCP_PROTOCOL_FAILED, "payload must be an object")
                 )
                 continue
-            response = _dispatch_message(payload, tools, workspace)
+            response = _dispatch_message(payload, tools, workspace, host_config)
             _write_response(response)
     finally:
         shutdown_lsp_tools()

@@ -47,13 +47,13 @@ is enforced from both ends.
 `services/backend/schema-version-registry.js` registers schemas with a
 `forward_policy`. App-version is `lockstep_release`; API-version is
 `lockstep_api_version`. The Node test pins the corpus assumption that
-`package.json:version === '1.0.0'` — when the app version bumps, the
+`package.json:version === '1.1.0'` — when the app version bumps, the
 gate fails until either:
 
 1. A new `userdata-v<N>/` fixture is added for the new schema dimension,
    or
 2. The bump is covered by the current-schema fixtures and
-   `EXPECTED_APP_VERSION` is updated in the test. Version 1.0.0 uses the
+   `EXPECTED_APP_VERSION` is updated in the test. Version 1.1.0 retains the
    current v20 session fixture, the v1-current/v2-future terminal-repair
    guards, and the memory-v6 migration fixture for current schema v7.
 

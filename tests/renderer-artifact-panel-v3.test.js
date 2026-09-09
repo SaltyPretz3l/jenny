@@ -173,6 +173,67 @@ describe('Artifact Panel V3 view capabilities and segmented control', () => {
   });
 });
 
+test('load errors retain Retry and non-artifact modes cannot expose a dirty artifact', (t) => {
+  const selected = artifact('markdown');
+  const h = makePanelHarness(t, [selected, artifact('code')]);
+  h.state.artifacts.loadState = 'error';
+  h.state.artifacts.lastError = 'read failed';
+  h.controller.afterRender(selected);
+  assert.equal(h.panelEl.querySelector('#artifactReviewRevertButton').classList.contains('hidden'), false);
+  h.state.artifacts.loadedArtifactId = selected.id;
+  h.state.artifacts.loadedArtifactContent = 'old';
+  h.state.artifacts.dirtyContent = 'new';
+  for (const mode of ['code_review', 'file_preview', 'tasks']) {
+    h.state.ui = { artifactReview: { mode } };
+    h.controller.afterRender(selected);
+    h.controller.patchDirtyState(selected);
+    for (const id of ['artifactReviewSaveButton', 'artifactReviewRevertButton']) {
+      assert.equal(h.panelEl.querySelector('#' + id).classList.contains('hidden'), true, mode + ':' + id);
+    }
+    assert.equal(h.panelEl.querySelector('[data-artifact-panel-download]').disabled, true);
+    assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').disabled, true);
+    assert.equal(h.panelEl.querySelector('[data-inv-segmented="artifact-view"]'), null);
+    assert.equal(h.panelEl.querySelector('[data-artifact-switcher-trigger]'), null);
+  }
+});
+
+test('dirty chrome patch does not rebuild metadata or query the source', (t) => {
+  const selected = artifact('code');
+  const h = makePanelHarness(t, [selected]);
+  h.controller.afterRender(selected);
+  h.controller.connect({
+    getArtifacts: () => { throw new Error('catalog queried during edit'); },
+    getSelectedArtifactSource: () => { throw new Error('source scanned during edit'); },
+  });
+  Object.assign(h.state.artifacts, { loadedArtifactId: selected.id, loadedArtifactContent: 'before', dirtyContent: 'after' });
+  h.controller.patchDirtyState(selected);
+  assert.equal(h.panelEl.querySelector('#artifactReviewSaveButton').classList.contains('hidden'), false);
+  assert.equal(h.panelEl.querySelector('[data-artifact-save-state]').textContent, 'Unsaved');
+});
+
+test('download rejects unavailable or stale sources but permits a loaded empty file', async () => {
+  const selected = artifact('code');
+  const payloads = [];
+  let source = null;
+  let current = true;
+  const controller = createArtifactPanelActions({
+    getArtifactSource: () => source,
+    isCurrentArtifact: () => current,
+    windowRef: { jennyShell: { dialog: { saveFile: async (payload) => { payloads.push(payload); return { canceled: true }; } } } },
+  });
+  await controller.download(selected);
+  assert.equal(payloads.length, 0);
+  source = '';
+  await controller.download(selected);
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].content, '');
+  current = false;
+  source = 'different artifact';
+  await controller.download(selected);
+  assert.equal(payloads.length, 1);
+  controller.dispose();
+});
+
 describe('Artifact Panel V3 switcher', () => {
   test('shared anchored listbox filters long lists and supports keyboard selection', (t) => {
     const dom = new JSDOM('<!doctype html><body><button id="anchor">Open</button></body>');

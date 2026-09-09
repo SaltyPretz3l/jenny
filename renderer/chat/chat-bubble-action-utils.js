@@ -5,6 +5,7 @@
   }
   root.chatBubbleActionUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const _stringUtils = typeof globalThis !== 'undefined' && typeof globalThis.stringUtils !== 'undefined' ? globalThis.stringUtils
     : typeof require === 'function' ? require('../shared/string-utils')
     : { normalizeString: function (v) { return String(v || '').trim(); }, normalizeId: function (v) { return String(v || '').trim(); } };
@@ -20,18 +21,18 @@
   const ERROR_STATUS = 'error';
   const ELABORATE_PROMPT = 'Can you elaborate on that?';
   const FOLLOW_UP_ACTION_BUSY_REASON =
-    'Wait for the current response to finish before trying that.';
+    jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
   const FOLLOW_UP_AUTH_BLOCKED_REASON =
-    'Sign in before trying that.';
+    jt('chat.bubbleActions.signInBeforeTrying', 'Sign in before trying that.');
   const FOLLOW_UP_BACKEND_NOT_READY_REASON =
-    'Wait for Jenny to finish connecting before trying that.';
+    jt('chat.bubbleActions.waitForBackend', 'Wait for Jenny to finish connecting before trying that.');
   const REGENERATE_DISABLED_REASON =
-    'Regenerate is only available for the latest assistant reply.';
+    jt('shell.fallback.regenerateLatestOnly', 'Regenerate is only available for the latest assistant reply.');
   const REGENERATE_MISSING_SOURCE_REASON =
-    'Could not find the source prompt for this reply.';
+    jt('shell.fallback.sourcePromptNotFound', 'Could not find the source prompt for this reply.');
   const REGENERATE_TEXT_ATTACHMENTS_REASON =
-    'Regenerate cannot replay text file attachments yet.';
-  const EDIT_DISABLED_REASON_DURING_EDIT = 'Finish the current edit first.';
+    jt('shell.fallback.regenerateTextAttachmentsUnsupported', 'Regenerate cannot replay text file attachments yet.');
+  const EDIT_DISABLED_REASON_DURING_EDIT = jt('chat.bubbleActions.finishCurrentEdit', 'Finish the current edit first.');
   const NON_REPLY_ASSISTANT_KINDS = new Set([
     'interactive_round_recap',
     'proactive_suggestion',

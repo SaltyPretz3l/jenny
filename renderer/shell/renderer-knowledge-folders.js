@@ -20,6 +20,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var GROUP_ID = 'knowledgeFoldersGroup';
   // MUST be card-scoped: the settings NAV items carry the same
   // data-settings-section attribute (renderer-settings-nav-utils.js) and
@@ -63,30 +64,30 @@
   // Human copy for the structured addFolder rejection reasons. Never leaks
   // the raw enum (the service's reason strings stay wire-only).
   var ADD_FOLDER_REASON_COPY = {
-    sensitive_path: 'That folder looks sensitive (keys, credentials, or browser data) and can’t be registered.',
-    not_a_directory: 'That path points at a file, not a folder.',
-    not_found: 'That folder doesn’t exist. Check the path and try again.',
-    duplicate: 'That folder is already registered.',
-    limit_reached: 'You’ve reached the folder limit. Remove one before adding another.',
-    feature_disabled: 'The knowledge layer is currently turned off.',
-    invalid_path: 'Enter a full, absolute folder path.',
-    picker_unavailable: 'The folder picker is unavailable right now. Type the path instead.',
+    sensitive_path: jt('knowledge.folderSensitive', 'That folder looks sensitive (keys, credentials, or browser data) and can’t be registered.'),
+    not_a_directory: jt('knowledge.pathIsFile', 'That path points at a file, not a folder.'),
+    not_found: jt('knowledge.folderNotFound', 'That folder doesn’t exist. Check the path and try again.'),
+    duplicate: jt('knowledge.folderAlreadyRegistered', 'That folder is already registered.'),
+    limit_reached: jt('knowledge.folderLimitReached', 'You’ve reached the folder limit. Remove one before adding another.'),
+    feature_disabled: jt('knowledge.layerDisabled', 'The knowledge layer is currently turned off.'),
+    invalid_path: jt('knowledge.enterAbsolutePath', 'Enter a full, absolute folder path.'),
+    picker_unavailable: jt('knowledge.pickerUnavailable', 'The folder picker is unavailable right now. Type the path instead.'),
   };
 
   function mapAddFolderReason(reason) {
     return ADD_FOLDER_REASON_COPY[String(reason || '')]
-      || 'That folder can’t be registered right now.';
+      || jt('knowledge.registerFolderFailed', 'That folder can’t be registered right now.');
   }
 
   var REMOVE_FOLDER_REASON_COPY = {
-    not_found: 'That folder is no longer registered.',
-    feature_disabled: 'The knowledge layer is currently turned off.',
-    schema_too_new: 'Knowledge folders saved by a newer Jenny version are read-only.',
+    not_found: jt('knowledge.folderNoLongerRegistered', 'That folder is no longer registered.'),
+    feature_disabled: jt('knowledge.layerDisabled', 'The knowledge layer is currently turned off.'),
+    schema_too_new: jt('knowledge.newerVersionReadOnly', 'Knowledge folders saved by a newer Jenny version are read-only.'),
   };
 
   function mapRemoveFolderReason(reason) {
     return REMOVE_FOLDER_REASON_COPY[String(reason || '')]
-      || 'That folder could not be removed right now.';
+      || jt('knowledge.removeFolderFailed', 'That folder could not be removed right now.');
   }
 
   function normalizeRoots(snapshot) {
@@ -131,7 +132,7 @@
       + resolveActionButton()({
         plain: true,
         className: 'settings-secondary knowledge-folders-remove-btn',
-        label: isPending ? 'Removing…' : 'Remove',
+        label: isPending ? jt('knowledge.removing', 'Removing…') : jt('common.remove', 'Remove'),
         disabled: isPending,
         dataset: { 'knowledge-folders-action': 'remove', 'root-id': entry.id },
       })
@@ -146,12 +147,12 @@
     return stepModal.renderStepModal({
       id: CONFIRM_MODAL_ID,
       tone: 'danger',
-      title: 'Remove folder?',
-      summary: 'The assistant will no longer be able to search "' + entry.path + '". The folder itself is not touched.',
+      title: jt('knowledge.removeFolderTitle', 'Remove folder?'),
+      summary: jt('knowledge.removeFolderSummary', 'The assistant will no longer be able to search "{path}". The folder itself is not touched.', { path: entry.path }),
       bodyHtml: '',
       actions: [
-        { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-        { id: 'confirm', label: 'Remove', variant: 'danger' },
+        { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+        { id: 'confirm', label: jt('common.remove', 'Remove'), variant: 'danger' },
       ],
     });
   }
@@ -162,13 +163,13 @@
       ? view.roots.map(function (entry) {
         return buildRowHtml(entry, view.pendingRemoveId);
       }).join('')
-      : '<p class="settings-note">No folders registered yet. Registered folders become searchable by the assistant.</p>';
+      : '<p class="settings-note">' + escapeHtml(jt('knowledge.noFoldersRegistered', 'No folders registered yet. Registered folders become searchable by the assistant.')) + '</p>';
 
     var browseButtonHtml = hasPicker
       ? actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: 'Browse…',
+        label: jt('knowledge.browse', 'Browse…'),
         disabled: view.addBusy,
         dataset: { 'knowledge-folders-action': 'browse' },
       })
@@ -176,20 +177,20 @@
 
     return ''
       + '<div class="settings-group knowledge-folders-group" role="group" aria-labelledby="knowledgeFoldersHeading" id="' + GROUP_ID + '">'
-      + '<h4 class="settings-group-heading" id="knowledgeFoldersHeading">Knowledge folders</h4>'
-      + '<p class="settings-group-copy">Folders the assistant can search and read with the knowledge tools.</p>'
+      + '<h4 class="settings-group-heading" id="knowledgeFoldersHeading">' + escapeHtml(jt('knowledge.foldersHeading', 'Knowledge folders')) + '</h4>'
+      + '<p class="settings-group-copy">' + escapeHtml(jt('knowledge.foldersDescription', 'Folders the assistant can search and read with the knowledge tools.')) + '</p>'
       + '<div class="knowledge-folders-list">' + rowsHtml + '</div>'
       + '<div class="settings-field-row knowledge-folders-add-row">'
       + '<div class="settings-field-row-text">'
       + '<label class="settings-field-label" for="knowledgeFolderPathInput">Add a folder</label>'
-      + '<p class="settings-field-description">Pick a folder or paste its full path.</p>'
+      + '<p class="settings-field-description">' + escapeHtml(jt('knowledge.addFolderDescription', 'Pick a folder or paste its full path.')) + '</p>'
       + '</div>'
       + resolveTextField()({
         id: 'knowledgeFolderPathInput',
-        placeholder: 'C:\\Users\\you\\Documents\\notes',
+        placeholder: jt('knowledge.folderPathPlaceholder', 'C:\\Users\\you\\Documents\\notes'),
         value: view.addInputValue || '',
         disabled: view.addBusy,
-        ariaLabel: 'Folder path to register',
+        ariaLabel: jt('knowledge.folderPathLabel', 'Folder path to register'),
         className: 'knowledge-folders-add-input',
       })
       + '</div>'
@@ -197,7 +198,7 @@
       + actionButton({
         plain: true,
         className: 'settings-primary',
-        label: view.addBusy ? 'Adding…' : 'Add folder',
+        label: view.addBusy ? jt('knowledge.adding', 'Adding…') : jt('knowledge.addFolder', 'Add folder'),
         disabled: view.addBusy,
         dataset: { 'knowledge-folders-action': 'add' },
       })
@@ -449,7 +450,7 @@
         }))
         .catch(disposalFence.guard(function (error) {
           view.pendingRemoveId = '';
-          view.errorMessage = 'That folder could not be removed right now.';
+          view.errorMessage = jt('knowledge.removeFolderFailed', 'That folder could not be removed right now.');
           appendClientLog('WARN', 'knowledge_folders.remove_failed', {
             message: error && error.message ? error.message : String(error),
           });

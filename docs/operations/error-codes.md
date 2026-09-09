@@ -1,7 +1,7 @@
 # CMP-* Error Code Registry
 
 **Schema version:** 1
-**Last reconciled:** 2026-08-12
+**Last reconciled:** 2026-09-08
 
 This is the single source of truth for every `CMP-<DOMAIN>-<NNNN>` error code emitted by Jenny's sidecar (Python) and backend services (Node). Codes are wire-stable identifiers attached to error payloads (`error_code` field) so that the renderer and ops tooling can route, classify, and surface failures consistently.
 
@@ -24,6 +24,23 @@ Each row in the per-domain tables below has the following columns:
 - **Terminal classification** â€” how the chat/tool runtime classifies the error: `runtime_error`, `denied`, `cancelled`, `timeout`, `preempted`, `question_batch`, or `internal` (never reaches user).
 - **User-visible message** â€” what the renderer shows; `internal-only` if the code never escapes the sidecar.
 - **Example raise site** â€” `path:line` of one representative raise site (not exhaustive). `DEAD` means the code is defined but not raised anywhere outside its definition file.
+
+---
+
+## HOST - `CMP-HOST-NNNN` (7 codes)
+
+Private browser-host failures reuse canonical Node constants. The API maps these
+to bounded public reasons; secrets and backend exceptions remain private.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `HOST_ERROR_CODES.INVALID` | `CMP-HOST-0001` | Invalid hosted configuration or request | No | denied | Bounded validation reason | `server/api-contract.js` |
+| `HOST_ERROR_CODES.UNAUTHORIZED` | `CMP-HOST-0002` | Authentication or client identity invalid | No | denied | Sign in again | `server/api-contract.js` |
+| `HOST_ERROR_CODES.FORBIDDEN` | `CMP-HOST-0003` | Operation lacks required authority | No | denied | Control or permission required | `server/api-contract.js` |
+| `HOST_ERROR_CODES.CONFLICT` | `CMP-HOST-0004` | Profile ownership, revision or control conflict | Conditional | denied | Bounded conflict reason | `services/host/profile-ownership.js` |
+| `HOST_ERROR_CODES.UNAVAILABLE` | `CMP-HOST-0005` | Hosted service or policy handshake unavailable | Conditional | runtime_error | Host unavailable | `services/backend/managed-sidecar-lifecycle.js` |
+| `HOST_ERROR_CODES.PERSISTENCE` | `CMP-HOST-0006` | Durable storage or receipt failure | Conditional | runtime_error | Persistence failed | `server/api-contract.js` |
+| `HOST_ERROR_CODES.LIMIT` | `CMP-HOST-0007` | Bounded resource capacity exhausted | Conditional | denied | Resource limit reached | `server/api-contract.js` |
 
 ---
 
@@ -112,6 +129,7 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND` | `CMP-TOOL-0043` | Requested worktree baseline is missing, expired, evicted, or belongs to another session/repository | No | `runtime_error` | "Worktree baseline is missing or expired; capture a new workspace_change_baseline." | [sidecar/ai/tools/builtins/worktree_change_tracking.py](../../sidecar/ai/tools/builtins/worktree_change_tracking.py) |
 | `CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED` / `TOOL_ERROR_CODES.PLACEHOLDER_ARGUMENTS_REJECTED` (Node) | `CMP-TOOL-0044` | Model echoed the schema example instead of real arguments (the whole argument object is the generated minimal example and that example contains a `<string>`/`<value>` placeholder, or -- for a side-effecting or descriptor-less tool -- any argument value is such a placeholder); settled before dispatch so the call never reaches the pre-mutation auto-checkpoint | No | `runtime_error` | "Tool '{name}' was not executed: the arguments are the schema example placeholders, not real values. Supply real arguments, or if no tool is needed, answer the user directly." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PRECONDITION_UNMET` | `CMP-TOOL-0045` | A declared tool precondition (e.g. `git_repo` for the git read tools and worktree change tracking) is unmet at call time; the tool stays listed but blocked until the precondition is satisfied | No | `runtime_error` | "'{cwd}' is not a git repository..." (git ops) / "worktree tracking requires a git repository within the workspace" | [sidecar/ai/tools/builtins/git_ops.py](../../sidecar/ai/tools/builtins/git_ops.py) |
+| `CMP_TOOL_PAUSED_UNATTENDED` | `CMP-TOOL-0046` | Auto run changed to prompt after the batch approval scan, so a side-effecting call was paused before dispatch | Yes | `runtime_error` | "Tool '{tool_id}' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 
 ## MEM â€” `CMP-MEM-NNNN` (9 codes, 0 dead)
 
@@ -355,6 +373,25 @@ Service-lifecycle errors.
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
 | `CMP_SRV_INITIALIZE_FAILED` | `CMP-SRV-0001` | Service initialization failed | No | `runtime_error` | internal-only | [sidecar/runtime/request_dispatch.py:1348](../../sidecar/runtime/request_dispatch.py#L1348) |
+
+## REMOTE â€” `CMP-REMOTE-NNNN` (12 Node codes, 0 dead)
+
+Remote Control command admission, authority, bounded transport, and resynchronization errors. The runtime values are owned by `ERROR_CODES` in the remote wire contract.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `ERROR_CODES.unauthorized` | `CMP-REMOTE-0001` | Device or connection is not authorized for the requested remote operation | No | `runtime_error` | "This device is not authorized." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.not_reachable` | `CMP-REMOTE-0002` | Jenny or its backend is not currently reachable through Remote Control | Conditional | `runtime_error` | "Jenny is not reachable right now." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.session_not_shared` | `CMP-REMOTE-0003` | The requested session has not been shared with the remote device | No | `runtime_error` | "This conversation is not shared with your phone." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.stale_approval` | `CMP-REMOTE-0004` | A decision targets an approval or question that is no longer pending at the supplied revision | No | `runtime_error` | "This decision is no longer pending." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.session_busy` | `CMP-REMOTE-0005` | The session already has an active turn and remote sends are not queued | Yes | `runtime_error` | "This conversation is busy. Try again when the current response finishes." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.rate_limited` | `CMP-REMOTE-0006` | A per-device remote command, send, or session-creation limit was exceeded | Yes | `runtime_error` | "Too many remote requests. Wait before trying again." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.payload_too_large` | `CMP-REMOTE-0007` | The prompt, frame, transcript page, or queued payload exceeds its wire limit | No | `runtime_error` | "The remote request is too large." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.lockdown` | `CMP-REMOTE-0008` | Offline lockdown blocks remote listing, reading, sending, or decision authority for the session | No | `runtime_error` | "Remote Control is unavailable while this conversation is in offline lockdown." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.desktop_only` | `CMP-REMOTE-0009` | The pending decision requires facts or authority available only on desktop | No | `runtime_error` | "Continue this decision on desktop." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.resync_required` | `CMP-REMOTE-0010` | The connection can no longer replay every event after its last acknowledged sequence | Yes | `runtime_error` | "The phone must refresh this conversation." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.invalid_request` | `CMP-REMOTE-0011` | A remote frame or command violates the versioned wire contract | No | `runtime_error` | "The remote request is invalid." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
+| `ERROR_CODES.epoch_invalid` | `CMP-REMOTE-0012` | A command or frame belongs to an invalidated Remote Control live epoch | Yes | `runtime_error` | "Remote Control was restarted. Reconnect your phone." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
 
 ## RUNTIME â€” `CMP-RUNTIME-NNNN` (1 code, 0 dead)
 
@@ -662,3 +699,14 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 - **2026-04-26** - Added Node-side ARTIFACT peer constants for canonical `CMP-ARTIFACT-*` wire codes and documented artifact workspace error-code propagation through rejected IPC bridge calls.
 - **2026-04-26** â€” Added Node-side TOOL peer constants for canonical `CMP-TOOL-*` wire codes and documented Electron tool-loop propagation of executor `errorCode` values through stream events, turn-event payloads, and persisted `tool_result.error_code`.
 - **2026-04-19** â€” Initial registry. Bundle 5A of `BACKEND_PROMPT_LIFECYCLE_REVIEW.md`. Promoted 13 string-literal sites to constants (6 SYM-RPC, 5 backend, 2 in `services/session-recovery-service.js` + `services/backend/turn-diagnostic-dump.js`), created `services/backend/error-codes.js`, audited 138 codes total (42 dead).
+
+## UPD - desktop updater (3 codes)
+
+The existing updates IPC state exposes these as camelCase `errorCode` with
+`errorStage`. These do not classify chat turns and do not change sidecar RPC.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| UPDATER_ERROR_CODES.check | CMP-UPD-0001 | Release discovery failed | Conditional, manual | internal | Bounded connection or metadata explanation | services/update-service.js |
+| UPDATER_ERROR_CODES.download | CMP-UPD-0002 | Download or verification failed | Conditional, manual | internal | Retry download | services/update-service.js |
+| UPDATER_ERROR_CODES.install | CMP-UPD-0003 | Installer handoff failed | Conditional, manual | internal | Retry handoff or open Releases | services/update-service.js |

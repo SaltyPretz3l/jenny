@@ -8,12 +8,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function noop() {}
-
-  const SAFE_FAILURE_MESSAGES = new Map([
-    ['This note is full — switch to another note.', 'This note is full — switch to another note.'],
-    ['Scratchpad is unavailable.', 'Scratchpad is unavailable.'],
-  ]);
 
   function createNoteCommandHandler(deps = {}) {
     const captureToScratchpad = typeof deps.captureToScratchpad === 'function' ? deps.captureToScratchpad : null;
@@ -23,30 +19,42 @@
     return function handleNoteCommand(invocation) {
       const text = String(invocation?.args || '').trim();
       if (!text) {
-        showToastMessage('Type something after /note to save it.', { title: 'Nothing to save', tone: 'warning' });
+        showToastMessage(jt('composer.slash.noteTypeSomething', 'Type something after /note to save it.'), { title: jt('composer.slash.nothingToSave', 'Nothing to save'), tone: 'warning' });
         return { ok: false, handled: true, code: 'empty_args' };
       }
       if (!captureToScratchpad) {
-        showToastMessage('Scratchpad is unavailable.', { title: 'Scratchpad', tone: 'warning' });
+        showToastMessage(jt('composer.slash.scratchpadUnavailable', 'Scratchpad is unavailable.'), { title: jt('composer.slash.scratchpadTitle', 'Scratchpad'), tone: 'warning' });
         return { ok: false, handled: true, code: 'scratchpad_unavailable' };
       }
       return Promise.resolve(captureToScratchpad(text)).then((result) => {
         if (result && result.ok) {
-          const detail = result.noteTitle ? `Added to ${result.noteTitle}.` : 'Added to scratchpad.';
-          showToastMessage(detail, { title: 'Scratchpad', tone: 'success' });
+          const detail = result.noteTitle ? jt('composer.slash.addedToNote', 'Added to {noteTitle}.', { noteTitle: result.noteTitle }) : jt('composer.slash.addedToScratchpad', 'Added to scratchpad.');
+          showToastMessage(detail, { title: jt('composer.slash.scratchpadTitle', 'Scratchpad'), tone: 'success' });
           return { ok: true, code: 'note_saved' };
         }
-        const rawMessage = String(result?.error || '').trim();
-        const safeMessage = SAFE_FAILURE_MESSAGES.get(rawMessage) || 'Could not save the note.';
-        showToastMessage(safeMessage, { title: 'Scratchpad', tone: 'warning' });
+        let code = 'capture_failed';
+        let safeMessage = jt('composer.slash.noteSaveFailed', 'Could not save the note.');
+        switch (result?.code) {
+          case 'note_full':
+            code = 'note_full';
+            safeMessage = jt('dashboard.scratchpad.actions.noteFull', 'This note is full — switch to another note.');
+            break;
+          case 'scratchpad_unavailable':
+            code = 'scratchpad_unavailable';
+            safeMessage = jt('composer.slash.scratchpadUnavailable', 'Scratchpad is unavailable.');
+            break;
+          default:
+            break;
+        }
+        showToastMessage(safeMessage, { title: jt('composer.slash.scratchpadTitle', 'Scratchpad'), tone: 'warning' });
         return {
           ok: false,
           handled: true,
-          code: rawMessage === 'This note is full — switch to another note.' ? 'note_full' : 'capture_failed',
+          code,
         };
       }).catch(() => {
         appendClientLog('WARN', 'slash.note_failed', { status: 'failed' });
-        showToastMessage('Could not save the note.', { title: 'Scratchpad', tone: 'warning' });
+        showToastMessage(jt('composer.slash.noteSaveFailed', 'Could not save the note.'), { title: jt('composer.slash.scratchpadTitle', 'Scratchpad'), tone: 'warning' });
         return { ok: false, handled: true, code: 'capture_exception' };
       });
     };

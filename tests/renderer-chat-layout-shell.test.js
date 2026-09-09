@@ -96,24 +96,61 @@ test('renderer syncs chat viewport variables across resize, activation, and cont
   assert.equal(chatView.style.getPropertyValue('--empty-hero-stage-bottom'), '52px');
 });
 
-test('renderer keeps splash composer focusable while prompt chips stay interactive', async (t) => {
-  const { window } = await loadRendererTestApp(t);
+test('empty sessions preserve the composer without chips or background suggestion requests', async (t) => {
+  let suggestionCalls = 0;
+  const { window, shell } = await loadRendererTestApp(t, {
+    shell: {
+      suggestions: {
+        async generate() {
+          suggestionCalls += 1;
+          return { suggestions: ['Replace the draft'] };
+        },
+      },
+    },
+  });
   const doc = window.document;
-  const promptGrid = doc.getElementById('promptGrid');
   const input = doc.getElementById('chatInput');
-
+  const assertNoChips = () => {
+    assert.equal(doc.getElementById('promptGrid'), null);
+    assert.equal(doc.querySelector('[data-prompt], [data-tip-settings]'), null);
+    assert.equal(suggestionCalls, 0);
+  };
   await waitForUi(window, 40);
-
-  assert.equal(input.disabled, false, 'composer input should be enabled on a fresh splash');
+  assertNoChips();
+  assert.equal(input.disabled, false);
   input.focus();
-  assert.equal(doc.activeElement, input, 'composer input should remain focusable on splash');
+  assert.equal(doc.activeElement, input);
   assert.equal(input.value, '');
-  assert.ok(promptGrid);
-  const promptChip = promptGrid.querySelector('[data-prompt]');
-  assert.ok(promptChip, 'prompt plumbing should render at least one splash chip');
-  promptChip.click();
-  await waitForUi(window, 20);
-  assert.equal(input.value.length > 0, true, 'clicking a splash chip should seed the composer draft');
+  input.value = 'Keep my unfinished request';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  await shell.__emitBackendStatus({ phase: 'ready', model_loaded: true });
+  await shell.__emitAuthState({ authenticated: true, user: { display_name: 'Local User' } });
+  await shell.__emitTipsChanged({
+    featureEnabled: true,
+    settings: { enabled: true, sessionCount: 3, historyByTipId: {} },
+    relevantTips: [],
+    activeTip: { id: 'workspace-root', title: 'Choose a workspace', settingsSection: 'tools' },
+  });
+  await waitForUi(window, 40);
+  assertNoChips();
+  assert.equal(input.value, 'Keep my unfinished request');
+  assert.equal(shell.__state.chatCalls.length, 0, 'typing and shell events never send a turn');
+
+  doc.getElementById('newChatButton').click();
+  await waitForUi(window, 40);
+  assert.ok(window.__rendererState.currentSessionId, 'new session creation still works');
+  assertNoChips();
+  assert.equal(doc.activeElement, input);
+  doc.querySelector('.toprail-tab[data-tab-id="settings"]').click();
+  await waitForUi(window, 40);
+  assert.equal(window.__rendererState.ui.activeView, 'settings');
+  const sessionRow = doc.querySelector(`.conversation-item[data-session-id="${window.__rendererState.currentSessionId}"] [data-session-open]`);
+  assert.ok(sessionRow, 'the empty session remains available in the session list');
+  sessionRow.click();
+  await waitForUi(window, 40);
+  assert.equal(window.__rendererState.ui.activeView, 'chat');
+  assertNoChips();
 });
 
 test('renderer syncs thread and composer surface-state attributes from renderer-local state', async (t) => {

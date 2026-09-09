@@ -14,6 +14,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -38,7 +40,7 @@
 
   function getShowMoreLabel(hiddenCount) {
     var count = Math.max(0, Number(hiddenCount) || 0);
-    return 'Show ' + count + ' more sources';
+    return jtn('inventory.faviconBadge.showMoreSources', count, { count: count }, 'Show {count} more source', 'Show {count} more sources');
   }
 
   /**
@@ -141,9 +143,9 @@
       overflow.hidden = !nextExpanded;
       var hiddenCount = Number(btn.getAttribute('data-inv-more-count') || 0);
       var showMoreLabel = getShowMoreLabel(hiddenCount);
-      btn.textContent = nextExpanded ? 'Show less' : '+' + hiddenCount + ' more';
-      btn.setAttribute('aria-label', nextExpanded ? 'Show fewer sources' : showMoreLabel);
-      btn.setAttribute('title', nextExpanded ? 'Show fewer sources' : showMoreLabel);
+      btn.textContent = nextExpanded ? jt('inventory.faviconBadge.showLess', 'Show less') : jt('inventory.faviconBadge.moreCount', '+{count} more', { count: hiddenCount });
+      btn.setAttribute('aria-label', nextExpanded ? jt('inventory.faviconBadge.showFewerSources', 'Show fewer sources') : showMoreLabel);
+      btn.setAttribute('title', nextExpanded ? jt('inventory.faviconBadge.showFewerSources', 'Show fewer sources') : showMoreLabel);
     });
   }
 

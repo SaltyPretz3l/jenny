@@ -20,6 +20,7 @@
   root.rendererIdeMapA11y = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRefForOwnership = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -158,9 +159,9 @@
     function applyStaticRoles() {
       if (viewportEl) {
         viewportEl.setAttribute('role', 'application');
-        viewportEl.setAttribute('aria-roledescription', 'File map');
+    viewportEl.setAttribute('aria-roledescription', jt('ide.map.a11y.roleDescription', 'File map'));
         if (!viewportEl.hasAttribute('aria-label')) {
-          viewportEl.setAttribute('aria-label', 'Workspace file map');
+          viewportEl.setAttribute('aria-label', jt('ide.map.a11y.label', 'Workspace file map'));
         }
       }
       if (contentEl) {
@@ -181,7 +182,7 @@
         : 0;
       viewportEl.setAttribute(
         'aria-label',
-        `Workspace file map — ${fileCount} visible files, ${edgeCount} dependencies${hiddenCount ? `, ${hiddenCount} hidden tests` : ''}`
+        hiddenCount ? jt('ide.map.a11y.summaryWithHiddenTests', 'Workspace file map — {fileCount} visible files, {edgeCount} dependencies, {hiddenCount} hidden tests', { fileCount, edgeCount, hiddenCount }) : jt('ide.map.a11y.summary', 'Workspace file map — {fileCount} visible files, {edgeCount} dependencies', { fileCount, edgeCount })
       );
     }
 
@@ -324,7 +325,7 @@
       const ids = cycleState.ids.filter((id) => isNavigable(id));
       cycleState.ids = ids;
       if (!ids.length) {
-        announce(wantOutbound ? 'No outbound dependencies.' : 'No inbound dependents.');
+      announce(wantOutbound ? jt('ide.map.a11y.noOutbound', 'No outbound dependencies.') : jt('ide.map.a11y.noInbound', 'No inbound dependents.'));
         return;
       }
       cycleState.index = (cycleState.index + 1) % ids.length;

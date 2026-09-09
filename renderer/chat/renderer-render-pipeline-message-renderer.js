@@ -5,6 +5,7 @@
   }
   root.rendererRenderPipelineMessageRenderer = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Ht-D: syncChatEntryCvExemptAttribute keeps the paint-skip exemption
   // attribute in lockstep with the 'pending' class on the narrow patch path
   // below (which bypasses a full markup rebuild).
@@ -125,6 +126,9 @@
           kind,
           status,
           String(message.finalizedAt || ''),
+          String(message.timestamp || ''),
+          String(message.model_used || ''),
+          String(message.terminal_status || ''),
           String(message.streamId || ''),
           String(message.parent_stream_id || ''),
           Array.isArray(message.phases) ? message.phases.length : 0,
@@ -276,7 +280,10 @@
     const hideAssistantSprite = asFn(callbacks.hideAssistantSprite, noop);
 
     function renderMessages(options = {}) {
-      const forceFullRender = options?.forceFullRender === true || options?.forceLegacyRowModelFallback === true;
+      const timeFormat = globalThis.jennyI18n?.timeOptions?.().hourCycle || '';
+      const forceFullRender = options?.forceFullRender === true || options?.forceLegacyRowModelFallback === true
+        || (uiRuntime.timeFormat || '') !== timeFormat;
+      uiRuntime.timeFormat = timeFormat;
       if (!chatTimeline || !chatThreadScroll) {
         return;
       }
@@ -330,19 +337,19 @@
       pruneToolRowProjectionSessionCaches(state.currentSessionId);
       function resolveFollowUpDisabledReason() {
         if (state.ui?.branchCommitting === true) {
-          return 'Wait for the branch to finish before trying that.';
+      return jt('chat.messageRenderer.waitForBranch', 'Wait for the branch to finish before trying that.');
         }
         if (isSendBusy() || isSendPreflightPending()) {
-          return 'Wait for the current response to finish before trying that.';
+      return jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
         }
         if (!state.auth?.authenticated) {
-          return 'Sign in before trying that.';
+      return jt('chat.messageRenderer.signInBeforeTrying', 'Sign in before trying that.');
         }
         // model_unavailable keeps follow-up actions live: regenerate /
         // edit-and-resend retry the model load, matching the composer gates
         // in renderer-render-pipeline-chrome.js and renderer-send-utils.js.
         if (!['ready', 'model_unavailable'].includes(String(state.backend?.phase || '').trim())) {
-          return 'Wait for Jenny to finish connecting before trying that.';
+      return jt('chat.messageRenderer.waitForBackend', 'Wait for Jenny to finish connecting before trying that.');
         }
         return '';
       }

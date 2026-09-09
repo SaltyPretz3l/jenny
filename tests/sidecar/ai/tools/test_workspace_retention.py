@@ -596,3 +596,52 @@ def test_touch_workspace_active_use_updates_journal_and_ledger(tmp_path: Path) -
     raw = guarded.read_bytes(ledger_ref, max_bytes=4096, missing_ok=False)
     ledger = json.loads(raw.decode("utf-8"))
     assert ledger["current_active_use_seconds"] == 42
+
+
+def test_builtin_startup_reconciles_abandoned_journal_before_retention(tmp_path: Path) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    target = workspace / "abandoned.txt"
+    prepared = lifecycle.prepare_file_change(
+        {"_jenny_session_id": "session", "_jenny_turn_id": "abandoned",
+         "_jenny_tool_call_id": "call-abandoned",
+         "_jenny_change_set_id": "01990f9a-8c51-7ad2-a8be-41190e0e1f21"},
+        tool_name="write_file", target=target, relative_path="abandoned.txt",
+        new_bytes=b"written", checkpoint=None,
+    )
+    target.write_bytes(b"written")
+    guard = builtin_server._build_workspace_guard(Namespace(
+        workspace_root=str(workspace), pre_change_snapshot_root=None,
+        workspace_recovery_root=str(store.version_root),
+    ))
+    record = guard.mutation_journal.store.load(
+        prepared.workspace_id, prepared.change_set_id,
+    ).record
+    assert record["state"] == "interrupted"
+    assert record["termination_reason"] == "process_recovered"
+    assert record["completed_sequences"] == [1]
+    assert target.read_bytes() == b"written"
+
+
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_builtin_startup_retention_survives_reconciliation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[Exception],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    calls = []
+
+    def reconcile(_store, _root):
+        calls.append("reconcile")
+        raise error_type("fixture failure")
+
+    monkeypatch.setattr(WorkspaceMutationJournalStore, "reconcile_workspace", reconcile)
+    monkeypatch.setattr(
+        retention_module, "run_recovery_maintenance",
+        lambda *_args: calls.append("retention"),
+    )
+    guard = builtin_server._build_workspace_guard(Namespace(
+        workspace_root=str(workspace), pre_change_snapshot_root=None,
+        workspace_recovery_root=str(tmp_path / "recovery" / "v1"),
+    ))
+    assert guard.mutation_journal is not None
+    assert calls == ["reconcile", "retention"]

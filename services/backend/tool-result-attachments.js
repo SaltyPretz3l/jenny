@@ -4,6 +4,7 @@
 // the STORED asset id/path only — raw bytes/base64 never persist.
 
 const fs = require('fs');
+const { t } = require('../i18n-main');
 
 // Mirrors sidecar TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES (aggregate decoded
 // bytes per tool result) — anything larger was never admitted sidecar-side,
@@ -166,32 +167,32 @@ function readToolResultAttachment(service, attachmentId) {
   const index = attachmentIndexFor(service || {});
   const record = id ? index.get(id) : null;
   if (!record) {
-    return { ok: false, reason: 'unknown attachment id' };
+    return { ok: false, reason: t('main.attachments.unknownId', 'unknown attachment id') };
   }
   const store = service.attachmentAssetStore;
   const managedPath = store && typeof store.resolveManagedAssetRealPath === 'function'
     ? store.resolveManagedAssetRealPath(record.assetPath, { kind: 'image' })
     : '';
   if (!managedPath) {
-    return { ok: false, reason: 'attachment is not in the managed asset store' };
+    return { ok: false, reason: t('main.attachments.notManaged', 'attachment is not in the managed asset store') };
   }
   let stats;
   try {
     stats = fs.statSync(managedPath);
   } catch (_error) {
-    return { ok: false, reason: 'attachment asset is unavailable' };
+    return { ok: false, reason: t('main.attachments.assetUnavailable', 'attachment asset is unavailable') };
   }
   if (!stats.isFile() || stats.size > MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES) {
-    return { ok: false, reason: 'attachment asset failed the bounded-read check' };
+    return { ok: false, reason: t('main.attachments.boundedReadFailed', 'attachment asset failed the bounded-read check') };
   }
   let bytes;
   try {
     bytes = fs.readFileSync(managedPath);
   } catch (_error) {
-    return { ok: false, reason: 'attachment asset is unavailable' };
+    return { ok: false, reason: t('main.attachments.assetUnavailable', 'attachment asset is unavailable') };
   }
   if (bytes.length > MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES) {
-    return { ok: false, reason: 'attachment asset failed the bounded-read check' };
+    return { ok: false, reason: t('main.attachments.boundedReadFailed', 'attachment asset failed the bounded-read check') };
   }
   return {
     ok: true,

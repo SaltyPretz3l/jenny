@@ -101,7 +101,7 @@
   }
 
   .settings-nav-item-child {
-    padding-left: var(--space-5);
+    padding-inline-start: var(--space-5);
   }
 
   .settings-nav-divider {
@@ -128,12 +128,16 @@
 
   .chat-view .attachment-chip {
     gap: 6px;
-    padding: 0 6px 0 10px;
+    padding-block: 0;
+    padding-inline-start: 10px;
+    padding-inline-end: 6px;
   }
 
   .chat-view .attachment-chip-image {
     min-height: 42px;
-    padding: 4px 6px 4px 4px;
+    padding-block: 4px;
+    padding-inline-start: 4px;
+    padding-inline-end: 6px;
     border-radius: var(--radius-md);
   }
 

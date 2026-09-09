@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+FROM --platform=linux/amd64 node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10003 jenny-control \
+    && groupadd --gid 10001 jenny \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin jenny \
+    && install -d -m 0770 -o 0 -g 10003 /run/jenny-worker \
+    && install -d -m 0755 /inputs \
+    && install -d -m 0700 -o 10001 -g 10001 /workspace
+COPY server/worker /app/server/worker
+USER 0:10003
+ENTRYPOINT ["python3", "-I", "-c", "import sys; sys.path.insert(0, '/app'); from server.worker.supervisor import main; main()"]

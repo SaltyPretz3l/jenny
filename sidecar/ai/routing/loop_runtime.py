@@ -61,6 +61,8 @@ class LoopRuntime:
     phase_events_enabled: bool = False
     observation_store: ToolObservationStore | None = None
     request_context: Any | None = None
+    # Pixels never enter outcomes, events, or persisted messages.
+    preview_images: dict[str, Any] = field(default_factory=dict, repr=False)
     sub_agent_slot_allocator: Any | None = None
     tool_call_limit: int | None = None
     provider_cost_expected: bool = False
@@ -102,6 +104,16 @@ class LoopRuntime:
     clock: Callable[[], float] = field(default=time.monotonic, repr=False)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def _preview_context_tokens(self, messages: list[Any]) -> int:
+        """Release compacted observations before reserving their context cost."""
+        from sidecar.ai.routing.preview_vision import (  # noqa: PLC0415 — lazy preview path
+            preview_token_cost,
+            prune_previews,
+        )
+
+        prune_previews(self, messages)
+        return preview_token_cost(self)
 
     def emit_safe(self, event: LoopEvent) -> None:
         """Emit an event while serializing cross-thread producers."""

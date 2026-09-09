@@ -1,5 +1,6 @@
 'use strict';
 
+var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 const MAX_TASK_TEXT_CHARS = 8 * 1024 * 1024;
 const MAX_FIND_RESULTS = 500;
 
@@ -81,7 +82,7 @@ function evaluateRegexTask(task) {
 function serializeError(error) {
   return {
     code: String(error?.code || 'REGEX_EVALUATION_FAILED').slice(0, 64),
-    message: String(error?.message || 'Regex evaluation failed.').slice(0, 256),
+    message: String(error?.message || jt('ide.regexWorker.evaluationFailed', 'Regex evaluation failed.')).slice(0, 256),
   };
 }
 

@@ -5,7 +5,8 @@
   }
   root.rendererInteractivePanelUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   // ---- Shared question-state helpers (pure; used by both the markup builder
   // and the renderer's stalled-timer accounting) ----
   function getSkippedMap(draft) {
@@ -110,7 +111,7 @@
                 type="text"
                 spellcheck="true"
                 value="${escapeHtml(otherText)}"
-                placeholder="Type your answer..."
+                placeholder="${escapeHtml(jt('interactive.questions.answerPlaceholder', 'Type your answer...'))}"
                 data-interactive-other-input="true"
                 data-batch-id="${escapeHtml(batch.batch_id)}"
                 data-question-id="${escapeHtml(questionId)}"
@@ -124,7 +125,7 @@
                 data-question-id="${escapeHtml(questionId)}"
                 ${disabled || !String(otherText || '').trim() ? 'disabled' : ''}
               >
-                Save answer
+                ${escapeHtml(jt('interactive.questions.saveAnswer', 'Save answer'))}
               </button>
             </div>
           `
@@ -137,11 +138,11 @@
               data-interactive-skip-question="true"
               data-batch-id="${escapeHtml(batch.batch_id)}"
               data-question-id="${escapeHtml(questionId)}"
-              aria-label="Skip this question"
-              title="Skip this question"
+              aria-label="${escapeHtml(jt('interactive.questions.skipLabel', 'Skip this question'))}"
+              title="${escapeHtml(jt('interactive.questions.skipLabel', 'Skip this question'))}"
               ${disabled ? 'disabled' : ''}
             >
-              Skip
+              ${escapeHtml(jt('common.skip', 'Skip'))}
             </button>
           `
           : skipped
@@ -170,16 +171,16 @@
       .join('');
 
     const noteText = allResolved
-      ? (allAnswered ? 'Review answers or submit when ready.' : 'Review answers - some were skipped.')
-      : `${unresolved} question${unresolved === 1 ? '' : 's'} remaining.`;
+      ? (allAnswered ? jt('interactive.questions.reviewReady', 'Review answers or submit when ready.') : jt('interactive.questions.reviewSkipped', 'Review answers - some were skipped.'))
+      : jtn('interactive.questions.remainingCount', unresolved, { count: unresolved }, '{count} question remaining.', '{count} questions remaining.');
     const progressMarkup = questions.length > 1
-      ? `<span class="ask-card-progress">${escapeHtml(`${answeredCount} of ${questions.length} answered`)}</span>`
+      ? `<span class="ask-card-progress">${escapeHtml(jt('interactive.questions.answeredProgress', '{answered} of {total} answered', { answered: answeredCount, total: questions.length }))}</span>`
       : '';
 
     return `
       <div class="ask-card" data-interactive-batch-id="${escapeHtml(batch.batch_id)}">
         <div class="ask-card-header">
-          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>Jenny asks</span>
+          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>${escapeHtml(jt('interactive.questions.jennyAsks', 'Jenny asks'))}</span>
           ${progressMarkup}
         </div>
         ${batch.intro_text ? `<div class="ask-card-intro">${escapeHtml(batch.intro_text)}</div>` : ''}
@@ -194,7 +195,7 @@
             data-batch-id="${escapeHtml(batch.batch_id)}"
             ${disabled || !allResolved ? 'disabled' : ''}
           >
-            Submit answers
+            ${escapeHtml(jt('interactive.questions.submitAnswers', 'Submit answers'))}
           </button>
           ${unresolved > 1 ? `
             <button
@@ -204,7 +205,7 @@
               data-batch-id="${escapeHtml(batch.batch_id)}"
               ${disabled ? 'disabled' : ''}
             >
-              Skip all (${unresolved})
+              ${escapeHtml(jt('interactive.questions.skipAllCount', 'Skip all ({count})', { count: unresolved }))}
             </button>
           ` : ''}
           <button
@@ -214,13 +215,13 @@
             data-batch-id="${escapeHtml(batch.batch_id)}"
             ${disabled ? 'disabled' : ''}
           >
-            Answer later
+            ${escapeHtml(jt('interactive.questions.answerLater', 'Answer later'))}
           </button>
           <div class="interactive-card-note">
             ${noteText}
           </div>
           <div class="interactive-stalled-nudge" aria-live="polite">
-            Still there? You can skip unanswered questions or answer later.
+            ${escapeHtml(jt('interactive.questions.stalledNudge', 'Still there? You can skip unanswered questions or answer later.'))}
           </div>
         </div>
       </div>
@@ -245,7 +246,7 @@
     return `
       <div class="ask-card ask-card-inert" data-interactive-batch-id="${esc(batch?.batch_id || '')}" data-interactive-inert="true">
         <div class="ask-card-header">
-          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>Jenny asked</span>
+          <span class="ask-card-kicker"><span class="ask-card-kicker-dot" aria-hidden="true"></span>${esc(jt('interactive.questions.jennyAsked', 'Jenny asked'))}</span>
         </div>
         ${introMarkup}
         <ul class="interactive-summary-questions">${questionsMarkup}</ul>
@@ -418,7 +419,7 @@
           composer.classList.remove('composer-has-interactive');
         }
         if (chatInput) {
-          chatInput.placeholder = 'Message Jenny...';
+          chatInput.placeholder = jt('interactive.composer.placeholder', 'Message Jenny...');
         }
         return;
       }
@@ -447,7 +448,7 @@
         composer.classList.add('composer-has-interactive');
       }
       if (chatInput) {
-        chatInput.placeholder = 'Message Jenny...';
+        chatInput.placeholder = jt('interactive.composer.placeholder', 'Message Jenny...');
       }
       const unresolved = countUnresolvedQuestions(batch, draft, isInteractiveQuestionAnswered);
       if (unresolved > 0) {

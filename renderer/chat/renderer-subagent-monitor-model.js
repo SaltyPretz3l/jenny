@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TERMINAL = new Set([
     'completed', 'partial', 'failed', 'cancelled', 'rejected', 'skipped_budget',
   ]);
@@ -35,21 +36,21 @@
 
   function terminalCopy(reason, status) {
     const copy = {
-      deadline_exceeded: 'Ran out of time',
-      budget_exhausted: 'Reached its work limit',
-      max_iterations_summary: 'Reached its work limit',
-      capacity_unavailable: 'Did not start — no subagent slot was available',
+      deadline_exceeded: jt('chat.subagentMonitor.ranOutOfTime', 'Ran out of time'),
+      budget_exhausted: jt('chat.subagentMonitor.reachedWorkLimit', 'Reached its work limit'),
+      max_iterations_summary: jt('chat.subagentMonitor.reachedWorkLimit', 'Reached its work limit'),
+      capacity_unavailable: jt('chat.subagentMonitor.capacityUnavailable', 'Did not start — no subagent slot was available'),
       cancelled: 'Cancelled',
-      invalid_report: 'Finished, but the result could not be validated',
-      runtime_unavailable: 'Could not start the subagent runtime',
-      rejected: 'Could not start',
+      invalid_report: jt('chat.subagentMonitor.invalidReport', 'Finished, but the result could not be validated'),
+      runtime_unavailable: jt('chat.subagentMonitor.runtimeUnavailable', 'Could not start the subagent runtime'),
+      rejected: jt('chat.subagentMonitor.couldNotStart', 'Could not start'),
     };
     if (copy[reason]) return copy[reason];
     if (status === 'completed') return 'Completed';
-    if (status === 'partial') return 'Partially completed';
+    if (status === 'partial') return jt('chat.subagentMonitor.partiallyCompleted', 'Partially completed');
     if (status === 'cancelled') return 'Cancelled';
-    if (status === 'rejected') return 'Could not start';
-    if (status === 'skipped_budget') return 'Reached its work limit';
+    if (status === 'rejected') return jt('chat.subagentMonitor.couldNotStart', 'Could not start');
+    if (status === 'skipped_budget') return jt('chat.subagentMonitor.reachedWorkLimit', 'Reached its work limit');
     if (status === 'failed') return 'Failed';
     if (status === 'queued') return 'Queued';
     return 'Running';
@@ -95,11 +96,11 @@
       agentId: normalizeText(source.agent_id, 200),
       parentAgentId: normalizeText(source.parent_agent_id, 200),
       ordinal: Number.isSafeInteger(source.ordinal) ? source.ordinal : index + 1,
-      label: normalizeText(source.label, 80) || `Research task ${index + 1}`,
+      label: normalizeText(source.label, 80) || jt('chat.subagentMonitor.researchTask', 'Research task {index}', { index: index + 1 }),
       status,
       terminal: TERMINAL.has(status),
       success: status === 'completed',
-      summary: normalizeText(source.summary, 1000) || 'Details unavailable.',
+      summary: normalizeText(source.summary, 1000) || jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.'),
       evidence: normalizeEvidence(source.evidence),
       tools: Array.isArray(source.tools_used) ? source.tools_used.map((item) => normalizeText(item, 64)).filter(Boolean).slice(0, 20) : [],
       uncertainties: Array.isArray(source.uncertainties) ? source.uncertainties.map((item) => normalizeText(item, 300)).filter(Boolean).slice(0, 8) : [],
@@ -129,12 +130,12 @@
       parentAgentId: normalizeText(source.parentAgentId || source.parent_agent_id, 200),
       ordinal: Number.isSafeInteger(source.childOrdinal) ? source.childOrdinal : index + 1,
       count: Number.isSafeInteger(source.childCount) ? source.childCount : null,
-      label: normalizeText(source.childLabel || source.child_label, 80) || 'Research subagent',
+      label: normalizeText(source.childLabel || source.child_label, 80) || jt('chat.subagentMonitor.researchSubagent', 'Research subagent'),
       status,
       stage: normalizeText(source.stage, 80),
       terminal: source.childTerminal === true || source.terminal === true || TERMINAL.has(status),
       success: source.childSuccess === true || source.success === true,
-      summary: normalizeText(source.summary, 240) || 'Working on it.',
+      summary: normalizeText(source.summary, 240) || jt('chat.subagentMonitor.working', 'Working on it.'),
       evidence: [], tools: [], uncertainties: [],
       usage: normalizeUsage(source.usage),
       budget: {}, error: null,
@@ -246,8 +247,8 @@
       usage,
       parentState: input.parentResponding === true
         ? 'Responding'
-        : (children.some((child) => !child.terminal) ? 'Waiting on child' : 'Synthesizing results'),
-      summaryLabel: terminal?.kind === 'batch' || children.length > 1 ? 'Delegated research' : (selected?.label || 'Delegated research'),
+        : (children.some((child) => !child.terminal) ? jt('chat.subagentMonitor.waitingOnChild', 'Waiting on child') : jt('chat.subagentMonitor.synthesizingResults', 'Synthesizing results')),
+      summaryLabel: terminal?.kind === 'batch' || children.length > 1 ? jt('chat.subagentMonitor.delegatedResearch', 'Delegated research') : (selected?.label || jt('chat.subagentMonitor.delegatedResearch', 'Delegated research')),
       statusCopy: terminalCopy(selected?.terminalReason, status),
     };
   }

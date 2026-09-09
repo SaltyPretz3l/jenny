@@ -121,6 +121,7 @@ const {
   renameSession: _renameSession,
   getSessionMessages: _getSessionMessages,
   setSessionPreferences: _setSessionPreferences,
+  pauseSessionAutoRun: _pauseSessionAutoRun,
   setSessionMeta: _setSessionMeta,
   sweepEmptySessions: _sweepEmptySessions,
   updateSessionMessage: _updateSessionMessage,
@@ -148,6 +149,7 @@ const { SecureStore } = require('./secure-store');
 const { getAllSchemaVersions } = require('./schema-version-registry');
 const { createProviderIntegrationRegistry } = require('./provider-integrations');
 const { createUnavailableSetupState } = require('../setup-service');
+const { createHostPorts } = require('../host/host-ports');
 const {
   initializeConversationStorage,
 } = require('./backend-conversation-storage');
@@ -155,7 +157,16 @@ const MAX_DISMISSED_MEMORY_FINGERPRINTS = 1000;
 class BackendService extends EventEmitter {
   constructor(options) {
     super();
+    options = options && typeof options === 'object' ? options : {};
     this.options = options;
+    // Host ports are pure policy. Desktop callers with no host options retain
+    // the existing managed-engine behavior; server callers inject their
+    // credential service and explicitly opt into external engine ownership.
+    this.hostPorts = createHostPorts({
+      hostMode: options.hostMode,
+      credentialService: options.credentialService,
+    });
+    this.hostMode = this.hostPorts.mode;
     const emitLog = (level, event, details) => this._emitServiceLog(level, event, details);
     const appVersion = String(options.appVersion || '').trim();
     this.appVersion = appVersion || String(DEFAULT_APP_VERSION || '').trim();
@@ -164,7 +175,10 @@ class BackendService extends EventEmitter {
     // picker show openai-compatible (llama-server) models at boot even
     // while the default model string still implies ollama.  Empty = infer.
     const preferredEngineType = String(
-      options.configService?.getState?.()?.preferredEngineType || ''
+      options.preferredEngineType
+      || options.modelEndpoint?.engine
+      || options.configService?.getState?.()?.preferredEngineType
+      || ''
     ).trim().toLowerCase();
     this.currentEngineType = preferredEngineType
       || inferEngineTypeFromModel(options.defaultModel || '');
@@ -187,7 +201,7 @@ class BackendService extends EventEmitter {
       updated_at: null,
       ready_at: null,
     };
-    this.ollamaManager = new OllamaProcessManager({
+    this.ollamaManager = options.ollamaManager || new OllamaProcessManager({
       logger: emitLog,
       userDataPath: options.userDataPath,
       resolveMaxLoadedModels: () => this._resolveOllamaMaxLoadedModels(),
@@ -202,7 +216,7 @@ class BackendService extends EventEmitter {
         }
       },
     });
-    this.vllmManager = new VLLMProcessManager({
+    this.vllmManager = options.vllmManager || new VLLMProcessManager({
       logger: emitLog,
       userDataPath: options.userDataPath,
       model: this.currentEngineType === 'vllm' ? String(options.defaultModel || '').trim() : '',
@@ -238,7 +252,7 @@ class BackendService extends EventEmitter {
     this.artifactService = options.artifactService || null;
     this.worktreeService = options.worktreeService || null;
     this.automationService = options.automationService || null;
-    this.secureStore = new SecureStore({
+    this.secureStore = options.credentialService || new SecureStore({
       filePath: path.join(options.userDataPath, 'secure-state.json'),
       safeStorage: options.safeStorage,
       isSafeStorageReady: options.isSafeStorageReady,
@@ -266,9 +280,10 @@ class BackendService extends EventEmitter {
       authService: this.codexCliAuthService,
       logger: emitLog,
     });
-    this.sidecarManager = new SidecarManager({
+    this.sidecarManager = options.sidecarManager || new SidecarManager({
       mode: 'managed-dev',
       userDataPath: options.userDataPath,
+      runtimeHome: this.hostMode === 'server' ? options.runtimeHome : null,
       repoRoot: options.repoRoot,
       pythonExecutable: options.pythonExecutable,
       sandboxRoot: options.sandboxRoot,
@@ -419,14 +434,16 @@ class BackendService extends EventEmitter {
     // process exit.
     drainSessionStoresSync(this);
     try { this.sidecarManager.stop().catch(() => null); } catch (_) { /* best effort */ }
-    try { this.vllmManager.stop().catch(() => null); } catch (_) { /* best effort */ }
-    if (this.ollamaManager) {
-      try {
-        // Residue-gated: skips the ~1s win32 process-list scan when no local
-        // ollama could be left behind (see runOllamaDisposeForceKillSweep).
-        runOllamaDisposeForceKillSweep(this.ollamaManager);
-      } catch (_error) {
-        // best effort only
+    if (this.hostPorts?.posture?.ownsEngineLifecycle !== false) {
+      try { this.vllmManager.stop().catch(() => null); } catch (_) { /* best effort */ }
+      if (this.ollamaManager) {
+        try {
+          // Residue-gated: skips the ~1s win32 process-list scan when no local
+          // ollama could be left behind (see runOllamaDisposeForceKillSweep).
+          runOllamaDisposeForceKillSweep(this.ollamaManager);
+        } catch (_error) {
+          // best effort only
+        }
       }
     }
   }
@@ -443,7 +460,9 @@ class BackendService extends EventEmitter {
     return {
       ...runtimeStatus,
       appVersion: this.appVersion,
-      credentialStore: this.secureStore.getStatus(),
+      credentialStore: typeof this.secureStore?.getStatus === 'function'
+        ? this.secureStore.getStatus()
+        : { status: 'unavailable', ready: false },
       schemaVersions: getAllSchemaVersions({
         sidecarSchemaVersions:
           this.currentStatus?.schema_versions || this.currentStatus?.schemaVersions || [],
@@ -580,8 +599,8 @@ class BackendService extends EventEmitter {
     return _renameSession(this, sessionId, title);
   }
 
-  async deleteSession(sessionId) {
-    return _deleteSessionWithQuiescence(this, sessionId);
+  async deleteSession(sessionId, options) {
+    return _deleteSessionWithQuiescence(this, sessionId, options);
   }
 
   async getSessionMessages(sessionId) {
@@ -590,6 +609,10 @@ class BackendService extends EventEmitter {
 
   async setSessionPreferences(sessionId, preferences = {}) {
     return _setSessionPreferences(this, sessionId, preferences);
+  }
+
+  pauseSessionAutoRun(sessionId, options = {}) {
+    return _pauseSessionAutoRun(this, sessionId, options);
   }
 
   async setSessionMeta(sessionId, meta = {}) {
@@ -716,7 +739,8 @@ class BackendService extends EventEmitter {
     return _resolveModel(this, preferredModel, preferredEngineType, ownStreamId);
   }
 
-  async startChatStream({
+  async startChatStream(payload, options = {}) {
+    const {
     sessionId,
     prompt,
     visiblePrompt,
@@ -734,7 +758,7 @@ class BackendService extends EventEmitter {
     approvalMode,
     debugOptions,
     clientTiming, pluginCommandInvocation, skillInvocation, editedMessageId, failureRetry,
-  }) {
+    } = payload || {};
     // IMG-D01/C3 + C2 admission (gpu_busy_image / session_type_mismatch).
     assertChatTurnAdmissible(this, sessionId);
     return _startLocalEngineChatStream(this, {
@@ -755,7 +779,7 @@ class BackendService extends EventEmitter {
       approvalMode,
       debugOptions,
       clientTiming, pluginCommandInvocation, skillInvocation, editedMessageId, failureRetry,
-    });
+    }, options);
   }
 
   async editAndRegenerate(payload = {}) {

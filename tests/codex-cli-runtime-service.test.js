@@ -8,6 +8,28 @@ const {
   createCodexCliRuntimeService,
   normalizeCodexCliModelId,
 } = require('../services/backend/codex-cli-runtime-service');
+const CODEX_RUNTIME_PATH = require.resolve('../services/backend/codex-cli-runtime-service');
+const { registerMainTranslator } = require('../services/i18n-main');
+
+test.afterEach(() => {
+  registerMainTranslator(null);
+  delete globalThis.jennyI18n;
+  delete require.cache[CODEX_RUNTIME_PATH];
+});
+
+test('disabled-reason export translates when read after main translator registration', () => {
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  i18n.load({ tag: 'qps-ploc', strings: {
+    'main.codexCli.disabled': '[Cødęx CLI ïş dïşåƀļęd.]',
+  } });
+  globalThis.jennyI18n = i18n;
+  delete require.cache[CODEX_RUNTIME_PATH];
+  const runtime = require(CODEX_RUNTIME_PATH);
+
+  registerMainTranslator(i18n);
+
+  assert.equal(runtime.CODEX_CLI_DISABLED_REASON, '[Cødęx CLI ïş dïşåƀļęd.]');
+});
 
 test('codex CLI runtime service exposes disabled model entries without auth probing', async () => {
   let authProbeCount = 0;

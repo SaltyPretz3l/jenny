@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SVG_ATTRIBUTES = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" '
     + 'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
   const EYE_GLYPH = `<svg ${SVG_ATTRIBUTES}><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>`;
@@ -101,7 +102,7 @@
         size = `<span class="composer-model-picker-size"${sizeTitle}>${escapeHtml(formatUtils.formatHumanSize(source.sizeBytes))}</span>`;
       }
       const loaded = source.loaded
-        ? '<span class="composer-model-picker-loaded status-dot status-dot--ok" role="img" title="Loaded now" aria-label="Loaded now"></span>'
+        ? '<span class="composer-model-picker-loaded status-dot status-dot--ok" role="img" title="' + escapeHtml(jt('composer.modelPicker.loadedNow', 'Loaded now')) + '" aria-label="' + escapeHtml(jt('composer.modelPicker.loadedNow', 'Loaded now')) + '"></span>'
         : '';
       const check = source.selected
         ? '<span class="composer-model-picker-check" aria-hidden="true">&#10003;</span>'
@@ -109,7 +110,7 @@
       return '<span class="composer-model-picker-meta">'
         + glyph(source.vision, 'Vision', EYE_GLYPH)
         + glyph(source.thinking, 'Thinking', BULB_GLYPH)
-        + glyph(source.insert, 'Code completion', CODE_GLYPH)
+        + glyph(source.insert, jt('composer.modelPicker.codeCompletion', 'Code completion'), CODE_GLYPH)
         + size + loaded + check
         + '</span>';
     }
@@ -120,10 +121,10 @@
         ? `${entry.engineHint === 'huggingface' ? ' · ' : ':'}${entry.tag}`
         : '';
       const title = entry.retained
-        ? `${entry.id} — not in the current catalog`
+        ? jt('composer.modelPicker.notInCatalog', '{model} — not in the current catalog', { model: entry.id })
         : entry.available
           ? entry.id + (entry.org ? ` (${entry.org})` : '')
-          : `${entry.id} — unavailable${entry.reason ? `: ${entry.reason}` : ''}`;
+          : jt('composer.modelPicker.unavailable', '{model} — unavailable{reason}', { model: entry.id, reason: entry.reason ? `: ${entry.reason}` : '' });
       return actionButton({
         plain: true,
         role: 'option',
@@ -143,12 +144,10 @@
       const segments = inputs.effortOptions.map((option) => {
         const active = option.value === inputs.effort;
         const title = option.value === 'default'
-          ? 'Model default' + (
-            defaultEffortHint && defaultEffortHint !== 'default'
-              ? ` (${utils.effortSegmentLabel(defaultEffortHint)})`
-              : ''
-          )
-          : `Thinking: ${option.label}`;
+          ? (defaultEffortHint && defaultEffortHint !== 'default'
+            ? jt('composer.modelPicker.modelDefaultWithEffort', 'Model default ({effort})', { effort: utils.effortSegmentLabel(defaultEffortHint) })
+            : jt('composer.modelPicker.modelDefault', 'Model default'))
+          : jt('composer.modelPicker.thinkingValue', 'Thinking: {effort}', { effort: option.label });
         return actionButton({
           plain: true,
           role: 'radio',
@@ -161,7 +160,7 @@
       }).join('');
       return '<div class="composer-model-picker-thinking">'
         + '<span class="composer-model-picker-thinking-label">Thinking</span>'
-        + '<div class="composer-model-picker-segments" role="radiogroup" aria-label="Thinking effort">'
+        + '<div class="composer-model-picker-segments" role="radiogroup" aria-label="' + escapeHtml(jt('composer.modelPicker.thinkingEffort', 'Thinking effort')) + '">'
         + segments
         + '</div></div>';
     }
@@ -230,8 +229,8 @@
         && formatUtils.canonicalOllamaTag(inputs.loadedModel)
           === formatUtils.canonicalOllamaTag(inputs.backendModel);
       const defaultTitle = inputs.backendModel
-        ? `Use the backend default model (${inputs.backendModel})`
-        : 'Use the backend default model';
+        ? jt('composer.modelPicker.useBackendDefaultWithModel', 'Use the backend default model ({model})', { model: inputs.backendModel })
+        : jt('composer.modelPicker.useBackendDefault', 'Use the backend default model');
       const defaultSelected = inputs.preferredModel === '';
       const defaultOption = actionButton({
         plain: true,
@@ -249,8 +248,8 @@
           + textField({
             id: 'composerModelPickerSearch',
             value: query,
-            placeholder: 'Search models',
-            ariaLabel: 'Search models',
+            placeholder: jt('composer.modelPicker.searchPlaceholder', 'Search models'),
+            ariaLabel: jt('composer.modelPicker.searchPlaceholder', 'Search models'),
             className: 'composer-model-picker-search-field',
             dataset: { 'picker-search': '1' },
           })
@@ -266,18 +265,19 @@
         )).join('')
       )).join('');
       const empty = query && visibleEntries.length === 0
-        ? '<div class="composer-model-picker-empty" role="note">No models match</div>'
+        ? '<div class="composer-model-picker-empty" role="note">' + escapeHtml(jt('composer.modelPicker.noMatches', 'No models match')) + '</div>'
         : '';
       const retainedOption = retainedEntry
         ? modelOptionHtml(retainedEntry, inputs.preferredModel, locked)
         : '';
 
       host.innerHTML = search
-        + '<div class="composer-model-picker-list" role="listbox" aria-label="Model" id="composerModelPickerList">'
+        + '<div class="composer-model-picker-list" role="listbox" id="composerModelPickerList">'
         + defaultOption + retainedOption + catalogOptions + empty
         + '</div>'
         + thinkingHtml(inputs, defaultEffortHint)
-        + '<div class="inv-popover-footer">Applies to this chat. Defaults live in Settings.</div>';
+        + '<div class="inv-popover-footer">' + escapeHtml(jt('composer.modelPicker.chatDefaultsHint', 'Applies to this chat. Defaults live in Settings.')) + '</div>';
+      host.querySelector('#composerModelPickerList')?.setAttribute('aria-label', jt('composer.modelPicker.modelLabel', 'Model'));
       signature = nextSignature;
 
       const searchInput = host.querySelector('[data-picker-search]');
@@ -341,7 +341,7 @@
       const labelEl = pill.querySelector('.inv-chip-label');
       if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
       const title = utils.buildPillTitle(inputs);
-      const ariaLabel = `Model and reasoning effort. ${title}`;
+      const ariaLabel = jt('composer.modelPicker.pillAriaLabel', 'Model and reasoning effort. {title}', { title });
       if (pill.getAttribute('title') !== title) pill.setAttribute('title', title);
       if (pill.getAttribute('aria-label') !== ariaLabel) pill.setAttribute('aria-label', ariaLabel);
 

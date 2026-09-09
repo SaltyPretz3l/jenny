@@ -14,6 +14,7 @@
   }
   root.rendererIdeImageHost = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   const ZOOM_MIN = 10;
@@ -73,10 +74,10 @@
         dataset: { 'ide-image-zoom': action },
       });
       return '<div class="ide-image-toolbar">'
-        + zoomButton('fit', 'Fit', 'Fit to view')
-        + zoomButton('100', '100%', 'Actual size')
-        + zoomButton('out', '−', 'Zoom out')
-        + zoomButton('in', '+', 'Zoom in')
+        + zoomButton('fit', 'Fit', jt('ide.image.fitToView', 'Fit to view'))
+        + zoomButton('100', '100%', jt('ide.image.actualSize', 'Actual size'))
+        + zoomButton('out', '−', jt('ide.image.zoomOut', 'Zoom out'))
+        + zoomButton('in', '+', jt('ide.image.zoomIn', 'Zoom in'))
         + '<span class="ide-image-meta"></span>'
         + '</div>';
     }
@@ -158,7 +159,7 @@
       if (width * height > MAX_DECODE_PIXELS) {
         // Release the oversized decoded bitmap rather than leaving it live.
         imgEl.src = '';
-        showError(`Image is too large to preview (${width}×${height} decodes past the size budget).`);
+        showError(jt('ide.imageHost.tooLarge', 'Image is too large to preview ({width}×{height} decodes past the size budget).', { width, height }));
         return;
       }
       currentDoc.naturalWidth = width;
@@ -170,7 +171,7 @@
       if (!currentDoc) {
         return;
       }
-      showError('Could not load this image — the file may be corrupted or an unsupported format.');
+      showError(jt('ide.imageHost.loadFailed', 'Could not load this image — the file may be corrupted or an unsupported format.'));
     }
 
     function handleToolbarClick(event) {

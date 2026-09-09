@@ -16,6 +16,11 @@ const WORKSPACE_PORTABLE_NAMES = Object.freeze([
   'omissions.db',
   'artifact-manifest.json',
 ]);
+const DATA_INVENTORY_DESCRIPTIONS = Object.freeze({
+  'secure-state.json': Object.freeze([
+    'Remote control pairing record (encrypted): desktop identity, paired phones, shared chat ids, relay URL',
+  ]),
+});
 
 function inventoryError(reason, message) {
   return Object.assign(new Error(message), { code: DATA_ERROR_CODES.SOURCE_UNREADABLE, reason });
@@ -206,10 +211,11 @@ function collectDataInventory({
     if (entry.category === 'preferences') counts.preferences += 1;
   }
   counts.attachments = countSessionAttachments(sessionStore);
-  return { entries, counts };
+  return { entries, counts, descriptions: DATA_INVENTORY_DESCRIPTIONS };
 }
 
 module.exports = {
+  DATA_INVENTORY_DESCRIPTIONS,
   collectDataInventory,
   countSessionAttachments,
 };

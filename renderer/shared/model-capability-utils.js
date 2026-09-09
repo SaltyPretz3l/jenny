@@ -17,6 +17,7 @@
   root.modelCapabilityUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Effective-parameter floor (billions) below which multi-step planning is
   // unreliable on local models.
@@ -65,7 +66,7 @@
   function formatModelLabel(name) {
     const text = String(name || '').trim();
     if (!text) {
-      return 'the current model';
+      return jt('app.modelCapability.currentModel', 'the current model');
     }
     let base = text.split(':')[0];
     const suffixNoise = /[-_](q\d\S*|latest|it|instruct)$/i;

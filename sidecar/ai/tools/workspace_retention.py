@@ -380,15 +380,8 @@ def active_use_age_source(
 def run_recovery_maintenance(
     store: WorkspaceMutationJournalStore, workspace_root: str | Path
 ) -> None:
-    """Run bounded best-effort journal/trash/backup maintenance synchronously."""
+    """Retain recovery data without reconciling journals owned by live turns."""
     root = Path(workspace_root)
-    try:
-        store.reconcile_workspace(root)
-    except (OSError, ValueError) as error:
-        logger.warning(
-            "workspace_retention_maintenance_reconcile_failed",
-            extra={"reason": type(error).__name__},
-        )
     try:
         guarded = GuardedWorkspaceStore(root)
     except (OSError, ValueError, ToolExecutionFailure) as error:

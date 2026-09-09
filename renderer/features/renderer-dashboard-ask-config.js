@@ -21,8 +21,9 @@
   }
   root.rendererDashboardAskConfig = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
-
   const CHIP_DOM_ID = 'homeAskConfigChip';
   const POPOVER_DOM_ID = 'homeAskConfigPopover';
   const MODEL_FIELD_ID = 'homeAskConfigModel';
@@ -30,7 +31,7 @@
   // Long Ollama tags would push the trigger past the ask line's meta row; the
   // full name stays in the title + aria-label.
   const CHIP_LABEL_MAX = 22;
-  const DEFAULT_MODEL_LABEL = 'Default model';
+  const DEFAULT_MODEL_LABEL = jt('dashboard.widgets.askConfig.defaultModel', 'Default model');
   // The ask line's meta row; a bare region (unit harnesses) hosts it directly.
   const META_ROW_SELECTOR = '.home-ask__meta';
   const MODEL_SELECT_SELECTOR = '[data-ask-config="model"]';
@@ -247,10 +248,10 @@
         labelSlot.textContent = truncateLabel(text.display);
       }
       const description = text.effort
-        ? `Ask settings: ${text.model}, ${text.effort} reasoning effort`
-        : `Ask settings: ${text.model}`;
+        ? jt('dashboard.widgets.askConfig.summaryWithEffort', 'Ask settings: {model}, {effort} reasoning effort', { model: text.model, effort: text.effort })
+        : jt('dashboard.widgets.askConfig.summary', 'Ask settings: {model}', { model: text.model });
       chipEl.setAttribute('aria-label', description);
-      chipEl.setAttribute('title', `${description}. Applies to the chat this ask starts.`);
+      chipEl.setAttribute('title', jt('dashboard.widgets.askConfig.summaryTitle', '{description}. Applies to the chat this ask starts.', { description }));
     }
 
     function toolTogglesMarkup() {
@@ -267,7 +268,7 @@
         checked: current[category.id] !== false,
         className: 'home-ask-config__toggle',
       }));
-      return '<div class="home-ask-config__tools" role="group" aria-label="Tools for this ask">'
+      return '<div class="home-ask-config__tools" role="group" aria-label="' + escapeHtml(jt('dashboard.widgets.askConfig.toolsLabel', 'Tools for this ask')) + '">'
         + rows.join('')
         + '</div>';
     }
@@ -287,10 +288,10 @@
       }
       return selectField({
         id: EFFORT_FIELD_ID,
-        label: 'Reasoning effort',
+        label: jt('dashboard.widgets.askConfig.reasoningEffort', 'Reasoning effort'),
         value: current.reasoningEffort,
         options,
-        ariaLabel: 'Reasoning effort for this ask',
+        ariaLabel: jt('dashboard.widgets.askConfig.reasoningEffortLabel', 'Reasoning effort for this ask'),
         className: 'home-ask-config__field',
         dataset: { 'ask-config': 'effort' },
       });
@@ -312,10 +313,10 @@
       const modelField = selectField
         ? selectField({
           id: MODEL_FIELD_ID,
-          label: 'Model',
+          label: jt('dashboard.widgets.askConfig.model', 'Model'),
           value: current.preferredModel,
           options: modelOptions(current.preferredModel),
-          ariaLabel: 'Model for this ask',
+          ariaLabel: jt('dashboard.widgets.askConfig.modelLabel', 'Model for this ask'),
           className: 'home-ask-config__field',
           dataset: { 'ask-config': 'model' },
         })
@@ -326,7 +327,7 @@
         + '</div>'
         + toolTogglesMarkup()
         + '<div class="inv-popover-footer">'
-        + 'Applies to the chat this ask starts — defaults live in Settings.'
+        + escapeHtml(jt('dashboard.widgets.askConfig.footer', 'Applies to the chat this ask starts — defaults live in Settings.'))
         + '</div>';
     }
 
@@ -506,7 +507,7 @@
         + popover({
           id: 'home-ask-config',
           domId: POPOVER_DOM_ID,
-          ariaLabel: 'Ask settings',
+          ariaLabel: jt('dashboard.widgets.askConfig.label', 'Ask settings'),
           className: 'home-ask__panel',
         });
       // On the meta row, at its FRONT (ahead of the hint and the send button)

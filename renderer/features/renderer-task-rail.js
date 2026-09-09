@@ -6,6 +6,7 @@
   root.rendererTaskRail = factory(root.rendererTaskRailRender, root.rendererTaskBriefUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (taskRailRender, taskBriefUtils) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const render = taskRailRender || {};
@@ -162,9 +163,9 @@
       } catch (error) {
         if (disposed) return false;
         ui.busyTaskId = '';
-        ui.lastError = 'Task update failed.';
+        ui.lastError = jt('tasks.rail.updateFailed', 'Task update failed.');
         appendClientLog('WARN', 'task_rail.update_failed', { name: String(error?.name || 'Error').slice(0, 80) });
-        showToastMessage('Task update failed.');
+        showToastMessage(jt('tasks.rail.updateFailed', 'Task update failed.'));
         rerender();
         return false;
       }
@@ -228,7 +229,7 @@
       setActiveView('chat');
       chatInput.focus();
       renderAll();
-      showToastMessage('Task list added to the composer.');
+      showToastMessage(jt('tasks.rail.addedToComposer', 'Task list added to the composer.'));
     }
 
     function saveEditor(taskId) {
@@ -248,14 +249,14 @@
       const contextMenu = inventory.contextMenu || windowRef.inventoryContextMenu;
       if (!contextMenu?.show || !row) return;
       const items = [
-        { label: 'Edit', action: () => { ensureUiState().editTaskId = row.followUpId; rerender(); } },
-        { label: 'Defer until tomorrow', action: () => runMutation(row.followUpId, () => companionApi.deferFollowUp(row.followUpId, 'tomorrow')) },
+        { label: jt('common.edit', 'Edit'), action: () => { ensureUiState().editTaskId = row.followUpId; rerender(); } },
+        { label: jt('tasks.rail.deferUntilTomorrow', 'Defer until tomorrow'), action: () => runMutation(row.followUpId, () => companionApi.deferFollowUp(row.followUpId, 'tomorrow')) },
       ];
       if (row.status === 'resolved') {
-        items.push({ label: 'Archive', action: () => runMutation(row.followUpId, () => companionApi.archiveFollowUp(row.followUpId)) });
+        items.push({ label: jt('tasks.rail.archive', 'Archive'), action: () => runMutation(row.followUpId, () => companionApi.archiveFollowUp(row.followUpId)) });
       }
       items.push({ separator: true }, {
-        label: 'Delete', danger: true,
+        label: jt('common.delete', 'Delete'), danger: true,
         action: () => runMutation(row.followUpId, () => companionApi.deleteFollowUp(row.followUpId)),
       });
       contextMenu.show({ anchorEl: anchor, rootEl: panelEl, restoreFocusTo: anchor, items });
@@ -341,7 +342,7 @@
       mount.innerHTML = inventory.actionButton({
         id: 'chatTimelineTasksToggle', domId: 'chatTimelineTasksToggle', plain: true,
         className: 'chat-timeline-utility-button chat-timeline-tasks-toggle',
-        ariaLabel: 'Toggle tasks panel', title: 'Show or hide the Tasks panel', ariaPressed: false,
+        ariaLabel: jt('tasks.rail.toggleLabel', 'Toggle tasks panel'), title: jt('tasks.rail.toggleTitle', 'Show or hide the Tasks panel'), ariaPressed: false,
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4h7M6.25 8h7M6.25 12h7"/><path d="m2.5 4 .75.75L4.75 3.25M2.5 8l.75.75L4.75 7.25M2.5 12l.75.75 1.5-1.5"/></svg><span class="chat-timeline-utility-count" data-task-count="0" hidden>0</span>',
       });
       toggleEl = mount.firstElementChild;

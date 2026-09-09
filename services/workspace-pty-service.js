@@ -23,6 +23,7 @@
 
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { TERMINAL_ERROR_CODES } = require('./backend/error-codes');
+const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
 
 const MAX_CHUNK_BYTES = 64 * 1024; // per onData event (matches piped sibling)
@@ -216,7 +217,7 @@ class WorkspacePtyService {
         ok: false,
         available: true,
         code: TERMINAL_ERROR_CODES.ROOT_MISSING,
-        message: 'No workspace root is configured; choose a workspace folder first.',
+        message: t('main.workspacePty.workspaceRootRequired', 'No workspace root is configured; choose a workspace folder first.'),
       };
     }
     // 3. Single-session policy.
@@ -240,7 +241,7 @@ class WorkspacePtyService {
         ok: false,
         available: true,
         code: TERMINAL_ERROR_CODES.MODULE_LOAD_FAILED,
-        message: 'The terminal engine could not be loaded.',
+        message: t('main.workspacePty.engineLoadFailed', 'The terminal engine could not be loaded.'),
       };
     }
 
@@ -274,7 +275,7 @@ class WorkspacePtyService {
         ok: false,
         available: true,
         code: TERMINAL_ERROR_CODES.SPAWN_FAILED,
-        message: `Could not start the terminal shell: ${String(lastError?.message || lastError || '')}`,
+        message: t('main.workspacePty.shellStartFailed', 'Could not start the terminal shell: {error}', { error: String(lastError?.message || lastError || '') }),
       };
     }
 
@@ -301,7 +302,7 @@ class WorkspacePtyService {
         ok: false,
         available: true,
         code: TERMINAL_ERROR_CODES.SPAWN_FAILED,
-        message: 'The terminal engine could not attach its event handlers.',
+        message: t('main.workspacePty.eventHandlersFailed', 'The terminal engine could not attach its event handlers.'),
         terminationConfirmed,
       };
     }
@@ -355,7 +356,7 @@ class WorkspacePtyService {
       return {
         ok: false,
         code: TERMINAL_ERROR_CODES.SPAWN_FAILED,
-        message: `Could not resize the terminal: ${String(error?.message || error || '')}`,
+        message: t('main.workspacePty.resizeFailed', 'Could not resize the terminal: {error}', { error: String(error?.message || error || '') }),
       };
     }
     return { ok: true };

@@ -65,6 +65,11 @@ well before the end (a fully covered window can stop producing frames), then wal
 Leave the window unobstructed while it records. Pass scene ids to either
 command to regenerate a subset, e.g. `npm run demo:record -- ide-tour`.
 
+Each recording allocates a unique `ledger-cli-<suffix>` workspace under the
+Windows Public directory (or the system temporary directory elsewhere). It
+never reuses or clears an existing `ledger-cli` project. Cleanup removes only
+directories allocated by that recorder and refuses replaced roots or junctions.
+
 Scene choreography lives in `scripts/demo/demo-scenes.js` (cursor moves, clicks, typed text with a seeded human cadence, captions); the stills harness
 is documented in `docs/captures/README.md`.
 

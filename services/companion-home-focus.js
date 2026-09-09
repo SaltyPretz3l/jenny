@@ -1,4 +1,5 @@
 const { clipText, normalizeString } = require('./backend/path-utils');
+const { t } = require('./i18n-main');
 
 function isActionObject(action) {
   return action && typeof action === 'object' && !Array.isArray(action);
@@ -38,7 +39,9 @@ function buildLoopFocus(loop) {
   return {
     id: `focus:open_loop:${normalizeString(loop?.followUpId) || normalizeString(loop?.id) || 'active'}`,
     kind: 'open_loop',
-    label: loop?.isDue ? 'Due now' : 'Active loop',
+    label: loop?.isDue
+      ? t('main.companionHome.dueNow', 'Due now')
+      : t('main.companionHome.activeLoop', 'Active loop'),
     title: normalizeString(loop?.title) || 'Untitled open loop',
     meta: metaParts.join(' | ')
       || normalizeString(loop?.body)
@@ -63,7 +66,7 @@ function buildResumeFocus(card) {
   return {
     id: `focus:resume:${normalizeString(item.action?.sessionId) || normalizeString(item.label) || 'item'}`,
     kind: 'resume',
-    label: 'Ready to resume',
+    label: t('main.companionHome.readyToResume', 'Ready to resume'),
     title: normalizeString(item.label) || 'Resume interrupted work',
     meta: normalizeString(item.detail) || 'A recent session has resumable work waiting.',
     state: 'resume',
@@ -90,7 +93,7 @@ function buildSuggestedFocus(action) {
   return {
     id: `focus:suggested:${normalizeString(action?.id) || 'action'}`,
     kind: 'suggested',
-    label: 'Suggested start',
+    label: t('main.companionHome.suggestedStart', 'Suggested start'),
     title: normalizeString(action?.label) || 'Companion suggestion',
     meta: clipText(
       normalizeString(action?.prompt) || 'Jenny has a suggested next move ready based on your current mode.',
@@ -106,8 +109,8 @@ function buildClearFocus() {
   return {
     id: 'focus:clear',
     kind: 'clear',
-    label: 'Clear runway',
-    title: 'Nothing urgent is waiting.',
+    label: t('main.companionHome.clearRunway', 'Clear runway'),
+    title: t('main.companionHome.nothingUrgent', 'Nothing urgent is waiting.'),
     meta: 'Pick a mode, start a fresh session, or add an open loop to keep something visible.',
     state: 'clear',
     primaryAction: null,

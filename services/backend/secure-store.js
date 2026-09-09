@@ -1,6 +1,12 @@
 const crypto = require('crypto');
 
 const { FileJsonStore } = require('./file-json-store');
+const {
+  SECRET_TYPE_REMOTE_CONTROL,
+  parseRemoteControlRecord,
+  remoteControlRecordKeyName,
+  serializeRemoteControlRecord,
+} = require('./secure-store-remote-record');
 
 const SECURE_STORE_SOURCE = 'electron_safe_storage';
 const BASIC_TEXT_STORAGE_BACKEND = 'basic_text';
@@ -132,6 +138,7 @@ const KNOWN_SECRET_TYPES = Object.freeze([
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
   SECRET_TYPE_PLUGIN_REMOTE_MCP,
   SECRET_TYPE_PLUGIN_FULL_HOST,
+  SECRET_TYPE_REMOTE_CONTROL,
 ]);
 
 function normalizeSecretType(value, fallback = '') {
@@ -488,6 +495,38 @@ class SecureStore {
     return this.delete(keyName);
   }
 
+  getRemoteControlRecord() {
+    if (!this._assertSafeStorageReady().ready) {
+      throw new Error('SecureStore: encryption unavailable for the remote control record.');
+    }
+    const keyName = remoteControlRecordKeyName();
+    const record = parseRemoteControlRecord(this.get(keyName));
+    if (record === undefined) {
+      this._dropInvalidRecord(this.store.read({}), keyName,
+        'SecureStore: invalid remote control record, removing corrupted entry.');
+      return null;
+    }
+    return record;
+  }
+
+  // Presence of ANY stored envelope (even a malformed or unencrypted one) so
+  // the device store routes it through the fail-closed getter instead of
+  // treating corruption as absence and minting a fresh identity over it.
+  hasRemoteControlRecord() {
+    this._assertAppReady();
+    return Object.hasOwn(this.store.read({}), remoteControlRecordKeyName());
+  }
+
+  setRemoteControlRecord(record) {
+    return this.set(remoteControlRecordKeyName(), serializeRemoteControlRecord(record), {
+      secretType: SECRET_TYPE_REMOTE_CONTROL,
+    });
+  }
+
+  deleteRemoteControlRecord() {
+    return this.delete(remoteControlRecordKeyName());
+  }
+
   getModelProviderOAuth(providerId) {
     return this.get(modelProviderOAuthKeyName(providerId));
   }
@@ -552,8 +591,10 @@ class SecureStore {
 
 module.exports = {
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
+  SECRET_TYPE_REMOTE_CONTROL,
   WEB_SEARCH_PROVIDER_KEY_IDS,
   SecureStore,
   pluginRemoteMcpCredentialKeyName,
   pluginFullHostSecretKeyName,
+  remoteControlRecordKeyName,
 };

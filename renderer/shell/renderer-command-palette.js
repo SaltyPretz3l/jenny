@@ -36,6 +36,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (providersModule, renderModule) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const providers = providersModule || {};
   const renderUtils = renderModule || {};
   const SCOPES = providers.SCOPES || [{ id: 'all', label: '', groups: null }];
@@ -487,8 +488,8 @@
       const item = _items[_activeIndex];
       if (!item) return;
       if (item.disabled) {
-        showToastMessage(item.unavailableReason || 'That command is unavailable.', {
-          title: 'Command unavailable',
+        showToastMessage(item.unavailableReason || jt('commandPalette.unavailableFallback', 'That command is unavailable.'), {
+          title: jt('commandPalette.unavailableTitle', 'Command unavailable'),
           tone: 'warning',
         });
         return;

@@ -10,6 +10,7 @@ between turns of the same session.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -193,3 +194,24 @@ def test_home_rooted_workspace_renders_tilde_alias(tmp_path: Path, monkeypatch: 
     root_line = next(line for line in block.splitlines() if line.startswith("workspace_root:"))
     assert root_line.startswith("workspace_root: ~")
     assert str(home) not in root_line
+
+
+def test_24_hour_preference_survives_disabled_environment_overlay() -> None:
+    for environment_enabled in (True, False):
+        messages = _render(
+            workspace_root=None,
+            config=_config(
+                use_24_hour_time=True,
+                session_environment_overlay_enabled=environment_enabled,
+            ),
+        )
+        assert len(messages) == 1
+        assert messages[0].startswith(SESSION_ENVIRONMENT_HEADING)
+        assert "use 24-hour time (00:00\u201323:59) in replies" in messages[0]
+        assert re.search(r"Current runtime local time: \d{4}-\d{2}-\d{2} [0-2]\d:[0-5]\d", messages[0])
+        assert "UTC offset" in messages[0]
+
+
+def test_disabled_time_preference_does_not_add_clock_context() -> None:
+    messages = _render(workspace_root=None, config=_config(use_24_hour_time=False))
+    assert "Time display preference" not in messages[0]

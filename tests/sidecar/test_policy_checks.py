@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 from types import ModuleType
+
+from scripts.checks import check_test_coverage_map
 
 
 def _load_script_module(script_name: str) -> ModuleType:
@@ -301,7 +304,7 @@ def test_release_workflow_same_step_preload_must_precede_builder(
     tmp_path, monkeypatch
 ) -> None:
     module = _load_script_module("check_release_version_policy.py")
-    workflow = tmp_path / "release.yml"
+    workflow = tmp_path / "preload.yml"
     workflow.write_text(
         "jobs:\n"
         "  build:\n"
@@ -309,12 +312,12 @@ def test_release_workflow_same_step_preload_must_precede_builder(
         "      - run: npm exec -- electron-builder && npm run build:preload\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(module, "RELEASE_WORKFLOWS", (Path("release.yml"),))
+    monkeypatch.setattr(module, "RELEASE_WORKFLOWS", (Path("preload.yml"),))
 
     violations = module._validate_release_workflows(tmp_path)
 
     assert violations == [
-        "release.yml job 'build' runs electron-builder without a preceding "
+        "preload.yml job 'build' runs electron-builder without a preceding "
         "'npm run build:preload' command"
     ]
 
@@ -519,11 +522,11 @@ def test_check_no_mojibake_passes_when_canonical_docs_are_clean(
     )
     monkeypatch.setattr(module, "ROOT", repo_root)
 
-    exit_code = module.main()
+    exit_code = module.main([])
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "PASS: no mojibake markers detected in canonical docs" in output
+    assert "PASS: no UTF-8 decoding errors or mojibake markers detected" in output
 
 
 def test_check_no_mojibake_fails_when_canonical_doc_contains_marker(
@@ -540,11 +543,11 @@ def test_check_no_mojibake_fails_when_canonical_doc_contains_marker(
     manifest_path.write_text("broken \u00c3\u00a2\u201a\u00ac marker\n", encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", repo_root)
 
-    exit_code = module.main()
+    exit_code = module.main([])
     output = capsys.readouterr().out.replace("\\", "/")
 
     assert exit_code == 1
-    assert "FAIL: mojibake markers detected in canonical docs" in output
+    assert "FAIL: invalid UTF-8 or mojibake markers detected" in output
     assert "docs/manifests/ui-ux.md:1 contains" in output
 
 
@@ -562,11 +565,11 @@ def test_check_no_mojibake_fails_when_canonical_doc_contains_common_utf8_latin1_
     target.write_text("caf\u00c3\u00a9\n", encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", repo_root)
 
-    exit_code = module.main()
-    output = capsys.readouterr().out.replace("\\", "/")
+    exit_code = module.main([])
+    output = capsys.readouterr().out
 
     assert exit_code == 1
-    assert "README.md:1 contains Ã" in output
+    assert r"README.md:1 contains \xc3" in output
 
 
 def test_check_no_port_bundle_runtime_imports_passes_when_runtime_is_clean(
@@ -950,7 +953,7 @@ def test_run_all_caps_forwarded_output_and_drops_the_checks_own_pass_line(
 def test_test_coverage_allowlist_rejects_malformed_entry_shapes(
     tmp_path, monkeypatch
 ) -> None:
-    from scripts.checks import check_test_coverage_map as module
+    module = check_test_coverage_map
 
     repo_root = tmp_path / "repo"
     allowlist_path = repo_root / "scripts" / "checks" / "test_coverage_allowlist.json"
@@ -1165,8 +1168,6 @@ def test_check_no_secrets_scope_is_git_visible_content_only(
     # non-ignored untracked files. Gitignored local runtime state holds real
     # user secrets by design, cannot be committed or exported, and is
     # deliberately not scanned.
-    import subprocess
-
     module = _load_script_module("check_no_secrets.py")
     repo_root = tmp_path / "repo"
     repo_root.mkdir()

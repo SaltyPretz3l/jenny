@@ -12,6 +12,7 @@
   }
   root.rendererIdePreviewController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -158,8 +159,8 @@
         return true;
       } catch (error) {
         if (surfaceError && !disposed && epoch === requestEpoch) {
-          showShellErrorToast(`Could not read ${normalized} for preview.`, {
-            title: 'Open Preview',
+          showShellErrorToast(jt('ide.preview.readFailed', 'Could not read {path} for preview.', { path: normalized }), {
+            title: jt('ide.preview.open', 'Open Preview'),
             dedupeKey: `ide:preview:${normalized}`,
           });
         }
@@ -194,8 +195,8 @@
           if (!payload || disposed || epoch !== requestEpoch) return false;
           text = payload.content;
         } catch (error) {
-          showShellErrorToast(`Could not read ${normalized} for preview.`, {
-            title: 'Open Preview',
+          showShellErrorToast(jt('ide.preview.readFailed', 'Could not read {path} for preview.', { path: normalized }), {
+            title: jt('ide.preview.open', 'Open Preview'),
             dedupeKey: `ide:preview:${normalized}`,
           });
           appendClientLog('WARN', 'ide.preview_read_failed', {
@@ -205,7 +206,7 @@
         }
       }
       const id = previewIdFor(normalized);
-      const label = `${ideStateUtils.fileNameOf?.(normalized) || normalized} (preview)`;
+      const label = jt('ide.preview.documentLabel', '{name} (preview)', { name: ideStateUtils.fileNameOf?.(normalized) || normalized });
       openPreviewDocument({ id, label, sourcePath: normalized });
       updatePreview(id, buildPreviewHtml(normalized, text));
       ideStateUtils.openPreviewTab?.(getIde(), { id, label });
@@ -253,7 +254,7 @@
       }
       return [
         { separator: true },
-        { label: 'Open Preview', action: () => openPreview(path) },
+        { label: jt('ide.preview.open', 'Open Preview'), action: () => openPreview(path) },
       ];
     }
 

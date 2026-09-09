@@ -5,17 +5,18 @@
   }
   root.rendererMemorySharedUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const APPROVED_MEMORY_KIND_OPTIONS = Object.freeze([
-    { value: 'all', label: 'All' },
-    { value: 'profile', label: 'Profile' },
-    { value: 'preference', label: 'Preference' },
-    { value: 'response_style', label: 'Response Style' },
-    { value: 'tool_strategy', label: 'Tool Strategy' },
-    { value: 'working_preference', label: 'Working Preference' },
-    { value: 'project_context', label: 'Project Context' },
-    { value: 'routine', label: 'Routine' },
-    { value: 'goal', label: 'Goal' },
-    { value: 'important_person', label: 'People' },
+    { value: 'all', label: jt('memory.filters.all', 'All') },
+    { value: 'profile', label: jt('memory.kinds.profile', 'Profile') },
+    { value: 'preference', label: jt('memory.kinds.preference', 'Preference') },
+    { value: 'response_style', label: jt('memory.kinds.responseStyle', 'Response Style') },
+    { value: 'tool_strategy', label: jt('memory.kinds.toolStrategy', 'Tool Strategy') },
+    { value: 'working_preference', label: jt('memory.kinds.workingPreference', 'Working Preference') },
+    { value: 'project_context', label: jt('memory.kinds.projectContext', 'Project Context') },
+    { value: 'routine', label: jt('memory.kinds.routine', 'Routine') },
+    { value: 'goal', label: jt('memory.kinds.goal', 'Goal') },
+    { value: 'important_person', label: jt('memory.kinds.people', 'People') },
   ]);
   const APPROVED_MEMORY_KIND_LABELS = Object.freeze(
     APPROVED_MEMORY_KIND_OPTIONS.reduce((labels, option) => {
@@ -29,9 +30,9 @@
     APPROVED_MEMORY_KIND_OPTIONS.map((option) => option.value)
   );
   const PENDING_MEMORY_SORT_OPTIONS = Object.freeze([
-    { value: 'newest', label: 'Newest' },
-    { value: 'oldest', label: 'Oldest' },
-    { value: 'confidence', label: 'Highest confidence' },
+    { value: 'newest', label: jt('memory.sort.newest', 'Newest') },
+    { value: 'oldest', label: jt('memory.sort.oldest', 'Oldest') },
+    { value: 'confidence', label: jt('memory.sort.highestConfidence', 'Highest confidence') },
   ]);
   const PENDING_MEMORY_SORT_VALUES = new Set(
     PENDING_MEMORY_SORT_OPTIONS.map((option) => option.value)

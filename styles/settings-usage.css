@@ -87,7 +87,7 @@
   font-size: var(--font-size-sm);
   font-weight: 700;
   letter-spacing: var(--tracking-kicker-sm);
-  text-align: left;
+  text-align: start;
   text-transform: uppercase;
 }
 
@@ -107,7 +107,7 @@
   font-size: var(--font-size-base);
   font-weight: 400;
   overflow: hidden;
-  text-align: left;
+  text-align: start;
   text-transform: none;
   letter-spacing: normal;
   text-overflow: ellipsis;
@@ -143,7 +143,7 @@
 }
 
 .usage-cell-num {
-  text-align: right !important;
+  text-align: end !important;
   font-variant-numeric: tabular-nums;
 }
 
@@ -180,7 +180,7 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  margin-left: var(--space-2);
+  margin-inline-start: var(--space-2);
   padding: 0 var(--space-2);
   border: 1px solid color-mix(in srgb, var(--state-warning) 42%, transparent);
   border-radius: var(--radius-pill);

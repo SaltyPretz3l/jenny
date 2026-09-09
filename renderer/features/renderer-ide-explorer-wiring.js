@@ -10,6 +10,7 @@
   }
   root.rendererIdeExplorerWiring = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function resolveModule(globalName, requirePath) {
@@ -81,26 +82,26 @@
       onChooseWorkspaceRoot: () => getChooseWorkspaceRoot()?.(),
       buildFileContextMenuItems: (path) => buildFileContextMenuItems(path),
       buildDirectoryContextMenuItems: (path, options = {}) => [
-        { label: 'Find in Folder', action: () => getSearchPanel()?.beginScopedSearch?.(path) },
+        { label: jt('ide.explorer.findInFolder', 'Find in Folder'), action: () => getSearchPanel()?.beginScopedSearch?.(path) },
         ...(isQolEnabled() && canOpenInTerminal() && options.includeTerminal !== false
-          ? [{ label: 'Open in Terminal', action: () => openInTerminal(path) }]
+          ? [{ label: jt('ide.explorer.openInTerminal', 'Open in Terminal'), action: () => openInTerminal(path) }]
           : []),
         ...(options.includePathUtilities === false ? [] : buildPathUtilityMenuItems(path, 'directory')),
       ],
       buildRootContextMenuItems: () => (isQolEnabled() && canOpenInTerminal()
-        ? [{ label: 'Open in Terminal', action: () => openInTerminal('') }]
+        ? [{ label: jt('ide.explorer.openInTerminal', 'Open in Terminal'), action: () => openInTerminal('') }]
         : []),
       schedulePersist: () => schedulePersist(),
       preflightMutation: (path, kind) => getCloseOrchestrator()?.preflight((getIde().openTabs || []).filter((tab) => tab.path === path || (kind === 'directory' && tab.path.startsWith(`${path}/`))).map((tab) => tab.path)),
       commitMutationPreflight: (plan) => getCloseOrchestrator()?.commit(plan),
       cancelMutationPreflight: (plan) => getCloseOrchestrator()?.cancel(plan),
-      confirmDelete: (path, kind) => getConfirmDialog()?.confirm({ title: `Delete ${kind}?`, message: `${path} will be moved to the recycle bin.`, confirmLabel: 'Delete', variant: 'danger' }) || false,
+      confirmDelete: (path, kind) => getConfirmDialog()?.confirm({ title: jt('ide.explorer.deleteKindTitle', 'Delete {kind}?', { kind }), message: jt('ide.explorer.movePathToRecycleBin', '{path} will be moved to the recycle bin.', { path }), confirmLabel: jt('common.delete', 'Delete'), variant: 'danger' }) || false,
       confirmDeleteMany: (count) => getConfirmDialog()?.confirm({
-        title: `Delete ${count} items?`,
+        title: jt('ide.explorer.deleteItemsTitle', 'Delete {count} items?', { count }),
         message: count > 50
-          ? `They will be moved to the recycle bin. This will create ${count} recycle-bin entries.`
-          : 'They will be moved to the recycle bin.',
-        confirmLabel: 'Delete',
+          ? jt('ide.explorer.moveManyToRecycleBinDetail', 'They will be moved to the recycle bin. This will create {count} recycle-bin entries.', { count })
+          : jt('ide.explorer.moveManyToRecycleBin', 'They will be moved to the recycle bin.'),
+        confirmLabel: jt('common.delete', 'Delete'),
         variant: 'danger',
       }) || false,
       getMutationContext: () => getWorkspaceRootApi()?.captureContext?.(),
@@ -117,7 +118,7 @@
           return showShellErrorToast?.(message);
         }
         return toastUtils.showToastMessage(message, {
-          title: 'Workspace',
+          title: jt('ide.explorer.workspace', 'Workspace'),
           tone: 'info',
           ...options,
         });
@@ -137,7 +138,7 @@
       return showToast(message, {
         durationMs: 8000,
         actions: typeof onUndo === 'function'
-          ? [{ id: 'ide-tree-move-undo', label: 'Undo', kind: 'primary', onClick: onceUndo }]
+          ? [{ id: 'ide-tree-move-undo', label: jt('ide.explorer.undo', 'Undo'), kind: 'primary', onClick: onceUndo }]
           : [],
       });
     }
@@ -151,7 +152,7 @@
         generation: operationGeneration,
         rootEpoch: tree?.getRootEpoch?.(),
       };
-      showUndoToast(`Renamed to ${treeMarkup.nameOf(rename.to)}`, async () => {
+      showUndoToast(jt('ide.explorer.renamedTo', 'Renamed to {name}', { name: treeMarkup.nameOf(rename.to) }), async () => {
         if (undoIsStale(undoContext)) return;
         let restored = 0;
         try {
@@ -160,12 +161,12 @@
           if (didMove !== false) restored = 1;
         } catch (error) {
           if (undoIsStale(undoContext)) return;
-          treeDeps.showError(String(error?.message || error || 'Could not restore an item.'), {
-            title: 'Workspace', dedupeKey: 'ide:tree:move-undo',
+      treeDeps.showError(String(error?.message || error || jt('ide.explorer.restoreFailed', 'Could not restore an item.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:move-undo',
           });
         }
         if (undoIsStale(undoContext)) return;
-        showUndoToast(restored ? 'Restored 1 item' : 'Restored 0 of 1');
+        showUndoToast(restored ? jt('ide.explorer.restoredOneItem', 'Restored 1 item') : jt('ide.explorer.restoredZeroOfOne', 'Restored 0 of 1'));
       });
     }
     const dnd = treeDndUtils.createIdeTreeDnd?.({

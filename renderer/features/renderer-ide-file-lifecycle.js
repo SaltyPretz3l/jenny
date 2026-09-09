@@ -13,24 +13,25 @@
   }
   root.rendererIdeFileLifecycle = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function noop() {}
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function openFailureMessage(error, path) {
     const name = String(path || '').split('/').pop() || String(path || '');
     const code = String(error?.code || '');
-    if (code.endsWith('0010')) return `${name} is a binary file and can't be shown in the editor.`;
+    if (code.endsWith('0010')) return jt('ide.fileLifecycle.binaryFile', "{name} is a binary file and can't be shown in the editor.", { name });
     if (code.endsWith('0011')) {
       const maxBytes = error?.details?.max_bytes;
-      if (!Number.isFinite(maxBytes)) return `${name} is larger than the editor's size limit.`;
+      if (!Number.isFinite(maxBytes)) return jt('ide.fileLifecycle.overSizeLimit', "{name} is larger than the editor's size limit.", { name });
       const megabytes = maxBytes / (1024 * 1024);
       const limit = Number.isInteger(megabytes) ? megabytes : Number(megabytes.toFixed(1));
-      return `${name} is larger than the editor's ${limit} MB limit.`;
+      return jt('ide.fileLifecycle.overMegabyteLimit', "{name} is larger than the editor's {limit} MB limit.", { name, limit });
     }
-    if (code.endsWith('0012')) return `${name} is too large to preview.`;
-    if (code.endsWith('0013')) return `${name} isn't valid UTF-8 text.`;
-    if (code.endsWith('0014')) return `${name}'s image format isn't supported.`;
-    return `${path} was closed — it could not be opened.`;
+    if (code.endsWith('0012')) return jt('ide.fileLifecycle.tooLargeToPreview', '{name} is too large to preview.', { name });
+    if (code.endsWith('0013')) return jt('ide.fileLifecycle.invalidUtf8', "{name} isn't valid UTF-8 text.", { name });
+    if (code.endsWith('0014')) return jt('ide.fileLifecycle.unsupportedImageFormat', "{name}'s image format isn't supported.", { name });
+    return jt('ide.fileLifecycle.openFailed', '{path} was closed — it could not be opened.', { path });
   }
 
   function resolveFileOperations() {
@@ -142,8 +143,8 @@
         return false;
       }
       showShellErrorToast(
-        `Tab limit reached (${capacity.limit} tabs) — close a tab before opening ${path}.`,
-        { title: 'Tab Limit', dedupeKey: 'ide:tab-cap' }
+        jt('ide.fileLifecycle.tabLimitReached', 'Tab limit reached ({limit} tabs) — close a tab before opening {path}.', { limit: capacity.limit, path }),
+        { title: jt('ide.fileLifecycle.tabLimit', 'Tab Limit'), dedupeKey: 'ide:tab-cap' }
       );
       appendClientLog('WARN', 'ide.open_tab_cap', {
         path, code: capacity.code, limit: capacity.limit,
@@ -230,7 +231,7 @@
           closedTabs?.dropPath(normalized);
           renderTabs();
           showShellErrorToast(openFailureMessage(error, normalized), {
-            title: 'Could Not Open',
+            title: jt('ide.fileLifecycle.couldNotOpen', 'Could Not Open'),
             dedupeKey: `ide:vanished:${normalized}`,
           });
           appendClientLog('WARN', 'ide.open_file_failed', {
@@ -359,8 +360,8 @@
         if (unattended) {
           appendClientLog('WARN', 'ide.auto_save_skipped', { reason: 'no_bridge' });
         } else {
-          showShellErrorToast('Workspace file access is unavailable; the file was not saved.', {
-            title: 'Save Failed',
+          showShellErrorToast(jt('ide.fileLifecycle.fileAccessUnavailable', 'Workspace file access is unavailable; the file was not saved.'), {
+            title: jt('ide.fileLifecycle.saveFailed', 'Save Failed'),
             dedupeKey: 'ide:save:no-bridge',
           });
         }
@@ -413,12 +414,12 @@
           unattended,
         });
         if (!unattended && hygieneOutcome.formatStatus === 'formatted') {
-          showToastMessage('File saved and formatted.', {
-            title: 'Saved', tone: 'success', dedupeKey: `ide:save:formatted:${path}`,
+          showToastMessage(jt('ide.fileLifecycle.savedAndFormatted', 'File saved and formatted.'), {
+            title: jt('ide.fileLifecycle.saved', 'Saved'), tone: 'success', dedupeKey: `ide:save:formatted:${path}`,
           });
         } else if (!unattended && ['unavailable', 'failed', 'skipped'].includes(hygieneOutcome.formatStatus)) {
-          showToastMessage('File saved without formatting.', {
-            title: 'Saved', tone: 'warning', dedupeKey: `ide:save:unformatted:${path}`,
+          showToastMessage(jt('ide.fileLifecycle.savedWithoutFormatting', 'File saved without formatting.'), {
+            title: jt('ide.fileLifecycle.saved', 'Saved'), tone: 'warning', dedupeKey: `ide:save:unformatted:${path}`,
           });
         }
         return true;
@@ -430,9 +431,9 @@
         showShellErrorToast(
           toErrorMessage(
             error,
-            conflicted ? 'File changed on disk since it was loaded.' : 'Could not save the file.'
+            conflicted ? jt('ide.fileLifecycle.changedOnDisk', 'File changed on disk since it was loaded.') : jt('ide.fileLifecycle.saveFileFailed', 'Could not save the file.')
           ),
-          { title: conflicted ? 'Save Conflict' : 'Save Failed', dedupeKey: `ide:save:${path}` }
+          { title: conflicted ? jt('ide.fileLifecycle.saveConflict', 'Save Conflict') : jt('ide.fileLifecycle.saveFailed', 'Save Failed'), dedupeKey: `ide:save:${path}` }
         );
         appendClientLog('WARN', 'ide.save_failed', {
           message: String(error?.message || error || ''),

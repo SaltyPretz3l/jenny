@@ -9,6 +9,8 @@ const {
   STRUCTURED_DIFF_CAP_TRUNCATION_REASONS,
 } = require('../tools/structured-diff');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
+const { normalizeHomeResultMetadata } = require('./home-calendar-result-metadata');
+const { normalizeSandboxResultMetadata } = require('./sandbox-result-metadata');
 
 const DIFF_STATUSES = new Set(['created', 'modified', 'deleted', 'renamed', 'unknown']);
 const DIFF_REVIEW_STATES = new Set(['full', 'partial', 'summary_only', 'non_text', 'failed']);
@@ -509,6 +511,7 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   const files = normalizePatchFilesMetadata(source.files);
   const subagent = normalizeSubagentMetadata(source);
   const userQuestions = normalizeUserQuestionsResultMetadata(source);
+  const homeResult = normalizeHomeResultMetadata(source);
   const workspaceChangeSet = normalizeWorkspaceChangeSetMetadata(source.workspace_change_set);
   const result = {};
   const workspaceId = String(source.workspace_id || '').trim().toLowerCase();
@@ -521,6 +524,8 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   if (files.length) result.files = files;
   if (subagent) Object.assign(result, subagent);
   if (userQuestions) Object.assign(result, userQuestions);
+  if (homeResult) Object.assign(result, homeResult);
+  Object.assign(result, normalizeSandboxResultMetadata(source));
   if (workspaceChangeSet) result.workspace_change_set = workspaceChangeSet;
   return Object.keys(result).length ? result : null;
 }
@@ -530,6 +535,9 @@ function normalizeToolResultMetadataForStorage(metadata, options = {}, precomput
     ? metadata
     : {};
   const result = { ...source };
+  delete result.execution;
+  delete result.calendar;
+  delete result.calendar_receipt;
   delete result.diff;
   delete result.diffs;
   delete result.patch;

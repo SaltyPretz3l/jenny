@@ -3,15 +3,18 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 
+const { resolveUiLanguage } = require('../i18n-main');
+
 const INIT_CHANNEL = 'plugin-consent:initialize';
 const DECIDE_CHANNEL = 'plugin-consent:decide';
 
 class PluginConsentWindow {
-  constructor({ BrowserWindow, ipcMain, session, baseDir, timeoutMs = 120_000, log = () => {} } = {}) {
+  constructor({ BrowserWindow, ipcMain, session, baseDir, shellConfigService = null, timeoutMs = 120_000, log = () => {} } = {}) {
     this._BrowserWindow = BrowserWindow;
     this._ipc = ipcMain;
     this._session = session;
     this._baseDir = baseDir;
+    this._shellConfigService = shellConfigService;
     this._timeout = timeoutMs;
     this._log = typeof log === 'function' ? log : () => {};
     this._active = null;
@@ -80,7 +83,15 @@ class PluginConsentWindow {
       win.webContents.once('did-fail-load', () => void settle({ approved: false, reason: 'load_failed' }));
       win.once('ready-to-show', () => win.show());
       this._active = { win, settle };
-      win.loadFile(trustedFile).catch(() => settle({ approved: false, reason: 'load_failed' }));
+      const query = {};
+      try {
+        const uiLanguage = resolveUiLanguage({ shellConfigService: this._shellConfigService });
+        if (typeof uiLanguage === 'string' && uiLanguage.length > 0) query.jennyUiLanguage = uiLanguage;
+      } catch (_error) {
+        // Language projection is optional; the renderer falls back to storage.
+      }
+      const loadOptions = Object.keys(query).length ? { query } : undefined;
+      win.loadFile(trustedFile, loadOptions).catch(() => settle({ approved: false, reason: 'load_failed' }));
     });
   }
 

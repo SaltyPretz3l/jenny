@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var asyncFence = (root && root.rendererAsyncFence)
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
 
@@ -26,7 +27,7 @@
 
   function normalizeStatus(value) {
     var status = String(value || '').trim().toLowerCase();
-    return status || 'idle';
+    return status || 'unchecked';
   }
 
   function normalizeVersion(value) {
@@ -47,86 +48,110 @@
     var status = normalizeStatus(source.status);
     var latestVersion = normalizeVersion(source.latestVersion);
     var currentVersion = normalizeVersion(source.currentVersion);
-    var versionLabel = latestVersion || currentVersion || 'current version';
+    var versionLabel = latestVersion || currentVersion || jt('updates.dialog.currentVersionFallback', 'current version');
     var summary = String(source.reason || source.lastError || '').trim();
-    var releaseNotesMarkdown = String(source.releaseNotesMarkdown || '').trim();
-    var closeAction = { id: 'close', label: 'Close', variant: 'secondary' };
+    var releaseNotesMarkdown = String(source.releaseNotesMarkdown || '').trim().slice(0, 65536);
+    var closeAction = { id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' };
     var actions;
     var progress = null;
     var tone = 'default';
     var title;
     var statusLabel;
-    var eyebrow = currentVersion ? 'Current ' + currentVersion : 'Application update';
+    var eyebrow = currentVersion ? jt('updates.dialog.currentVersion', 'Current {version}', { version: currentVersion }) : jt('updates.dialog.applicationUpdate', 'Application update');
 
     if (status === 'disabled') {
-      title = 'Updates unavailable';
-      statusLabel = 'Disabled';
-      summary = summary || 'Updates are available only in packaged Windows builds.';
+      title = jt('updates.dialog.unavailableTitle', 'Updates unavailable');
+      statusLabel = jt('common.disabled', 'Disabled');
+      summary = summary || jt('updates.dialog.packagedWindowsOnly', 'Updates are available only in packaged Windows builds.');
       tone = 'muted';
       actions = [closeAction];
+    } else if (status === 'unchecked') {
+      title = jt('updates.dialog.unchecked', 'Check for a new release');
+      statusLabel = jt('updates.status.unchecked', 'Not checked');
+      summary = jt('updates.networkDisclosure', 'Checks GitHub when you ask. Requires internet access.');
+      actions = [closeAction, { id: 'check', label: jt('updates.actions.checkAgain', 'Check Again'), variant: 'primary' }];
+    } else if (['manual', 'no-package', 'no-release', 'ahead'].includes(status)) {
+      title = jt('updates.dialog.manual', 'A newer Jenny release is available');
+      statusLabel = latestVersion;
+      summary = jt('updates.dialog.manualSummary', 'Open the releases page to download and install the update yourself.');
+      if (status === 'no-package') {
+        title = jt('updates.dialog.noPackage', 'No package for this platform');
+        summary = jt('updates.dialog.noPackageSummary', 'The latest public release has no installer for this platform. Check the releases page for availability.');
+      } else if (status === 'no-release') {
+        title = jt('updates.dialog.noRelease', 'No published release');
+        summary = jt('updates.dialog.noReleaseSummary', 'GitHub has no published stable release available.');
+      } else if (status === 'ahead') {
+        title = jt('updates.dialog.ahead', 'Newer than the public release');
+        summary = jt('updates.dialog.aheadSummary', 'This installation is newer than the latest published stable release.');
+      }
+      actions = [closeAction];
     } else if (status === 'checking') {
-      title = 'Checking for updates';
-      statusLabel = 'Checking';
-      summary = summary || 'Looking for the latest Jenny release.';
+      title = jt('updates.dialog.checkingTitle', 'Checking for updates');
+      statusLabel = jt('updates.status.checking', 'Checking');
+      summary = summary || jt('updates.dialog.checkingSummary', 'Looking for the latest Jenny release.');
       actions = [closeAction];
     } else if (status === 'available') {
-      title = 'Jenny ' + versionLabel + ' is ready';
-      statusLabel = 'Ready';
-      summary = summary || 'Review the release notes before downloading.';
+      title = jt('updates.dialog.availableTitle', 'Jenny {version} is ready', { version: versionLabel });
+      statusLabel = jt('updates.status.ready', 'Ready');
+      summary = summary || jt('updates.dialog.reviewReleaseNotes', 'Review the release notes before downloading.');
       actions = [
-        { id: 'close', label: 'Later', variant: 'secondary' },
-        { id: 'skip', label: 'Skip This Version', variant: 'secondary' },
-        { id: 'download', label: 'Download Update', variant: 'primary' },
+        { id: 'close', label: jt('updates.actions.later', 'Later'), variant: 'secondary' },
+        { id: 'download', label: jt('updates.actions.download', 'Download Update'), variant: 'primary' },
       ];
     } else if (status === 'downloading') {
-      title = 'Downloading Jenny ' + versionLabel;
-      statusLabel = progressText(source.downloadProgress) || 'Downloading';
-      summary = summary || 'The installer is downloading in the background.';
+      title = jt('updates.dialog.downloadingTitle', 'Downloading Jenny {version}', { version: versionLabel });
+      statusLabel = progressText(source.downloadProgress) || jt('updates.status.downloading', 'Downloading');
+      summary = summary || jt('updates.dialog.downloadingSummary', 'The installer is downloading in the background.');
       progress = {
         value: Number(source.downloadProgress && source.downloadProgress.percent) || 0,
         max: 100,
-        label: 'Download progress',
+        label: jt('updates.dialog.downloadProgress', 'Download progress'),
         displayText: progressText(source.downloadProgress),
       };
-      actions = [{ id: 'close', label: 'Close', variant: 'secondary' }];
+      actions = [{ id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' }];
     } else if (status === 'downloaded') {
-      title = 'Jenny ' + versionLabel + ' is ready to install';
-      statusLabel = 'Downloaded';
-      summary = summary || 'Restart Jenny to finish installing the update.';
+      title = jt('updates.dialog.downloadedTitle', 'Jenny {version} is ready to install', { version: versionLabel });
+      statusLabel = jt('updates.status.downloaded', 'Downloaded');
+      summary = summary || jt('updates.dialog.restartToFinish', 'Restart Jenny to finish installing the update.');
       progress = {
         value: 100,
         max: 100,
-        label: 'Download complete',
+        label: jt('updates.dialog.downloadComplete', 'Download complete'),
         displayText: '100%',
       };
       actions = [
-        { id: 'close', label: 'Later', variant: 'secondary' },
-        { id: 'install', label: 'Restart and Install', variant: 'primary' },
+        { id: 'close', label: jt('updates.actions.later', 'Later'), variant: 'secondary' },
+        { id: 'install', label: jt('updates.actions.restartAndInstall', 'Restart and Install'), variant: 'primary' },
       ];
     } else if (status === 'installing') {
-      title = 'Installing Jenny ' + versionLabel;
-      statusLabel = 'Installing';
-      summary = summary || 'Jenny will restart when the installer takes over.';
-      actions = [{ id: 'close', label: 'Close', variant: 'secondary' }];
+      title = jt('updates.dialog.installingTitle', 'Installing Jenny {version}', { version: versionLabel });
+      statusLabel = jt('updates.status.installing', 'Installing');
+      summary = summary || jt('updates.dialog.installingSummary', 'Jenny will restart when the installer takes over.');
+      actions = [{ id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' }];
     } else if (status === 'error') {
-      title = 'Update check failed';
-      statusLabel = 'Needs attention';
+      title = jt('updates.dialog.checkFailedTitle', 'Update check failed');
+      if (source.errorStage === 'download') title = jt('updates.dialog.downloadFailedTitle', 'Update download failed');
+      if (source.errorStage === 'install') title = jt('updates.dialog.installFailedTitle', 'Installer handoff failed');
+      statusLabel = jt('updates.dialog.needsAttention', 'Needs attention');
       tone = 'danger';
-      summary = summary || 'The updater could not complete that request.';
+      summary = summary || jt('updates.dialog.failedSummary', 'The updater could not complete that request.');
       actions = [
         closeAction,
-        { id: 'check', label: 'Try Again', variant: 'primary' },
+        { id: source.canInstall ? 'install' : source.canDownload ? 'download' : 'check', label: jt('updates.actions.tryAgain', 'Try Again'), variant: 'primary' },
       ];
     } else {
-      title = 'Jenny is up to date';
-      statusLabel = 'Idle';
-      summary = summary || 'No update is waiting right now.';
+      title = jt('updates.dialog.upToDateTitle', 'Jenny is up to date');
+      statusLabel = jt('updates.status.idle', 'Idle');
+      summary = summary || jt('updates.dialog.noUpdateWaiting', 'No update is waiting right now.');
       actions = [
         closeAction,
-        { id: 'check', label: 'Check Again', variant: 'secondary' },
+        { id: 'check', label: jt('updates.actions.checkAgain', 'Check Again'), variant: 'secondary' },
       ];
     }
 
+    if (source.releaseUrl && !['checking', 'downloading', 'installing'].includes(status)) {
+      actions.push({ id: 'releases', label: jt('updates.actions.releases', 'Open GitHub Releases'), variant: 'secondary' });
+    }
     return {
       status: status,
       title: title,
@@ -194,17 +219,16 @@
     }
     var renderMarkdown = resolveMarkdownRenderer(deps || {});
     var releaseNotesHtml = view.releaseNotesMarkdown
-      ? '<div class="update-dialog-notes">' + renderMarkdown(view.releaseNotesMarkdown) + '</div>'
+      ? '<div class="update-dialog-notes">' + renderMarkdown(view.releaseNotesMarkdown, { images: 'omit', mermaid: 'plain' }) + '</div>'
       : '';
-    var bodyHtml = '<p class="update-dialog-summary">' + escapeHtml(view.summary) + '</p>'
-      + releaseNotesHtml;
+    var bodyHtml = releaseNotesHtml;
     return renderStepModal({
       id: 'update-dialog',
       tone: view.tone,
       eyebrow: view.eyebrow,
       title: view.title,
       status: view.statusLabel,
-      summary: '',
+      summary: view.summary,
       progress: view.progress,
       bodyHtml: bodyHtml,
       actions: view.actions,
@@ -212,7 +236,7 @@
   }
 
   function shouldAutoOpen(status) {
-    return ['available', 'downloaded', 'error'].includes(normalizeStatus(status));
+    return ['available', 'manual', 'no-package', 'downloaded', 'error'].includes(normalizeStatus(status));
   }
 
   function createUpdateDialogController(options) {
@@ -238,6 +262,22 @@
     var stateRevision = 0;
     var modalLifecycle = null;
     var dismissedSignature = '';
+    var renderedKey = '';
+
+    function patchProgress(mount) {
+      var progress = mount.querySelector?.('[role="progressbar"]');
+      if (!progress) return false;
+      var percent = Math.max(0, Math.min(100, Number(state.downloadProgress?.percent) || 0));
+      progress.setAttribute('aria-valuenow', String(percent));
+      progress.style.setProperty('--progress', percent + '%');
+      progress.classList.toggle('inv-progress--warning', percent >= 80 && percent < 95);
+      progress.classList.toggle('inv-progress--danger', percent >= 95);
+      var label = progressText(state.downloadProgress);
+      [mount.querySelector('.inv-progress-text'), mount.querySelector('.inv-step-modal-status')].forEach(function (node) {
+        if (node && node.textContent !== label) node.textContent = label;
+      });
+      return true;
+    }
 
     function updateSignature(value) {
       var source = value && typeof value === 'object' ? value : {};
@@ -289,9 +329,16 @@
       if (!open && !mayAutoOpen) {
         if (modalLifecycle) modalLifecycle.close();
         mount.innerHTML = '';
+        renderedKey = '';
         return;
       }
       open = true;
+      var key = JSON.stringify(Object.assign({}, state, { downloadProgress: null, actionInFlight: actionInFlight }));
+      if (state.status === 'downloading' && renderedKey === key && patchProgress(mount)) return;
+      renderedKey = key;
+      var focused = documentRef?.activeElement;
+      var hadFocus = mount.contains?.(focused);
+      var focusedAction = hadFocus && focused?.getAttribute?.('data-step-modal-action');
       mount.innerHTML = renderUpdateDialog(state, { renderMarkdown: renderMarkdown, renderStepModal: renderStepModal });
       var lifecycle = ensureModalLifecycle(mount);
       if (lifecycle && !lifecycle.isOpen()) {
@@ -300,9 +347,19 @@
           onRequestClose: function requestClose() { api.close(); },
         });
       }
+      var liveStatus = mount.querySelector?.('.inv-step-modal-status');
+      if (liveStatus) {
+        liveStatus.setAttribute('role', 'status');
+        liveStatus.setAttribute('aria-live', 'polite');
+      }
+      if (hadFocus) {
+        var nextFocus = Array.from(mount.querySelectorAll?.('[data-step-modal-action]') || [])
+          .find(function (button) { return button.getAttribute('data-step-modal-action') === focusedAction; });
+        (nextFocus || mount.querySelector?.('[role="dialog"]'))?.focus?.();
+      }
       if (actionInFlight && typeof mount.querySelectorAll === 'function') {
         Array.prototype.forEach.call(mount.querySelectorAll('[data-step-modal-action]'), function disableAction(button) {
-          button.disabled = true;
+          button.disabled = button.getAttribute('data-step-modal-action') !== 'close';
         });
         var dialog = mount.querySelector('[role="dialog"]');
         if (dialog) dialog.setAttribute('aria-busy', 'true');
@@ -322,11 +379,16 @@
     }
 
     async function runAction(actionId) {
-      if (disposed || actionInFlight) return;
+      if (disposed) return;
       if (actionId === 'close') {
         dismissedSignature = updateSignature(state);
         open = false;
         render(state);
+        return;
+      }
+      if (actionInFlight) return;
+      if (actionId === 'releases') {
+        windowRef?.open?.('https://github.com/SaltyPretz3l/jenny/releases', '_blank', 'noopener,noreferrer');
         return;
       }
       var updates = jennyShell && jennyShell.updates ? jennyShell.updates : null;
@@ -338,7 +400,7 @@
       var actionToken = actionGate.capture();
       var startingRevision = stateRevision;
       var result = null;
-      var closeAfterAction = false;
+
       render(state);
       try {
         if (actionId === 'download') {
@@ -352,12 +414,6 @@
             if (!outcome || outcome.proceed !== true) return;
           }
           result = await updates.install();
-        } else if (actionId === 'skip') {
-          result = await updates.skip((state && state.latestVersion) || '');
-          closeAfterAction = true;
-          if (typeof showToastMessage === 'function') {
-            showToastMessage('Update skipped.', { tone: 'info' });
-          }
         } else if (actionId === 'check') {
           result = await updates.check();
         }
@@ -365,7 +421,6 @@
         if (result && stateRevision === startingRevision) {
           state = result;
         }
-        if (closeAfterAction) open = false;
       } finally {
         if (!disposed && actionGate.isCurrent(actionToken)) {
           actionInFlight = false;
@@ -384,12 +439,12 @@
       if (target.disabled === true) return;
       event.preventDefault();
       runAction(target.getAttribute('data-step-modal-action')).catch(function (error) {
-        var message = String(error && error.message || error || 'Update action failed.');
+        var message = String(error && error.message || error || jt('updates.errors.actionFailed', 'Update action failed.'));
         /* EH-W9: route through intake when error_intake_routing is on —
          * when intake is off, use the valid danger tone so the toast store
          * cannot silently normalize a failed update into informational UI. */
         var routed = reportError
-          ? reportError({ message: message, options: { title: 'Update Failed' } }, { origin: 'update-action' })
+          ? reportError({ message: message, options: { title: jt('updates.titles.failed', 'Update Failed') } }, { origin: 'update-action' })
           : null;
         if (!routed && typeof showToastMessage === 'function') {
           showToastMessage(message, { tone: 'danger' });

@@ -94,6 +94,40 @@ test('parseArgs supports --model=tag', () => {
   assert.equal(parseArgs(['--model=qwen3:8b']).model, 'qwen3:8b');
 });
 
+test('existing-server rejects model selection but accepts redundant skip-model', () => {
+  assert.equal(parseArgs(['--existing-server', '--skip-model']).errors.length, 0);
+  assert.equal(parseArgs(['--existing-server', '--model=x:y']).errors.length, 1);
+  assert.equal(parseArgs(['--existing-server', '--model', 'x:y']).errors.length, 1);
+});
+
+for (const platform of ['win32', 'darwin', 'linux']) {
+  test(`existing-server installs app dependencies with zero Ollama operations on ${platform}`, async () => {
+    const commands = [];
+    const fallback = makeRunCapture();
+    const result = await runSetup({
+      argv: ['--existing-server', '--no-launch'], nodeVersion: '22.23.2',
+      platform, ui: makeUi(), repoRoot: 'G:/test-existing-server', deps: {
+      ...baseDeps(),
+      runCapture: (cmd, args = []) => {
+        commands.push([cmd, ...args]);
+        assert.doesNotMatch([cmd, ...args].join(' '), /ollama/i);
+        if (cmd === 'npm.cmd') return { status: 0, stdout: '10.9.2' };
+        if (cmd === 'py') return { status: 0, stdout: 'Python 3.11.9' };
+        return fallback(cmd, args);
+      },
+      runStreaming: async (cmd, args) => { commands.push([cmd, ...args]); return { status: 0 }; },
+      fetchImpl: () => { throw new Error('Unexpected model-server request'); },
+      spawnImpl: () => { throw new Error('Unexpected Ollama process'); },
+      restartOllamaAfterUpgrade: () => { throw new Error('Unexpected Ollama restart'); },
+      },
+    });
+    assert.equal(result, EXIT.OK);
+    assert.ok(commands.some(args => args.join(' ').includes('pip install')));
+    assert.ok(commands.some(args => /npm/.test(args[0]) && args.includes('install')));
+    assert.ok(commands.every(args => !/ollama/i.test(args.join(' '))));
+  });
+}
+
 test('parseArgs rejects unknown flags, missing model values, and option-shaped tags', () => {
   assert.ok(parseArgs(['--wat']).errors.length);
   assert.ok(parseArgs(['--model']).errors.length);
@@ -101,6 +135,24 @@ test('parseArgs rejects unknown flags, missing model values, and option-shaped t
   assert.ok(parseArgs(['--model=']).errors.length);
   assert.ok(parseArgs(['--model=--force']).errors.length);
 });
+
+for (const distribution of [false, true]) {
+  test(`existing-server launch forwards its startup choice (distribution=${distribution})`, async () => {
+    const launches = [];
+    const capture = async (command, args) => { launches.push([command, ...args]); return { status: 0 }; };
+    const result = await runSetup({
+      argv: ['--existing-server', '--yes'], platform: 'darwin', nodeVersion: '22.23.2',
+      ui: makeUi(), deps: baseDeps({
+        isDistribution: () => distribution,
+        runStreaming: capture, launchDetached: capture,
+        fetchImpl: () => { throw new Error('Unexpected Ollama request'); },
+      }),
+    });
+    assert.equal(result, EXIT.OK);
+    assert.deepEqual(launches.filter(args => args.includes('dev')),
+      [['npm', 'run', 'dev', '--', '--existing-server']]);
+  });
+}
 
 test('npmCommand is .cmd on Windows only', () => {
   assert.equal(npmCommand('win32'), 'npm.cmd');

@@ -20,6 +20,7 @@
   root.rendererIdeFimPicker = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function noop() {}
 
@@ -74,15 +75,15 @@
       switch (reason) {
         case 'sidecar_unavailable':
         case 'sidecar_not_ready':
-          return 'The local engine is still starting — try again in a moment.';
+          return jt('ide.fimPicker.engineStarting', 'The local engine is still starting — try again in a moment.');
         case 'chat_stream_active':
-          return 'Busy with a chat reply — try again when it finishes.';
+          return jt('ide.fimPicker.chatBusy', 'Busy with a chat reply — try again when it finishes.');
         case 'no_model_selected':
-          return 'Pick a completion model first.';
+          return jt('ide.fimPicker.pickModelFirst', 'Pick a completion model first.');
         case 'generate_failed':
-          return 'Could not reach the model. Is it still installed and is Ollama running?';
+          return jt('ide.fimPicker.modelUnreachable', 'Could not reach the model. Is it still installed and is Ollama running?');
         default:
-          return 'Could not load the model.';
+          return jt('ide.fimPicker.loadFailed', 'Could not load the model.');
       }
     }
 
@@ -119,7 +120,7 @@
       wrap.innerHTML = popover({
         id: 'ideFimPicker',
         className: 'ide-chip-popover ide-fim-popover',
-        ariaLabel: 'Completion model',
+        ariaLabel: jt('ide.fimPicker.completionModel', 'Completion model'),
       });
       host = wrap.firstChild;
       shell.appendChild(host);
@@ -142,17 +143,17 @@
 
     function loadedDot(isLoaded) {
       return `<span class="ide-fim-dot${isLoaded ? ' ide-fim-dot--on' : ''}"`
-        + ` title="${isLoaded ? 'loaded' : 'not loaded'}" aria-hidden="true">`
+        + ` title="${escapeHtml(isLoaded ? jt('ide.fimPicker.loaded', 'loaded') : jt('ide.fimPicker.notLoaded', 'not loaded'))}" aria-hidden="true">`
         + `${isLoaded ? '●' : '○'}</span>`;
     }
 
     function buildRows() {
       if (loading) {
-        return '<div class="ide-fim-empty">Loading models…</div>';
+        return '<div class="ide-fim-empty">' + escapeHtml(jt('ide.fimPicker.loadingModels', 'Loading models…')) + '</div>';
       }
       if (!models.length) {
-        return '<div class="ide-fim-empty">No fill-in-the-middle models installed — '
-          + 'pull one (e.g. qwen2.5-coder:1.5b-base).</div>';
+        return '<div class="ide-fim-empty">' + escapeHtml(jt('ide.fimPicker.noModelsInstalled', 'No fill-in-the-middle models installed — '
+          + 'pull one (e.g. qwen2.5-coder:1.5b-base).')) + '</div>';
       }
       const cur = currentModel();
       if (!actionButton) {
@@ -161,7 +162,7 @@
       return models.map((m) => actionButton({
         plain: true,
         className: `ide-chip-option${m.id === cur ? ' ide-chip-option--active' : ''}`,
-        title: 'Choose the inline-completion model',
+        title: jt('ide.fimPicker.chooseModel', 'Choose the inline-completion model'),
         trustedHtml: escapeHtml(m.id) + loadedDot(loaded.has(m.id)),
         dataset: { 'ide-fim-model': m.id },
         ariaPressed: m.id === cur,
@@ -176,13 +177,13 @@
       const cur = currentModel();
       const curLoaded = loaded.has(cur);
       const loadBtn = actionButton({
-        label: 'Load',
+        label: jt('ide.fimPicker.load', 'Load'),
         size: 'sm',
         disabled: busy || !cur || curLoaded,
         dataset: { 'ide-fim-action': 'load' },
       });
       const unloadBtn = actionButton({
-        label: 'Unload',
+        label: jt('ide.fimPicker.unload', 'Unload'),
         size: 'sm',
         disabled: busy || !cur || !curLoaded,
         dataset: { 'ide-fim-action': 'unload' },
@@ -192,7 +193,7 @@
       // toggle off there is no ghost text however the model is loaded, so make
       // that the dominant, always-on hint when paused.
       if (ide.inlineSuggestEnabled === false) {
-        lines += statusLineHtml('Autocomplete is paused — turn it on with the ✦ button.', 'warn');
+        lines += statusLineHtml(jt('ide.fimPicker.autocompletePaused', 'Autocomplete is paused — turn it on with the ✦ button.'), 'warn');
       }
       if (statusMsg) {
         lines += statusLineHtml(statusMsg, statusTone);
@@ -204,7 +205,7 @@
       if (!host) {
         return;
       }
-      host.innerHTML = `<div class="ide-fim-popover__header">Completion model</div>${buildRows()}${buildFooter()}`;
+      host.innerHTML = `<div class="ide-fim-popover__header">${escapeHtml(jt('ide.fimPicker.completionModel', 'Completion model'))}</div>${buildRows()}${buildFooter()}`;
     }
 
     async function fetchModels() {
@@ -284,7 +285,7 @@
       const opId = ++fimOpSeq;
       loading = false;
       busy = true;
-      statusMsg = `Loading "${model}"…`;
+      statusMsg = jt('ide.fimPicker.loadingModel', 'Loading "{model}"…', { model });
       statusTone = 'info';
       renderMenu();
       let result;
@@ -314,7 +315,7 @@
       loaded = loadedNow || new Set();
       const readyMsg = (getIde() || {}).inlineSuggestEnabled === false
         ? 'Loaded.'
-        : 'Loaded — ready to autocomplete.';
+        : jt('ide.fimPicker.loadedReady', 'Loaded — ready to autocomplete.');
       if (loadedNow && loadedNow.has(model)) {
         statusMsg = readyMsg;
         statusTone = 'ok';
@@ -322,7 +323,7 @@
         if (loadedNow) {
           // The warm call succeeded but /api/ps DEFINITIVELY does not list the
           // model — the single-model daemon ceiling evicted it. Say how to fix it.
-          statusMsg = 'The model loaded but did not stay resident — restart Jenny so the chat and completion models can coexist.';
+          statusMsg = jt('ide.fimPicker.modelNotResident', 'The model loaded but did not stay resident — restart Jenny so the chat and completion models can coexist.');
           statusTone = 'warn';
         } else {
           // Warm succeeded (the model served a token, so it IS resident) but the
@@ -349,7 +350,7 @@
       const opId = ++fimOpSeq;
       loading = false;
       busy = true;
-      statusMsg = `Unloading "${model}"…`;
+      statusMsg = jt('ide.fimPicker.unloadingModel', 'Unloading "{model}"…', { model });
       statusTone = 'info';
       renderMenu();
       try {
@@ -365,14 +366,14 @@
       }
       loaded = loadedNow || new Set();
       if (loadedNow && loadedNow.has(model)) {
-        statusMsg = 'Could not unload the model.';
+        statusMsg = jt('ide.fimPicker.unloadFailed', 'Could not unload the model.');
         statusTone = 'warn';
       } else if (loadedNow) {
         statusMsg = 'Unloaded.';
         statusTone = 'ok';
       } else {
         // Could not re-query residency — report the request without asserting state.
-        statusMsg = 'Unload requested — could not confirm it.';
+        statusMsg = jt('ide.fimPicker.unloadUnconfirmed', 'Unload requested — could not confirm it.');
         statusTone = 'info';
       }
       renderMenu();
@@ -385,7 +386,7 @@
       }
       const result = await commitPreference('inlineSuggestModel', model);
       if (result?.updated !== true) {
-        statusMsg = 'The completion model choice could not be saved.';
+        statusMsg = jt('ide.fimPicker.preferenceSaveFailed', 'The completion model choice could not be saved.');
         statusTone = 'warn';
         renderMenu();
         return;

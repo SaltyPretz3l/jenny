@@ -23,6 +23,7 @@
   }
   root.rendererMonacoEditorUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MONACO_THEME = 'vs-dark';
   const MONACO_STATE_KEY = '__jennyMonacoSharedState';
   const MONACO_DEFAULTS = {
@@ -152,14 +153,13 @@
       notice.setAttribute('role', 'status');
       const restoreHtml = actionButton
         ? actionButton({
-            label: 'Restore full features',
+            label: jt('ide.monaco.restoreFullFeatures', 'Restore full features'),
             className: 'ide-large-file-notice-restore',
             dataset: { 'large-file-restore': '1' },
           })
         : '';
       notice.innerHTML =
-        '<span class="ide-large-file-notice-label">Large file — editor features reduced'
-        + ' and not auto-shared with Jenny.</span>' + restoreHtml;
+        '<span class="ide-large-file-notice-label">' + jt('ide.monaco.largeFileNotice', 'Large file — editor features reduced and not auto-shared with Jenny.') + '</span>' + restoreHtml;
       notice.addEventListener('click', function onNoticeClick(event) {
         const target = event && event.target;
         if (target && typeof target.closest === 'function'
@@ -199,7 +199,7 @@
       return doc.placeholderText;
     }
     return [
-      '=== Original (before change) ===',
+      jt('artifacts.editor.originalBeforeChange', '=== Original (before change) ==='),
       doc ? doc.original : '',
       '',
       '=== Current ===',

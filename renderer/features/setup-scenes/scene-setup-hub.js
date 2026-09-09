@@ -12,7 +12,7 @@
   root.rendererSetupSceneSetupHub = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var actionButton = sceneUtils && sceneUtils.resolveDependency
@@ -43,33 +43,34 @@
   }
 
   function glyphMeta(status, number) {
-    if (status === 'done') return { glyph: '✓', tone: 'success', label: 'Done' };
-    if (status === 'skipped') return { glyph: '—', tone: 'muted', label: 'Skipped' };
-    if (status === 'error') return { glyph: '!', tone: 'danger', label: 'Needs attention' };
-    return { glyph: String(number), tone: 'pending', label: 'Pending' };
+    if (status === 'done') return { glyph: '✓', tone: 'success', label: jt('common.done', 'Done') };
+    if (status === 'skipped') return { glyph: '—', tone: 'muted', label: jt('setup.hub.skipped', 'Skipped') };
+    if (status === 'error') return { glyph: '!', tone: 'danger', label: jt('setup.hub.needsAttention', 'Needs attention') };
+    return { glyph: String(number), tone: 'pending', label: jt('setup.hub.pending', 'Pending') };
   }
 
   function buildStepRow(spec, setupState) {
     var status = String(setupState.steps && setupState.steps[spec.id] || 'pending');
     var meta = glyphMeta(status, spec.order + 1);
     var value = currentValue(spec.id, setupState);
-    var openerLabel = status === 'done' ? 'Change' : status === 'skipped' ? 'Revisit' : 'Set up';
+    var openerLabel = status === 'done' ? jt('setup.hub.change', 'Change') : status === 'skipped' ? jt('setup.hub.revisit', 'Revisit') : jt('setup.hub.setUp', 'Set up');
     var actions = renderButton({
       id: 'openStep', label: openerLabel, variant: status === 'pending' || status === 'error' ? 'secondary' : 'ghost',
       size: 'sm', dataset: { 'step-id': spec.id }, className: 'setup-hub-row-action',
     });
     if (status !== 'done' && status !== 'skipped') {
       actions += renderButton({
-        id: 'skipStep', label: 'Skip', variant: 'ghost', size: 'sm',
+        id: 'skipStep', label: jt('setup.hub.skip', 'Skip'), variant: 'ghost', size: 'sm',
         dataset: { 'step-id': spec.id }, className: 'setup-hub-row-skip',
       });
     }
     return '<li class="setup-hub-row" data-setup-step-id="' + escapeHtml(spec.id) + '">'
-      + '<span class="setup-hub-glyph setup-hub-glyph--' + meta.tone + '" aria-label="' + meta.label + '">'
+      + '<span class="setup-hub-glyph setup-hub-glyph--' + meta.tone + '" aria-label="' + escapeHtml(meta.label) + '">'
       + escapeHtml(meta.glyph) + '</span>'
       + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">' + escapeHtml(spec.title)
       // Endpoint is an alternative model route; one badge per requirement keeps the promised two-step model canonical.
-      + (spec.id === 'workspaceRoot' || spec.id === 'localModel' ? '<span class="setup-hub-required">Required</span>' : '')
+      + (spec.id === 'workspaceRoot' ? '<span class="setup-hub-required">Required</span>'
+        : spec.health === 'model' ? '<span class="setup-hub-required">' + escapeHtml(jt('setupHub.chooseOneModelRoute', 'Choose one model route')) + '</span>' : '')
       + '</div><p class="setup-hub-row-description"' + (value ? ' title="' + escapeHtml(value) + '"' : '') + '>'
       + escapeHtml(value || spec.description) + '</p></div>'
       + '<div class="setup-hub-row-actions">'
@@ -79,17 +80,17 @@
 
   function buildEngineRow(engine) {
     var done = engine.state === 'running';
-    var label = done ? ('Running' + (engine.version ? ' v' + engine.version : ''))
-      : engine.state === 'upgrade' ? ('Update required' + (engine.version ? ' — v' + engine.version : ''))
-        : engine.state === 'checking' ? 'Checking…'
-          : engine.state === 'missing' ? 'Not running' : engine.state === 'absent' ? 'Not installed' : 'Not detected';
+    var label = done ? (jt('setup.hub.running', 'Running') + (engine.version ? ' v' + engine.version : ''))
+      : engine.state === 'upgrade' ? (engine.version ? jt('setup.hub.updateRequiredVersion', 'Update required — v{version}', { version: engine.version }) : jt('setup.hub.updateRequired', 'Update required'))
+        : engine.state === 'checking' ? jt('setup.hub.checking', 'Checking…')
+          : engine.state === 'missing' ? jt('setup.hub.notRunning', 'Not running') : engine.state === 'absent' ? jt('setup.hub.notInstalled', 'Not installed') : jt('setup.hub.notDetected', 'Not detected');
     return '<li class="setup-hub-row setup-hub-row--derived" data-setup-derived="local-engine">'
       + '<span class="setup-hub-glyph setup-hub-glyph--' + (done ? 'success' : 'warning')
-      + '" aria-label="' + (done ? 'Running' : 'Needs attention') + '">' + (done ? '✓' : '!') + '</span>'
-      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">Local engine</div>'
+      + '" aria-label="' + escapeHtml(done ? jt('setup.hub.running', 'Running') : jt('setup.hub.needsAttention', 'Needs attention')) + '">' + (done ? '✓' : '!') + '</span>'
+      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">' + escapeHtml(jt('setupHub.ollamaOptionalForExistingServers', 'Ollama on this computer (optional for existing servers)')) + '</div>'
       + '<p class="setup-hub-row-description">' + escapeHtml(label) + '</p></div>'
       + '<div class="setup-hub-row-actions">' + (done ? '' : renderButton({
-        id: 'openStep', label: 'Set up', variant: 'secondary', size: 'sm', dataset: { 'step-id': 'localEngine' },
+        id: 'openStep', label: jt('setup.hub.setUp', 'Set up'), variant: 'secondary', size: 'sm', dataset: { 'step-id': 'localEngine' },
       })) + '</div></li>';
   }
 
@@ -97,38 +98,46 @@
     var health = sceneUtils.computeSetupHealth(setupState);
     var unresolved = health.pendingSteps.concat(health.skippedSteps);
     if (unresolved.indexOf('workspaceRoot') !== -1) return 'workspaceRoot';
-    if (unresolved.indexOf('model') !== -1) return 'localModel';
+    if (unresolved.indexOf('model') !== -1) return usesExistingServer(setupState) ? 'endpoint' : 'localModel';
     return '';
+  }
+
+  function usesExistingServer(setupState) {
+    var endpoint = setupState.readiness && setupState.readiness.endpoint || {};
+    if (endpoint.engineType === 'ollama') return false;
+    return endpoint.engineType === 'vllm' || endpoint.engineType === 'openai-compatible'
+      || (setupState.steps && (setupState.steps.endpoint === 'done' || setupState.steps.localModel === 'skipped'));
   }
 
   function warningCopy(setupState) {
     if (sceneUtils.computeSetupHealth(setupState).state === 'complete') {
-      return "Jenny can't reach a model right now — start the local engine or validate an endpoint, then try again.";
+      return jt('setup.hub.modelUnavailable', "Jenny can't reach a model right now — start the local engine or validate an endpoint, then try again.");
     }
     var workspaceDone = setupState.steps && setupState.steps.workspaceRoot === 'done';
     return workspaceDone
-      ? "No model configured — chats can't run locally."
-      : 'No workspace root set — file tools will be off until you set one.';
+      ? jt('setup.hub.noModelConfigured', "No model configured — chats can't run locally.")
+      : jt('setup.hub.noWorkspaceRoot', 'No workspace root set — file tools will be off until you set one.');
   }
 
   function requiredHealthLine(setupState) {
     var health = sceneUtils.computeSetupHealth(setupState);
     var completed = 2 - health.pendingSteps.length - health.skippedSteps.length;
-    return Math.max(0, completed) + ' of 2 required steps complete';
+    return jt('setup.hub.requiredStepsComplete', '{count} of 2 required steps complete', { count: Math.max(0, completed) });
   }
 
   function buildWarning(setupState) {
     var healthComplete = sceneUtils.computeSetupHealth(setupState).state === 'complete';
-    var stepId = healthComplete ? 'localEngine' : (firstUnresolvedRequiredStepId(setupState) || 'localModel');
-    var fixLabel = healthComplete ? 'Check local engine'
-      : stepId === 'workspaceRoot' ? 'Set workspace root' : 'Configure model';
+    var stepId = healthComplete ? (usesExistingServer(setupState) ? 'endpoint' : 'localEngine')
+      : (firstUnresolvedRequiredStepId(setupState) || 'localModel');
+    var fixLabel = stepId === 'endpoint' ? jt("sceneSetupHub.checkExistingServer", "Check existing server") : healthComplete ? jt("sceneSetupHub.checkOllama", "Check Ollama")
+      : stepId === 'workspaceRoot' ? jt('setup.hub.setWorkspaceRoot', 'Set workspace root') : jt('setup.hub.configureModel', 'Configure model');
     return '<div class="setup-hub-finish-warning" role="alert">'
-      + '<div class="setup-hub-warning-copy"><strong>Setup is not ready</strong><p>'
+      + '<div class="setup-hub-warning-copy"><strong>' + escapeHtml(jt('setup.hub.notReady', 'Setup is not ready')) + '</strong><p>'
       + escapeHtml(warningCopy(setupState)) + '</p></div>'
       + '<div class="setup-hub-warning-actions">'
       + renderButton({ id: 'fixRequired', label: fixLabel, variant: 'primary', dataset: { 'step-id': stepId } })
-      + renderButton({ id: 'finishAnyway', label: 'Finish anyway', variant: 'ghost' })
-      + renderButton({ id: 'finishGateCancel', label: 'Dismiss', variant: 'ghost', ariaLabel: 'Dismiss finish warning',
+      + renderButton({ id: 'finishAnyway', label: jt('setup.hub.finishAnyway', 'Finish anyway'), variant: 'ghost' })
+      + renderButton({ id: 'finishGateCancel', label: jt('common.dismiss', 'Dismiss'), variant: 'ghost', ariaLabel: jt('setup.hub.dismissFinishWarning', 'Dismiss finish warning'),
         dataset: { 'step-modal-action': 'finishGateCancel' }, className: 'setup-hub-warning-dismiss' })
       + '</div></div>';
   }
@@ -155,18 +164,18 @@
     function render() {
       if (!rootEl || disposed) return;
       var rows = registry.map(function renderRegistryStep(spec) { return buildStepRow(spec, setupState); });
-      rows.splice(2, 0, buildEngineRow(engine));
+      if (!usesExistingServer(setupState)) rows.splice(2, 0, buildEngineRow(engine));
       var body = '<div class="setup-hub"><ol class="setup-hub-list">' + rows.join('') + '</ol>'
         + (finishGateOpen ? buildWarning(setupState) : '')
         + '<p class="setup-hub-health" aria-live="polite">' + escapeHtml(requiredHealthLine(setupState)) + '</p></div>';
       rootEl.innerHTML = sceneUtils.renderStepModalHtml({
         id: 'setup-hub',
-        title: 'Set up Jenny',
-        summary: 'Two steps are required — everything else you can tune now or later in Settings. Do them in any order.',
+        title: jt('setup.hub.title', 'Set up Jenny'),
+        summary: jt("sceneSetupHub.chooseAWorkspaceAndOneModelRouteUseOllama", "Choose a workspace and one model route: use Ollama on this computer or connect an existing server. Everything else is optional."),
         bodyHtml: body,
         actions: [
-          { id: 'close', label: 'Finish later', variant: 'secondary' },
-          { id: 'finishSetup', label: finishInFlight ? 'Checking…' : 'Finish setup',
+          { id: 'close', label: jt('setup.hub.finishLater', 'Finish later'), variant: 'secondary' },
+          { id: 'finishSetup', label: finishInFlight ? jt('setup.hub.checking', 'Checking…') : jt('setup.hub.finishSetup', 'Finish setup'),
             variant: 'primary', disabled: finishInFlight },
         ],
       });
@@ -183,6 +192,7 @@
 
     function renderEngineRow() {
       if (!rootEl || disposed) return;
+      if (usesExistingServer(setupState)) return;
       var current = rootEl.querySelector('[data-setup-derived="local-engine"]');
       if (!current) { render(); return; }
       current.outerHTML = buildEngineRow(engine);
@@ -249,6 +259,7 @@
     }
 
     function detectEngine() {
+      if (usesExistingServer(setupState)) return;
       var generation = ++detectGeneration;
       if (!setupService || typeof setupService.detectOllama !== 'function') {
         engine = { state: 'unknown', version: '' };

@@ -6,6 +6,7 @@
   root.rendererMcpServers = factory(root, root.inventoryDrawer);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, drawerModule) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var GROUP_ID = 'mcpServersGroup';
   var HOST_ID = 'mcpServersHost';
 
@@ -16,11 +17,11 @@
   function resolveMcpServerBadge(signals) {
     var source = signals || {};
     if (source.enabled === false) return { state: 'muted', text: 'Off' };
-    if (source.trustStatus !== 'approved') return { state: 'warn', text: 'Review required' };
+    if (source.trustStatus !== 'approved') return { state: 'warn', text: jt('mcp.servers.reviewRequired', 'Review required') };
     var status = String(source.status || 'configured').toLowerCase();
     if (status === 'running') return { state: 'success', text: 'Running' };
     if (status === 'failed') return { state: 'error', text: 'Failed' };
-    if (status === 'cooldown') return { state: 'warn', text: 'Cooling down' };
+    if (status === 'cooldown') return { state: 'warn', text: jt('mcp.servers.coolingDown', 'Cooling down') };
     return { state: 'info', text: 'Approved' };
   }
   function resolveMcpServerStatusDot(signals) {
@@ -30,8 +31,8 @@
   }
   function mapMcpFailureMessage(message) {
     var text = String(message || '').trim();
-    if (/:\s*PermissionError\s*$/.test(text)) return 'URL points to a private or local address, which is blocked.';
-    if (/:\s*ValueError\s*$/.test(text)) return 'URL is invalid. Use http or https without embedded credentials.';
+    if (/:\s*PermissionError\s*$/.test(text)) return jt('mcp.servers.privateAddressBlocked', 'URL points to a private or local address, which is blocked.');
+    if (/:\s*ValueError\s*$/.test(text)) return jt('mcp.servers.invalidUrl', 'URL is invalid. Use http or https without embedded credentials.');
     return text;
   }
   function normalizeDiscoveryServer(value) {
@@ -60,7 +61,7 @@
   }
   function buildServerViewModel(server) {
     return { server: server, badge: resolveMcpServerBadge(server), dot: resolveMcpServerStatusDot(server),
-      muted: server.enabled === false, authHint: server.auth ? 'authentication configured' : '' };
+      muted: server.enabled === false, authHint: server.auth ? jt('mcp.servers.authenticationConfigured', 'authentication configured') : '' };
   }
   function toggleId(name) {
     var encoded = '';
@@ -160,55 +161,55 @@
       });
       var status = panel.querySelector('[data-mcp-drawer-operation-status]');
       if (active && !status) panel.querySelector('.inv-drawer-body')?.insertAdjacentHTML('afterbegin',
-        '<p class="settings-note" role="status" data-mcp-drawer-operation-status>Working…</p>');
+        '<p class="settings-note" role="status" data-mcp-drawer-operation-status>' + escapeHtml(jt('mcp.servers.working', 'Working…')) + '</p>');
       else if (!active) status?.remove();
     }
     function editorMarkup(name, server) {
-      if (!textField || !selectField) return '<div class="settings-note">Connection editor is unavailable.</div>';
+      if (!textField || !selectField) return '<div class="settings-note">' + escapeHtml(jt('mcp.servers.editorUnavailable', 'Connection editor is unavailable.')) + '</div>';
       var row = server || {};
       var authKind = String(row.auth?.kind || 'none');
       return '<div class="mcp-server-editor" data-mcp-editor data-mcp-original-name="' + escapeHtml(name) + '">'
-        + textField({ id: 'mcpServerName', label: 'Connection name', value: row.name || '', maxLength: 64 })
-        + selectField({ id: 'mcpServerTransport', label: 'Transport', value: row.transport || 'stdio',
-          options: [{ value: 'stdio', label: 'Local stdio' }, { value: 'sse', label: 'Remote SSE' }] })
-        + textField({ id: 'mcpServerTarget', label: row.transport === 'sse' ? 'HTTPS URL' : 'Command',
+        + textField({ id: 'mcpServerName', label: jt('mcp.servers.connectionName', 'Connection name'), value: row.name || '', maxLength: 64 })
+        + selectField({ id: 'mcpServerTransport', label: jt('mcp.servers.transport', 'Transport'), value: row.transport || 'stdio',
+          options: [{ value: 'stdio', label: jt('mcp.servers.localStdio', 'Local stdio') }, { value: 'sse', label: jt('mcp.servers.remoteSse', 'Remote SSE') }] })
+        + textField({ id: 'mcpServerTarget', label: row.transport === 'sse' ? jt('mcp.servers.httpsUrl', 'HTTPS URL') : jt('mcp.servers.command', 'Command'),
           value: row.transport === 'sse' ? row.url || '' : row.command || '', maxLength: 2048 })
-        + textField({ id: 'mcpServerArgs', label: 'Arguments (one per line)',
+        + textField({ id: 'mcpServerArgs', label: jt('mcp.servers.arguments', 'Arguments (one per line)'),
           value: Array.isArray(row.args) ? row.args.join('\n') : '', maxLength: 4096, multiline: true })
-        + selectField({ id: 'mcpServerAuthKind', label: 'Authentication', value: authKind,
-          options: [{ value: 'none', label: 'None' }, { value: 'bearer', label: 'Bearer token' },
-            { value: 'oauth_client_credentials', label: 'OAuth client credentials' }] })
-        + textField({ id: 'mcpServerTokenUrl', label: 'OAuth token URL', value: row.auth?.token_url || '', maxLength: 2048 })
-        + textField({ id: 'mcpServerClientId', label: 'OAuth client ID', value: row.auth?.client_id || '', maxLength: 512 })
-        + textField({ id: 'mcpServerScope', label: 'OAuth scope', value: row.auth?.scope || '', maxLength: 1024 })
-        + '<div class="settings-actions">' + actionButton({ label: name ? 'Save changes' : 'Create connection', size: 'sm',
+        + selectField({ id: 'mcpServerAuthKind', label: jt('mcp.servers.authentication', 'Authentication'), value: authKind,
+          options: [{ value: 'none', label: jt('common.none', 'None') }, { value: 'bearer', label: jt('mcp.servers.bearerToken', 'Bearer token') },
+            { value: 'oauth_client_credentials', label: jt('mcp.servers.oauthClientCredentials', 'OAuth client credentials') }] })
+        + textField({ id: 'mcpServerTokenUrl', label: jt('mcp.servers.oauthTokenUrl', 'OAuth token URL'), value: row.auth?.token_url || '', maxLength: 2048 })
+        + textField({ id: 'mcpServerClientId', label: jt('mcp.servers.oauthClientId', 'OAuth client ID'), value: row.auth?.client_id || '', maxLength: 512 })
+        + textField({ id: 'mcpServerScope', label: jt('mcp.servers.oauthScope', 'OAuth scope'), value: row.auth?.scope || '', maxLength: 1024 })
+        + '<div class="settings-actions">' + actionButton({ label: name ? jt('mcp.servers.saveChanges', 'Save changes') : jt('mcp.servers.createConnection', 'Create connection'), size: 'sm',
           dataset: { 'mcp-servers-action': 'save-editor', 'mcp-server-name': name } })
-        + actionButton({ label: 'Cancel', variant: 'ghost', size: 'sm', dataset: {
+        + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', dataset: {
           'mcp-servers-action': 'cancel-drawer', 'mcp-server-name': name } }) + '</div></div>';
     }
     function credentialMarkup(name) {
       return '<div class="mcp-server-editor" data-mcp-credential-editor>'
-        + textField({ id: 'mcpServerCredential', label: 'Secret', value: '', type: 'password', maxLength: 8192 })
-        + '<div class="settings-actions">' + actionButton({ label: 'Save credential', size: 'sm',
+        + textField({ id: 'mcpServerCredential', label: jt('mcp.servers.secret', 'Secret'), value: '', type: 'password', maxLength: 8192 })
+        + '<div class="settings-actions">' + actionButton({ label: jt('mcp.servers.saveCredential', 'Save credential'), size: 'sm',
           dataset: { 'mcp-servers-action': 'save-credential', 'mcp-server-name': name } })
-        + actionButton({ label: 'Clear credential', variant: 'danger', size: 'sm',
+        + actionButton({ label: jt('mcp.servers.clearCredential', 'Clear credential'), variant: 'danger', size: 'sm',
           dataset: { 'mcp-servers-action': 'clear-credential', 'mcp-server-name': name } })
-        + actionButton({ label: 'Cancel', variant: 'ghost', size: 'sm', dataset: {
+        + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', dataset: {
           'mcp-servers-action': 'details', 'mcp-server-name': name } }) + '</div></div>';
     }
     function toolReviewMarkup(server) {
       var inspection = inspections.get(server.name);
       if (!inspection && server.trustStatus === 'approved') {
-        return '<div class="mcp-trust-review"><p><strong>Approved tool surface</strong></p>'
+        return '<div class="mcp-trust-review"><p><strong>' + escapeHtml(jt('mcp.servers.approvedToolSurface', 'Approved tool surface')) + '</strong></p>'
           + (server.reviewedAt ? '<p>Reviewed ' + escapeHtml(server.reviewedAt) + '</p>' : '')
-          + '<p>Advertised tools digest</p><code>' + escapeHtml(server.toolsDigest || 'Evidence unavailable') + '</code>'
-          + '<p>Configuration digest</p><code>' + escapeHtml(server.configurationDigest || 'Evidence unavailable')
+          + '<p>' + escapeHtml(jt('mcp.servers.advertisedToolsDigest', 'Advertised tools digest')) + '</p><code>' + escapeHtml(server.toolsDigest || jt('mcp.servers.evidenceUnavailable', 'Evidence unavailable')) + '</code>'
+          + '<p>' + escapeHtml(jt('mcp.servers.configurationDigest', 'Configuration digest')) + '</p><code>' + escapeHtml(server.configurationDigest || jt('mcp.servers.evidenceUnavailable', 'Evidence unavailable'))
           + '</code></div>';
       }
-      if (!inspection) return '<p class="settings-note">Run an inspection to review this connection’s advertised tools.</p>';
-      return '<div class="mcp-trust-review"><p><strong>' + inspection.toolCount + ' discovered tool(s)</strong></p><code>'
+      if (!inspection) return '<p class="settings-note">' + escapeHtml(jt('mcp.servers.runInspectionHint', 'Run an inspection to review this connection’s advertised tools.')) + '</p>';
+      return '<div class="mcp-trust-review"><p><strong>' + escapeHtml(jt('mcp.servers.discoveredTools', '{count} discovered tool(s)', { count: inspection.toolCount })) + '</strong></p><code>'
         + escapeHtml(inspection.toolsDigest) + '</code>'
-        + (server.configurationDigest ? '<p>Configuration digest</p><code>'
+        + (server.configurationDigest ? '<p>' + escapeHtml(jt('mcp.servers.configurationDigest', 'Configuration digest')) + '</p><code>'
           + escapeHtml(server.configurationDigest) + '</code>' : '') + inspection.tools.map(function (tool) {
           return '<p><strong>' + escapeHtml(tool.name) + '</strong>'
             + (tool.description ? ' — ' + escapeHtml(tool.description) : '') + '</p>';
@@ -221,30 +222,30 @@
       var failure = server.failure ? '<p class="mcp-servers-note mcp-servers-note--danger">'
         + escapeHtml(mapMcpFailureMessage(server.failure.message)) + '</p>' : '';
       return '<div class="mcp-server-details"><dl><div><dt>Transport</dt><dd>'
-        + escapeHtml(server.transport === 'sse' ? 'Remote SSE' : 'Local stdio') + '</dd></div>'
-        + '<div><dt>Target</dt><dd><code>' + escapeHtml(target || 'Not configured') + '</code></dd></div>'
+        + escapeHtml(server.transport === 'sse' ? jt('mcp.servers.remoteSse', 'Remote SSE') : jt('mcp.servers.localStdio', 'Local stdio')) + '</dd></div>'
+        + '<div><dt>Target</dt><dd><code>' + escapeHtml(target || jt('mcp.servers.notConfigured', 'Not configured')) + '</code></dd></div>'
         + '<div><dt>Tools</dt><dd>' + server.toolsCount + '</dd></div><div><dt>Status</dt><dd>'
         + escapeHtml(resolveMcpServerBadge(server).text) + '</dd></div></dl>' + failure
-        + '<section><h3>Trust review</h3>' + toolReviewMarkup(server) + '</section>'
+        + '<section><h3>' + escapeHtml(jt('mcp.servers.trustReview', 'Trust review')) + '</h3>' + toolReviewMarkup(server) + '</section>'
         + '<div class="settings-actions">'
-        + actionButton({ label: 'Test connection', size: 'sm', disabled: Boolean(busy), dataset: {
+        + actionButton({ label: jt('mcp.servers.testConnection', 'Test connection'), size: 'sm', disabled: Boolean(busy), dataset: {
           'mcp-servers-action': 'test', 'mcp-server-name': server.name } })
-        + (pending ? actionButton({ label: 'Approve tools', size: 'sm', disabled: Boolean(busy) || !inspections.has(server.name),
+        + (pending ? actionButton({ label: jt('mcp.servers.approveTools', 'Approve tools'), size: 'sm', disabled: Boolean(busy) || !inspections.has(server.name),
           dataset: { 'mcp-servers-action': 'approve', 'mcp-server-name': server.name } }) : '')
-        + actionButton({ label: 'Edit', variant: 'ghost', size: 'sm', disabled: Boolean(busy), dataset: {
+        + actionButton({ label: jt('common.edit', 'Edit'), variant: 'ghost', size: 'sm', disabled: Boolean(busy), dataset: {
           'mcp-servers-action': 'edit', 'mcp-server-name': server.name } })
-        + (server.auth ? actionButton({ label: authRow?.configured ? 'Update credential' : 'Set credential',
+        + (server.auth ? actionButton({ label: authRow?.configured ? jt('mcp.servers.updateCredential', 'Update credential') : jt('mcp.servers.setCredential', 'Set credential'),
           variant: 'ghost', size: 'sm', disabled: Boolean(busy), dataset: {
             'mcp-servers-action': 'configure-credential', 'mcp-server-name': server.name } }) : '')
-        + actionButton({ label: 'Remove', variant: 'danger', size: 'sm', disabled: Boolean(busy), dataset: {
+        + actionButton({ label: jt('common.remove', 'Remove'), variant: 'danger', size: 'sm', disabled: Boolean(busy), dataset: {
           'mcp-servers-action': 'remove', 'mcp-server-name': server.name } }) + '</div></div>';
     }
     function drawDrawer() {
       if (!drawerState || disposed) return;
       var server = drawerState.kind === 'editor' ? drawerState.server : serverByName(drawerState.name);
       if (drawerState.kind !== 'editor' && !server) { drawer.close(); drawerState = null; return; }
-      var title = drawerState.kind === 'editor' ? (drawerState.name ? 'Edit MCP connection' : 'Add MCP connection')
-        : drawerState.kind === 'credential' ? 'Credential for ' + drawerState.name : drawerState.name;
+      var title = drawerState.kind === 'editor' ? (drawerState.name ? jt('mcp.servers.editConnection', 'Edit MCP connection') : jt('mcp.servers.addConnection', 'Add MCP connection'))
+        : drawerState.kind === 'credential' ? jt('mcp.servers.credentialFor', 'Credential for {name}', { name: drawerState.name }) : drawerState.name;
       var body = drawerState.kind === 'editor' ? editorMarkup(drawerState.name, server)
         : drawerState.kind === 'credential' ? credentialMarkup(drawerState.name) : detailsMarkup(server);
       drawer.open({ title: title, bodyHtml: body,
@@ -254,31 +255,31 @@
       var pending = server.trustStatus !== 'approved';
       var secondary = [server.transport === 'sse' ? 'remote' : 'local', server.toolsCount + ' tools',
         resolveMcpServerBadge(server).text.toLowerCase()];
-      if (!server.enabled && pending) secondary.push('turn on unavailable until its tools are reviewed');
-      if (busy) secondary.push('operation in progress');
+      if (!server.enabled && pending) secondary.push(jt('mcp.servers.turnOnUnavailablePendingReview', 'turn on unavailable until its tools are reviewed'));
+      if (busy) secondary.push(jt('mcp.servers.operationInProgress', 'operation in progress'));
       if (server.failure) secondary.push(mapMcpFailureMessage(server.failure.message));
       var disabled = discovery.readOnly || Boolean(busy) || (!server.enabled && pending);
       return '<div class="settings-field-row mcp-servers-row" data-mcp-server-row="' + escapeHtml(server.name) + '">'
         + '<span class="status-dot status-dot--' + resolveMcpServerStatusDot(server) + '"></span>'
         + '<span class="settings-field-row-text"><strong>' + escapeHtml(server.name) + '</strong><small>'
         + escapeHtml(secondary.join(' · ')) + '</small></span><span class="mcp-servers-row-actions">'
-        + actionButton({ label: pending ? 'Review' : 'Details', variant: 'ghost', size: 'sm', ariaHaspopup: 'dialog',
+        + actionButton({ label: pending ? jt('mcp.servers.review', 'Review') : jt('mcp.servers.details', 'Details'), variant: 'ghost', size: 'sm', ariaHaspopup: 'dialog',
           dataset: { 'mcp-servers-action': 'details', 'mcp-server-name': server.name } })
-        + (root.inventoryToggleSwitch?.toggleSwitch?.({ id: toggleId(server.name), label: server.name + ' enabled',
+        + (root.inventoryToggleSwitch?.toggleSwitch?.({ id: toggleId(server.name), label: jt('mcp.servers.enabledLabel', '{name} enabled', { name: server.name }),
           checked: server.enabled, disabled: disabled, className: 'mcp-servers-row-toggle' }) || '') + '</span></div>';
     }
     function groupMarkup() {
       var readonly = discovery.readOnly ? '<div class="settings-note plugins-settings-error" data-mcp-read-only>'
-        + 'This MCP configuration was preserved unchanged. ' + escapeHtml(discovery.remediationReason) + '.</div>' : '';
+        + escapeHtml(jt('mcp.servers.configurationPreserved', 'This MCP configuration was preserved unchanged.')) + ' ' + escapeHtml(discovery.remediationReason) + '.</div>' : '';
       var operation = busy ? '<p class="settings-note" role="status">Working…</p>' : '';
       return '<div class="settings-group settings-group--wide mcp-servers-group" role="group" '
         + 'aria-labelledby="mcpServersHeading" id="' + GROUP_ID + '"><div class="mcp-servers-header"><div>'
-        + '<h4 class="settings-group-heading" id="mcpServersHeading">MCP connections</h4>'
-        + '<p class="settings-group-copy">Standalone connections require an explicit tool-surface trust review before they can be enabled.</p></div>'
-        + actionButton({ label: 'Add connection', size: 'sm', disabled: discovery.readOnly || Boolean(busy),
+        + '<h4 class="settings-group-heading" id="mcpServersHeading">' + escapeHtml(jt('mcp.servers.heading', 'MCP connections')) + '</h4>'
+        + '<p class="settings-group-copy">' + escapeHtml(jt('mcp.servers.trustReviewRequirement', 'Standalone connections require an explicit tool-surface trust review before they can be enabled.')) + '</p></div>'
+        + actionButton({ label: jt('mcp.servers.addConnectionShort', 'Add connection'), size: 'sm', disabled: discovery.readOnly || Boolean(busy),
           ariaHaspopup: 'dialog', dataset: { 'mcp-servers-action': 'add' } }) + '</div>' + readonly + operation
         + '<div class="mcp-servers-list">' + (discovery.servers.length ? discovery.servers.map(rowMarkup).join('')
-          : '<div class="settings-note">No standalone MCP connections.</div>') + '</div></div>';
+          : '<div class="settings-note">' + escapeHtml(jt('mcp.servers.noneConfigured', 'No standalone MCP connections.')) + '</div>') + '</div></div>';
     }
     function render() {
       var target = host(); if (!target || disposed) return;
@@ -317,7 +318,7 @@
     async function run(name, payload) {
       if (busy) return null;
       if (typeof bridge()?.[name] !== 'function') {
-        reportBridgeFailure('mcp_settings.bridge_method_missing', name, 'This MCP action is unavailable in this build.');
+        reportBridgeFailure('mcp_settings.bridge_method_missing', name, jt('mcp.servers.actionUnavailable', 'This MCP action is unavailable in this build.'));
         return { ok: false, reason: 'bridge_method_missing' };
       }
       busy = name; render(); setDrawerBusy(true);
@@ -325,11 +326,11 @@
       try {
         result = await bridge()[name](payload);
         if (result?.ok === false && result?.confirmation_required !== true) {
-          reportBridgeFailure('mcp_settings.operation_failed', name, 'The MCP operation could not be completed.');
+          reportBridgeFailure('mcp_settings.operation_failed', name, jt('mcp.servers.operationIncomplete', 'The MCP operation could not be completed.'));
         }
       }
       catch (_error) {
-        reportBridgeFailure('mcp_settings.bridge_call_failed', name, 'The MCP operation failed.');
+        reportBridgeFailure('mcp_settings.bridge_call_failed', name, jt('mcp.servers.operationFailed', 'The MCP operation failed.'));
         result = { ok: false, reason: 'bridge_call_failed' };
       }
       finally {
@@ -343,7 +344,7 @@
       if (busy) return null;
       if (typeof authBridge()?.[name] !== 'function') {
         reportBridgeFailure('mcp_settings.auth_bridge_method_missing', name,
-          'Credential management is unavailable in this build.');
+          jt('mcp.servers.credentialManagementUnavailable', 'Credential management is unavailable in this build.'));
         return { ok: false, reason: 'bridge_method_missing' };
       }
       busy = name; render(); setDrawerBusy(true);
@@ -351,10 +352,10 @@
       try {
         result = await authBridge()[name](payload);
         if (result?.ok === false) reportBridgeFailure('mcp_settings.auth_operation_failed', name,
-          'The credential operation could not be completed.');
+          jt('mcp.servers.credentialOperationIncomplete', 'The credential operation could not be completed.'));
       }
       catch (_error) {
-        reportBridgeFailure('mcp_settings.auth_bridge_call_failed', name, 'The credential operation failed.');
+        reportBridgeFailure('mcp_settings.auth_bridge_call_failed', name, jt('mcp.servers.credentialOperationFailed', 'The credential operation failed.'));
         result = { ok: false, reason: 'bridge_call_failed' };
       }
       finally {
@@ -369,8 +370,8 @@
       if (!drawerActiveFor(name)) return;
       if (result?.confirmation_required) {
         var exact = [result.command].concat(result.args || []).join(' ');
-        var confirmed = await confirmDanger({ title: 'Inspect MCP connection?',
-          message: 'Run this one-time MCP inspection?\n\n' + exact, confirmLabel: 'Run inspection', cancelLabel: 'Cancel' });
+        var confirmed = await confirmDanger({ title: jt('mcp.servers.inspectConfirmTitle', 'Inspect MCP connection?'),
+          message: jt('mcp.servers.inspectConfirmMessage', 'Run this one-time MCP inspection?\n\n{command}', { command: exact }), confirmLabel: jt('mcp.servers.runInspection', 'Run inspection'), cancelLabel: jt('common.cancel', 'Cancel') });
         if (confirmed && drawerActiveFor(name)) result = await run('testServer', { name: name, confirmed: true });
       }
       if (result?.ok && !disposed && enabled()) {
@@ -380,12 +381,12 @@
               description: String(tool.description || '') }; }) : [] });
         render();
         if (drawerActiveFor(name)) { drawerState.kind = 'details'; drawDrawer(); }
-        options.showToastMessage?.('Inspection found ' + result.tool_count + ' tool(s).');
+        options.showToastMessage?.(jt('mcp.servers.inspectionFound', 'Inspection found {count} tool(s).', { count: result.tool_count }));
       }
     }
     async function removeServer(name) {
-      if (!await confirmDanger({ title: 'Remove MCP connection?', message: 'Remove MCP connection “' + name + '”?',
-        confirmLabel: 'Remove', cancelLabel: 'Keep' }) || !drawerActiveFor(name)) return;
+      if (!await confirmDanger({ title: jt('mcp.servers.removeConfirmTitle', 'Remove MCP connection?'), message: jt('mcp.servers.removeConfirmMessage', 'Remove MCP connection “{name}”?', { name: name }),
+        confirmLabel: jt('common.remove', 'Remove'), cancelLabel: jt('mcp.servers.keep', 'Keep') }) || !drawerActiveFor(name)) return;
       var result = await run('removeServer', { name: name });
       if (result?.ok && drawerActiveFor(name)) { inspections.delete(name); drawerState = null; drawer.close(); }
     }

@@ -22,6 +22,7 @@
   root.rendererWorkspacePresentationController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -107,7 +108,7 @@
     }
 
     function surfaceLabel(view) {
-      return view === 'preview' ? 'Preview' : view === 'change_diff' ? 'change diff' : 'File Map';
+      return view === 'preview' ? jt('workspace.presentation.preview', 'Preview') : view === 'change_diff' ? jt('workspace.presentation.changeDiff', 'change diff') : jt('workspace.presentation.fileMap', 'File Map');
     }
 
     function requestApi() {
@@ -142,8 +143,8 @@
 
     function warnMissingChange() {
       openChangesPanel();
-      showShellErrorToast('That recorded change is no longer available. Jenny opened the Changes panel instead.', {
-        title: "Jenny's Changes",
+      showShellErrorToast(jt('workspace.presentation.recordedChangeUnavailable', 'That recorded change is no longer available. Jenny opened the Changes panel instead.'), {
+        title: jt('workspace.presentation.changesTitle', "Jenny's Changes"),
         dedupeKey: 'workspace-presentation:change-missing',
       });
       appendClientLog('WARN', 'workspace_presentation.change_missing', {});
@@ -151,8 +152,8 @@
 
     function warnUnavailableIntegration() {
       openChangesPanel();
-      showShellErrorToast('Change review is unavailable right now. Jenny opened the Changes panel instead.', {
-        title: "Jenny's Changes",
+      showShellErrorToast(jt('workspace.presentation.reviewUnavailable', 'Change review is unavailable right now. Jenny opened the Changes panel instead.'), {
+        title: jt('workspace.presentation.changesTitle', "Jenny's Changes"),
         dedupeKey: 'workspace-presentation:change-unavailable',
       });
       appendClientLog('WARN', 'workspace_presentation.change_context_rejected', {
@@ -259,23 +260,23 @@
       chipEl.setAttribute('role', 'status');
       chipEl.setAttribute('aria-live', 'polite');
       const what = request.view === 'preview'
-        ? `a preview of ${request.path || 'a file'}`
+        ? request.path ? jt('workspace.presentation.previewTarget', 'a preview of {path}', { path: request.path }) : jt('workspace.presentation.previewTargetFallback', 'a preview of a file')
         : request.view === 'change_diff'
-          ? `the change to ${request.path}`
-          : `the File Map${request.path ? ` for ${request.path}` : ''}`;
-      chipEl.innerHTML = `<span class="ide-presentation-chip-copy">Jenny wants to show ${escapeHtml(what)}</span>`
+          ? jt('workspace.presentation.changeTarget', 'the change to {path}', { path: request.path })
+          : request.path ? jt('workspace.presentation.fileMapTargetForPath', 'the File Map for {path}', { path: request.path }) : jt('workspace.presentation.fileMapTarget', 'the File Map');
+      chipEl.innerHTML = `<span class="ide-presentation-chip-copy">${escapeHtml(jt('workspace.presentation.wantsToShow', 'Jenny wants to show {what}', { what }))}</span>`
         + actionButton({
           plain: true,
           className: 'ide-presentation-chip-show',
-          label: 'Show',
-          title: `Show ${surfaceLabel(request.view)}`,
+          label: jt('workspace.presentation.show', 'Show'),
+          title: jt('workspace.presentation.showSurface', 'Show {surface}', { surface: surfaceLabel(request.view) }),
           dataset: { 'presentation-show': '1' },
         })
         + actionButton({
           plain: true,
           className: 'ide-presentation-chip-dismiss',
-          ariaLabel: 'Dismiss',
-          title: 'Dismiss',
+          ariaLabel: jt('common.dismiss', 'Dismiss'),
+          title: jt('common.dismiss', 'Dismiss'),
           dataset: { 'presentation-dismiss': '1' },
           trustedHtml: '<span aria-hidden="true">&#x2715;</span>',
         });

@@ -18,6 +18,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (badge, actionButton) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function normalizeId(value) {
     return String(value || '').trim();
   }
@@ -31,42 +32,42 @@
     const artifactId = normalizeId(unsavedReply.artifactId);
     const recoveryUnavailable = !artifactId;
     const recoveryUnavailableReason =
-      'Recovery controls are unavailable because the repair record could not be saved.';
+      jt('chat.unsavedReply.recoveryUnavailable', 'Recovery controls are unavailable because the repair record could not be saved.');
     const dataset = (action) => ({
       'unsaved-reply-action': action,
       'message-id': messageId,
       'artifact-id': artifactId,
     });
     const retryButton = actionButton({
-      label: 'Retry save',
+      label: jt('chat.unsavedReply.retrySave', 'Retry save'),
       variant: 'ghost',
       size: 'sm',
       className: 'chat-unsaved-reply-action',
       ariaLabel: recoveryUnavailable
-        ? `Retry saving this reply (${recoveryUnavailableReason})`
-        : 'Retry saving this reply',
-      title: recoveryUnavailable ? recoveryUnavailableReason : 'Retry saving this reply',
+        ? jt('chat.unsavedReply.retrySavingUnavailable', 'Retry saving this reply ({reason})', { reason: recoveryUnavailableReason }).replace('{reason}', () => String(recoveryUnavailableReason))
+        : jt('chat.unsavedReply.retrySaving', 'Retry saving this reply'),
+      title: recoveryUnavailable ? recoveryUnavailableReason : jt('chat.unsavedReply.retrySaving', 'Retry saving this reply'),
       disabled: recoveryUnavailable,
       dataset: dataset('retry'),
     });
     const copyButton = actionButton({
-      label: 'Copy',
+      label: jt('common.copy', 'Copy'),
       variant: 'ghost',
       size: 'sm',
       className: 'chat-unsaved-reply-action',
-      ariaLabel: 'Copy this unsaved reply',
-      title: 'Copy this reply',
+      ariaLabel: jt('chat.unsavedReply.copyAriaLabel', 'Copy this unsaved reply'),
+      title: jt('chat.unsavedReply.copyTitle', 'Copy this reply'),
       dataset: dataset('copy'),
     });
     const discardButton = actionButton({
-      label: 'Discard',
+      label: jt('chat.unsavedReply.discard', 'Discard'),
       variant: 'danger',
       size: 'sm',
       className: 'chat-unsaved-reply-action',
       ariaLabel: recoveryUnavailable
-        ? `Discard this unsaved reply (${recoveryUnavailableReason})`
-        : 'Discard this unsaved reply',
-      title: recoveryUnavailable ? recoveryUnavailableReason : 'Discard this unsaved reply',
+        ? jt('chat.unsavedReply.discardUnavailable', 'Discard this unsaved reply ({reason})', { reason: recoveryUnavailableReason }).replace('{reason}', () => String(recoveryUnavailableReason))
+        : jt('chat.unsavedReply.discardAriaLabel', 'Discard this unsaved reply'),
+      title: recoveryUnavailable ? recoveryUnavailableReason : jt('chat.unsavedReply.discardAriaLabel', 'Discard this unsaved reply'),
       disabled: recoveryUnavailable,
       dataset: dataset('discard'),
     });
@@ -74,9 +75,9 @@
       <div class="chat-unsaved-reply-notice" data-unsaved-reply-notice="true" data-message-id="${actionButton.escapeHtml(messageId)}">
         <div class="chat-unsaved-reply-state">
           ${badge({ tone: 'warning', size: 'sm', text: 'Unsaved', className: 'chat-unsaved-reply-badge' })}
-          <span class="chat-unsaved-reply-detail">Not yet saved to chat history.</span>
+          <span class="chat-unsaved-reply-detail">${actionButton.escapeHtml(jt('chat.unsavedReply.notSavedDetail', 'Not yet saved to chat history.'))}</span>
         </div>
-        <div class="chat-unsaved-reply-actions" role="group" aria-label="Unsaved reply actions">
+        <div class="chat-unsaved-reply-actions" role="group" aria-label="${actionButton.escapeHtml(jt('chat.unsavedReply.actionsAriaLabel', 'Unsaved reply actions'))}">
           ${retryButton}${copyButton}${discardButton}
         </div>
       </div>

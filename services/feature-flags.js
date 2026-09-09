@@ -36,6 +36,9 @@ const FEATURE_OVERRIDE_KEYS = Object.freeze([
   // back until the flag is removed at the end of the cleanup wave (the
   // top_nav_shell precedent), so rollback never needs an env var.
   'error_intake_routing',
+  // unattended_guard is user-overridable so the idle safety fallback can be
+  // disabled without removing its main-process wiring.
+  'unattended_guard',
   // ollama_tray_remediation is user-overridable (Settings) so the owner-
   // triggered Ollama tray-conflict remediation actions (quit tray app,
   // disable Startup shortcut, restart engine) can be turned off per-user
@@ -59,7 +62,15 @@ const FEATURE_OVERRIDE_KEYS = Object.freeze([
   // The DOM keeps its inert spellcheck="true" attributes while off, so flag-off
   // is behaviourally coherent but NOT byte-identical markup.
   'text_spellcheck',
+  // remote_control is user-overridable from Settings > Remote Control.
+  // DEFAULT-ON; JENNY_ENABLE_REMOTE_CONTROL=0 is an emergency
+  // deny that stored overrides cannot defeat.
+  'remote_control',
 ]);
+
+const FORCE_DENY_ENV_KEYS = Object.freeze({
+  remote_control: 'JENNY_ENABLE_REMOTE_CONTROL',
+});
 
 const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'agent_executor',
@@ -592,6 +603,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // controller stays wired as the rollback surface) until the flag is
     // removed at the end of the cleanup wave.
     error_intake_routing: fe('ERROR_INTAKE_ROUTING', true),
+    unattended_guard: fe('UNATTENDED_GUARD', true),
     // agent_test_hooks gates the window.__jennyAgent automation surface and
     // DEBUG-level renderer log forwarding. Defaults on under the agent/dev
     // launcher (JENNY_AGENT_DEV) and off everywhere else.
@@ -778,6 +790,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // in Settings (FEATURE_OVERRIDE_KEYS).
     ollama_tray_remediation: fe('OLLAMA_TRAY_REMEDIATION', true),
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
+    remote_control: fe('REMOTE_CONTROL', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
     // model_fit_estimates gates the pure-estimator fit computed for installed
     // local models that have no config/model-recommendation-catalog.json
@@ -857,14 +870,21 @@ function buildFeatureFlagDefaults(env = process.env) {
 }
 
 function buildFeatureFlags(env = process.env, overrides = {}) {
-  return {
+  const flags = {
     ...buildFeatureFlagDefaults(env),
     ...normalizeFeatureOverrides(overrides),
   };
+  for (const [key, envKey] of Object.entries(FORCE_DENY_ENV_KEYS)) {
+    if (isFeatureEnabledByDefault(env[envKey], true) === false) {
+      flags[key] = false;
+    }
+  }
+  return flags;
 }
 
 module.exports = {
   FEATURE_OVERRIDE_KEYS,
+  FORCE_DENY_ENV_KEYS,
   INTERNAL_FEATURE_FLAG_KEYS,
   TOOL_SETTING_KEYS,
   buildFeatureFlags,

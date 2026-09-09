@@ -13,12 +13,14 @@
   root.rendererSetupController = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function noop() {}
 
   var sceneUtils = (typeof globalThis !== 'undefined' && globalThis.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./setup-scenes/scene-utils') : null);
   var globalRef = typeof globalThis !== 'undefined' ? globalThis : null;
+  var DISCLOSURE_VERSION = sceneUtils && sceneUtils.DISCLOSURE_VERSION || '1';
 
   function isTerminalStatus(status) {
     return sceneUtils && typeof sceneUtils.isTerminalStatus === 'function'
@@ -46,20 +48,21 @@
       dismissed: false,
       completedAt: '',
       updatedAt: '',
+      acknowledgedVersion: '', acknowledgedAt: '',
       steps: defaultSteps,
       assistantIdentity: { agentName: 'Jenny', profile: 'balanced', customText: '', updatedAt: '' },
       mcpToolsDiscovered: false,
       toolsWorkspaceRootConfigured: false,
       toolsWorkspaceRoot: '',
-      workspaceRootStatus: { state: 'missing', message: 'No workspace root is configured.' },
+      workspaceRootStatus: { state: 'missing', message: jt('setup.controller.workspaceRootMissing', 'No workspace root is configured.') },
       readiness: {},
       pullInFlight: null,
     };
   }
 
   function allStepsTerminal(steps) {
-    var values = Object.keys(steps || {}).map(function readStep(key) { return steps[key]; });
-    return values.length > 0 && values.every(isTerminalStatus);
+    var keys = Object.keys(steps || {}).filter(function omitAcknowledgement(key) { return key !== 'acknowledgement'; });
+    return keys.length > 0 && keys.every(function readStep(key) { return isTerminalStatus(steps && steps[key]); });
   }
 
   // UIUX-005: derives setup HEALTH from step truth (workspaceRoot + model
@@ -121,6 +124,7 @@
     return JSON.stringify({
       setupComplete: source.setup_complete === true,
       updatedAt: String(source.updated_at || ''),
+      acknowledgedVersion: String(source.acknowledged_version || source.acknowledgedVersion || ''),
       toolsWorkspaceRoot: String(source.tools_workspace_root || ''),
       workspaceRootStatus: {
         state: String(workspaceRootStatus.state || ''),
@@ -161,6 +165,7 @@
       : null;
     var persistPreferredModel = typeof d.persistPreferredModel === 'function' ? d.persistPreferredModel : null;
     var persistFeatureSettings = typeof d.persistFeatureSettings === 'function' ? d.persistFeatureSettings : null;
+    var getFeatureSettings = typeof d.getFeatureSettings === 'function' ? d.getFeatureSettings : null;
 
     var modalRoot = dom.homeSetupModalRoot || null;
     var activeScene = null;
@@ -169,6 +174,7 @@
     var disposed = false;
     var lifecycleGeneration = 0;
     var completeInFlight = null;
+    var acknowledgementGate = null; var acknowledgementSceneMissingLogged = false;
 
     function ensureModalRoot() {
       if (modalRoot) return modalRoot;
@@ -236,13 +242,59 @@
       return state.setup;
     }
 
+    function needsAcknowledgement() {
+      return state.setup.loaded === true
+        && String(state.setup.acknowledgedVersion || '') !== DISCLOSURE_VERSION;
+    }
+
     function maybeStartFirstRunFlow() {
       if (disposed) return;
       var setup = state.setup;
       if (!setup || setup.loaded !== true) return;
+      if (needsAcknowledgement()) {
+        startAcknowledgementGate();
+        return;
+      }
       if (setup.firstRunCompleted === true || setup.setupComplete === true) return;
       if (activeFlow || !hubFactory) return;
       startLinearFlow();
+    }
+
+    function startAcknowledgementGate() {
+      if (disposed || acknowledgementGate) return acknowledgementGate;
+      if (typeof sceneFactories.acknowledgement !== 'function') {
+        if (!acknowledgementSceneMissingLogged) {
+          appendClientLog('ERROR', 'setup.acknowledgement_scene_missing', {});
+          acknowledgementSceneMissingLogged = true;
+        }
+        return null;
+      }
+      var closeIgnoredLogged = false;
+      acknowledgementGate = openScene('acknowledgement', {
+        onRequestClose: function ignoreClose(reason) {
+          if (closeIgnoredLogged) return;
+          appendClientLog('INFO', 'setup.acknowledgement_close_ignored', { reason: reason }); closeIgnoredLogged = true;
+        },
+        onContinue: async function persistAcknowledgement() {
+          var generation = lifecycleGeneration;
+          try {
+            var snapshot = await setupService.updateState({ acknowledgedVersion: DISCLOSURE_VERSION, acknowledgedAt: new Date().toISOString(), steps: { acknowledgement: 'done' } });
+            if (disposed || generation !== lifecycleGeneration) return;
+            applySnapshot(snapshot);
+            if (String(state.setup.acknowledgedVersion || '') !== DISCLOSURE_VERSION) {
+              throw new Error('Acknowledgement was not persisted.');
+            }
+            closeModal();
+            acknowledgementGate = null;
+            if (!(state.setup.firstRunCompleted || state.setup.setupComplete)) startLinearFlow();
+          } catch (error) {
+            if (!disposed && generation === lifecycleGeneration) appendClientLog('WARN', 'setup.acknowledgement_persist_failed',
+              { message: error && error.message ? error.message : String(error) });
+            throw error;
+          }
+        },
+      });
+      return acknowledgementGate;
     }
 
     async function init() {
@@ -296,8 +348,8 @@
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
         showShellErrorToast(
-          'Could not save the setup step. Try again in a moment.',
-          { title: 'Setup Update Failed' }
+          jt('setup.controller.updateFailedMessage', 'Could not save the setup step. Try again in a moment.'),
+          { title: jt('setup.controller.updateFailedTitle', 'Setup Update Failed') }
         );
         appendClientLog('WARN', 'setup.mark_step_failed', {
           step: name,
@@ -334,8 +386,8 @@
         var health = computeHealth(state.setup);
         if (health.state !== 'complete') {
           showShellErrorToast(
-            'Choose a workspace root and configure at least one model route before finishing setup.',
-            { title: 'Setup Not Ready' }
+            jt('setup.controller.notReadyMessage', 'Choose a workspace root and configure at least one model route before finishing setup.'),
+            { title: jt('setup.controller.notReadyTitle', 'Setup Not Ready') }
           );
           appendClientLog('INFO', 'setup.complete_blocked', {
             pendingSteps: health.pendingSteps,
@@ -351,8 +403,8 @@
         } catch (error) {
           if (disposed || generation !== lifecycleGeneration) return state.setup;
           showShellErrorToast(
-            'Could not finish setup. Try again in a moment.',
-            { title: 'Setup Finish Failed' }
+            jt('setup.controller.finishFailedMessage', 'Could not finish setup. Try again in a moment.'),
+            { title: jt('setup.controller.finishFailedTitle', 'Setup Finish Failed') }
           );
           appendClientLog('WARN', 'setup.complete_failed', {
             message: error && error.message ? error.message : String(error),
@@ -404,6 +456,10 @@
     }
 
     function openScene(name, overrides) {
+      if (name !== 'acknowledgement' && needsAcknowledgement()) {
+        setActiveView('home');
+        return startAcknowledgementGate();
+      }
       var factory = sceneFactories && sceneFactories[name];
       if (typeof factory !== 'function') {
         appendClientLog('WARN', 'setup.unknown_scene', { name: name });
@@ -431,10 +487,12 @@
         appendClientLog: appendClientLog,
         persistPreferredModel: persistPreferredModel,
         persistFeatureSettings: persistFeatureSettings,
+        getFeatureSettings: getFeatureSettings,
       };
       if (overrides && typeof overrides.openStep === 'function') sceneDeps.openStep = overrides.openStep;
       if (overrides && typeof overrides.finish === 'function') sceneDeps.finish = overrides.finish;
       if (overrides && typeof overrides.attemptComplete === 'function') sceneDeps.attemptComplete = overrides.attemptComplete;
+      if (overrides && typeof overrides.onContinue === 'function') sceneDeps.onContinue = overrides.onContinue;
       var scene = factory(sceneDeps);
       if (!scene) {
         return null;
@@ -456,7 +514,7 @@
       if (lifecycle) {
         lifecycle.open({
           id: 'setup-' + name,
-          onRequestClose: requestModalClose,
+          onRequestClose: (overrides && overrides.onRequestClose) || requestModalClose,
         });
       }
       return scene;
@@ -502,6 +560,10 @@
     }
 
     function startLinearFlow() {
+      if (needsAcknowledgement()) {
+        setActiveView('home');
+        return startAcknowledgementGate();
+      }
       if (!hubFactory) {
         return null;
       }
@@ -515,6 +577,10 @@
     // Explicit "Resume setup" entry point. A second call while the hub is
     // active re-focuses Home without reconstructing the in-progress surface.
     function resumeSetup() {
+      if (needsAcknowledgement()) {
+        setActiveView('home');
+        return startAcknowledgementGate();
+      }
       if (activeFlow) {
         setActiveView('home');
         return activeFlow;
@@ -560,7 +626,7 @@
             await completeSetup();
             if (disposed || generation !== lifecycleGeneration) return state.setup;
             if (state.setup.setupComplete !== true) {
-              showToastMessage("Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up.");
+              showToastMessage(jt('setup.controller.incompleteModelMessage', "Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up."));
             }
           } catch (_error) { /* already toasted */ }
         }
@@ -590,6 +656,8 @@
 
     function showFromSettings() {
       setActiveView('home');
+      if (needsAcknowledgement()) return startAcknowledgementGate();
+      return null;
     }
 
     function computeCanFinish(setup) {
@@ -683,6 +751,7 @@
       }
       activeFlow = null;
       disposeActiveScene();
+      acknowledgementGate = null;
       if (modalLifecycle) modalLifecycle.dispose();
       modalLifecycle = null;
       if (globalRef && globalRef.jennySetupResume === resumeSetup) {

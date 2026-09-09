@@ -1,11 +1,11 @@
 /* renderer/chat/renderer-stream-handler-live-events.js -- non-terminal live stream event handlers (UMD) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-stream-text-cursor'));
+    module.exports = factory(require('./renderer-stream-text-cursor'), require('./renderer-stream-handler-reducer-wiring'));
     return;
   }
-  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor) {
+  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {}, root.rendererStreamHandlerReducerWiring || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor, segmentIdentityUtils) {
   const {
     createTextCursor,
     resetCursor,
@@ -161,28 +161,6 @@
       return { buffered: false, terminal: false };
     }
 
-    // `assistant_<streamId>` (segment 0) and `assistant_<streamId>_seg<n>` are
-    // the only two shapes main mints for an assistant shell message. Recover
-    // <n> from an authoritative id so segState keeps counting from the index
-    // main is actually on; anything else leaves the local counter alone.
-    function parseAssistantSegmentIndex(streamId, messageId, fallbackIndex) {
-      const normalizedStreamId = normalizeId(streamId);
-      const normalizedId = normalizeString(messageId);
-      if (!normalizedStreamId || !normalizedId) {
-        return fallbackIndex;
-      }
-      const baseId = `assistant_${normalizedStreamId}`;
-      if (normalizedId === baseId) {
-        return 0;
-      }
-      const segPrefix = `${baseId}_seg`;
-      if (!normalizedId.startsWith(segPrefix)) {
-        return fallbackIndex;
-      }
-      const suffix = normalizedId.slice(segPrefix.length);
-      return /^\d+$/.test(suffix) ? Number(suffix) : fallbackIndex;
-    }
-
     async function handleStreamReset(payload) {
       flushPendingStreamCommit(payload.streamId);
       reasoningStreamMerger.drop(payload.streamId);
@@ -196,9 +174,13 @@
       // canonical message landed on the previous index, so the same text
       // painted twice until terminal reconcile deleted the stale rows. Fall
       // back to the local counter when the field is absent (older main).
-      const authoritativeNextAssistantMessageId = normalizeString(
-        payload.next_assistant_message_id || payload.nextAssistantMessageId || ''
-      );
+      const rawNextId = payload.next_assistant_message_id ?? payload.nextAssistantMessageId;
+      const identity = segmentIdentityUtils.resolveAssistantSegmentIdentity?.(payload.streamId, rawNextId);
+      const authoritativeNextAssistantMessageId = identity?.messageId || '';
+      if (rawNextId != null && !identity && segState && !segState.invalidAssistantIdentityReported) {
+        segState.invalidAssistantIdentityReported = true;
+        appendClientLog('WARN', 'stream.assistant_segment_identity_invalid', { boundary: 'reset' });
+      }
       const nextAssistantMessageId = authoritativeNextAssistantMessageId
         || buildAssistantShellMessageId(payload.streamId, localSegmentIndex + 1);
       applyLiveTurnPayload(payload, {
@@ -211,13 +193,7 @@
       streamPhaseState.delete(normalizeId(payload.streamId));
       clearStreamThinkingStatus(payload.streamId);
       if (segState) {
-        segState.segmentIndex = authoritativeNextAssistantMessageId
-          ? parseAssistantSegmentIndex(
-            payload.streamId,
-            authoritativeNextAssistantMessageId,
-            localSegmentIndex + 1
-          )
-          : localSegmentIndex + 1;
+        segState.segmentIndex = identity ? identity.segmentIndex : localSegmentIndex + 1;
         // Latched so every id derived from THIS segment index — text deltas,
         // reasoning phases — resolves to main's exact spelling (main writes
         // `_seg0` where the renderer's own scheme writes the bare base id).

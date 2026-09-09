@@ -13,6 +13,7 @@
   root.rendererIdePathMenu = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function noop() {}
 
@@ -50,8 +51,8 @@
     async function revealInFileExplorer(path) {
       const api = getWorkspaceFsApi();
       if (typeof api?.revealInFolder !== 'function') {
-        showShellErrorToast('Reveal in File Explorer is unavailable in this shell mode.', {
-          title: 'Workspace',
+        showShellErrorToast(jt('ide.pathMenu.revealUnavailable', 'Reveal in File Explorer is unavailable in this shell mode.'), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey: 'ide:path:reveal',
         });
         return;
@@ -59,8 +60,8 @@
       try {
         await api.revealInFolder({ path });
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not reveal the item.'), {
-          title: 'Workspace',
+      showShellErrorToast(toErrorMessage(error, jt('ide.pathMenu.revealFailed', 'Could not reveal the item.')), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey: 'ide:path:reveal',
         });
         appendClientLog('WARN', 'ide.reveal_in_folder_failed', {
@@ -72,8 +73,8 @@
     async function openInDefaultApp(path) {
       const api = getWorkspaceFsApi();
       if (typeof api?.openInDefaultApp !== 'function') {
-        showShellErrorToast('Open in Default App is unavailable in this shell mode.', {
-          title: 'Workspace',
+        showShellErrorToast(jt('ide.pathMenu.openDefaultUnavailable', 'Open in Default App is unavailable in this shell mode.'), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey: 'ide:path:open-default',
         });
         return;
@@ -81,8 +82,8 @@
       try {
         await api.openInDefaultApp({ path });
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not open the item.'), {
-          title: 'Workspace',
+      showShellErrorToast(toErrorMessage(error, jt('ide.pathMenu.openFailed', 'Could not open the item.')), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey: 'ide:path:open-default',
         });
         appendClientLog('WARN', 'ide.open_default_app_failed', {
@@ -95,10 +96,10 @@
       const clipboard = windowRef.jennyShell?.clipboard;
       try {
         await clipboard.writeText(text);
-        showToastMessage(`Copied ${text}`, { dedupeKey });
+        showToastMessage(jt('ide.pathMenu.copiedValue', 'Copied {value}', { value: text }), { dedupeKey });
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not copy to the clipboard.'), {
-          title: 'Workspace',
+      showShellErrorToast(toErrorMessage(error, jt('ide.pathMenu.copyFailed', 'Could not copy to the clipboard.')), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey,
         });
       }
@@ -116,8 +117,8 @@
         /* fall through to the no-root toast */
       }
       if (!root) {
-        showShellErrorToast('No workspace root is configured.', {
-          title: 'Workspace',
+        showShellErrorToast(jt('ide.pathMenu.noWorkspaceRoot', 'No workspace root is configured.'), {
+          title: jt('ide.explorer.workspace', 'Workspace'),
           dedupeKey: 'ide:path:copy-abs',
         });
         return;
@@ -133,16 +134,16 @@
     function buildPathUtilityMenuItems(path, kind = 'file') {
       const items = [
         { separator: true },
-        { label: 'Reveal in File Explorer', action: () => revealInFileExplorer(path) },
+        { label: jt('ide.pathMenu.revealInFileExplorer', 'Reveal in File Explorer'), action: () => revealInFileExplorer(path) },
       ];
       if (kind !== 'directory') {
-        items.push({ label: 'Open in Default App', action: () => openInDefaultApp(path) });
+        items.push({ label: jt('ide.pathMenu.openInDefaultApp', 'Open in Default App'), action: () => openInDefaultApp(path) });
       }
       items.push(
         { separator: true },
-        { label: 'Copy Path', action: () => copyAbsolutePath(path) },
-        { label: 'Copy Relative Path', action: () => copyTextToClipboard(path, 'ide:path:copy-rel') },
-        { label: 'Copy Name', action: () => copyTextToClipboard(path.split('/').pop() || path, 'ide:path:copy-name') }
+        { label: jt('ide.pathMenu.copyPath', 'Copy Path'), action: () => copyAbsolutePath(path) },
+        { label: jt('ide.pathMenu.copyRelativePath', 'Copy Relative Path'), action: () => copyTextToClipboard(path, 'ide:path:copy-rel') },
+        { label: jt('ide.pathMenu.copyName', 'Copy Name'), action: () => copyTextToClipboard(path.split('/').pop() || path, 'ide:path:copy-name') }
       );
       return items;
     }

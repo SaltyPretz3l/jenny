@@ -33,7 +33,8 @@
   codeHighlight
 ) {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TOOL_DETAIL_PREVIEW_MAX_CHARS = 10000;
   const TOOL_DETAIL_REGISTRY_MAX_ENTRIES = 200;
   const TOOL_DETAIL_REGISTRY_MAX_BYTES = 8 * 1024 * 1024;
@@ -147,22 +148,22 @@
         return inventoryActionButton({
           label: normalizedLabel,
           ariaLabel: normalizedLabel,
-          title: 'Copy to clipboard',
+          title: jt('chat.toolDetail.copyToClipboard', 'Copy to clipboard'),
           plain: true,
           className: `inv-codeblock-copy ${className || 'tool-detail-copy'}`,
           dataset: { 'inv-copy-target': copyId },
         });
       }
-      return `<span class="inv-codeblock-copy ${escapeHtml(className || 'tool-detail-copy')}" role="button" tabindex="0" data-inv-copy-target="${escapeHtml(copyId)}" aria-label="${escapeHtml(normalizedLabel)}" title="Copy to clipboard">${escapeHtml(normalizedLabel)}</span>`;
+      return `<span class="inv-codeblock-copy ${escapeHtml(className || 'tool-detail-copy')}" role="button" tabindex="0" data-inv-copy-target="${escapeHtml(copyId)}" aria-label="${escapeHtml(normalizedLabel)}" title="${escapeHtml(jt('chat.toolDetail.copyToClipboard', 'Copy to clipboard'))}">${escapeHtml(normalizedLabel)}</span>`;
     }
 
     function actionButton(label, copyId) {
-      const moreLabel = String(label || 'Show more');
+      const moreLabel = String(label || jt('chat.toolDetail.showMore', 'Show more'));
       if (typeof inventoryActionButton === 'function') {
         return inventoryActionButton({
           label: moreLabel,
           ariaLabel: moreLabel,
-          title: 'Show full output',
+          title: jt('chat.toolDetail.showFullOutput', 'Show full output'),
           ariaExpanded: false,
           plain: true,
           className: 'tool-detail-toggle',
@@ -173,11 +174,11 @@
           },
         });
       }
-      return `<span class="tool-detail-toggle" role="button" tabindex="0" aria-expanded="false" title="Show full output" data-tool-detail-toggle="true" data-copy-id="${escapeHtml(copyId)}" data-collapsed-label="${escapeHtml(moreLabel)}">${escapeHtml(moreLabel)}</span>`;
+      return `<span class="tool-detail-toggle" role="button" tabindex="0" aria-expanded="false" title="${escapeHtml(jt('chat.toolDetail.showFullOutput', 'Show full output'))}" data-tool-detail-toggle="true" data-copy-id="${escapeHtml(copyId)}" data-collapsed-label="${escapeHtml(moreLabel)}">${escapeHtml(moreLabel)}</span>`;
     }
 
     function sectionCaption(label, copyId, extraMarkup) {
-      return `<div class="tool-call-section-caption"><div class="tool-call-section-kicker${label === 'Error' ? ' tool-call-section-kicker--error' : ''}">${escapeHtml(label)}${extraMarkup || ''}</div>${copyId ? copyButton(copyId, `Copy ${String(label || 'section').toLowerCase()}`, 'tool-detail-copy') : ''}</div>`;
+      return `<div class="tool-call-section-caption"><div class="tool-call-section-kicker${label === 'Error' ? ' tool-call-section-kicker--error' : ''}">${escapeHtml(label)}${extraMarkup || ''}</div>${copyId ? copyButton(copyId, jt('chat.toolDetail.copySection', 'Copy {section}', { section: String(label || 'section').toLowerCase() }), 'tool-detail-copy') : ''}</div>`;
     }
 
     function formatBytes(bytes) {
@@ -202,10 +203,10 @@
     function buildShowMoreLabel(lineCount, fullCharCount, previewCharCount) {
       const hiddenLines = Math.max(0, lineCount - TOOL_DETAIL_CLAMP_LINE_FLOOR);
       if (hiddenLines > 0) {
-        return `Show ${hiddenLines.toLocaleString('en-US')} more ${hiddenLines === 1 ? 'line' : 'lines'}`;
+        return jtn('chat.toolDetail.showMoreLines', hiddenLines, { count: hiddenLines.toLocaleString(globalThis.jennyI18n?.tag?.()) }, 'Show {count} more line', 'Show {count} more lines');
       }
       const hiddenChars = Math.max(1, fullCharCount - previewCharCount);
-      return `Show ${hiddenChars.toLocaleString('en-US')} more ${hiddenChars === 1 ? 'character' : 'characters'}`;
+      return jtn('chat.toolDetail.showMoreChars', hiddenChars, { count: hiddenChars.toLocaleString(globalThis.jennyI18n?.tag?.()) }, 'Show {count} more character', 'Show {count} more characters');
     }
 
     function textSection(label, text, options) {
@@ -225,9 +226,9 @@
         ? ` data-tool-result-outcome="${escapeHtml(opts.resultOutcome)}"`
         : '';
       const footer = shouldClamp && (!capped || fullTextRegistered)
-        ? `<div class="tool-detail-more">${actionButton(moreLabel, copyId)}${capped ? `<span aria-hidden="true"> · </span>${copyButton(copyId, `Copy all (${formatBytes(utf8Bytes(raw))})`, 'tool-detail-copy-all')}` : ''}</div>`
+        ? `<div class="tool-detail-more">${actionButton(moreLabel, copyId)}${capped ? `<span aria-hidden="true"> · </span>${copyButton(copyId, jt('chat.toolDetail.copyAll', 'Copy all ({size})', { size: formatBytes(utf8Bytes(raw)) }), 'tool-detail-copy-all')}` : ''}</div>`
         : (capped
-            ? '<div class="tool-detail-more tool-detail-limit-note">Preview only · full payload exceeds the in-memory copy limit.</div>'
+            ? '<div class="tool-detail-more tool-detail-limit-note">' + escapeHtml(jt('chat.toolDetail.previewOnlyLimit', 'Preview only · full payload exceeds the in-memory copy limit.')) + '</div>'
             : '');
       const captionCopyId = capped && !fullTextRegistered ? '' : copyId;
       return `<div class="tool-call-section${opts.isError ? ' tool-call-section--error' : ''} inv-codeblock-wrap" data-tool-detail-section="true"${outcomeAttr}>${sectionCaption(label, captionCopyId, opts.captionExtra)}<pre class="${escapeHtml(preClass)}"${shouldClamp ? ' data-detail-clamped="true"' : ''}${capped && fullTextRegistered ? ' data-detail-capped="true"' : ''}><code id="${escapeHtml(copyId)}"${codeClass}>${escapeHtml(preview)}</code></pre>${footer}${opts.trailingMarkup || ''}</div>`;
@@ -255,7 +256,7 @@
         const rendered = item === null ? 'null' : String(item);
         const preview = rendered.slice(0, TOOL_DETAIL_PREVIEW_MAX_CHARS);
         const meta = typeof item === 'string'
-          ? `${item.length.toLocaleString('en-US')} ${item.length === 1 ? 'char' : 'chars'}`
+          ? jtn('chat.toolDetail.charCount', item.length, { count: item.length.toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} char', '{count} chars')
           : (typeof item === 'boolean' ? 'bool' : 'num');
         hasCappedValue = hasCappedValue || rendered.length > TOOL_DETAIL_PREVIEW_MAX_CHARS;
         previewCharCount += preview.length;
@@ -275,9 +276,9 @@
       if (!grid) return '';
       const moreLabel = buildShowMoreLabel(fullLineCount, fullValueCharCount, previewCharCount);
       const footer = shouldClamp && (!hasCappedValue || fullTextRegistered)
-        ? `<div class="tool-detail-more">${actionButton(moreLabel, copyId)}${hasCappedValue ? `<span aria-hidden="true"> · </span>${copyButton(copyId, `Copy all (${formatBytes(utf8Bytes(fullText))})`, 'tool-detail-copy-all')}` : ''}</div>`
+        ? `<div class="tool-detail-more">${actionButton(moreLabel, copyId)}${hasCappedValue ? `<span aria-hidden="true"> · </span>${copyButton(copyId, jt('chat.toolDetail.copyAll', 'Copy all ({size})', { size: formatBytes(utf8Bytes(fullText)) }), 'tool-detail-copy-all')}` : ''}</div>`
         : (hasCappedValue
-            ? '<div class="tool-detail-more tool-detail-limit-note">Preview only · full payload exceeds the in-memory copy limit.</div>'
+            ? '<div class="tool-detail-more tool-detail-limit-note">' + escapeHtml(jt('chat.toolDetail.previewOnlyLimit', 'Preview only · full payload exceeds the in-memory copy limit.')) + '</div>'
             : '');
       return `<div class="tool-call-section inv-codeblock-wrap" data-tool-detail-section="true">${sectionCaption(label, fullTextRegistered ? copyId : '')}${grid}${footer}</div>`;
     }
@@ -313,7 +314,7 @@
         });
       }
       if (model.inputExpected === true && model.inputRecorded === false) {
-        return `<div class="tool-call-section">${sectionCaption('Input', '')}<div class="tool-call-empty">Not recorded.</div></div>`;
+        return `<div class="tool-call-section">${sectionCaption('Input', '')}<div class="tool-call-empty">${escapeHtml(jt('chat.toolDetail.notRecorded', 'Not recorded.'))}</div></div>`;
       }
       if (!skip.size && model.inputJson && !parsed) {
         return textSection('Input', model.inputJson, {
@@ -333,7 +334,7 @@
           })
         : 'failure';
       // Prefer outputText because it contains the tool's failure text; resultSummary describes what was run.
-      const message = String(model.outputText || model.resultSummary || (outcome === 'stopped' ? 'Tool was stopped' : 'Tool failed'));
+      const message = String(model.outputText || model.resultSummary || (outcome === 'stopped' ? jt('chat.toolDetail.toolStopped', 'Tool was stopped') : jt('chat.toolDetail.toolFailed', 'Tool failed')));
       const code = String(model.errorCode || '').trim();
       const codeChip = code && code.toLowerCase() !== 'unknown'
         && errorRecoveryUtils && typeof errorRecoveryUtils.buildErrorCodeChip === 'function'
@@ -346,7 +347,7 @@
       const retry = outcome === 'failure' && model.retryMessageId
         && errorRecoveryUtils && typeof errorRecoveryUtils.buildActionButton === 'function'
         ? `<div class="tool-result-notice-actions">${errorRecoveryUtils.buildActionButton(
-            { id: 'retry', label: 'Regenerate response', icon: 'retry' },
+            { id: 'retry', label: jt('chat.toolDetail.regenerateResponse', 'Regenerate response'), icon: 'retry' },
             { callId: model.callId, messageId: model.retryMessageId, errorClass: 'tool', primary: true }
           )}</div>`
         : '';
@@ -390,7 +391,7 @@
         parts.push(textSection('Output', model.outputText, { copyId: `${domToken}-output`, pretty: true }));
       }
       if (exitCode != null || timedOut) {
-        const label = exitCode != null ? `exit ${Number(exitCode)}${timedOut ? ' (timed out)' : ''}` : 'timed out';
+      const label = exitCode != null ? (timedOut ? jt('chat.toolDetail.exitTimedOut', 'exit {code} (timed out)', { code: Number(exitCode) }) : jt('chat.toolDetail.exitCode', 'exit {code}', { code: Number(exitCode) })) : jt('chat.toolDetail.timedOut', 'timed out');
         parts.push(`<div class="bash-exit-badge ${Number(exitCode) === 0 && !timedOut ? 'bash-exit-success' : 'bash-exit-error'}">${escapeHtml(label)}</div>`);
       }
       return parts.join('');
@@ -439,11 +440,11 @@
       const safeImages = Array.from(new Set(legacySafeImages.concat(trustedImages.filter(allowedImageSource))));
       const blockedImageCount = Math.max(0, images.length - legacySafeImages.length);
       if (safeImages.length) {
-        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div>${safeImages.map((src) => `<img class="python-output-image" src="${escapeHtml(src)}" alt="Python output image">`).join('')}</div></div>`);
+        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div>${safeImages.map((src) => `<img class="python-output-image" src="${escapeHtml(src)}" alt="${escapeHtml(jt('chat.toolDetail.pythonOutputImageAlt', 'Python output image'))}">`).join('')}</div></div>`);
         hasStructuredOutput = true;
       }
       if (blockedImageCount > 0) {
-        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div class="tool-call-empty">${escapeHtml(`${blockedImageCount} image output(s) are unavailable.`)}</div></div>`);
+        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div class="tool-call-empty">${escapeHtml(jt('chat.toolDetail.imagesUnavailable', '{count} image output(s) are unavailable.', { count: blockedImageCount }))}</div></div>`);
         hasStructuredOutput = true;
       }
       if (Array.isArray(parsed.tables) && parsed.tables.length) {
@@ -511,7 +512,7 @@
       if (parsed.offset != null || parsed.limit != null) {
         const start = parsed.offset != null ? Number(parsed.offset) : 0;
         const count = parsed.limit != null ? Number(parsed.limit) : 0;
-        if (Number.isFinite(start) && Number.isFinite(count) && count > 0) lineRange = ` (lines ${start}-${start + count})`;
+        if (Number.isFinite(start) && Number.isFinite(count) && count > 0) lineRange = jt('chat.toolDetail.lineRange', ' (lines {start}-{end})', { start: start, end: start + count });
       }
       const meta = filePath ? `<div class="tool-call-output-meta">${escapeHtml(filePath + lineRange)}</div>` : '';
       const output = model.outputText
@@ -554,7 +555,7 @@
         body = genericBody(model);
       }
       if (!String(body || '').trim()) {
-        body = '<div class="tool-call-empty">No input or output recorded.</div>';
+        body = '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolDetail.noInputOrOutput', 'No input or output recorded.')) + '</div>';
       }
       return `<div class="tool-detail-body" data-tool-detail-body="true">${body}</div>`;
     }
@@ -596,10 +597,10 @@
     }
     target.setAttribute('data-detail-clamped', expanding ? 'false' : 'true');
     control.setAttribute('aria-expanded', expanding ? 'true' : 'false');
-    const label = expanding ? 'Show less' : String(control.dataset?.collapsedLabel || 'Show more');
+    const label = expanding ? jt('chat.toolDetail.showLess', 'Show less') : String(control.dataset?.collapsedLabel || jt('chat.toolDetail.showMore', 'Show more'));
     control.textContent = label;
     control.setAttribute('aria-label', label);
-    control.setAttribute('title', expanding ? 'Collapse output' : 'Show full output');
+    control.setAttribute('title', expanding ? jt('chat.toolDetail.collapseOutput', 'Collapse output') : jt('chat.toolDetail.showFullOutput', 'Show full output'));
     return true;
   }
 

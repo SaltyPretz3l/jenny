@@ -11,7 +11,9 @@ from sidecar.ai.context.runtime_message_markers import (
     RESTORED_TOOL_CONTRACT_HEADING,
     RUNTIME_SYSTEM_MESSAGE_HEADINGS,
 )
+from sidecar.ai.engines.chatgpt_subscription_request import build_input_items
 from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.ai.routing.engine_messages import engine_messages
 from sidecar.ai.routing.plan_mode_transition import (
     apply_restored_tool_contract,
     build_restored_tool_contract_overlay,
@@ -105,11 +107,40 @@ def test_apply_restored_tool_contract_deduplicates_and_empty_is_noop() -> None:
         and str(row.get("content") or "").startswith(RESTORED_TOOL_CONTRACT_HEADING)
     ]
     assert len(restored_rows) == 1
-    assert messages[-1] is restored_rows[0]
+    assert messages[0] is restored_rows[0]
 
     untouched = [{"role": "user", "content": "keep"}]
     apply_restored_tool_contract(working_messages=untouched, tool_statuses=())
     assert untouched == [{"role": "user", "content": "keep"}]
+
+
+@pytest.mark.parametrize("decision", ["approved", "approved_auto"])
+def test_confirmed_exit_survives_provider_instruction_serialization(decision: str) -> None:
+    messages = [
+        {"role": "system", "content": "Base read-only tool digest"},
+        {"role": "system", "content": f"{PLAN_MODE_OVERLAY_HEADING}\nplan"},
+        {"role": "user", "content": "Build it"},
+        {"role": "assistant", "content": "Submitting plan"},
+    ]
+    context = transition_after_exit_outcome(
+        request_context=_context(), outcomes=[_outcome(decision)], working_messages=messages
+    )
+    apply_restored_tool_contract(
+        working_messages=messages,
+        tool_statuses=(RuntimeToolStatus(
+            name="write_file", display_name="Write file", available=True,
+        ),),
+    )
+    normalized = engine_messages(messages, primary_system_text="Base read-only tool digest")
+    instructions, items = build_input_items(
+        prompt="", system="Base read-only tool digest", messages=normalized
+    )
+    assert context.read_only is False
+    assert RESTORED_TOOL_CONTRACT_HEADING in instructions
+    assert APPROVED_PLAN_OVERLAY_HEADING in instructions
+    assert PLAN_MODE_OVERLAY_HEADING not in instructions
+    assert "`write_file`" in instructions
+    assert not any(RESTORED_TOOL_CONTRACT_HEADING in str(item) for item in items)
 
 
 def test_restored_tool_contract_heading_is_registered() -> None:
@@ -132,7 +163,7 @@ def test_approved_transition_replaces_plan_overlay_and_keeps_prompt_policy(
     assert context.approvals_pre_granted is False
     assert context.approval_mode == "prompt"
     assert not any(str(row.get("content", "")).startswith(PLAN_MODE_OVERLAY_HEADING) for row in messages)
-    assert str(messages[-1]["content"]).startswith(APPROVED_PLAN_OVERLAY_HEADING)
+    assert str(messages[0]["content"]).startswith(APPROVED_PLAN_OVERLAY_HEADING)
     applied = next(
         record
         for record in caplog.records

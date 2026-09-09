@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, logViewUtils) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const escapeHtml = stringUtils.escapeHtml;
   const normString = stringUtils.normalizeString;
   const formatRelativeTimestamp = logViewUtils.formatRelativeTime;
@@ -27,7 +28,7 @@
   function formatNumber(value) {
     const n = Number(value);
     if (!Number.isFinite(n)) return '0';
-    return n.toLocaleString('en-US');
+    return n.toLocaleString(globalThis.jennyI18n?.tag?.());
   }
 
   function formatCost(value) {
@@ -54,14 +55,14 @@
 
   function buildToolLatencyMarkup(facet) {
     if (!facet || facet.available !== true) {
-      return buildEmptyState('Tool observability is unavailable.');
+      return buildEmptyState(jt('diagnostics.observability.toolUnavailable', 'Tool observability is unavailable.'));
     }
     const tools = facet.tools && typeof facet.tools === 'object' ? facet.tools : {};
     const entries = Object.entries(tools)
       .map(([name, stats]) => ({ name, stats: stats || {} }))
       .filter((row) => Number.isFinite(Number(row.stats.count)) && Number(row.stats.count) > 0);
     if (entries.length === 0) {
-      return buildEmptyState('No tool calls recorded yet.');
+      return buildEmptyState(jt('diagnostics.observability.noToolCalls', 'No tool calls recorded yet.'));
     }
     entries.sort((a, b) => {
       const ap = Number(a.stats.latency_ms?.p95) || 0;
@@ -99,7 +100,7 @@
       + '<th scope="col" class="observability-cell-num">p50</th>'
       + '<th scope="col" class="observability-cell-num">p95</th>'
       + '<th scope="col" class="observability-cell-num">p99</th>'
-      + '<th scope="col" class="observability-cell-code">Last error</th>'
+      + '<th scope="col" class="observability-cell-code">' + escapeHtml(jt('diagnostics.observability.lastError', 'Last error')) + '</th>'
       + '</tr></thead>'
       + '<tbody>' + rows + '</tbody>'
       + '</table>';
@@ -109,11 +110,11 @@
 
   function buildSlowOperationsMarkup(facet) {
     if (!facet || facet.available !== true) {
-      return buildEmptyState('Slow operations facet unavailable.');
+      return buildEmptyState(jt('diagnostics.observability.slowOperationsUnavailable', 'Slow operations facet unavailable.'));
     }
     const items = Array.isArray(facet.items) ? facet.items : [];
     if (items.length === 0) {
-      return buildEmptyState('No slow operations recorded.');
+      return buildEmptyState(jt('diagnostics.observability.noSlowOperations', 'No slow operations recorded.'));
     }
     const rows = items.slice().sort((a, b) => Number(b?.observed_ms || 0) - Number(a?.observed_ms || 0)).map((item) => {
       const kind = normString(item && item.kind) || 'operation';
@@ -144,11 +145,11 @@
 
   function buildTraceTimingMarkup(facet, expandedStreams) {
     if (!facet || facet.available !== true) {
-      return buildEmptyState('Trace timing facet unavailable.');
+      return buildEmptyState(jt('diagnostics.observability.traceTimingUnavailable', 'Trace timing facet unavailable.'));
     }
     const items = Array.isArray(facet.recent) ? facet.recent : [];
     if (items.length === 0) {
-      return buildEmptyState('No turns recorded yet.');
+      return buildEmptyState(jt('diagnostics.observability.noTurns', 'No turns recorded yet.'));
     }
     const expandedSet = expandedStreams instanceof Set ? expandedStreams : new Set();
     const rows = items.slice().reverse().map((trace, index) => {
@@ -173,7 +174,7 @@
         + '<button type="button" class="observability-trace-row-header"'
         + ' aria-expanded="' + (isExpanded ? 'true' : 'false') + '"'
         + ' aria-controls="' + escapeHtml(detailId) + '"'
-        + ' aria-label="' + escapeHtml('Trace ' + (stream || 'without an identifier') + ', ' + terminal + ', ' + duration) + '"'
+        + ' aria-label="' + escapeHtml('Trace ' + (stream || jt('diagnostics.observability.withoutIdentifier', 'without an identifier')) + ', ' + terminal + ', ' + duration) + '"'
         + ' data-observability-trace-toggle="' + escapeHtml(stream) + '">'
         + '<span class="observability-trace-status observability-trace-status-' + escapeHtml(tone) + '">' + escapeHtml(terminal) + '</span>'
         + '<span class="observability-trace-duration">' + escapeHtml(duration) + '</span>'
@@ -201,10 +202,10 @@
     ].filter((pair) => pair[1]);
     const idsMarkup = ids.map((pair) => '<span class="observability-trace-id"><span class="observability-trace-id-label">' + escapeHtml(pair[0]) + '</span><code>' + escapeHtml(pair[1]) + '</code></span>').join('');
     const providerRows = [
-      ['Request start', formatMs(provider.time_to_provider_request_start_ms)],
-      ['First chunk', formatMs(provider.time_to_first_chunk_ms)],
-      ['First visible token', formatMs(provider.time_to_first_visible_token_ms)],
-      ['Total request', formatMs(provider.request_duration_ms)],
+      [jt('diagnostics.observability.requestStart', 'Request start'), formatMs(provider.time_to_provider_request_start_ms)],
+      [jt('diagnostics.observability.firstChunk', 'First chunk'), formatMs(provider.time_to_first_chunk_ms)],
+      [jt('diagnostics.observability.firstVisibleToken', 'First visible token'), formatMs(provider.time_to_first_visible_token_ms)],
+      [jt('diagnostics.observability.totalRequest', 'Total request'), formatMs(provider.request_duration_ms)],
       ['Tokens / sec', Number.isFinite(Number(provider.visible_tokens_per_second_estimate))
         ? Number(provider.visible_tokens_per_second_estimate).toFixed(1)
         : '--'],
@@ -212,7 +213,7 @@
     const phaseEntries = tools.by_phase && typeof tools.by_phase === 'object' ? Object.entries(tools.by_phase) : [];
     const phaseMarkup = phaseEntries.length
       ? phaseEntries.map(([phase, count]) => '<span class="observability-trace-phase"><code>' + escapeHtml(phase) + '</code><span>' + escapeHtml(String(count)) + '</span></span>').join('')
-      : '<span class="observability-cell-muted">no tool events</span>';
+      : '<span class="observability-cell-muted">' + escapeHtml(jt('diagnostics.observability.noToolEvents', 'no tool events')) + '</span>';
     return ''
       + '<div class="observability-trace-detail-ids">' + idsMarkup + '</div>'
       + '<div class="observability-trace-detail-grid">' + providerRows + '</div>'

@@ -38,6 +38,8 @@ class MCPToolResult:
     # Transport-shaped only at this layer — the fail-closed admission gate
     # (builtin read_file/python_execute only) runs in routing.tool_execution.
     trusted_attachments: tuple[dict[str, Any], ...] = ()
+    # Live Electron preview only; consumed before outcomes/events are formed.
+    preview_image: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)

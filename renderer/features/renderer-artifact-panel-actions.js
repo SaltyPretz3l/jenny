@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (contextMenu, logContractUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function fileExtension(fileName) {
     var match = String(fileName || '').match(/\.([A-Za-z0-9]+)$/);
     return match ? match[1].toLowerCase() : '';
@@ -33,7 +34,7 @@
   }
 
   function buildDownloadPayload(artifact, source, formatLanguageLabel) {
-    if (!artifact || artifact.artifactType === 'image') return null;
+    if (!artifact || artifact.artifactType === 'image' || source == null) return null;
     var file = artifact.generatedFile || {};
     var markdown = isMarkdownArtifact(artifact);
     var json = artifact.artifactType === 'tool_output' && isJsonText(source);
@@ -61,9 +62,9 @@
     var downloadPromise = null;
 
     function safeErrorMessage(error) {
-      var message = String(error?.message || error || 'Unknown error.');
+      var message = String(error?.message || error || jt('common.unknownError', 'Unknown error.'));
       if (typeof logContractUtils?.redactLogText === 'function') message = logContractUtils.redactLogText(message);
-      return message.slice(0, 160) || 'Unknown error.';
+      return message.slice(0, 160) || jt('common.unknownError', 'Unknown error.');
     }
 
     function hiddenClick(selector) {
@@ -75,15 +76,16 @@
     }
 
     function download(artifact) {
-      if (disposed || !artifact || artifact.artifactType === 'image') return Promise.resolve(null);
+      if (disposed || !artifact || artifact.artifactType === 'image' || options.isCurrentArtifact?.(artifact) === false) return Promise.resolve(null);
       if (downloadPromise) return downloadPromise;
       var source = typeof options.getArtifactSource === 'function' ? options.getArtifactSource() : '';
       var payload = buildDownloadPayload(artifact, source, options.formatLanguageLabel);
+      if (!payload) return Promise.resolve(null);
       var dialog = windowRef?.jennyShell?.dialog;
       if (!dialog || typeof dialog.saveFile !== 'function') {
         if (!disposed) {
           options.appendClientLog?.('WARN', 'artifacts.download_bridge_unavailable', { artifactId: String(artifact.id || '') });
-          options.showToastMessage?.('Export failed. Try again.', { tone: 'danger', title: 'Download' });
+          options.showToastMessage?.(jt('artifacts.actions.exportFailed', 'Export failed. Try again.'), { tone: 'danger', title: jt('artifacts.actions.download', 'Download') });
         }
         return Promise.resolve(null);
       }
@@ -95,16 +97,16 @@
         }
         if (result.canceled !== false || typeof result.path !== 'string' || !result.path.trim()) {
           options.appendClientLog?.('WARN', 'artifacts.download_invalid_result', { artifactId: String(artifact.id || '') });
-          options.showToastMessage?.('Export failed. Try again.', { tone: 'danger', title: 'Download' });
+          options.showToastMessage?.(jt('artifacts.actions.exportFailed', 'Export failed. Try again.'), { tone: 'danger', title: jt('artifacts.actions.download', 'Download') });
           return null;
         }
-        options.showToastMessage?.('Saved to ' + result.path, { tone: 'success', title: 'Download' });
+        options.showToastMessage?.(jt('artifacts.actions.savedTo', 'Saved to {path}', { path: result.path }), { tone: 'success', title: jt('artifacts.actions.download', 'Download') });
         options.appendClientLog?.('INFO', 'artifacts.download_completed', { artifactId: String(artifact.id || ''), bytesWritten: result.bytesWritten || 0 });
         return result;
       }).catch(function (error) {
         if (disposed) return null;
         options.appendClientLog?.('ERROR', 'artifacts.download_failed', { artifactId: String(artifact.id || ''), message: safeErrorMessage(error) });
-        options.showToastMessage?.('Export failed. Try again.', { tone: 'danger', title: 'Download' });
+        options.showToastMessage?.(jt('artifacts.actions.exportFailed', 'Export failed. Try again.'), { tone: 'danger', title: jt('artifacts.actions.download', 'Download') });
         return null;
       });
       var tracked = pending.finally(function () { if (downloadPromise === tracked) downloadPromise = null; });
@@ -116,6 +118,10 @@
       if (disposed || !artifact || !contextMenu?.show || !triggerEl) return false;
       var generated = artifact.artifactType === 'generated_file';
       var isImage = artifact.artifactType === 'image';
+      var sourceReady = options.getArtifactSource?.() != null;
+      function act(selector) {
+        if (options.isCurrentArtifact?.(artifact) !== false) hiddenClick(selector);
+      }
       triggerEl.setAttribute('aria-expanded', 'true');
       overflowOpen = true;
       contextMenu.show({
@@ -130,13 +136,13 @@
           if (!disposed) options.appendClientLog?.('ERROR', 'artifacts.overflow_action_failed', { message: safeErrorMessage(error) });
         },
         items: [
-          { label: 'Reveal in folder', disabled: !generated, action: function () { hiddenClick('#artifactReviewRevealButton'); } },
-          { label: 'Open externally', disabled: !generated, action: function () { hiddenClick('#artifactReviewOpenExternalButton'); } },
-          { label: 'Jump to chat', disabled: !artifact.sourceMessageId, action: function () { hiddenClick('#artifactReviewJumpButton'); } },
-          { label: 'Copy', disabled: isImage, action: function () { hiddenClick('[data-artifact-panel-v2-copy]'); } },
-          { label: 'Download', disabled: isImage, action: function () { return download(artifact); } },
+          { label: jt('artifacts.actions.revealInFolder', 'Reveal in folder'), disabled: !generated, action: function () { act('#artifactReviewRevealButton'); } },
+          { label: jt('artifacts.actions.openExternally', 'Open externally'), disabled: !generated, action: function () { act('#artifactReviewOpenExternalButton'); } },
+          { label: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'), disabled: !artifact.sourceMessageId, action: function () { act('#artifactReviewJumpButton'); } },
+          { label: jt('common.copy', 'Copy'), disabled: isImage || !sourceReady, action: function () { act('[data-artifact-panel-v2-copy]'); } },
+          { label: jt('artifacts.actions.download', 'Download'), disabled: isImage || !sourceReady, action: function () { return download(artifact); } },
           { separator: true },
-          { label: 'Delete artifact', danger: true, disabled: !generated, action: function () { hiddenClick('#artifactReviewDeleteButton'); } },
+          { label: jt('artifacts.actions.deleteLabel', 'Delete artifact'), danger: true, disabled: !generated, action: function () { act('#artifactReviewDeleteButton'); } },
         ],
       });
       return true;
@@ -147,14 +153,18 @@
       return typeof options.toggleMaximize === 'function' ? options.toggleMaximize() : false;
     }
 
-    function dispose() {
-      if (disposed) return;
-      disposed = true;
+    function closeOverflow() {
       if (overflowOpen) contextMenu?.hide?.({ restoreFocus: false });
       overflowOpen = false;
     }
 
-    return { dispose: dispose, download: download, showOverflow: showOverflow, toggleMaximize: toggleMaximize };
+    function dispose() {
+      if (disposed) return;
+      disposed = true;
+      closeOverflow();
+    }
+
+    return { dispose: dispose, closeOverflow: closeOverflow, download: download, showOverflow: showOverflow, toggleMaximize: toggleMaximize };
   }
 
   return { buildDownloadPayload: buildDownloadPayload, createArtifactPanelActions: createArtifactPanelActions };

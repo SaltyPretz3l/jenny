@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { executeHostedRunCommand } = require('./hosted-command-bridge');
 
 const { TOOL_ERROR_CODES } = require('./error-codes');
 
@@ -173,7 +174,8 @@ function sanitizeBridgeMetadataValue(value, depth = 0) {
 }
 
 function isForbiddenMetadataKey(key) {
-  return key === '__proto__' || key === 'prototype' || key === 'constructor';
+  return ['__proto__', 'prototype', 'constructor', 'preview_image', 'previewImage',
+    'data_base64', 'trusted_attachments'].includes(key);
 }
 
 function sanitizeBridgeMetadata(value) {
@@ -242,6 +244,9 @@ function bridgeFailure(toolName, output, errorCode = TOOL_ERROR_CODES.EXECUTION_
   };
 }
 
+
+const { executeSandboxCommand, sandboxEnabled, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../execution/command-bridge');
+const { trackSandboxBridgeRequest } = require('../execution/execution-settlement');
 async function executeElectronToolRequest(
   service,
   {
@@ -250,6 +255,8 @@ async function executeElectronToolRequest(
     streamId,
     abortSignal = null,
     pluginRuntimeAuthority = null,
+    sandboxAuthorization = null,
+    canonicalReadOnly = true,
   } = {}
 ) {
   const payload = params && typeof params === 'object' && !Array.isArray(params) ? params : {};
@@ -262,6 +269,30 @@ async function executeElectronToolRequest(
   const planFeedback = String(payload.plan_feedback || '').trim().slice(0, 800);
   const editedPlan = payload.edited_plan && typeof payload.edited_plan === 'object'
     && !Array.isArray(payload.edited_plan) ? payload.edited_plan : null;
+
+  if (service?.hostMode === 'server' && toolName === 'run_command') {
+    if (effectivePlanMode || effectiveReadOnly) {
+      return bridgeFailure(toolName, 'Command execution is unavailable in read-only or plan mode.', TOOL_ERROR_CODES.DISABLED);
+    }
+    return executeHostedRunCommand(service, {
+      input,
+      sessionId: String(sessionId || payload.session_id || '').trim(),
+      streamId: String(streamId || payload.request_id || '').trim(),
+      abortSignal,
+    }, { bridgeFailure, sanitizeBridgeMetadata, maxOutputChars: MAX_BRIDGE_METADATA_STRING_LENGTH });
+  }
+
+  if (sandboxEnabled(service)) {
+    if (!SANDBOX_BRIDGE_TOOLS.has(toolName)) return bridgeFailure(toolName, 'This execution path is unavailable in Docker sandbox mode.', TOOL_ERROR_CODES.DISABLED);
+    if (toolName === 'run_command') {
+      if (!payload.tool_call_id) return bridgeFailure(toolName, 'Sandbox call identity is required.');
+      return executeSandboxCommand(service, { input, sessionId, streamId, callId, abortSignal,
+        readOnly: effectiveReadOnly, planMode: effectivePlanMode, authorize: sandboxAuthorization, canonicalReadOnly });
+    }
+  }
+  if (service?.hostMode === 'server' && !['ask_user', 'exit_plan_mode'].includes(toolName)) {
+    return bridgeFailure(toolName, 'Tool is unavailable in the hosted execution policy.', TOOL_ERROR_CODES.DISABLED);
+  }
 
   // __jenny_git_checkpoint is an internal sidecar-originated op (auto-checkpoint
   // before the first repo mutation of a run), never model-callable. It routes
@@ -461,6 +492,16 @@ async function executeElectronToolRequest(
     generated_artifacts: generatedArtifacts,
     error_code: String(result?.errorCode || '').trim() || null,
     metadata,
+    ...(toolName === 'preview_test' && input.screenshot === true && result.isError === false
+      && Buffer.isBuffer(result.previewImage?.buffer)
+      && result.previewImage.buffer.length <= 2 * 1024 * 1024 ? {
+        preview_image: {
+          call_id: callId, mime_type: 'image/png',
+          data_base64: result.previewImage.buffer.toString('base64'),
+          byte_length: result.previewImage.buffer.length,
+          width: result.previewImage.width, height: result.previewImage.height,
+        },
+      } : {}),
   };
 }
 
@@ -558,6 +599,24 @@ function buildManagedSidecarChatSendOptions({
       }
     },
     onElectronToolRequest: async (params) => {
+      if (sandboxEnabled(service) && params?.tool_name === 'run_command') {
+        const resume = suspendIdleWatchdog();
+        try {
+          return await trackSandboxBridgeRequest(service, streamId, () => executeElectronToolRequest(service, {
+            params, sessionId: resolvedSessionId, streamId, abortSignal: controller.signal,
+            canonicalReadOnly: normalizedPreferences?.plan_mode !== false
+              || toolContext?.readOnly === true || params?.read_only !== false,
+            sandboxAuthorization: (approval, signal) => waitForToolApproval(service, streamId, resolvedSessionId,
+              requestId, approval, { signal: signal || controller.signal }, turnEventCollector),
+          }), result => {
+            // The aborted sidecar transport cannot return its tool.result. Settle
+            // through the existing persistence path before the terminal barrier.
+            if (controller.signal.aborted) runtime.handleNotification({ method: 'tool.result',
+              params: { ...result, tool_call_id: params.tool_call_id, tool_input: params.arguments } },
+            { toolContext, handleToolNotification });
+          });
+        } finally { if (typeof resume === 'function') resume(); }
+      }
       if (params?.tool_name !== 'ask_user') {
         return executeElectronToolRequest(service, {
           params,
@@ -586,6 +645,7 @@ function buildManagedSidecarChatSendOptions({
       }
     },
     onPluginHostRequest: (() => {
+      if (sandboxEnabled(service)) return undefined;
       const privileged = service?._pluginStage8ControlPlane;
       if (!privileged?.engineStream) return undefined;
       const { createElectronPluginHostBridge } = require('./electron-plugin-host-bridge');

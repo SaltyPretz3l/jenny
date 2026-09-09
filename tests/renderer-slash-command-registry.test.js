@@ -24,6 +24,21 @@ function buildHarness(overrides = {}) {
   return { calls, registry, state };
 }
 
+test('catalog subscriptions report successful changes only and unsubscribe cleanly', () => {
+  const { registry } = buildHarness();
+  let changes = 0;
+  const unsubscribe = registry.subscribe(() => { changes++; });
+  registry.register('/test', 'Test', () => {});
+  registry.register('/test', 'Duplicate', () => {});
+  registry.unregister('/missing');
+  assert.equal(changes, 1);
+  registry.unregister('/test');
+  assert.equal(changes, 2);
+  unsubscribe();
+  registry.register('/another', 'Another', () => {});
+  assert.equal(changes, 2);
+});
+
 test('parser accepts any whitespace and preserves multiline arguments', () => {
   assert.deepEqual(parseCommandPrompt('/NOTE\tfirst line\nsecond line'), {
     name: '/note',

@@ -20,7 +20,7 @@
   color: var(--text-primary);
   background: color-mix(in srgb, var(--surface-input-background) 82%, transparent);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -105,7 +105,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--border-default);
+  border-inline-start: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-base) 82%, var(--bg-surface));
   color: var(--text-primary);
   contain: layout paint style;
@@ -165,7 +165,7 @@
 }
 
 .subagent-monitor-master {
-  border-right: 1px solid var(--border-default);
+  border-inline-end: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-sidebar) 68%, var(--bg-base));
 }
 
@@ -201,7 +201,7 @@
   color: var(--text-secondary);
   background: transparent;
   font: inherit;
-  text-align: left;
+  text-align: start;
 }
 
 .subagent-tree-item {
@@ -218,9 +218,9 @@
 .subagent-tree-children {
   display: grid;
   gap: var(--space-2);
-  margin-left: var(--space-7);
-  padding-left: var(--space-5);
-  border-left: 1px solid var(--border-strong);
+  margin-inline-start: var(--space-7);
+  padding-inline-start: var(--space-5);
+  border-inline-start: 1px solid var(--border-strong);
 }
 
 .subagent-tree-copy,
@@ -382,7 +382,7 @@
   z-index: var(--z-overlay);
   display: block;
   width: 100%;
-  border-left: 0;
+  border-inline-start: 0;
 }
 
 .subagent-monitor-inspector.is-compact .subagent-monitor-body {

@@ -22,9 +22,10 @@
   }
   root.rendererIdeProblemsPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
-
   // Worst-first ordering for file groups + the statusbar/summary buckets.
   const SEVERITY_ORDER = { error: 0, warning: 1, info: 2, hint: 3 };
 
@@ -40,8 +41,8 @@
   // Spoken severity names for the summary chips (WIDE-056b): the chip markup is
   // an aria-hidden icon + a bare number, which exposes no severity to AT. Pair
   // singular/plural so "1 error" / "3 errors" reads naturally.
-  const SEVERITY_LABEL = { error: 'error', warning: 'warning', info: 'info notice', hint: 'hint' };
-  const SEVERITY_LABEL_PLURAL = { error: 'errors', warning: 'warnings', info: 'info notices', hint: 'hints' };
+  const SEVERITY_LABEL = { error: jt('ide.problems.error', 'error'), warning: jt('ide.problems.warning', 'warning'), info: jt('ide.problems.infoNotice', 'info notice'), hint: jt('ide.problems.hint', 'hint') };
+  const SEVERITY_LABEL_PLURAL = { error: jt('ide.problems.errors', 'errors'), warning: jt('ide.problems.warnings', 'warnings'), info: jt('ide.problems.infoNotices', 'info notices'), hint: jt('ide.problems.hints', 'hints') };
 
   function resolveActionButton(options) {
     if (typeof options.actionButton === 'function') {
@@ -159,7 +160,7 @@
       if (!actionButton) {
         return '';
       }
-      const loc = `Ln ${marker.line}, Col ${marker.column}`;
+      const loc = jt('ide.problems.lineColumn', 'Ln {line}, Col {column}', { line: marker.line, column: marker.column });
       const sourceHint = marker.source
         ? `<span class="ide-prb-row-source">${escapeHtml(marker.source)}${marker.code ? `(${escapeHtml(marker.code)})` : ''}</span>`
         : '';
@@ -188,7 +189,7 @@
         ? actionButton({
           plain: true,
           className: 'ide-prb-file',
-          title: `${path} — ${group.items.length} problem${group.items.length === 1 ? '' : 's'}`,
+          title: jtn('ide.problems.fileProblemCount', group.items.length, { path, count: group.items.length }, '{path} — {count} problem', '{path} — {count} problems'),
           dataset: {
             'ide-prb-path': path,
             'ide-prb-line': String(first.line),
@@ -207,8 +208,8 @@
       const { groups, counts } = model();
       if (!counts.total) {
         return '<div class="ide-prb">'
-          + '<div class="ide-prb-empty">No problems detected in open files.</div>'
-          + '<p class="ide-prb-empty-hint">Diagnostics from open TypeScript, JavaScript, JSON and CSS files appear here.</p>'
+          + '<div class="ide-prb-empty">' + escapeHtml(jt('ide.problems.empty', 'No problems detected in open files.')) + '</div>'
+          + '<p class="ide-prb-empty-hint">' + escapeHtml(jt('ide.problems.emptyHint', 'Diagnostics from open TypeScript, JavaScript, JSON and CSS files appear here.')) + '</p>'
           + '</div>';
       }
       const body = groups.map((group) => buildGroupMarkup(group)).join('');

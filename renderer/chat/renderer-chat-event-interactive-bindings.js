@@ -7,6 +7,7 @@
   }
   root.rendererChatEventInteractiveBindings = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // --- Composer context menu (clipboard + spellcheck corrections) -----------
   //
   // The composer's contextmenu handler preventDefault()s Chromium's native menu,
@@ -124,7 +125,7 @@
       label: suggestion,
       action: () => onReplace(suggestion),
     }));
-    items.push({ label: 'Add to dictionary', action: () => onAddToDictionary(word) });
+    items.push({ label: jt('chat.interactive.addToDictionary', 'Add to dictionary'), action: () => onAddToDictionary(word) });
     items.push({ separator: true });
     return items.concat(base);
   }
@@ -137,10 +138,10 @@
       doc.execCommand(command, false, value);
     };
     return [
-      { label: 'Cut', shortcutHint: 'Ctrl+X', disabled: !hasSelection, action: () => exec('cut') },
-      { label: 'Copy', shortcutHint: 'Ctrl+C', disabled: !hasSelection, action: () => exec('copy') },
+      { label: jt('chat.interactive.cut', 'Cut'), shortcutHint: 'Ctrl+X', disabled: !hasSelection, action: () => exec('cut') },
+      { label: jt('common.copy', 'Copy'), shortcutHint: 'Ctrl+C', disabled: !hasSelection, action: () => exec('copy') },
       {
-        label: 'Paste',
+        label: jt('chat.interactive.paste', 'Paste'),
         shortcutHint: 'Ctrl+V',
         action: () => {
           chatInput.focus();
@@ -157,7 +158,7 @@
       },
       { separator: true },
       {
-        label: 'Select All',
+        label: jt('chat.interactive.selectAll', 'Select All'),
         shortcutHint: 'Ctrl+A',
         action: () => {
           chatInput.focus();
@@ -177,10 +178,10 @@
       doc.execCommand(command, false, value);
     };
     return [
-      { label: 'Cut', shortcutHint: 'Ctrl+X', disabled: !hasSelection, action: () => exec('cut') },
-      { label: 'Copy', shortcutHint: 'Ctrl+C', disabled: !hasSelection, action: () => exec('copy') },
+      { label: jt('chat.interactive.cut', 'Cut'), shortcutHint: 'Ctrl+X', disabled: !hasSelection, action: () => exec('cut') },
+      { label: jt('common.copy', 'Copy'), shortcutHint: 'Ctrl+C', disabled: !hasSelection, action: () => exec('copy') },
       {
-        label: 'Paste',
+        label: jt('chat.interactive.paste', 'Paste'),
         shortcutHint: 'Ctrl+V',
         action: () => {
           field.focus();
@@ -190,7 +191,7 @@
       },
       { separator: true },
       {
-        label: 'Select All',
+        label: jt('chat.interactive.selectAll', 'Select All'),
         shortcutHint: 'Ctrl+A',
         action: () => { field.focus(); field.select(); },
       },
@@ -297,7 +298,7 @@
         });
         showComposerActionError(
           error,
-          itemLabel === 'Paste' ? 'Clipboard Paste Failed' : 'Composer Menu Failed'
+          itemLabel === 'Paste' ? jt('chat.events.clipboardPasteFailedTitle', 'Clipboard Paste Failed') : jt('chat.events.composerMenuFailedTitle', 'Composer Menu Failed')
         );
       };
       const open = (spellcheck) => {
@@ -378,7 +379,7 @@
           itemLabel,
           message: (error && error.message) || String(error),
         });
-        showActionError(error, itemLabel === 'Paste' ? 'Clipboard Paste Failed' : 'Text Field Menu Failed');
+        showActionError(error, itemLabel === 'Paste' ? jt('chat.events.clipboardPasteFailedTitle', 'Clipboard Paste Failed') : jt('chat.events.textFieldMenuFailedTitle', 'Text Field Menu Failed'));
       };
       const open = (spellcheck) => {
         if (torn || field.isConnected === false) return;
@@ -472,7 +473,7 @@
         if (interactiveSubmit) {
           event.preventDefault();
           handleInteractiveSubmit(interactiveSubmit.dataset.batchId).catch((error) => {
-            showComposerActionError(error, 'Interactive Submit Failed');
+            showComposerActionError(error, jt('chat.events.interactiveSubmitFailedTitle', 'Interactive Submit Failed'));
           });
           return;
         }
@@ -481,7 +482,7 @@
         if (interactiveSkip) {
           event.preventDefault();
           handleInteractiveSkip(interactiveSkip.dataset.batchId).catch((error) => {
-            showComposerActionError(error, 'Interactive Skip Failed');
+            showComposerActionError(error, jt('chat.events.interactiveSkipFailedTitle', 'Interactive Skip Failed'));
           });
           return;
         }

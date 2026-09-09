@@ -21,6 +21,8 @@
   }
   root.rendererIdeCommitHistory = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function noop() {}
 
   const SECOND = 1000;
@@ -33,18 +35,18 @@
   // Largest-unit-first ladder. Weeks are intentionally omitted (days roll
   // straight into months) to keep the phrasing simple for non-experts.
   const RELATIVE_UNITS = [
-    [YEAR, 'year'],
-    [MONTH, 'month'],
-    [DAY, 'day'],
-    [HOUR, 'hour'],
-    [MINUTE, 'minute'],
+    [YEAR, (count) => jtn('ide.commitHistory.yearsAgo', count, { count }, '{count} year ago', '{count} years ago')],
+    [MONTH, (count) => jtn('ide.commitHistory.monthsAgo', count, { count }, '{count} month ago', '{count} months ago')],
+    [DAY, (count) => jtn('ide.commitHistory.daysAgo', count, { count }, '{count} day ago', '{count} days ago')],
+    [HOUR, (count) => jtn('ide.commitHistory.hoursAgo', count, { count }, '{count} hour ago', '{count} hours ago')],
+    [MINUTE, (count) => jtn('ide.commitHistory.minutesAgo', count, { count }, '{count} minute ago', '{count} minutes ago')],
   ];
 
   const DEFAULT_LIMIT = 20;
 
   // Inline SVG carets (CSP-safe: no external src; fill=currentColor inherits the
   // toggle's themed text colour).
-  const CARET_RIGHT = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"'
+  const CARET_RIGHT = '<svg class="icon-mirror-rtl" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"'
     + ' focusable="false" fill="currentColor"><path d="M6 4l4 4-4 4z"/></svg>';
   const CARET_DOWN = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"'
     + ' focusable="false" fill="currentColor"><path d="M4 6l4 4 4-4z"/></svg>';
@@ -86,17 +88,17 @@
       diff = 0;
     }
     if (diff < MINUTE) {
-      return 'just now';
+      return jt('ide.commitHistory.justNow', 'just now');
     }
     for (let i = 0; i < RELATIVE_UNITS.length; i += 1) {
       const span = RELATIVE_UNITS[i][0];
       if (diff >= span) {
         const count = Math.floor(diff / span);
-        const name = RELATIVE_UNITS[i][1];
-        return `${count} ${name}${count === 1 ? '' : 's'} ago`;
+        const format = RELATIVE_UNITS[i][1];
+        return format(count);
       }
     }
-    return 'just now';
+    return jt('ide.commitHistory.justNow', 'just now');
   }
 
   // Best-effort absolute timestamp for the card's hover tooltip. Locale/timezone
@@ -108,7 +110,7 @@
       return '';
     }
     try {
-      return new Date(then).toLocaleString();
+      return new Date(then).toLocaleString(globalThis.jennyI18n?.tag?.());
     } catch (_error) {
       return String(dateISO || '');
     }
@@ -120,8 +122,8 @@
     const c = commit || {};
     const dateISO = String(c.dateISO || '');
     return {
-      subject: firstLine(c.subject) || '(no commit message)',
-      author: String(c.author || '').trim() || 'Unknown author',
+        subject: firstLine(c.subject) || jt('ide.commitHistory.noCommitMessage', '(no commit message)'),
+        author: String(c.author || '').trim() || jt('ide.commitHistory.unknownAuthor', 'Unknown author'),
       shortHash: shortHashOf(c),
       // Full SHA (when present) is the unambiguous ref passed to getCommitDiff;
       // shortHash is the fallback (git resolves abbreviated hashes too).
@@ -194,7 +196,7 @@
 
     function headerMarkup() {
       const count = Array.isArray(commits) ? commits.length : 0;
-      const label = `History${count ? ` (${count})` : ''}`;
+      const label = jt('ide.commitHistory.historyCount', 'History{count}', { count: count ? ` (${count})` : '' });
       if (!actionButton) {
         return `<div class="ide-scm-history-head"><span class="ide-scm-history-title">${escapeHtml(label)}</span></div>`;
       }
@@ -202,8 +204,8 @@
         plain: true,
         className: 'ide-scm-history-toggle',
         ariaExpanded: expanded ? 'true' : 'false',
-        ariaLabel: 'Toggle commit history',
-        title: expanded ? 'Hide recent commits' : 'Show recent commits',
+        ariaLabel: jt('ide.commitHistory.toggleLabel', 'Toggle commit history'),
+        title: expanded ? jt('ide.commitHistory.hide', 'Hide recent commits') : jt('ide.commitHistory.show', 'Show recent commits'),
         dataset: { 'ide-scm-action': 'history-toggle' },
         trustedHtml: `<span class="ide-scm-history-chevron" aria-hidden="true">${expanded ? CARET_DOWN : CARET_RIGHT}</span>`
           + `<span class="ide-scm-history-title">${escapeHtml(label)}</span>`,
@@ -213,10 +215,10 @@
 
     function cardMarkup(modelEntry) {
       const mergeTag = modelEntry.isMerge
-        ? '<span class="ide-scm-card-merge" title="Merge commit">merge</span>'
+        ? '<span class="ide-scm-card-merge" title="' + escapeHtml(jt('ide.commitHistory.mergeCommitTitle', 'Merge commit')) + '">merge</span>'
         : '';
       const hash = modelEntry.shortHash
-        ? `<span class="ide-scm-card-hash" title="Commit ${escapeHtml(modelEntry.shortHash)}">${escapeHtml(modelEntry.shortHash)}</span>`
+        ? `<span class="ide-scm-card-hash" title="${escapeHtml(jt('ide.commitHistory.commitHash', 'Commit {hash}', { hash: modelEntry.shortHash }))}">${escapeHtml(modelEntry.shortHash)}</span>`
         : '';
       // Clickable only when both a diff opener is wired and we have a ref to
       // pass; the panel's click delegation routes the data-ide-scm-action.
@@ -225,7 +227,7 @@
       const cardAttrs = clickable
         ? ` class="ide-scm-card ide-scm-card--clickable" role="button" tabindex="0"`
           + ` data-ide-scm-action="history-open" data-ide-scm-hash="${escapeHtml(ref)}"`
-          + ` aria-label="View changes in commit ${escapeHtml(modelEntry.shortHash || ref)}"`
+          + ` aria-label="${escapeHtml(jt('ide.commitHistory.viewCommit', 'View changes in commit {ref}', { ref: modelEntry.shortHash || ref }))}"`
         : ' class="ide-scm-card"';
       return `<div${cardAttrs}>`
         + `<div class="ide-scm-card-subject" title="${escapeHtml(modelEntry.subject)}">${escapeHtml(modelEntry.subject)}</div>`
@@ -251,10 +253,10 @@
           size: 'sm',
           className: 'ide-scm-history-retry',
           dataset: { 'ide-scm-action': 'history-retry' },
-          label: 'Try again',
+          label: jt('ide.commitHistory.tryAgain', 'Try again'),
         })
         : '';
-      return '<div class="ide-scm-history-error" role="status">Couldn’t load recent commits.</div>' + retry;
+      return '<div class="ide-scm-history-error" role="status">' + escapeHtml(jt('ide.commitHistory.loadFailed', 'Couldn’t load recent commits.')) + '</div>' + retry;
     }
 
     function buildMarkup() {
@@ -263,7 +265,7 @@
         return '';
       }
       if (commits === null) {
-        return loading ? '<div class="ide-scm-history-loading">Loading recent commits…</div>' : '';
+        return loading ? '<div class="ide-scm-history-loading">' + escapeHtml(jt('ide.commitHistory.loading', 'Loading recent commits…')) + '</div>' : '';
       }
       const header = headerMarkup();
       if (!expanded) {
@@ -273,7 +275,7 @@
         return header + errorMarkup();
       }
       if (commits.length === 0) {
-        return header + '<div class="ide-scm-history-empty">No commits yet.</div>';
+        return header + '<div class="ide-scm-history-empty">' + escapeHtml(jt('ide.commitHistory.empty', 'No commits yet.')) + '</div>';
       }
       return header + cardsMarkup();
     }

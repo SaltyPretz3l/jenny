@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, inventoryChip) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const BUILT_INS = new Set(['help', 'context', 'compact', 'note']);
   const CHIP_TOKEN = 'skill_pending';
   const SPARKLE_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.2L14 7.5l-4.4 1.8L8 13.5 6.4 9.3 2 7.5l4.4-1.8z"/></svg>';
@@ -18,12 +19,12 @@
 
   function chipMarkup(skill) {
     const name = String(skill?.name || skill?.command || 'Skill');
-    const ariaLabel = 'Skill attached: ' + name + '. Remove';
+    const ariaLabel = jt('composer.skills.attachedRemoveLabel', 'Skill attached: {name}. Remove', { name });
     // The inventory chip primitive owns the markup; without it nothing renders.
     const chip = typeof inventoryChip === 'function' ? inventoryChip : globalThis.inventoryChip;
     if (typeof chip !== 'function') return '';
     return chip({ id: CHIP_TOKEN, label: name, count: '\u00d7', iconHtml: SPARKLE_SVG,
-      className: 'composer-skill-chip', ariaLabel, title: 'Remove skill' });
+      className: 'composer-skill-chip', ariaLabel, title: jt('composer.skills.removeTitle', 'Remove skill') });
   }
 
   // Renders the composer chip for the pending skill (host #composerSkillChip).
@@ -179,8 +180,6 @@
     const syncComposerInputHeight = options.syncComposerInputHeight || function noop() {};
     const syncComposerVisualState = options.syncComposerVisualState || function noop() {};
     const renderComposerState = options.renderComposerState || function noop() {};
-    const selectSlashCommand = options.selectSlashCommand || function noop() {};
-    const submitPrompt = options.submitPrompt || function noop() {};
     const skillCommands = createSkillSlashCommands({
       registry,
       getSkillsState: options.getSkillsState,
@@ -266,10 +265,11 @@
     const autocomplete = autocompleteUtils?.createSlashAutocomplete?.({
       document: chatInput?.ownerDocument,
       registry,
-      onAccept(entry, commandPrompt) {
-        return entry.action === 'insert'
-          ? selectSlashCommand(entry.name, entry.action)
-          : submitPrompt(commandPrompt);
+      state,
+      onAccept() {
+        syncComposerInputHeight();
+        syncComposerVisualState();
+        renderComposerState();
       },
     }) || null;
     autocomplete?.attach?.();

@@ -7,7 +7,7 @@
   root.rendererStreamRecovery = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const DEFAULT_APPLIED_RECOVERY_CAP = 128;
   const DEFAULT_CANONICAL_READ_DEADLINE_MS = 20_000;
 
@@ -206,7 +206,7 @@
         }
         setSessionComposerNotice(
           request.sessionId,
-          'Live updates were restored from Jenny\'s saved conversation state.'
+          jt('chat.streamRecovery.restored', 'Live updates were restored from Jenny\'s saved conversation state.')
         );
         queueSessionRender(request.sessionId, {
           messages: true,
@@ -234,7 +234,7 @@
         try {
           setSessionComposerNotice(
             request.sessionId,
-            'Live updates were interrupted. Jenny will retry recovery when the stream reconnects.'
+          jt('chat.streamRecovery.retryOnReconnect', 'Live updates were interrupted. Jenny will retry recovery when the stream reconnects.')
           );
           queueSessionRender(request.sessionId, { composer: true, composerStatus: true, chrome: true });
         } catch (_error) { /* best-effort visible degradation */ }

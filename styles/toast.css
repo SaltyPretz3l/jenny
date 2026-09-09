@@ -3,7 +3,7 @@
 .toast-viewport {
   position: fixed;
   top: calc(var(--titlebar-height) + var(--space-8));
-  right: var(--space-10);
+  inset-inline-end: var(--space-10);
   z-index: var(--z-toast);
   display: grid;
   justify-items: end;
@@ -27,7 +27,9 @@
   width: fit-content;
   min-width: 240px;
   max-width: 100%;
-  padding: var(--space-5) var(--space-5) var(--space-5) var(--space-6);
+  padding-block: var(--space-5);
+  padding-inline-start: var(--space-6);
+  padding-inline-end: var(--space-5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface-toast-background);
@@ -79,7 +81,9 @@
   flex: none;
   width: 26px;
   height: 26px;
-  margin: -4px -4px 0 0;
+  margin-block: -4px 0;
+  margin-inline-start: 0;
+  margin-inline-end: -4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -151,7 +155,7 @@
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
   font-size: var(--font-size-base);
-  text-align: right;
+  text-align: end;
 }
 
 .inv-toast.toast-exiting {

@@ -34,6 +34,7 @@
 // duplicated as two regexes and pinned by a test that asserts agreement.
 
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
+const { t } = require('../i18n-main');
 
 const SAFE_MODE_SWITCH = '--plugins-safe-mode';
 const SAFE_MODE_ENV_VAR = 'JENNY_PLUGINS_SAFE_MODE';
@@ -105,8 +106,8 @@ function resolvePluginsSafeMode({ argv = [], env = {} } = {}) {
     active,
     source,
     reason: active
-      ? `plugins safe mode is active via ${source}; the control plane refuses every mutation`
-      : 'plugins safe mode is not active',
+      ? t('main.plugins.safeModeActive', 'plugins safe mode is active via {source}; the control plane refuses every mutation', { source })
+      : t('main.plugins.safeModeInactive', 'plugins safe mode is not active'),
   };
 }
 

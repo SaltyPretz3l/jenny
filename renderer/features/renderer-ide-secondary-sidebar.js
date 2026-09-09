@@ -21,6 +21,7 @@
   }
   root.rendererIdeSecondarySidebar = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -34,10 +35,10 @@
   // The label source for every rail panel; the header renders a button only for
   // the panels currently LOCATED in the secondary sidebar (ide.panelLocations).
   const PANELS = [
-    { id: 'explorer', label: 'Explorer' },
-    { id: 'search', label: 'Search' },
-    { id: 'changes', label: "Jenny's Changes" },
-    { id: 'source-control', label: 'Source Control' },
+    { id: 'explorer', label: jt('ide.secondarySidebar.explorer', 'Explorer') },
+    { id: 'search', label: jt('common.search', 'Search') },
+    { id: 'changes', label: jt('ide.secondarySidebar.changes', "Jenny's Changes") },
+    { id: 'source-control', label: jt('ide.secondarySidebar.sourceControl', 'Source Control') },
   ];
 
   function resolveActionButton() {
@@ -185,12 +186,12 @@
       // Only role=tab children may live in a tablist, so the panel tabs sit in an
       // inner role="tablist" wrapper (display:contents keeps the header's flex
       // layout) while the collapse button stays a sibling in the role="toolbar".
-      const tablist = `<div class="ide-tablist-group" role="tablist" aria-label="Secondary sidebar panels">${tabs.join('')}</div>`;
+      const tablist = `<div class="ide-tablist-group" role="tablist" aria-label="${(actionButton.escapeHtml || String)(jt('ide.secondarySidebar.panelsLabel', 'Secondary sidebar panels'))}">${tabs.join('')}</div>`;
       const collapse = actionButton({
         plain: true,
         className: 'ide-secondary-sidebar-collapse',
-        ariaLabel: 'Hide secondary sidebar',
-        title: 'Hide secondary sidebar',
+        ariaLabel: jt('ide.secondarySidebar.hide', 'Hide secondary sidebar'),
+        title: jt('ide.secondarySidebar.hide', 'Hide secondary sidebar'),
         dataset: { 'ide-secondary-collapse': '1' },
         trustedHtml: COLLAPSE_GLYPH,
       });
@@ -293,7 +294,7 @@
         anchorX: event.clientX,
         anchorY: event.clientY,
         items: [{
-          label: 'Move to Primary Sidebar',
+          label: jt('ide.secondarySidebar.moveToPrimary', 'Move to Primary Sidebar'),
           action: () => onMovePanel(id, 'primary'),
         }],
       });
@@ -338,7 +339,8 @@
       // The grab edge is the sidebar's INNER edge (facing the editor): when the
       // sidebar is on the left, dragging right (clientX grows) widens it; when on
       // the right, dragging left (clientX shrinks) widens it.
-      const delta = isOnLeft()
+      const rtl = (event.target?.ownerDocument || event.target?.document || (typeof document !== 'undefined' ? document : null))?.documentElement?.dir === 'rtl';
+      const delta = isOnLeft() !== rtl
         ? event.clientX - dragState.startX
         : dragState.startX - event.clientX;
       getIde().secondaryWidth = clampWidthForViewport(dragState.startWidth + delta);

@@ -124,7 +124,7 @@ test('root buckets isolate same-relative paths while global preferences remain s
 });
 
 test('explorer sort mode is normalized and shared as a global preference', () => {
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   const target = createTarget(normalizeState({}));
   target.updateWorkspaceIdeState(rootId(1), { explorerSortMode: 'type' });
   assert.equal(target.getWorkspaceIdeState(rootId(1)).explorerSortMode, 'type');

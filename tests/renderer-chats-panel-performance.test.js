@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const actionButton = require('../renderer/inventory/action-button');
 const segmentedControl = require('../renderer/inventory/segmented-control');
+const popover = require('../renderer/inventory/popover');
+const { createSidebarBulkActions } = require('../renderer/shell/renderer-sidebar-bulk-actions');
 const { createStreamHandlerRuntime } = require('../renderer/chat/renderer-stream-handler-runtime');
 const {
   PAGE_SIZE,
@@ -36,6 +38,7 @@ function createControllerHarness({ sessions = buildSessions(2), nowStep = 0, pro
   const afterRenderCalls = [];
   const newChatCalls = [];
   const windowRef = {
+    Event: dom.window.Event,
     performance: { now: () => (nowValue += nowStep) },
     requestAnimationFrame(callback) {
       frames.push(callback);
@@ -487,4 +490,49 @@ test('background chrome updates avoid structural history renders without suppres
   assert.deepEqual(calls, { chrome: 2, sessions: 1 });
   assert.equal(chromeOptions[1].runtimeOnly, false);
   runtime.disposeRenderQueue();
+});
+
+test('bulk mode survives real panel rerenders and roving focus without replacing unchanged rows', t => {
+  const h = createControllerHarness();
+  const doc = h.dom.window.document;
+  const groups = doc.getElementById('groups');
+  groups.id = 'conversationGroups';
+  doc.getElementById('search').id = 'conversationSearch';
+  const section = doc.createElement('section');
+  section.id = 'sidebarHistorySection';
+  section.append(...doc.body.childNodes);
+  doc.body.append(section);
+  section.insertAdjacentHTML('afterbegin', '<div id="chatsSelectionEntry"></div>');
+  const cleanups = [];
+  const bulk = createSidebarBulkActions({ state: h.state, windowRef: h.dom.window, actionButton, popover,
+    scheduler: {}, callbacks: { registerCleanup: fn => cleanups.push(fn) } });
+  t.after(() => { cleanups.forEach(fn => fn()); h.controller.dispose(); h.dom.window.close(); });
+  h.controller.renderNow();
+  const row = groups.querySelector('[data-session-id="session-0"]');
+  const open = row.querySelector('[data-session-open]');
+  const glyph = row.querySelector('.session-row__selection');
+  const dot = row.querySelector('.session-row__dot');
+  assert.ok(glyph);
+  assert.notEqual(glyph, dot);
+  bulk.act('select'); open.click();
+  h.controller.renderNow();
+  assert.equal(groups.querySelector('[data-session-id="session-0"]'), row);
+  assert.equal(row.querySelector('[data-session-open]'), open);
+  assert.equal(row.querySelector('.session-row__selection'), glyph);
+  assert.equal(open.getAttribute('aria-checked'), 'true');
+  h.controller.setRovingSession('session-0');
+  assert.equal(row.querySelector('[data-session-action="menu"]').tabIndex, -1);
+  assert.equal(row.querySelector('[data-session-action="menu"]').hidden, true);
+  h.state.sessions[0].title = 'Renamed while selecting';
+  h.controller.renderNow();
+  const replacement = row.querySelector('[data-session-open]');
+  assert.notEqual(replacement, open, 'changed title rebuilds contents through the existing owner');
+  assert.equal(replacement.getAttribute('aria-checked'), 'true');
+  assert.equal(replacement.getAttribute('aria-label'), 'Select Renamed while selecting');
+  assert.equal(replacement.getAttribute('aria-current'), 'page');
+  bulk.act('done');
+  assert.equal(replacement.getAttribute('aria-label'), 'Open session Renamed while selecting');
+  assert.equal(replacement.hasAttribute('aria-checked'), false);
+  assert.equal(row.querySelector('[data-session-action="menu"]').hidden, false);
+  assert.equal(row.querySelector('[data-session-action="menu"]').tabIndex, replacement.tabIndex);
 });

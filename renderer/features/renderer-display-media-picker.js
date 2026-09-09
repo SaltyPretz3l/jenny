@@ -36,6 +36,7 @@
   root.rendererDisplayMediaPicker = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -160,13 +161,13 @@
       });
       let body = buildSection('Screens', screens) + buildSection('Windows', windows);
       if (!body) {
-        body = '<p class="capture-source-empty">No screens or windows are available to capture.</p>';
+        body = '<p class="capture-source-empty">' + escapeHtml(jt('attachments.capture.noSources', 'No screens or windows are available to capture.')) + '</p>';
       }
       return `${body}<div class="capture-source-actions">`
         + actionButton({
           plain: true,
           className: 'capture-source-cancel',
-          label: 'Cancel',
+          label: jt('common.cancel', 'Cancel'),
           dataset: { 'capture-source-cancel': 'true' },
         })
         + '</div>';
@@ -261,10 +262,10 @@
       };
       doc.addEventListener('click', docClickHandler, true);
       inst.open({
-        title: 'Choose what to capture',
+        title: jt('media.capture.chooseTitle', 'Choose what to capture'),
         titleId: 'displayMediaPickerTitle',
         bodyHtml: buildBodyHtml(payload && payload.sources),
-        closeLabel: 'Cancel screen capture',
+        closeLabel: jt('media.capture.cancelLabel', 'Cancel screen capture'),
         onClose: () => finishPick(null), // Esc / scrim / close button => cancel
       });
     }

@@ -13,6 +13,7 @@
   }
   root.rendererDashboardScratchpadMenu = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function noop() {}
 
   // Resolve a routing call (sync result object or a Promise of one) to a single
@@ -27,7 +28,7 @@
         }
       },
       (error) => {
-        onResult(String((error && error.message) || error || 'Action failed.'), true);
+        onResult(String((error && error.message) || error || jt('dashboard.scratchpad.menu.actionFailed', 'Action failed.')), true);
       }
     );
   }
@@ -63,34 +64,34 @@
       const rows = Math.max(3, Math.min(30, Math.trunc(Number(settings.rows) || 6)));
       const nextRows = rows >= 16 ? 4 : rows >= 12 ? 16 : rows >= 10 ? 12 : rows >= 8 ? 10 : rows >= 6 ? 8 : 6;
       items.push({
-        label: `Font: ${settings.font === 'mono' ? 'Monospace' : 'Prose'}`,
+        label: jt('dashboard.scratchpad.menu.font', 'Font: {font}', { font: settings.font === 'mono' ? jt('dashboard.scratchpad.menu.monospace', 'Monospace') : jt('dashboard.scratchpad.menu.prose', 'Prose') }),
         action: () => settle(actions.updateSettings({ font: settings.font === 'mono' ? 'prose' : 'mono' }),
-          onResult, () => 'Scratchpad font saved.'),
+          onResult, () => jt('dashboard.scratchpad.menu.fontSaved', 'Scratchpad font saved.')),
       });
       items.push({
-        label: `Height: ${rows} rows`,
-        action: () => settle(actions.updateSettings({ rows: nextRows }), onResult, () => 'Scratchpad height saved.'),
+        label: jt('dashboard.scratchpad.menu.heightRows', 'Height: {count} rows', { count: rows }),
+        action: () => settle(actions.updateSettings({ rows: nextRows }), onResult, () => jt('dashboard.scratchpad.menu.heightSaved', 'Scratchpad height saved.')),
       });
       items.push({
-        label: settings.markdown === true ? 'Markdown preview & checklists: On' : 'Markdown preview & checklists: Off',
+        label: settings.markdown === true ? jt('dashboard.scratchpad.menu.markdownOn', 'Markdown preview & checklists: On') : jt('dashboard.scratchpad.menu.markdownOff', 'Markdown preview & checklists: Off'),
         action: () => settle(actions.updateSettings({ markdown: settings.markdown !== true }),
-          onResult, () => 'Scratchpad preview setting saved.'),
+          onResult, () => jt('dashboard.scratchpad.menu.previewSettingSaved', 'Scratchpad preview setting saved.')),
       });
       items.push({ separator: true });
     }
 
     if (typeof actions.sendToChat === 'function') {
       items.push({
-        label: 'Send to chat',
-        action: () => settle(actions.sendToChat(scoped), onResult, () => 'Sent to chat.'),
+        label: jt('dashboard.scratchpad.menu.sendToChat', 'Send to chat'),
+        action: () => settle(actions.sendToChat(scoped), onResult, () => jt('dashboard.scratchpad.menu.sentToChat', 'Sent to chat.')),
       });
     }
 
     if (copyText) {
       items.push({
-        label: 'Copy',
+        label: jt('common.copy', 'Copy'),
         action: () => settle(
-          Promise.resolve(copyText(scoped)).then((ok) => (ok === false ? { error: 'Could not copy.' } : { ok: true })),
+          Promise.resolve(copyText(scoped)).then((ok) => (ok === false ? { error: jt('dashboard.scratchpad.menu.copyFailed', 'Could not copy.') } : { ok: true })),
           onResult,
           () => 'Copied.'
         ),
@@ -106,9 +107,9 @@
       const isPinned = o.isPinned === true;
       const disabled = !isPinned && o.pinsAtCap === true;
       items.push({
-        label: isPinned ? 'Unpin note' : 'Pin note',
+        label: isPinned ? jt('dashboard.scratchpad.menu.unpinNote', 'Unpin note') : jt('dashboard.scratchpad.menu.pinNote', 'Pin note'),
         disabled,
-        shortcutHint: disabled ? 'Pin limit reached' : '',
+        shortcutHint: disabled ? jt('dashboard.scratchpad.menu.pinLimitReached', 'Pin limit reached') : '',
         action: disabled
           ? undefined
           : () => settle(
@@ -122,27 +123,27 @@
 
     if (typeof actions.promoteToLoop === 'function') {
       items.push({
-        label: 'Add to Open Loops',
-        action: () => settle(actions.promoteToLoop(wholeText), onResult, () => 'Saved to Open Loops.'),
+        label: jt('dashboard.scratchpad.menu.addToOpenLoops', 'Add to Open Loops'),
+        action: () => settle(actions.promoteToLoop(wholeText), onResult, () => jt('dashboard.scratchpad.menu.savedToOpenLoops', 'Saved to Open Loops.')),
       });
     }
 
     if (typeof actions.createCalendarEvent === 'function') {
       items.push({
-        label: 'New calendar event',
-        action: () => settle(actions.createCalendarEvent(wholeText), onResult, () => 'Added to the calendar.'),
+        label: jt('dashboard.scratchpad.menu.newCalendarEvent', 'New calendar event'),
+        action: () => settle(actions.createCalendarEvent(wholeText), onResult, () => jt('dashboard.scratchpad.menu.addedToCalendar', 'Added to the calendar.')),
       });
     }
 
     if (typeof actions.saveToFile === 'function') {
       items.push({ separator: true });
       items.push({
-        label: 'Save as note file',
+        label: jt('dashboard.scratchpad.menu.saveAsNoteFile', 'Save as note file'),
         disabled: !canSaveFile,
-        shortcutHint: canSaveFile ? '.jenny/notes' : 'Open a folder',
-        action: canSaveFile
-          ? () => settle(actions.saveToFile(title, wholeText), onResult, (r) => (
-            r && r.path ? `Saved ${r.path}` : 'Saved to file.'
+          shortcutHint: canSaveFile ? '.jenny/notes' : jt('dashboard.scratchpad.menu.openFolderHint', 'Open a folder'),
+          action: canSaveFile
+            ? () => settle(actions.saveToFile(title, wholeText), onResult, (r) => (
+            r && r.path ? jt('dashboard.scratchpad.menu.savedPath', 'Saved {path}', { path: r.path }) : jt('dashboard.scratchpad.menu.savedToFile', 'Saved to file.')
           ))
           : undefined,
       });

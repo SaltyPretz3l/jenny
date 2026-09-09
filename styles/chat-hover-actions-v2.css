@@ -42,6 +42,14 @@
   text-overflow: ellipsis;
 }
 
+.chat-hover-meta:focus {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  outline: 1px solid var(--text-muted);
+  outline-offset: 2px;
+}
+
 .chat-hover-meta-empty {
   visibility: hidden;
 }

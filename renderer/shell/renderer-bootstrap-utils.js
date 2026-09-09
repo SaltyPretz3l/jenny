@@ -6,6 +6,7 @@
   }
   root.rendererBootstrapUtils = factory(root.rendererSettingsSupport);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (settingsSupport) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MAX_CACHED_SESSION_MESSAGE_SETS = 6;
   const globalRoot = typeof globalThis !== 'undefined' ? globalThis : null;
   const bootstrapDom = globalRoot?.rendererBootstrapDom
@@ -26,22 +27,25 @@
     || (typeof require === 'function' ? require('../inventory/text-field') : null);
 
   const normalizeRunMode = settingsSupport.normalizeRunMode;
+  const normalizeUiLanguageTag = settingsSupport.normalizeUiLanguageTag;
+  const normalizeSafetyMode = settingsSupport.normalizeSafetyMode;
+  const normalizeUnattendedGuardMinutes = settingsSupport.normalizeUnattendedGuardMinutes;
 
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
     if (typeof inventorySelectField === 'function') {
-      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: 'Evidence window', ariaLabel: 'Diagnostic run', options: [{ value: '', label: 'Current run' }] }));
-      put('diagnosticsLevelControl', inventorySelectField({ id: 'logLevelFilter', label: 'Severity', options: ['all', 'error', 'warn', 'info', 'debug'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
-      put('diagnosticsSourceControl', inventorySelectField({ id: 'logSourceFilter', label: 'Source', options: ['all', 'electron', 'renderer', 'sidecar'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
+      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: jt('shell.bootstrap.diagnostics.evidenceWindow', 'Evidence window'), ariaLabel: jt('shell.bootstrap.diagnostics.run', 'Diagnostic run'), options: [{ value: '', label: jt('shell.bootstrap.diagnostics.currentRun', 'Current run') }] }));
+      put('diagnosticsLevelControl', inventorySelectField({ id: 'logLevelFilter', label: jt('shell.bootstrap.diagnostics.severity', 'Severity'), options: ['all', 'error', 'warn', 'info', 'debug'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
+      put('diagnosticsSourceControl', inventorySelectField({ id: 'logSourceFilter', label: jt('shell.bootstrap.diagnostics.source', 'Source'), options: ['all', 'electron', 'renderer', 'sidecar'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
     }
-    if (typeof inventoryTextField === 'function') put('diagnosticsSearchControl', inventoryTextField({ id: 'logSearchInput', ariaLabel: 'Search activity', placeholder: 'Search events, messages, or IDs…', className: 'logs-search-shell' }));
+    if (typeof inventoryTextField === 'function') put('diagnosticsSearchControl', inventoryTextField({ id: 'logSearchInput', ariaLabel: jt('shell.bootstrap.diagnostics.searchActivity', 'Search activity'), placeholder: jt('shell.bootstrap.diagnostics.searchPlaceholder', 'Search events, messages, or IDs…'), className: 'logs-search-shell' }));
     if (typeof inventoryActionButton === 'function') {
-      put('diagnosticsCopyControl', inventoryActionButton({ id: 'copy-diagnostic-report', domId: 'copyLogsReportButton', label: 'Copy diagnostic report', className: 'page-button' }));
-      put('diagnosticsResetControl', inventoryActionButton({ id: 'reset-phase-percentiles', domId: 'phasePercentilesResetButton', label: 'Reset samples', variant: 'ghost', size: 'sm' }));
-      put('diagnosticsRefreshControl', inventoryActionButton({ id: 'refresh-diagnostics', domId: 'observabilityRefreshButton', label: 'Refresh', variant: 'ghost', size: 'sm' }));
-      put('diagnosticsFollowControl', inventoryActionButton({ id: 'follow-latest', domId: 'logAutoScrollToggle', label: 'Follow latest', variant: 'ghost', size: 'sm', ariaPressed: true }));
-      put('contextPersonalityLinkHost', inventoryActionButton({ id: 'open-personality-page', label: 'Open Personality', variant: 'secondary' }));
-      put('contextMemoryLinkHost', inventoryActionButton({ id: 'open-memory-page', label: 'Manage recalled memories', variant: 'secondary' }));
+      put('diagnosticsCopyControl', inventoryActionButton({ id: 'copy-diagnostic-report', domId: 'copyLogsReportButton', label: jt('shell.bootstrap.diagnostics.copyReport', 'Copy diagnostic report'), className: 'page-button' }));
+      put('diagnosticsResetControl', inventoryActionButton({ id: 'reset-phase-percentiles', domId: 'phasePercentilesResetButton', label: jt('shell.bootstrap.diagnostics.resetSamples', 'Reset samples'), variant: 'ghost', size: 'sm' }));
+      put('diagnosticsRefreshControl', inventoryActionButton({ id: 'refresh-diagnostics', domId: 'observabilityRefreshButton', label: jt('common.refresh', 'Refresh'), variant: 'ghost', size: 'sm' }));
+      put('diagnosticsFollowControl', inventoryActionButton({ id: 'follow-latest', domId: 'logAutoScrollToggle', label: jt('shell.bootstrap.diagnostics.followLatest', 'Follow latest'), variant: 'ghost', size: 'sm', ariaPressed: true }));
+      put('contextPersonalityLinkHost', inventoryActionButton({ id: 'open-personality-page', label: jt('shell.bootstrap.diagnostics.openPersonality', 'Open Personality'), variant: 'secondary' }));
+      put('contextMemoryLinkHost', inventoryActionButton({ id: 'open-memory-page', label: jt('shell.bootstrap.diagnostics.manageRecalledMemories', 'Manage recalled memories'), variant: 'secondary' }));
     }
   }
 
@@ -54,13 +58,12 @@
 
     const staticModel = {
       tabs: [
-        { id: 'home', label: 'Home' },
-        { id: 'chat', label: 'Chat' },
-        { id: 'ide', label: 'Workspace' },
-        { id: 'logs', label: 'Diagnostics' },
-        { id: 'settings', label: 'Settings' },
+        { id: 'home', label: jt('shell.bootstrap.navigation.home', 'Home') },
+        { id: 'chat', label: jt('shell.bootstrap.navigation.chat', 'Chat') },
+        { id: 'ide', label: jt('shell.bootstrap.navigation.workspace', 'Workspace') },
+        { id: 'logs', label: jt('shell.bootstrap.navigation.diagnostics', 'Diagnostics') },
+        { id: 'settings', label: jt('shell.bootstrap.navigation.settings', 'Settings') },
       ],
-      suggestions: ['Tell me something interesting', 'Help me brainstorm ideas', 'Explain a topic in depth'],
     };
     const ACTIVITY_SCOPE = {
       backendFailed: 'backend.failed', backendRetrying: 'backend.retrying', backendStarting: 'backend.starting',
@@ -82,7 +85,11 @@
     const state = {
       authMode: 'login',
       auth: { authenticated: false, user: null },
-      backend: { phase: 'starting', detail: 'Connecting to backend...' },
+      uiLanguage: 'en',
+      use24HourTime: false,
+      safetyMode: 'normal',
+      unattendedGuardMinutes: 10,
+      backend: { phase: 'starting', detail: jt('shell.bootstrap.connectingToBackend', 'Connecting to backend...') },
       sessions: [],
       currentSessionId: '',
       workspace: { activeSessionId: '', openSessionIds: [] },
@@ -90,7 +97,7 @@
         path: '',
         status: {
           state: 'missing',
-          message: 'No workspace root is configured yet.',
+          message: jt('shell.bootstrap.noWorkspaceRoot', 'No workspace root is configured yet.'),
         },
       },
       messagesBySession: new Map(),
@@ -153,12 +160,12 @@
         pendingLoading: false,
         pendingLoaded: false,
         pendingUnavailable: false,
-        pendingStatus: 'Open Memory while signed in to load the review queue.',
+        pendingStatus: jt('shell.bootstrap.memoryReviewQueueSignIn', 'Open Memory while signed in to load the review queue.'),
         pendingFilter: 'all',
         pendingSort: 'newest',
         pendingFocusKey: '',
         pendingFocusAppliedKey: '',
-        status: 'Open Memory while signed in to load approved memories.',
+        status: jt('shell.bootstrap.openMemoryForApproved', 'Open Memory while signed in to load approved memories.'),
         statusSnapshot: null,
         statusLoading: false,
         statusLoaded: false,
@@ -177,7 +184,7 @@
         workspaceRoot: '',
         workspaceRootStatus: {
           state: 'missing',
-          message: 'Workspace-dependent proactive behaviors are blocked until a workspace root is configured.',
+          message: jt('shell.bootstrap.workspaceProactiveBlocked', 'Workspace-dependent proactive behaviors are blocked until a workspace root is configured.'),
         },
         reminders: [],
       },
@@ -243,7 +250,7 @@
             windowsOnly: true,
             workspaceRootStatus: {
               state: 'missing',
-              message: 'No workspace root is configured yet.',
+              message: jt('shell.bootstrap.noWorkspaceRoot', 'No workspace root is configured yet.'),
             },
           },
           tools: {},
@@ -255,7 +262,7 @@
         mode: 'planner',
         modeMeta: {
           key: 'planner',
-          label: 'Planner',
+          label: jt('shell.bootstrap.planner', 'Planner'),
           description: '',
           homePrompt: '',
           secondaryPrompts: [],
@@ -292,14 +299,13 @@
           workspaceRoot: '',
           workspaceRootStatus: {
             state: 'missing',
-            message: 'No workspace root is configured yet.',
+            message: jt('shell.bootstrap.noWorkspaceRoot', 'No workspace root is configured yet.'),
           },
           activeSessionId: '',
           openSessionIds: [],
           sessionCount: 0,
         },
       },
-      suggestions: { status: 'idle', items: [], requestId: 0 },
       offline: {
         // Least-invasive "first real payload landed" seam: normalizeOfflineState
         // (renderer-offline-utils.js) always returns resolved: true, and it is
@@ -317,9 +323,9 @@
         selectedLocalModelInstalled: false,
         localChatReady: false,
         localVisionReady: false,
-        unavailableReason: 'Managed sidecar is not ready yet.',
-        visionUnavailableReason: 'Offline local chat must be ready before image analysis can run locally.',
-        summary: 'Checking local offline readiness...',
+        unavailableReason: jt('shell.bootstrap.managedSidecarNotReady', 'Managed sidecar is not ready yet.'),
+        visionUnavailableReason: jt('shell.bootstrap.localChatRequiredForVision', 'Offline local chat must be ready before image analysis can run locally.'),
+        summary: jt('shell.bootstrap.checkingOfflineReadiness', 'Checking local offline readiness...'),
       },
       artifacts: {
         filter: 'all',
@@ -359,6 +365,7 @@
       interactiveDraftsBySession: new Map(),
       ui: {
         activeView: 'chat',
+        homeCalendarFocusDay: '',
         activeSettingsSection: 'models',
         ide: {
           openTabs: [],
@@ -419,6 +426,11 @@
     Promise.resolve(globalRoot?.jennyShell?.chatUi?.getState?.()).then((config) => {
       const defaultRunMode = normalizeRunMode(config?.defaultRunMode);
       state.defaultRunMode = defaultRunMode;
+      state.uiLanguage = normalizeUiLanguageTag(config?.uiLanguage);
+      state.use24HourTime = config?.use24HourTime === true;
+      globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
+      state.safetyMode = normalizeSafetyMode(config?.safetyMode);
+      state.unattendedGuardMinutes = normalizeUnattendedGuardMinutes(config?.unattendedGuardMinutes);
       if (!state.currentSessionId) state.runtimeDraft.runMode = defaultRunMode;
     }).catch(() => {});
 

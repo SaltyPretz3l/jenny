@@ -8,6 +8,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var canonicalOllamaTag = formatUtils && formatUtils.canonicalOllamaTag;
   var boundedErrorMessage = formatUtils && formatUtils.boundedErrorMessage;
   var formatBytesShort = formatUtils && formatUtils.formatBytesShort;
@@ -142,19 +143,19 @@
       // llama_server_acceleration flag on (the Setup scene never asks).
       var loadPromise = Promise.all([
         isolate('installed', function () {
-          return requireBridgeMethod(models, 'list', 'Installed models');
+          return requireBridgeMethod(models, 'list', jt('models.library.sources.installedModels', 'Installed models'));
         }, null),
         isolate('ollamaTags', function () {
-          return requireBridgeMethod(models, 'listOllamaTags', 'Ollama tags');
+          return requireBridgeMethod(models, 'listOllamaTags', jt('models.library.sources.ollamaTags', 'Ollama tags'));
         }, null),
         isolate('diagnostics', function () {
-          return requireBridgeMethod(offline, 'getDiagnostics', 'Hardware diagnostics');
+          return requireBridgeMethod(offline, 'getDiagnostics', jt('models.library.sources.hardwareDiagnostics', 'Hardware diagnostics'));
         }, null),
         withLlamaServer ? isolate('localGgufs', function () {
-          return requireBridgeMethod(llamaServer, 'listLocalGgufs', 'Local GGUF files');
+          return requireBridgeMethod(llamaServer, 'listLocalGgufs', jt('models.library.sources.localGgufFiles', 'Local GGUF files'));
         }, null) : Promise.resolve(null),
         withLlamaServer ? isolate('llamaServer', function () {
-          return requireBridgeMethod(llamaServer, 'getStatus', 'llama-server status');
+          return requireBridgeMethod(llamaServer, 'getStatus', jt('models.library.sources.llamaServerStatus', 'llama-server status'));
         }, null) : Promise.resolve(null),
       ]).then(function (results) {
         var installedResult = results[0];
@@ -174,7 +175,7 @@
         } else if (objectOrEmpty(installedResult.value).available === false) {
           unavailable.installed = unavailableReason(
             objectOrEmpty(installedResult.value).reason,
-            'Installed models unavailable.'
+            jt('models.library.sources.installedModelsUnavailable', 'Installed models unavailable.')
           );
         } else {
           installed = normalizeInstalled(installedResult.value);
@@ -184,7 +185,7 @@
         } else if (objectOrEmpty(tagsResult.value).available === false) {
           unavailable.ollamaTags = unavailableReason(
             objectOrEmpty(tagsResult.value).reason,
-            'Ollama tags unavailable.'
+            jt('models.library.sources.ollamaTagsUnavailable', 'Ollama tags unavailable.')
           );
         } else {
           ollamaTags = normalizeOllamaTags(tagsResult.value);
@@ -193,12 +194,12 @@
         // Advisory reads: their fail-soft payloads carry reason CODES
         // (manager_unavailable, not_gguf), which must not reach the status line.
         if (localGgufsResult && (!localGgufsResult.ok || objectOrEmpty(localGgufsResult.value).ok === false)) {
-          unavailable.localGgufs = 'Local GGUF files unavailable.';
+          unavailable.localGgufs = jt('models.library.sources.localGgufFilesUnavailable', 'Local GGUF files unavailable.');
         } else if (localGgufsResult) {
           localGgufs = normalizeLocalGgufs(localGgufsResult.value);
         }
         if (llamaServerResult && (!llamaServerResult.ok || objectOrEmpty(llamaServerResult.value).ok === false)) {
-          unavailable.llamaServer = 'llama-server status unavailable.';
+          unavailable.llamaServer = jt('models.library.sources.llamaServerStatusUnavailable', 'llama-server status unavailable.');
         } else if (llamaServerResult) {
           llamaServerStatus = normalizeLlamaServer(llamaServerResult.value);
         }
@@ -293,7 +294,7 @@
 
     function fail(record, error) {
       record.status = 'error';
-      record.message = unavailableReason(error, 'Pull failed.');
+      record.message = unavailableReason(error, jt('models.library.sources.pullFailed', 'Pull failed.'));
       notify(record.key);
     }
 
@@ -345,7 +346,7 @@
       pulls[key] = record;
       notify(key);
       if (!setupService || typeof setupService.startOllamaPull !== 'function') {
-        fail(record, 'Pull is unavailable right now.');
+        fail(record, jt('models.library.sources.pullUnavailable', 'Pull is unavailable right now.'));
         return Promise.resolve(record);
       }
       return Promise.resolve(setupService.startOllamaPull({
@@ -378,7 +379,7 @@
       if (!record || disposed || record.status !== 'running') return Promise.resolve(null);
       if (!setupService || typeof setupService.cancelOllamaPull !== 'function') {
         record.cancelFailed = true;
-        record.message = 'Could not cancel the pull.';
+        record.message = jt('models.library.sources.cancelPullFailed', 'Could not cancel the pull.');
         notify(key);
         return Promise.resolve({ cancelled: false });
       }
@@ -393,7 +394,7 @@
           record.cancelFailed = true;
           record.message = unavailableReason(
             result && (result.error || result.message || result.code),
-            'Could not cancel the pull.'
+            jt('models.library.sources.cancelPullFailed', 'Could not cancel the pull.')
           );
           notify(key);
         }
@@ -401,7 +402,7 @@
       }).catch(function (error) {
         if (disposed || pulls[key] !== record) return null;
         record.cancelFailed = true;
-        record.message = unavailableReason(error, 'Could not cancel the pull.');
+        record.message = unavailableReason(error, jt('models.library.sources.cancelPullFailed', 'Could not cancel the pull.'));
         notify(key);
         appendClientLog('WARN', 'model_library.pull_cancel_failed', {
           message: record.message,

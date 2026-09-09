@@ -710,7 +710,8 @@ function normalizeMessageFields(input, fallbackModel = '') {
     status: normalizeString(input.status),
     terminal_subcode: normalizeString(input.terminal_subcode),
     timestamp: String(input.timestamp || nowIso()),
-    model_used: String(input.model_used || fallbackModel || ''),
+    // Session selection is not evidence of which model produced this message.
+    model_used: String(input.model_used || ''),
     client_message_id: String(input.client_message_id || ''),
     parent_stream_id: normalizeString(input.parent_stream_id || input.parentStreamId),
     event_seq: Number.isInteger(input.event_seq) && input.event_seq >= 0 ? input.event_seq : null,

@@ -1,0 +1,5 @@
+{
+  "relay_endpoints_schema_version": 1,
+  "default_relay_url": "",
+  "note": "Empty until an official relay exists; the owner-hosted URL is stored in the encrypted remote-control record."
+}

@@ -372,10 +372,11 @@ class SessionTurnActorRegistry {
     lease.consumedContinuation = null;
     return nextBatch;
   }
-  beginDeletion(sessionId, { cancel = null } = {}) {
+  beginDeletion(sessionId, { cancel = null, onlyIfIdle = false } = {}) {
     const id = normalizeId(sessionId);
     if (!id) throw new TypeError('SessionTurnActor.beginDeletion requires sessionId.');
     const actor = this._getActor(id, null);
+    if (onlyIfIdle && (actor.deletionHandle || actor.lease || actor.controller || actor.pendingMutations.size)) return null;
     if (actor.deletionHandle) return actor.deletionHandle;
     if (actor.tombstoned) {
       return {

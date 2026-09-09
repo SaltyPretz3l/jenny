@@ -33,6 +33,7 @@
   root.rendererIdeMapAtlasView = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -196,8 +197,8 @@
       return actionButton({
         plain: true,
         className: 'ide-atlas-district-header',
-        ariaLabel: `Zoom to ${district.key === '.' ? 'repository root' : district.key}`,
-        title: `Zoom to ${district.key === '.' ? 'repository root' : district.key}`,
+        ariaLabel: jt('ide.map.atlas.zoomTo', 'Zoom to {district}', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key }),
+        title: jt('ide.map.atlas.zoomTo', 'Zoom to {district}', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key }),
         dataset: { 'map-district-header': district.key },
         trustedHtml: ''
           + `<span class="ide-atlas-district-name">${escapeHtml(name)}</span>${flat}`
@@ -222,7 +223,7 @@
         el.style.height = `${Math.round(district.h)}px`;
         el.setAttribute('role', 'group');
         el.setAttribute('aria-label',
-          `${district.key === '.' ? 'repository root' : district.key}, ${district.fileCount} files`);
+          jt('ide.map.atlas.districtFileCount', '{district}, {count} files', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key, count: district.fileCount }));
         el.innerHTML = districtMarkup(district);
         districtLayer.appendChild(el);
         districtEls.set(district.key, el);
@@ -337,8 +338,8 @@
       return actionButton({
         plain: true,
         className: `ide-atlas-tile ide-atlas-tile--lang-${lang}${node.isTest ? ' ide-atlas-tile--test' : ''}`,
-        ariaLabel: `${node.id}, ${Number(node.inbound) || 0} inbound, ${Number(node.outbound) || 0} outbound`,
-        title: `${node.id} — ${Number(node.inbound) || 0} inbound, ${Number(node.outbound) || 0} outbound`,
+        ariaLabel: jt('ide.map.atlas.nodeConnectionsLabel', '{file}, {inbound} inbound, {outbound} outbound', { file: node.id, inbound: Number(node.inbound) || 0, outbound: Number(node.outbound) || 0 }),
+        title: jt('ide.map.atlas.nodeConnectionsTitle', '{file} — {inbound} inbound, {outbound} outbound', { file: node.id, inbound: Number(node.inbound) || 0, outbound: Number(node.outbound) || 0 }),
         dataset: { 'map-node': node.id },
         trustedHtml: ''
           + '<span class="ide-atlas-tile-dot" aria-hidden="true"></span>'
@@ -869,7 +870,7 @@
     }
     stripEl.classList.remove('hidden');
     stripEl.innerHTML = list.slice(0, 8).map((b) => ''
-      + `<span class="ide-atlas-bucket-chip" data-map-bucket="${esc(b.key)}" title="${esc(b.key)} — excluded from the map">`
+        + `<span class="ide-atlas-bucket-chip" data-map-bucket="${esc(b.key)}" title="${esc(jt('ide.map.atlas.excludedBucket', '{bucket} — excluded from the map', { bucket: b.key }))}">`
       + '<span class="ide-atlas-bucket-glyph" aria-hidden="true">▤</span>'
       + `<span class="ide-atlas-bucket-name">${esc(b.label)}</span>`
       + `<span class="ide-atlas-bucket-count">${Number(b.count) || 0}</span>`

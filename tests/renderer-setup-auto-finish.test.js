@@ -37,6 +37,7 @@ function backendPayload({ steps = ALL_DONE_STEPS, readiness = READY_READINESS, s
   return {
     setup_complete: setupComplete,
     setup_state: {
+      acknowledged_version: '1',
       seen: true,
       dismissed: false,
       setup_complete: setupComplete,

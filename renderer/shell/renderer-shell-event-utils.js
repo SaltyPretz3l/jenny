@@ -7,6 +7,7 @@
   }
   root.rendererShellEventUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const COPY_FEEDBACK_MS = 1500;
 
   function createShellEventBindings(deps) {
@@ -21,6 +22,7 @@
       localProfileSettingsMount,
       checkUpdatesButton,
       updateSettingsSummary,
+      aboutVersionLine,
       copyLogsReportButton,
       logList,
       chatInput,
@@ -84,7 +86,7 @@
     function flashCopyFeedback(button, restoreLabel) {
       if (!button) { return; }
       if (copyFeedbackTimeout !== null) clearTimeout(copyFeedbackTimeout);
-      button.textContent = 'Copied';
+      button.textContent = jt('common.copied', 'Copied');
       button.classList.add('copied');
       copyFeedbackTimeout = setTimeout(() => {
         copyFeedbackTimeout = null;
@@ -292,7 +294,7 @@
           }
           await openConversationCard(card);
         } catch (error) {
-          showSessionActionError(error, 'Session Action Failed');
+          showSessionActionError(error, jt('shell.events.sessionActionFailed', 'Session Action Failed'));
         }
       }, listenerOptions);
       registerListener(conversationGroups, 'contextmenu', (event) => {
@@ -347,7 +349,7 @@
           chatInput.focus();
           appendClientLog('INFO', 'chat.session_ended');
         } catch (error) {
-          showSessionActionError(error, 'Session Update Failed');
+          showSessionActionError(error, jt('shell.events.sessionUpdateFailed', 'Session Update Failed'));
         }
       }, listenerOptions);
 
@@ -360,13 +362,13 @@
           action.disabled = true;
           state.auth = await window.jennyShell.auth.updateLocalProfile({ displayName });
           renderAll();
-          showToastMessage('Local profile saved.', {
-            title: 'Profile updated',
+          showToastMessage(jt('toast.profile.saved', 'Local profile saved.'), {
+            title: jt('toast.profile.updatedTitle', 'Profile updated'),
             tone: 'success',
             source: 'settings.local_profile',
           });
         } catch (error) {
-          showSessionActionError(error, 'Profile Update Failed');
+          showSessionActionError(error, jt('shell.events.profileUpdateFailed', 'Profile Update Failed'));
         } finally {
           action.disabled = false;
         }
@@ -374,31 +376,41 @@
 
       const summarizeUpdateState = (payload) => {
         const source = payload && typeof payload === 'object' ? payload : {};
-        const version = source.currentVersion ? `Jenny ${source.currentVersion}` : 'Jenny';
-        const pending = source.latestVersion ? `Update ${source.latestVersion}` : 'An update';
-        let suffix = 'Updates are checked only when you ask.';
-        if (source.status === 'disabled') {
-          suffix = source.reason || 'Automatic updates are unavailable in this install.';
-        } else if (source.status === 'available' || source.status === 'downloading') {
-          suffix = `${pending} is available.`;
-        } else if (source.status === 'downloaded') {
-          suffix = `${pending} is ready to install.`;
-        } else if (source.status === 'error') {
-          suffix = 'The last update check failed.';
+        const version = source.currentVersion ? jt('shell.events.currentVersion', 'Jenny {version}', { version: source.currentVersion }) : 'Jenny';
+        const view = window.rendererUpdateDialogUtils?.deriveUpdateDialogViewModel?.(source);
+        const summary = view?.title || source.reason || jt('updates.networkDisclosure', 'Checks GitHub when you ask. Requires internet access.');
+        let checked = '';
+        if (source.lastCheckedAt && Number.isFinite(Date.parse(source.lastCheckedAt))) {
+          checked = jt('updates.lastChecked', 'Last checked: {time}', {
+            time: new Date(source.lastCheckedAt).toLocaleString(globalThis.jennyI18n?.tag?.(), globalThis.jennyI18n?.timeOptions?.()),
+          });
         }
-        return `${version} — ${suffix}`;
+        return [version, summary, checked].filter(Boolean).join(' — ');
       };
 
       let updatesUiDisposed = false;
-      addCleanup(() => {
-        updatesUiDisposed = true;
-      });
-
+      let updateRevision = 0;
+      let latestUpdateState = null;
+      const paintUpdateSummary = (payload) => {
+        if (updatesUiDisposed) return;
+        const source = payload && typeof payload === 'object' ? payload : {};
+        if (updateSettingsSummary) updateSettingsSummary.textContent = summarizeUpdateState(source);
+        if (aboutVersionLine) aboutVersionLine.textContent = source.currentVersion
+          ? jt('settings.about.versionLine', 'Version {version}', { version: source.currentVersion }) : jt('settings.about.versionUnavailable', 'Version unavailable');
+      };
+      addCleanup(() => { updatesUiDisposed = true; });
+      if (window.jennyShell?.updates?.onChanged) {
+        const unsubscribeUpdates = window.jennyShell.updates.onChanged((payload) => {
+          updateRevision += 1;
+          latestUpdateState = payload;
+          paintUpdateSummary(payload);
+        });
+        if (typeof unsubscribeUpdates === 'function') addCleanup(unsubscribeUpdates);
+      }
       if (updateSettingsSummary && window.jennyShell?.updates?.getState) {
+        const hydrationRevision = updateRevision;
         window.jennyShell.updates.getState().then((payload) => {
-          if (!updatesUiDisposed) {
-            updateSettingsSummary.textContent = summarizeUpdateState(payload);
-          }
+          if (hydrationRevision === updateRevision) paintUpdateSummary(payload);
         }).catch(() => {});
       }
 
@@ -407,32 +419,38 @@
         if (!updates || typeof updates.check !== 'function') {
           showSessionActionError(
             new Error('The update service is unavailable in this build.'),
-            'Update Check Failed'
+            jt('shell.events.updateCheckFailedTitle', 'Update Check Failed')
           );
           return;
         }
         const dialog = window.jennyUpdateDialog;
-        if (dialog && typeof dialog.open === 'function') {
-          dialog.open();
-        }
+        let actionRevision = updateRevision;
         try {
-          // The dialog repaints from updates.onChanged pushes; only the
-          // settings note needs the resolved payload.
-          const payload = await updates.check();
-          if (!updatesUiDisposed && updateSettingsSummary) {
-            updateSettingsSummary.textContent = summarizeUpdateState(payload);
+          const cached = await updates.getState();
+          const snapshot = actionRevision === updateRevision ? cached : latestUpdateState;
+          if (updatesUiDisposed) return;
+          dialog?.open?.(snapshot);
+          if (snapshot?.canCheck === false || ['downloading', 'downloaded', 'installing'].includes(snapshot?.status)) {
+            paintUpdateSummary(snapshot);
+            return;
           }
+          actionRevision = updateRevision;
+          const payload = await updates.check();
+          if (updatesUiDisposed || actionRevision !== updateRevision) return;
+          paintUpdateSummary(payload);
+          // The response also covers bridges that do not emit changed events.
+          dialog?.render?.(payload);
         } catch (error) {
-          if (updatesUiDisposed) {
+          if (updatesUiDisposed || actionRevision !== updateRevision) {
             return;
           }
           if (dialog && typeof dialog.render === 'function') {
             dialog.render({
               status: 'error',
-              reason: String((error && error.message) || error || 'Update check failed.'),
+              reason: String((error && error.message) || error || jt('shell.events.updateCheckFailed', 'Update check failed.')),
             });
           }
-          showSessionActionError(error, 'Update Check Failed');
+          showSessionActionError(error, jt('shell.events.updateCheckFailedTitle', 'Update Check Failed'));
         }
       }, listenerOptions);
 
@@ -446,11 +464,11 @@
         if (!write) { return; }
         Promise.resolve(write(text))
           .then(() => {
-            flashCopyFeedback(copyLogsReportButton, 'Copy report');
+            flashCopyFeedback(copyLogsReportButton, jt('shell.events.copyReport', 'Copy report'));
             showToastMessage(
-              'Copied a redacted Diagnostics report with runtime, integrity, issues, and a bounded event tail.',
+              jt('toast.diagnostics.reportCopied', 'Copied a redacted Diagnostics report with runtime, integrity, issues, and a bounded event tail.'),
               {
-                title: 'Report Copied',
+                title: jt('toast.diagnostics.reportCopiedTitle', 'Report Copied'),
                 tone: 'success',
                 source: TOAST_SOURCE.logs,
                 dedupeKey: `${TOAST_SOURCE.logs}:copy-report`,
@@ -463,8 +481,8 @@
                 appendClientLog('WARN', 'logs.copy_failed', { reason: String(error && error.message || error || '') });
               }
             } catch (_err) { /* noop */ }
-            showToastMessage('Clipboard unavailable. Copy failed.', {
-              title: 'Copy failed',
+            showToastMessage(jt('toast.clipboard.copyFailed', 'Clipboard unavailable. Copy failed.'), {
+              title: jt('toast.clipboard.copyFailedTitle', 'Copy failed'),
               tone: 'warning',
               source: TOAST_SOURCE.logs,
               dedupeKey: `${TOAST_SOURCE.logs}:copy-report-failed`,

@@ -389,6 +389,33 @@ test('stream lifecycle falls back to legacy stream events when envelope subscrip
   harness.lifecycle.dispose();
 });
 
+test('stream lifecycle taps the health pill observer before handler dispatch', async (t) => {
+  const observed = [];
+  const previousController = globalThis.rendererHealthPillController;
+  globalThis.rendererHealthPillController = {
+    observeStreamPayload(payload) { observed.push(payload); },
+  };
+  t.after(() => {
+    if (previousController === undefined) delete globalThis.rendererHealthPillController;
+    else globalThis.rendererHealthPillController = previousController;
+  });
+  const payload = { type: 'started', streamId: 'stream-pill', sessionId: 'session-1' };
+  const harness = createLifecycleHarness({
+    handleStreamPayload: async () => {
+      assert.deepEqual(observed, [payload]);
+      return { buffered: false, terminal: false };
+    },
+  });
+  let listener = null;
+  harness.lifecycle.registerStreamHandler({
+    chat: { onStream(nextListener) { listener = nextListener; return () => {}; } },
+  });
+
+  await listener(payload);
+  assert.deepEqual(observed, [payload]);
+  harness.lifecycle.dispose();
+});
+
 test('stream lifecycle resyncs to envelope mode after the initial feature-state pull lands', async () => {
   // Live boot order repro: registerStreamHandler runs while the placeholder
   // feature flags are in state (stream_envelope_v2 unreadable -> legacy mode);

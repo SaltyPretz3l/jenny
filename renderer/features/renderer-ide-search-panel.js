@@ -13,6 +13,8 @@
   }
   root.rendererIdeSearchPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -213,10 +215,10 @@
       } else if (search.ranQuery) {
         const count = search.results.length;
         text = count
-          ? `${count} match${count === 1 ? '' : 'es'} in ${search.fileCount} file${search.fileCount === 1 ? '' : 's'}${search.limitHit ? ' (capped)' : ''}`
-          : 'No matches.';
+          ? jtn('ide.search.matchCountInFiles', count, { count, files: jtn('ide.search.fileCount', search.fileCount, { count: search.fileCount }, '{count} file', '{count} files'), capped: search.limitHit ? jt('ide.search.cappedSuffix', ' (capped)') : '' }, '{count} match in {files}{capped}', '{count} matches in {files}{capped}')
+          : jt('ide.search.noMatches', 'No matches.');
       } else {
-        text = 'Search across workspace files.';
+        text = jt('ide.search.prompt', 'Search across workspace files.');
       }
       return `<div class="${cls}">${escapeHtml(text)}</div>`;
     }
@@ -238,8 +240,8 @@
         plain: true,
         className: `ide-search-toggle${search.caseSensitive ? ' ide-search-toggle--active' : ''}`,
         ariaPressed: search.caseSensitive === true,
-        label: 'Aa',
-        title: 'Match case',
+        label: jt('ide.search.matchCaseGlyph', 'Aa'),
+        title: jt('ide.search.matchCase', 'Match case'),
         dataset: { 'ide-replace-action': 'toggle-case' },
       });
       const regexChip = actionButton({
@@ -247,11 +249,11 @@
         className: `ide-search-toggle${search.useRegex ? ' ide-search-toggle--active' : ''}`,
         ariaPressed: search.useRegex === true,
         label: '.*',
-        title: 'Use regular expression',
+        title: jt('ide.search.useRegularExpression', 'Use regular expression'),
         dataset: { 'ide-replace-action': 'toggle-regex' },
       });
       const replaceAll = actionButton({
-        label: 'Replace All',
+        label: jt('ide.search.replaceAll', 'Replace All'),
         variant: 'primary',
         size: 'sm',
         disabled: replaceDisabled,
@@ -259,7 +261,7 @@
       });
       const undo = search.canUndo === true
         ? actionButton({
-          label: 'Undo replace',
+          label: jt('ide.search.undoReplace', 'Undo replace'),
           size: 'sm',
           dataset: { 'ide-replace-action': 'undo' },
         })
@@ -305,8 +307,8 @@
           + (hasReplace ? actionButton({
             plain: true,
             className: 'ide-search-file-replace',
-            title: 'Replace all in this file',
-            ariaLabel: `Replace all in ${fileNameOf(path)}`,
+            title: jt('ide.search.replaceAllInFile', 'Replace all in this file'),
+            ariaLabel: jt('ide.search.replaceAllInNamedFile', 'Replace all in {name}', { name: fileNameOf(path) }),
             trustedHtml: '<span aria-hidden="true">&#8618;</span>',
             dataset: { 'ide-replace-file': path },
           }) : '')
@@ -326,8 +328,8 @@
             + (hasReplace ? actionButton({
               plain: true,
               className: 'ide-search-match-replace',
-              title: 'Replace this occurrence',
-              ariaLabel: 'Replace this occurrence',
+              title: jt('ide.search.replaceOccurrence', 'Replace this occurrence'),
+              ariaLabel: jt('ide.search.replaceOccurrence', 'Replace this occurrence'),
               trustedHtml: '<span aria-hidden="true">&#8618;</span>',
               dataset: {
                 'ide-replace-match': '1',
@@ -348,8 +350,8 @@
         ? textField({
           className: 'ide-search-field',
           value: search.query,
-          placeholder: search.scope ? `Search in ${search.scope}` : 'Search in workspace',
-          ariaLabel: 'Search in workspace',
+          placeholder: search.scope ? jt('ide.search.searchInScope', 'Search in {scope}', { scope: search.scope }) : jt('ide.search.searchInWorkspace', 'Search in workspace'),
+          ariaLabel: jt('ide.search.searchInWorkspace', 'Search in workspace'),
           maxLength: 256,
           dataset: { 'ide-search-input': '1' },
         })
@@ -361,8 +363,8 @@
           plain: true,
           className: 'ide-search-scope-chip',
           label: search.scope,
-          title: `Search scope: ${search.scope} — click to clear`,
-          ariaLabel: `Clear search scope ${search.scope}`,
+          title: jt('ide.search.scopeClearTitle', 'Search scope: {scope} — click to clear', { scope: search.scope }),
+          ariaLabel: jt('ide.search.clearScopeLabel', 'Clear search scope {scope}', { scope: search.scope }),
           dataset: { 'ide-search-clear-scope': '1' },
         })
         : '';
@@ -370,8 +372,8 @@
         ? textField({
           className: 'ide-search-replace-field',
           value: search.replaceText,
-          placeholder: 'Replace',
-          ariaLabel: 'Replace in workspace',
+          placeholder: jt('ide.search.replace', 'Replace'),
+          ariaLabel: jt('ide.search.replaceInWorkspace', 'Replace in workspace'),
           maxLength: 256,
           dataset: { 'ide-replace-input': '1' },
         })
@@ -456,7 +458,7 @@
       const api = getApi();
       if (typeof api?.searchInFiles !== 'function') {
         search.busy = false;
-        search.error = 'Workspace search is unavailable in this shell mode.';
+      search.error = jt('ide.replace.searchUnavailable', 'Workspace search is unavailable in this shell mode.');
         renderSearchPanel();
         return;
       }
@@ -485,7 +487,7 @@
           return;
         }
         search.results = [];
-        search.error = 'Search failed.';
+      search.error = jt('ide.replace.searchFailed', 'Search failed.');
         appendClientLog('WARN', 'ide.search_failed', {
           message: String(error?.message || error || ''),
         });

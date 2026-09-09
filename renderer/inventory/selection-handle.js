@@ -19,7 +19,7 @@
   root.inventorySelectionHandle = factory(root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var escapeHtml = stringUtils && stringUtils.escapeHtml;
   if (typeof escapeHtml !== 'function') {
     throw new Error('inventorySelectionHandle: renderer/shared/string-utils.js must load before this module');
@@ -38,7 +38,7 @@
     var settings = input || {};
     var id = String(settings.messageId || '');
     var selected = settings.selected === true;
-    var ariaLabel = String(settings.ariaLabel || 'Select this message');
+    var ariaLabel = String(settings.ariaLabel || jt('inventory.selectionHandle.label', 'Select this message'));
     var dataSelected = selected ? 'true' : 'false';
     return [
       '<button type="button" class="chat-entry-select-handle"',

@@ -165,7 +165,8 @@
   --chat-thread-offset: 86px;
   --thread-transition-duration: 300ms;
   --empty-composer-lift: clamp(72px, 10vh, 112px);
-  --font-family-body: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  /* Windows-bundled CJK, Devanagari, and Arabic fallbacks keep localized UI glyph-complete. */
+  --font-family-body: "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Malgun Gothic", "Microsoft YaHei UI", "Microsoft JhengHei UI", "Nirmala UI", "Segoe UI Historic", sans-serif;
   --font-family-display: var(--font-family-body);
   /* Mono stack. `ui-monospace` and Consolas sit ahead of the generic
      keyword on purpose: JetBrains Mono is not bundled (no @font-face)
@@ -602,14 +603,14 @@
    technical preset. These blocks outrank the bare `:root` defaults on
    specificity, so no !important is needed. */
 :root[data-typography="editorial"] {
-  --font-family-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  --font-family-display: "Fraunces", Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --font-family-body: "Aptos", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Malgun Gothic", "Microsoft YaHei UI", "Microsoft JhengHei UI", "Nirmala UI", "Segoe UI Historic", sans-serif;
+  --font-family-display: "Fraunces", Georgia, "Iowan Old Style", "Palatino Linotype", "Yu Gothic UI", "Malgun Gothic", "Microsoft YaHei UI", "Microsoft JhengHei UI", "Nirmala UI", "Segoe UI Historic", serif;
   --font-family-mono: "Cascadia Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
 }
 
 :root[data-typography="technical"] {
-  --font-family-body: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  --font-family-display: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-family-body: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Malgun Gothic", "Microsoft YaHei UI", "Microsoft JhengHei UI", "Nirmala UI", "Segoe UI Historic", sans-serif;
+  --font-family-display: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Malgun Gothic", "Microsoft YaHei UI", "Microsoft JhengHei UI", "Nirmala UI", "Segoe UI Historic", sans-serif;
   --font-family-mono: "Cascadia Code", ui-monospace, Consolas, monospace;
 }
 
@@ -829,7 +830,9 @@ button {
   align-items: center;
   gap: var(--space-9);
   min-height: var(--titlebar-height);
-  padding: 0 0 0 var(--space-5);
+  padding-block: 0;
+  padding-inline-start: var(--space-5);
+  padding-inline-end: 0;
   border-bottom: 1px solid var(--border-default);
   background: var(--mat-chrome-bg);
   -webkit-app-region: drag;
@@ -849,7 +852,7 @@ button {
   gap: 0;
   /* Nudge the "Jenny" home button off the window's left edge for breathing room
      (this padding lands in the draggable region; the button keeps no-drag). */
-  padding-left: var(--space-9);
+  padding-inline-start: var(--space-9);
 }
 
 /* Left-aligned (not centered) so the pinned-note tab strip begins right after
@@ -914,6 +917,70 @@ button {
   align-items: center;
   justify-self: end;
   gap: var(--space-8);
-  padding-left: var(--space-9);
+  padding-inline-start: var(--space-9);
   -webkit-app-region: no-drag;
+}
+
+[dir="rtl"] :is(
+  pre,
+  code,
+  kbd,
+  samp,
+  .monaco-editor,
+  .monaco-host,
+  .ide-editor-host,
+  .ide-editor-fallback,
+  .artifact-editor-host,
+  .artifact-editor-fallback,
+  .xterm,
+  .ide-terminal-xterm,
+  .ide-terminal-scrollback,
+  .ide-terminal-input,
+  .ide-terminal-field,
+  .diagnostics-activity-console .log-list,
+  .artifact-detail-path,
+  .artifact-file-preview-path,
+  .catalog-entry-file-path,
+  .chat-inline-path,
+  .file-diff-path,
+  .ide-changes-op-path,
+  .ide-map-overview-path,
+  .ide-mention-path,
+  .ide-picker-path,
+  .ide-recovery-conflict-path,
+  .jenny-code-review-file-path,
+  .jenny-code-review-selected-path,
+  .knowledge-folders-row-path,
+  .tool-path-chip,
+  .ide-test-runner-panel__cmd,
+  #toolsWorkspacePath,
+  .cal-feeds__url,
+  .inv-url-field-control,
+  .artifact-html-preview-count,
+  .artifact-panel-v2-stepper-count,
+  .context-metric-value,
+  .file-diff-counts,
+  .ide-statusbar-branch-count,
+  .model-library-row-size,
+  td.observability-cell-num,
+  .observability-list-duration,
+  .observability-trace-duration,
+  .tool-call-duration,
+  .tool-result-duration,
+  td.usage-cell-num,
+  [data-ltr]
+) {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
+
+[dir="rtl"] .icon-mirror-rtl {
+  transform: scaleX(-1);
+}
+
+/* Text twisties (U+25B8) have no bidi-mirroring property; the expanded glyph is symmetric. */
+[dir="rtl"] :is(.ide-tree-twisty, .ide-search-file-twisty) {
+  display: inline-block;
+  transform: scaleX(-1);
 }

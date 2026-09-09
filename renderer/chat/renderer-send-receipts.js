@@ -7,7 +7,7 @@
   root.rendererSendReceipts = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MAX_FAILED_PAYLOADS = 64;
   const MAX_RELEASED_ASSET_PATHS = 2048;
   let nextReceiptSequence = 0;
@@ -361,10 +361,10 @@
     }
 
     function getRetryAvailability(payloadId) {
-      if (disposed) return { available: false, reason: 'Retry is unavailable because the chat controller was closed.' };
+      if (disposed) return { available: false, reason: jt('chat.send.retryControllerClosed', 'Retry is unavailable because the chat controller was closed.') };
       const payload = getFailedPayload(payloadId);
-      if (!payload) return { available: false, reason: 'The original failed payload is no longer available.' };
-      if (payload.retryable === false) return { available: false, reason: 'This failure is not retryable.' };
+      if (!payload) return { available: false, reason: jt('chat.send.failedPayloadNoLongerAvailable', 'The original failed payload is no longer available.') };
+      if (payload.retryable === false) return { available: false, reason: jt('chat.send.failureNotRetryable', 'This failure is not retryable.') };
       return { available: true, reason: '' };
     }
 

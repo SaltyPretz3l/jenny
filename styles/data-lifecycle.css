@@ -330,7 +330,7 @@
 
 .data-lifecycle-progress .inv-progress {
   margin-top: var(--space-6);
-  text-align: left;
+  text-align: start;
 }
 
 .data-lifecycle-progress-glyph {
@@ -482,8 +482,8 @@
   .data-lifecycle-header,
   .data-lifecycle-scroll,
   .data-lifecycle-footer {
-    padding-left: var(--space-5);
-    padding-right: var(--space-5);
+    padding-inline-start: var(--space-5);
+    padding-inline-end: var(--space-5);
   }
 
   .data-lifecycle-summary {

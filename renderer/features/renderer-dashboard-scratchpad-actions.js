@@ -17,6 +17,7 @@
   }
   root.rendererDashboardScratchpadActions = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const DEFAULT_SAVE_DEBOUNCE_MS = 600;
   const MAX_LOOP_LABEL_CHARS = 120;
   // Mirrors services/home-config-schema.js (MAX_HOME_SCRATCHPAD_NOTES /
@@ -297,17 +298,17 @@
     // { error }.
     async function addNote() {
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       await flushSave();
       const current = readScratchpad();
       if (current.notes.length >= MAX_NOTES) {
-        return { error: `Up to ${MAX_NOTES} notes.` };
+        return { error: jt('dashboard.scratchpad.actions.notesLimit', 'Up to {count} notes.', { count: MAX_NOTES }) };
       }
       const { id, title } = nextNoteName(current.notes);
       const notes = [...current.notes, { id, title, text: '', updatedAt: '', appendLog: false }];
       const config = await writeScratchpad(withSettings({ notes, activeNoteId: id }, current));
-      return config ? { ok: true, activeNoteId: id } : { error: 'Could not add a note.' };
+      return config ? { ok: true, activeNoteId: id } : { error: jt('dashboard.scratchpad.actions.addNoteFailed', 'Could not add a note.') };
     }
 
     // Change a note's title only (the id is preserved so per-note UI state and
@@ -315,19 +316,19 @@
     // its id from the existing id, and the tab strip shows a fallback label.
     async function renameNote(noteId, title) {
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       await flushSave();
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: 'Note not found.' };
+        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
       }
       const cleanTitle = String(title || '').replace(/[\r\n\0]/g, '').trim().slice(0, MAX_TITLE_CHARS);
       const notes = current.notes.map((note) => (
         note.id === noteId ? { ...note, title: cleanTitle } : note
       ));
       const config = await writeScratchpad(withSettings({ notes, activeNoteId: current.activeNoteId }, current));
-      return config ? { ok: true } : { error: 'Could not rename the note.' };
+      return config ? { ok: true } : { error: jt('dashboard.scratchpad.actions.renameNoteFailed', 'Could not rename the note.') };
     }
 
     // Remove a note (never the last one). If the active note is deleted, the
@@ -335,16 +336,16 @@
     // pointer). Returns the surviving active id so the widget can sync.
     async function deleteNote(noteId) {
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       await flushSave();
       const current = readScratchpad();
       if (current.notes.length <= 1) {
-        return { error: 'Keep at least one note.' };
+        return { error: jt('dashboard.scratchpad.actions.keepOneNote', 'Keep at least one note.') };
       }
       const index = current.notes.findIndex((note) => note.id === noteId);
       if (index === -1) {
-        return { error: 'Note not found.' };
+        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
       }
       const notes = current.notes.filter((note) => note.id !== noteId);
       let activeNoteId = current.activeNoteId;
@@ -357,7 +358,7 @@
       const survivingIds = new Set(notes.map((note) => note.id));
       const pins = (current.pins || []).filter((id) => survivingIds.has(id));
       const config = await writeScratchpad(withSettings({ notes, activeNoteId, pins }, current));
-      return config ? { ok: true, activeNoteId } : { error: 'Could not delete the note.' };
+      return config ? { ok: true, activeNoteId } : { error: jt('dashboard.scratchpad.actions.deleteNoteFailed', 'Could not delete the note.') };
     }
 
     // Switch the active note. Flushes any pending save FIRST so the outgoing
@@ -365,18 +366,18 @@
     // keeps notes + settings).
     async function setActiveNote(noteId) {
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       await flushSave();
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: 'Note not found.' };
+        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
       }
       if (current.activeNoteId === noteId) {
         return { ok: true };
       }
       const config = await writeScratchpad({ activeNoteId: noteId });
-      return config ? { ok: true } : { error: 'Could not switch notes.' };
+      return config ? { ok: true } : { error: jt('dashboard.scratchpad.actions.switchNotesFailed', 'Could not switch notes.') };
     }
 
     // Pin / unpin a note onto the sticky-note overlay. Writes a pointer-only
@@ -387,12 +388,12 @@
     // pinned note (or unpinning an unpinned one) is an idempotent success.
     async function setPinned(noteId, shouldPin) {
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       await flushSave();
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: 'Note not found.' };
+        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
       }
       // Re-validate the live set against surviving notes before mutating it.
       const pins = (current.pins || []).filter((id) => current.notes.some((note) => note.id === id));
@@ -403,14 +404,14 @@
       let nextPins;
       if (shouldPin) {
         if (pins.length >= MAX_PINS) {
-          return { error: `Up to ${MAX_PINS} pinned notes — unpin one first.` };
+          return { error: jt('dashboard.scratchpad.actions.pinLimit', 'Up to {count} pinned notes — unpin one first.', { count: MAX_PINS }) };
         }
         nextPins = [...pins, noteId];
       } else {
         nextPins = pins.filter((id) => id !== noteId);
       }
       const config = await writeScratchpad({ pins: nextPins });
-      return config ? { ok: true, pinned: shouldPin } : { error: 'Could not update pins.' };
+      return config ? { ok: true, pinned: shouldPin } : { error: jt('dashboard.scratchpad.actions.updatePinsFailed', 'Could not update pins.') };
     }
 
     function pinNote(noteId) {
@@ -431,7 +432,7 @@
     // any pending text write, preserve every note/pin, and return a structured
     // result so the menu can keep visible feedback on failure.
     async function updateSettings(patch = {}) {
-      if (!shell?.home?.updateConfig) return { error: 'Scratchpad settings are unavailable.' };
+      if (!shell?.home?.updateConfig) return { error: jt('dashboard.scratchpad.actions.settingsUnavailable', 'Scratchpad settings are unavailable.') };
       await flushSave();
       const current = readScratchpad();
       const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
@@ -441,7 +442,7 @@
       if (Object.prototype.hasOwnProperty.call(source, 'markdown')) settings.markdown = source.markdown === true;
       const config = await writeScratchpad({ settings });
       return config ? { ok: true, settings: config.scratchpad?.settings || settings }
-        : { error: 'Could not save Scratchpad settings.' };
+        : { error: jt('dashboard.scratchpad.actions.saveSettingsFailed', 'Could not save Scratchpad settings.') };
     }
 
     // Promotes the pad text into an active open loop (text stays in the pad —
@@ -450,10 +451,10 @@
       const fullText = String(text || '');
       const trimmed = fullText.trim();
       if (!trimmed) {
-        return { error: 'Write something first.' };
+        return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
       if (!shell?.companion?.addFollowUp) {
-        return { error: 'Open loops are unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.openLoopsUnavailable', 'Open loops are unavailable.') };
       }
       await flushSave();
       const firstLine = trimmed.split(/\r?\n/, 1)[0].trim();
@@ -478,7 +479,7 @@
         });
         return { ok: true };
       } catch (error) {
-        return { error: String(error?.message || error || 'Could not create the open loop.') };
+        return { error: String(error?.message || error || jt('dashboard.scratchpad.actions.createOpenLoopFailed', 'Could not create the open loop.')) };
       }
     }
 
@@ -488,16 +489,16 @@
     function sendToChat(text) {
       const body = String(text || '');
       if (!body.trim()) {
-        return { error: 'Write something first.' };
+        return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
       if (typeof sendToChatImpl !== 'function') {
-        return { error: 'Chat is unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.chatUnavailable', 'Chat is unavailable.') };
       }
       const ok = sendToChatImpl(body) !== false;
       if (ok) {
         appendClientLog('INFO', 'home.scratchpad_sent_to_chat', { length: body.length });
       }
-      return ok ? { ok: true } : { error: 'Chat is unavailable.' };
+      return ok ? { ok: true } : { error: jt('dashboard.scratchpad.actions.chatUnavailable', 'Chat is unavailable.') };
     }
 
     // True only when a workspace folder is open (so the menu can disable the
@@ -519,11 +520,11 @@
     async function saveToFile(title, text) {
       const content = String(text || '');
       if (!content.trim()) {
-        return { error: 'Write something first.' };
+        return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
       const fsApi = shell?.workspaceFs;
       if (!fsApi?.writeFile) {
-        return { error: 'Saving to a file is unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.fileSaveUnavailable', 'Saving to a file is unavailable.') };
       }
       const relPath = `${NOTES_DIR}/${slugifyTitle(title) || 'note'}.md`;
       try {
@@ -534,9 +535,9 @@
         const code = String(error?.code || '');
         const message = String(error?.message || error || '');
         if (/ROOT_MISSING/i.test(code) || /workspace (folder|root)/i.test(message)) {
-          return { error: 'Open a workspace folder to save to a file.' };
+          return { error: jt('dashboard.scratchpad.actions.openWorkspaceToSave', 'Open a workspace folder to save to a file.') };
         }
-        return { error: message || 'Could not save the file.' };
+        return { error: message || jt('dashboard.scratchpad.actions.saveFileFailed', 'Could not save the file.') };
       }
     }
 
@@ -545,13 +546,13 @@
     async function createCalendarEvent(text) {
       const trimmed = String(text || '').trim();
       if (!trimmed) {
-        return { error: 'Write something first.' };
+        return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
       if (!shell?.calendar?.createEvent) {
-        return { error: 'Calendar is unavailable.' };
+        return { error: jt('dashboard.scratchpad.actions.calendarUnavailable', 'Calendar is unavailable.') };
       }
       const lines = trimmed.split(/\r?\n/);
-      const title = lines[0].trim().slice(0, MAX_EVENT_TITLE_CHARS) || 'Scratchpad note';
+      const title = lines[0].trim().slice(0, MAX_EVENT_TITLE_CHARS) || jt('dashboard.scratchpad.actions.scratchpadNote', 'Scratchpad note');
       const notes = lines.slice(1).join('\n').trim();
       const ymd = localYmd(nowProvider());
       try {
@@ -570,7 +571,7 @@
         appendClientLog('INFO', 'home.scratchpad_to_calendar', { titleLength: title.length });
         return { ok: true };
       } catch (error) {
-        return { error: String(error?.message || error || 'Could not create the event.') };
+        return { error: String(error?.message || error || jt('dashboard.scratchpad.actions.createEventFailed', 'Could not create the event.')) };
       }
     }
 
@@ -584,10 +585,10 @@
     async function captureToScratchpad(text, options = {}) {
       const body = String(text || '').trim();
       if (!body) {
-        return { error: 'Write something first.' };
+        return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
       if (!shell?.home?.updateConfig) {
-        return { error: 'Notes are unavailable.' };
+        return { code: 'scratchpad_unavailable', error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
       // Flush any in-flight pad edit first so the capture appends onto the
       // latest text (and the pending debounced save can't clobber it).
@@ -604,7 +605,7 @@
       if (nextText.length > MAX_NOTE_CHARS) {
         // The schema would truncate the tail (the just-captured line); refuse
         // instead of reporting a false success while dropping the new text.
-        return { error: 'This note is full — switch to another note.' };
+        return { code: 'note_full', error: jt('dashboard.scratchpad.actions.noteFull', 'This note is full — switch to another note.') };
       }
       const stamp = nowProvider().toISOString();
       const nextNotes = current.notes.map((entry) => (
@@ -614,7 +615,7 @@
         withSettings({ notes: nextNotes, activeNoteId: current.activeNoteId }, current),
       );
       if (!config) {
-        return { error: 'Could not save the note.' };
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
       }
       appendClientLog('INFO', 'home.scratchpad_capture', {
         mode: overwrite ? 'overwrite' : 'append',

@@ -48,12 +48,12 @@
   min-height: 104px;
   padding: var(--space-2);
   border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
   cursor: pointer;
 }
 
 .cal-month__cell:first-child {
-  border-left: 0;
+  border-inline-start: 0;
 }
 
 .cal-month__cell--weekend {
@@ -112,7 +112,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

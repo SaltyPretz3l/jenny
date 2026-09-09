@@ -118,7 +118,7 @@
 }
 
 .diagnostics-issue-count {
-  text-align: right;
+  text-align: end;
 }
 
 .diagnostics-issue-action {
@@ -163,7 +163,7 @@
 .diagnostics-source-table td {
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
+  text-align: start;
   white-space: nowrap;
 }
 
@@ -245,7 +245,7 @@
   margin: 0;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
-  text-align: right;
+  text-align: end;
 }
 
 .diagnostics-runtime-summary {
@@ -444,7 +444,7 @@
 .observability-table td {
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  text-align: right;
+  text-align: end;
   white-space: nowrap;
 }
 
@@ -453,7 +453,7 @@
 .observability-table th:first-child,
 .observability-table td:first-child {
   min-width: 190px;
-  text-align: left;
+  text-align: start;
   white-space: normal;
 }
 
@@ -538,7 +538,7 @@
 }
 
 .observability-cell-num {
-  text-align: right !important;
+  text-align: end !important;
 }
 
 .observability-cell-tool code,
@@ -619,7 +619,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  text-align: left;
+  text-align: start;
 }
 
 .observability-trace-row-header:hover {
@@ -779,7 +779,7 @@
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 
 .diagnostics-runtime-inventory .diagnostics-compact-empty {
@@ -829,7 +829,7 @@
   }
 
   .diagnostics-integrity-summary p {
-    text-align: left;
+    text-align: start;
   }
 
   .diagnostics-budget-list {

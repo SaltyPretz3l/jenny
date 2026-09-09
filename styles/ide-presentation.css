@@ -8,7 +8,7 @@
  * Positioning context: .ide-main (position: relative in ide-view.css). */
 .ide-presentation-chip {
   position: absolute;
-  left: 50%;
+  left: 50%; /* rtl:physical */
   bottom: 18px;
   transform: translateX(-50%);
   z-index: 5;
@@ -16,7 +16,9 @@
   align-items: center;
   gap: 8px;
   max-width: min(560px, calc(100% - 32px));
-  padding: 7px 8px 7px 14px;
+  padding-block: 7px;
+  padding-inline-end: 8px;
+  padding-inline-start: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-base);
   background: var(--bg-surface);

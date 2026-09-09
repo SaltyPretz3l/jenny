@@ -3,6 +3,7 @@ const {
   resolveRequestedEngineType,
 } = require('./backend-service-utils');
 const { managedModelKey, normalizePreferredEngineType } = require('../shell-config-engines');
+const { t } = require('../i18n-main');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { getResidentModels } = require('./backend-resident-models');
 
@@ -271,7 +272,7 @@ function listModelsForEngine(service, engineType, options = {}) {
         active_model: service.currentModel || '',
         engine_type: desiredEngineType,
         available: false,
-        reason: 'Managed sidecar is not ready yet.',
+      reason: t('main.backend.sidecarNotReady', 'Managed sidecar is not ready yet.'),
         data: [],
       });
     }

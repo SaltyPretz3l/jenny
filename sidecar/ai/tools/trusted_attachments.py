@@ -258,9 +258,10 @@ def strip_attachment_shaped_metadata(metadata: dict[str, Any]) -> dict[str, Any]
     key smuggled through tool metadata (which flows to the renderer verbatim)
     is stripped unconditionally.
     """
-    if TRUSTED_ATTACHMENTS_KEY not in metadata:
+    forbidden = {TRUSTED_ATTACHMENTS_KEY, "preview_image", "previewImage", "data_base64"}
+    if not forbidden.intersection(metadata):
         return metadata
-    cleaned = {key: value for key, value in metadata.items() if key != TRUSTED_ATTACHMENTS_KEY}
+    cleaned = {key: value for key, value in metadata.items() if key not in forbidden}
     _log_drop(
         _SPOOF_DROP_LOG_EVENT,
         tool_id="",

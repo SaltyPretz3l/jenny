@@ -9,6 +9,7 @@
   }
   root.rendererRenderPipelineRenderEffectsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Threshold for when an assistant turn is "substantial enough" to deserve
   // the Follow up action. Tuned to skip greetings and
   // short acknowledgements without suppressing real recommendations.
@@ -511,12 +512,12 @@
         const followUpBtn = document.createElement('button');
         followUpBtn.className = 'chat-hover-action chat-hover-action-text message-action-button';
         followUpBtn.type = 'button';
-        followUpBtn.textContent = 'Follow up';
+        followUpBtn.textContent = jt('chat.renderEffects.followUp', 'Follow up');
         followUpBtn.dataset.action = 'follow-up';
         followUpBtn.dataset.messageAction = 'follow-up';
         followUpBtn.dataset.messageId = messageId;
-        followUpBtn.setAttribute('aria-label', 'Save to Open Loops');
-        followUpBtn.setAttribute('title', 'Save to Open Loops');
+        followUpBtn.setAttribute('aria-label', jt('chat.renderEffects.saveToOpenLoops', 'Save to Open Loops'));
+        followUpBtn.setAttribute('title', jt('chat.renderEffects.saveToOpenLoops', 'Save to Open Loops'));
         actionContainer.append(followUpBtn);
       }
     }
@@ -679,16 +680,16 @@
     }
 
     /* ---- sprite helpers ---- */
-    function hideAssistantSprite({ clearTarget = false } = {}) {
-      return thinkingPipeline.hideAssistantSprite?.({ clearTarget });
+    function hideAssistantSprite(options) {
+      return thinkingPipeline.hideAssistantSprite?.(options);
     }
 
     function applyAssistantSprite(targetMessage, targetY) {
       return thinkingPipeline.applyAssistantSprite?.(targetMessage, targetY);
     }
 
-    function updateAssistantSpritePosition(messages, derivedState) {
-      return thinkingPipeline.updateAssistantSpritePosition?.(messages, derivedState);
+    function updateAssistantSpritePosition(messages, derivedState, options) {
+      return thinkingPipeline.updateAssistantSpritePosition?.(messages, derivedState, options);
     }
 
     /* ---- render functions ---- */

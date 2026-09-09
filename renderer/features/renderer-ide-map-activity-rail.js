@@ -32,6 +32,7 @@
   root.rendererIdeMapActivityRail = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -123,7 +124,7 @@
       if (railEl && railEl.parentNode === viewportEl) return railEl;
       railEl = documentRef.createElement('div');
       railEl.className = 'ide-map-activity-rail hidden';
-      railEl.setAttribute('aria-label', 'Jenny activity');
+      railEl.setAttribute('aria-label', jt('ide.map.activity.label', 'Jenny activity'));
       railEl.innerHTML = ''
         + '<div class="ide-map-activity-rail-head">'
         + '<span class="ide-map-activity-rail-live" aria-hidden="true"></span>'
@@ -186,8 +187,8 @@
         return actionButton({
           plain: true,
           className: `ide-map-activity-row${editCls}`,
-          ariaLabel: `Reveal ${step.rel} in the map`,
-          title: `Reveal ${step.rel} in the map`,
+          ariaLabel: jt('ide.map.activity.revealFile', 'Reveal {file} in the map', { file: step.rel }),
+          title: jt('ide.map.activity.revealFile', 'Reveal {file} in the map', { file: step.rel }),
           dataset: { 'activity-node': resolvedId },
           trustedHtml: inner,
         });
@@ -268,8 +269,8 @@
         rail.classList.toggle('is-live', snapshot.turnActive);
         if (headTitleEl) {
           headTitleEl.textContent = snapshot.pendingApproval
-            ? 'Jenny · waiting for approval'
-            : (snapshot.turnActive ? 'Jenny · working' : 'Jenny · turn finished');
+            ? jt('ide.map.activity.waitingForApproval', 'Jenny · waiting for approval')
+            : (snapshot.turnActive ? jt('ide.map.activity.working', 'Jenny · working') : jt('ide.map.activity.finished', 'Jenny · turn finished'));
         }
         if (rowsEl) {
           const steps = snapshot.trail.slice(-ROW_CAP).reverse();
@@ -279,8 +280,8 @@
         }
         if (footEl) {
           const c = snapshot.counts;
-          const outside = c.outside > 0 ? ` · ${c.outside} outside workspace` : '';
-          footEl.textContent = `${c.touched} touched · ${c.edited} edited${outside}`;
+          const outside = c.outside > 0;
+          footEl.textContent = outside ? jt('ide.map.activity.countsWithOutside', '{touched} touched · {edited} edited · {outside} outside workspace', c) : jt('ide.map.activity.counts', '{touched} touched · {edited} edited', c);
         }
       }
 

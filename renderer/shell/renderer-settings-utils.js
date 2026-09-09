@@ -5,6 +5,7 @@
   }
   root.rendererSettingsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
     || (typeof require === 'function' ? require('./renderer-settings-support') : null)
     || {};
@@ -37,6 +38,9 @@
     normalizeWorkspaceRootState = function fallbackNormalizeWorkspaceRootState(payload) { return payload || {}; },
     getToolConfigFieldsForRender = function fallbackGetToolConfigFieldsForRender() { return []; },
     buildToolConfigFieldListMarkup = function fallbackBuildToolConfigFieldListMarkup() { return ''; },
+    buildUiLanguageFieldMarkup = function fallbackBuildUiLanguageFieldMarkup() { return ''; },
+    buildSafetyModeFieldMarkup = function fallbackBuildSafetyModeFieldMarkup() { return ''; },
+    buildUnattendedGuardFieldMarkup = function fallbackBuildUnattendedGuardFieldMarkup() { return ''; },
     buildDefaultRunModeFieldMarkup = function fallbackBuildDefaultRunModeFieldMarkup() { return ''; },
     buildContextToggleListsMarkup = function fallbackBuildContextToggleListsMarkup() { return { sources: '', runtime: '' }; },
     buildSettingsToggleListMarkup = function fallbackBuildSettingsToggleListMarkup() { return ''; },
@@ -91,13 +95,15 @@
       homeBadge, homeStatus, homeSettingsFieldList,
       chatInput, composerModelSelectEl,
     } = deps.dom;
+    const appearanceLanguageField = deps.dom.appearanceLanguageField
+      || (typeof globalThis !== 'undefined' ? globalThis.document?.getElementById('appearanceLanguageField') : null);
 
     const {
       getCurrentRuntimePreferences, normalizeAppearancePreferences,
       getPalettePresets, getTypographyPresets, getSurfaceEffectPresets,
       getThemeBundles = function fallbackGetThemeBundles() { return []; },
       getComposerHoloOptions = function fallbackGetComposerHoloOptions() {
-        return [{ id: 'off', label: 'Off' }, { id: 'on', label: 'On' }];
+        return [{ id: 'off', label: jt('common.off', 'Off') }, { id: 'on', label: jt('common.on', 'On') }];
       },
       getFontScalePresets = function fallbackGetFontScalePresets() { return []; },
       getChatWidthPresets = function fallbackGetChatWidthPresets() { return []; },
@@ -176,7 +182,7 @@
       const activeThemeBundle = detectActiveThemeBundle(appearancePreferences);
       const themeBundleOptions = activeThemeBundle
         ? themeBundles
-        : themeBundles.concat([{ id: 'custom', label: 'Custom' }]);
+        : themeBundles.concat([{ id: 'custom', label: jt('settings.appearance.custom', 'Custom') }]);
       const composerHoloOptions = getComposerHoloOptions();
       const composerHoloOption = composerHoloOptions.find((option) => option.id === appearancePreferences.composerHoloId) || composerHoloOptions[0];
       // Overall app zoom (Electron webContents.setZoomFactor) — discrete preset
@@ -205,14 +211,14 @@
       const workspaceRootState = state.workspaceRoot;
       const featureWorkspaceRootStatus = featureAvailability.runtime?.workspaceRootStatus || {
         state: 'missing',
-        message: 'No workspace root is configured yet.',
+        message: jt('settings.tools.workspaceNotConfigured', 'No workspace root is configured yet.'),
       };
       const workspaceRootStatus = workspaceRootState.status || featureWorkspaceRootStatus;
       const contextScopeLabel = contextPreferences.historyScope === 'recent'
-        ? 'Last 6 turns'
+        ? jt('settings.context.historyScope.recent', 'Last 6 turns')
         : contextPreferences.historyScope === 'fresh'
-          ? 'New prompt only'
-          : 'Full session';
+          ? jt('settings.context.historyScope.fresh', 'New prompt only')
+          : jt('settings.context.historyScope.full', 'Full session');
       const backendMode = String(state.backend?.mode || '').trim().toLowerCase();
       const managedMode = String(state.offline?.managedSidecar?.mode || state.backend?.mode || '').trim().toLowerCase();
       const contextUnavailable = backendMode === 'external';
@@ -248,6 +254,13 @@
       if (appearanceFontScaleSelect) {
         appearanceFontScaleSelect.innerHTML = buildSelectOptionMarkup(fontScalePresets, appearancePreferences.fontScaleId);
       }
+      if (appearanceLanguageField && shouldPatchSection('appearanceLanguage')) {
+        appearanceLanguageField.innerHTML = buildUiLanguageFieldMarkup({
+          value: state.uiLanguage,
+          use24HourTime: state.use24HourTime,
+          selectField: typeof globalThis !== 'undefined' ? globalThis.inventory?.selectField : null,
+        });
+      }
       // Chat width mounts through the inventory selectField primitive rather
       // than a raw select element declared in index.html (that file's
       // raw-primitive budget only ever moves down). The select-shell class is
@@ -262,7 +275,7 @@
           appearanceChatWidthMount.innerHTML = selectField({
             id: 'appearanceChatWidthSelect',
             className: 'select-shell',
-            ariaLabel: 'Chat width selector',
+            ariaLabel: jt('settings.appearance.chatWidthAriaLabel', 'Chat width selector'),
             value: appearancePreferences.chatWidthId,
             options: chatWidthPresets.map((preset) => ({ value: preset.id, label: preset.label })),
           });
@@ -283,7 +296,7 @@
           escapeHtml,
           toggleSwitch: holoToggleSwitch,
           fields: [
-            { id: 'appearanceComposerHoloToggle', label: 'Holographic typing border', checked: composerHoloOption.id !== 'off' },
+            { id: 'appearanceComposerHoloToggle', label: jt('settings.appearance.holographicTypingBorderLabel', 'Holographic typing border'), checked: composerHoloOption.id !== 'off' },
           ],
         });
       }
@@ -316,8 +329,8 @@
         appearanceAppZoomSelect.value = String(appZoomPercent);
       }
       const appearanceStatusPrefix = activeThemeBundle
-        ? `${activeThemeBundle.label} bundle`
-        : `${palettePreset?.label || 'Theme'} palette`;
+        ? jt('settings.appearance.statusBundle', '{bundle} bundle', { bundle: activeThemeBundle.label })
+        : jt('settings.appearance.statusPalette', '{palette} palette', { palette: palettePreset?.label || jt('settings.appearance.themeFallback', 'Theme') });
       applyBadgeState(modelBadge, resolveModelBadge({
         busy: runtimeModelBusy, loadingModel, errored: runtimeModelActivity?.state === 'error',
         catalogUnavailable: modelCatalogUnavailable, activeModel,
@@ -325,25 +338,25 @@
       appearanceBadge.textContent = activeThemeBundle?.label || 'Custom';
       modelStatus.textContent = String(runtimeModelActivity?.message || '').trim() || (
         activeModel && modelCatalogUnavailable && modelCatalogReason
-          ? `Loaded model: ${activeModel} (catalog unavailable: ${modelCatalogReason})`
+          ? jt('settings.modelLibrary.loadedCatalogUnavailable', 'Loaded model: {model} (catalog unavailable: {reason})', { model: activeModel, reason: modelCatalogReason })
           : activeModel
-            ? `Loaded model: ${activeModel}`
+            ? jt('settings.modelLibrary.loadedModel', 'Loaded model: {model}', { model: activeModel })
             : modelCatalogUnavailable && modelCatalogReason
             ? modelCatalogReason
-            : 'No model is currently loaded.'
+            : jt('settings.modelLibrary.noneLoaded', 'No model is currently loaded.')
       );
       applyNote(modelCatalogEmpty, modelCatalogUnavailable
-        ? 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.'
+        ? jt('settings.modelLibrary.catalogUnavailableFallback', 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.')
         : '');
-      appearanceStatus.textContent = `${appearanceStatusPrefix} • ${typographyPreset?.label || 'Type'} typography • ${surfaceEffectPreset?.label || 'Effect'} effect • Composer typing border ${composerHoloOption?.label || 'Off'}${state.ui.osReducedMotion ? ' • OS reduced motion is active.' : ''}`;
+      const appearanceStatusParams = { appearance: appearanceStatusPrefix, typography: typographyPreset?.label || jt('settings.appearance.typeFallback', 'Type'), effect: surfaceEffectPreset?.label || jt('settings.appearance.effectFallback', 'Effect'), border: composerHoloOption?.label || jt('common.off', 'Off') }; appearanceStatus.textContent = state.ui.osReducedMotion ? jt('settings.appearance.statusReducedMotion', '{appearance} • {typography} typography • {effect} effect • Composer typing border {border} • OS reduced motion is active.', appearanceStatusParams) : jt('settings.appearance.status', '{appearance} • {typography} typography • {effect} effect • Composer typing border {border}', appearanceStatusParams);
       const canEditSessionRuntime = Boolean(state.auth.authenticated);
       if (appearanceResetButton) appearanceResetButton.disabled = isDefaultAppearancePreferences(appearancePreferences);
       // The composer render pass (renderComposerState) owns this control's
       // locked state via the inert-readable floor; a native write here would
       // fight it (S3, spec §6).
-      accountBadge.textContent = 'Local';
-      const localProfileName = String(state.auth?.user?.display_name || 'Local User').trim() || 'Local User';
-      accountSummary.textContent = `Stored on this device as ${localProfileName}.`;
+      accountBadge.textContent = jt('settings.account.localBadge', 'Local');
+      const localProfileName = String(state.auth?.user?.display_name || jt('settings.account.localUser', 'Local User')).trim() || jt('settings.account.localUser', 'Local User');
+      accountSummary.textContent = jt('settings.account.storedAs', 'Stored on this device as {name}.', { name: localProfileName });
       if (localProfileSettingsMount && localProfileSettingsMount.dataset.profileName !== localProfileName) {
         const textField = (typeof globalThis !== 'undefined' && globalThis.inventoryTextField)
           || (typeof require === 'function' ? require('../inventory/text-field') : null);
@@ -352,30 +365,30 @@
         if (typeof textField === 'function' && typeof actionButton === 'function') {
           localProfileSettingsMount.innerHTML = textField({
             id: 'localProfileDisplayName',
-            label: 'Profile name',
+            label: jt('settings.account.nameLabel', 'Profile name'),
             value: localProfileName,
             maxLength: 80,
-            hint: 'Stored locally; it is not an account identifier.',
+            hint: jt('settings.account.nameHint', 'Stored locally; it is not an account identifier.'),
           }) + '<div class="settings-actions">'
-            + actionButton({ id: 'save-local-profile', label: 'Save profile', variant: 'primary' })
+            + actionButton({ id: 'save-local-profile', label: jt('settings.account.saveProfile', 'Save profile'), variant: 'primary' })
             + '</div>';
           localProfileSettingsMount.dataset.profileName = localProfileName;
         }
       }
-      backendSummary.textContent = `Backend: ${state.backend.phase || 'unknown'}${state.backend.detail ? ` - ${state.backend.detail}` : ''}`;
+      backendSummary.textContent = jt('settings.account.backendSummary', 'Backend: {phase}{detail}', { phase: state.backend.phase || jt('settings.account.backendPhaseUnknown', 'unknown'), detail: state.backend.detail ? ` - ${state.backend.detail}` : '' });
       renderSetupSettingsRow({
         setupSnapshot: state.setup || {},
         setupSettingsSummary,
         setupSettingsActions,
       });
       if (contextBadge) {
-        contextBadge.textContent = contextUnavailable ? 'Unavailable' : contextScopeLabel;
+        contextBadge.textContent = contextUnavailable ? jt('settings.context.unavailable', 'Unavailable') : contextScopeLabel;
       }
       if (contextStatus) {
         contextStatus.textContent = String(settingsContextActivity?.message || '').trim() || (
           contextUnavailable
-            ? 'Context controls are available only when the managed sidecar backend is active.'
-            : 'Context controls are ready — edits take effect on your next message.'
+            ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
+            : jt('settings.context.controlsReady', 'Context controls are ready — edits take effect on your next message.')
         );
       }
       if (contextHistoryScopeSelect) {
@@ -415,9 +428,15 @@
       const toolsToggleSwitchRenderer =
         typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
       if (toolsConfigFieldList && shouldPatchSection('toolsConfig')) {
-        toolsConfigFieldList.innerHTML = buildDefaultRunModeFieldMarkup({
+        const selectField = typeof globalThis !== 'undefined' ? globalThis.inventory?.selectField : null;
+        toolsConfigFieldList.innerHTML = buildSafetyModeFieldMarkup({
+          value: state.safetyMode, selectField,
+        }) + buildDefaultRunModeFieldMarkup({
           value: state.defaultRunMode,
-          selectField: typeof globalThis !== 'undefined' ? globalThis.inventory?.selectField : null,
+          selectField,
+        }) + buildUnattendedGuardFieldMarkup({
+          value: state.unattendedGuardMinutes,
+          numberInput: typeof globalThis !== 'undefined' ? globalThis.inventory?.numberInput : null,
         }) + buildToolConfigFieldListMarkup({
           fields: toolConfigFields, tools: featureTools, availability: toolAvailability,
           escapeHtml, toggleSwitch: toolsToggleSwitchRenderer,
@@ -427,17 +446,17 @@
         });
       }
       if (toolsWorkspacePath) {
-        toolsWorkspacePath.textContent = workspaceRootState.path || 'No workspace root selected.';
+        toolsWorkspacePath.textContent = workspaceRootState.path || jt('settings.tools.noWorkspaceRootSelected', 'No workspace root selected.');
       }
       if (toolsWorkspaceStatus) {
         toolsWorkspaceStatus.textContent = workspaceRootStatus.state === 'ready'
-          ? workspaceRootStatus.message || 'Workspace root is configured.'
+          ? workspaceRootStatus.message || jt('settings.tools.workspaceRootConfigured', 'Workspace root is configured.')
           : workspaceRootStatus.state === 'invalid'
-            ? workspaceRootStatus.message || 'The current workspace root is invalid. Choose a new root to unlock workspace-aware tools.'
-            : 'Choose a workspace root to unlock workspace-aware tools, project skills, and local guidance.';
+            ? workspaceRootStatus.message || jt('settings.tools.invalidWorkspaceRoot', 'The current workspace root is invalid. Choose a new root to unlock workspace-aware tools.')
+            : jt('settings.tools.chooseWorkspaceDescription', 'Choose a workspace root to unlock workspace-aware tools, project skills, and local guidance.');
       }
       if (toolsWorkspaceChooseButton) {
-        toolsWorkspaceChooseButton.textContent = 'Open Workspace';
+        toolsWorkspaceChooseButton.textContent = jt('settings.tools.openWorkspace', 'Open Workspace');
       }
       if (toolsSummary) {
         const optionalCapabilityStates = [
@@ -450,10 +469,10 @@
         const readyCapabilityCount = optionalCapabilityStates.filter((entry) => entry.enabled && entry.available).length;
         const blockedCapabilityCount = enabledCapabilityCount - readyCapabilityCount;
         const workspaceSummary = workspaceRootStatus.state === 'ready'
-          ? 'workspace ready'
+          ? jt('settings.tools.workspaceSummaryReady', 'workspace ready')
           : workspaceRootStatus.state === 'invalid'
-            ? 'workspace root invalid'
-            : 'workspace root missing';
+            ? jt('settings.tools.workspaceSummaryInvalid', 'workspace root invalid')
+            : jt('settings.tools.workspaceSummaryMissing', 'workspace root missing');
         renderStatusRowContainer(toolsSummary, buildSettingsSummaryModel({
           tone: workspaceRootStatus.state === 'invalid'
             ? 'danger'
@@ -462,13 +481,13 @@
               : enabledCapabilityCount > 0
                 ? 'success'
                 : 'default',
-          label: 'Tools',
+          label: jt('settings.tools.summaryLabel', 'Tools'),
           message: enabledCapabilityCount === 0
-            ? `No optional capabilities enabled - ${workspaceSummary}.`
+            ? jt('settings.tools.noOptionalCapabilities', 'No optional capabilities enabled - {workspaceSummary}.', { workspaceSummary })
             : blockedCapabilityCount > 0
-              ? `${readyCapabilityCount}/${enabledCapabilityCount} enabled capabilities ready - ${blockedCapabilityCount} blocked - ${workspaceSummary}.`
-              : `${readyCapabilityCount} enabled capabilities ready - ${workspaceSummary}.`,
-          badgeText: workspaceRootStatus.state === 'ready' ? 'Workspace ready' : 'Workspace blocked',
+              ? jt('settings.tools.capabilitiesBlocked', '{readyCount}/{enabledCount} enabled capabilities ready - {blockedCount} blocked - {workspaceSummary}.', { readyCount: readyCapabilityCount, enabledCount: enabledCapabilityCount, blockedCount: blockedCapabilityCount, workspaceSummary })
+              : jt('settings.tools.capabilitiesReady', '{readyCount} enabled capabilities ready - {workspaceSummary}.', { readyCount: readyCapabilityCount, workspaceSummary }),
+          badgeText: workspaceRootStatus.state === 'ready' ? jt('settings.tools.workspaceReady', 'Workspace ready') : jt('settings.tools.workspaceBlocked', 'Workspace blocked'),
         }), escapeHtml);
       }
       if (editorSettingsFieldList) {

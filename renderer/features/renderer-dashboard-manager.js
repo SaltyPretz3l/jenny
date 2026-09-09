@@ -13,13 +13,14 @@
   }
   root.rendererDashboardUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const registryModuleFallback = typeof windowRef.rendererDashboardRegistry !== 'undefined'
     ? windowRef.rendererDashboardRegistry
     : typeof require === 'function'
       ? require('./renderer-dashboard-registry')
       : {};
-
   const CLOCK_REPAINT_INTERVAL_MS = 30 * 1000;
 
   function noop() {}
@@ -362,7 +363,7 @@
           weather: { lat: null, lon: null, units: 'metric' },
           widgets: { order: [], hidden: [] },
           scratchpad: {
-            notes: [{ id: 'note-1', title: 'Note 1', text: '', updatedAt: '', appendLog: false }],
+            notes: [{ id: 'note-1', title: jt('dashboard.scratchpad.actions.noteOne', 'Note 1'), text: '', updatedAt: '', appendLog: false }],
             activeNoteId: 'note-1',
             settings: { rows: 6, font: 'prose', captureMode: 'append', markdown: false, globalCapture: true },
           },
@@ -510,20 +511,20 @@
       return ''
         + actionButton({
           plain: true, className: 'dashboard-card__edit-btn', label: '↑',
-          ariaLabel: `Move ${name} earlier`,
-          title: `Move ${name} earlier`,
+          ariaLabel: jt('dashboard.widgets.layout.moveEarlier', 'Move {name} earlier', { name }),
+          title: jt('dashboard.widgets.layout.moveEarlier', 'Move {name} earlier', { name }),
           dataset: { 'widget-edit': 'up', 'widget-id': widget.id },
         })
         + actionButton({
           plain: true, className: 'dashboard-card__edit-btn', label: '↓',
-          ariaLabel: `Move ${name} later`,
-          title: `Move ${name} later`,
+          ariaLabel: jt('dashboard.widgets.layout.moveLater', 'Move {name} later', { name }),
+          title: jt('dashboard.widgets.layout.moveLater', 'Move {name} later', { name }),
           dataset: { 'widget-edit': 'down', 'widget-id': widget.id },
         })
         + actionButton({
-          plain: true, className: 'dashboard-card__edit-btn', label: 'Hide',
-          ariaLabel: `Hide ${name}`,
-          title: `Hide ${name}`,
+          plain: true, className: 'dashboard-card__edit-btn', label: jt('common.hide', 'Hide'),
+          ariaLabel: jt('dashboard.widgets.layout.hideWidget', 'Hide {name}', { name }),
+          title: jt('dashboard.widgets.layout.hideWidget', 'Hide {name}', { name }),
           dataset: { 'widget-edit': 'hide', 'widget-id': widget.id },
         });
     }
@@ -562,10 +563,10 @@
         return;
       }
       strip.dataset.stripKey = stripKey;
-      strip.innerHTML = '<span class="dashboard-hidden-strip__label">Hidden:</span>'
+      strip.innerHTML = '<span class="dashboard-hidden-strip__label">' + escapeHtml(jt('dashboard.widgets.layout.hiddenLabel', 'Hidden:')) + '</span>'
         + entries.map((id) => actionButton({
           plain: true, className: 'dashboard-card__edit-btn',
-          label: `Show ${known.get(id).title || id}`,
+          label: jt('dashboard.widgets.layout.showWidget', 'Show {name}', { name: known.get(id).title || id }),
           dataset: { 'widget-edit': 'show', 'widget-id': id },
         })).join('');
     }

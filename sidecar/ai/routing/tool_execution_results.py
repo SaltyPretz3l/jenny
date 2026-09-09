@@ -6,6 +6,7 @@ import json
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.routing.harness_helpers import MAX_RESPONSE_CHARS
 from sidecar.ai.tools.failure_taxonomy import FAILURE_CLASSES, classify
 from sidecar.ai.tools.registry import build_default_registry
@@ -279,3 +280,42 @@ def tool_result_message(
     if outcome.metadata:
         message["metadata"] = dict(outcome.metadata)
     return message
+
+
+def merge_result_metadata(
+    base_metadata: dict[str, object],
+    audit_metadata: dict[str, object] | None,
+) -> dict[str, object]:
+    metadata = dict(base_metadata)
+    if audit_metadata:
+        metadata.update(dict(audit_metadata))
+    return metadata
+
+
+# ---------------------------------------------------------------------------
+# execute_tool
+# ---------------------------------------------------------------------------
+
+
+# Error-code prefixes the renderer's chat-error-recovery `classifyAssistantError`
+# (services/backend/chat-error-recovery.js) routes to the recoverable *tool*
+# class. A tool failure must carry one of these so it never lands in the generic
+# `unknown` ("Turn failed") bucket that has no actionable recovery.
+_TOOL_RECOVERABLE_CODE_PREFIXES = ("CMP-TOOL-", "CMP-MCP-", "CMP-WEB-", "CMP-TSRCH-")
+
+
+def coerce_tool_failure_code(code: Any) -> str:
+    """Guarantee a tool-recoverable error code on a tool execution failure.
+
+    A tool failure must reach the renderer with a code the chat-error recovery
+    layer routes to the *tool* class (retry / diagnostics), not the generic
+    ``unknown`` bucket. Runtime MCP servers and the Electron tool bridge can pass
+    an arbitrary, empty, or wrong-domain ``code`` through ``MCPError``; only a
+    well-formed upper-case code in a tool-recoverable family (CMP-TOOL-/MCP-/WEB-
+    /TSRCH-, e.g. ``CMP-MCP-0004``) is preserved for its diagnostics. Anything
+    else is defaulted to ``CMP_TOOL_EXECUTION_FAILED`` (CMP-TOOL-0008).
+    """
+    text = str(code or "").strip()
+    if text == text.upper() and text.startswith(_TOOL_RECOVERABLE_CODE_PREFIXES):
+        return text
+    return CMP_TOOL_EXECUTION_FAILED

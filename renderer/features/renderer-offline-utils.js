@@ -5,6 +5,7 @@
   }
   root.rendererOfflineUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const documentRef = windowRef.document || null;
 
@@ -177,15 +178,15 @@
 
     function getModelStatusText(offlineState) {
       if (offlineState.preferredLocalModel && offlineState.localChatReady) {
-        return `Selected model ${offlineState.preferredLocalModel} is ready for local inference.`;
+        return jt('offline.status.selectedModelReady', 'Selected model {model} is ready for local inference.', { model: offlineState.preferredLocalModel });
       }
       if (offlineState.preferredLocalModel && offlineState.selectedLocalModelInstalled) {
-        return `Selected model ${offlineState.preferredLocalModel} is installed, but local inference is not ready. ${offlineState.unavailableReason || ''}`.trim();
+        return jt('offline.status.selectedModelNotReady', 'Selected model {model} is installed, but local inference is not ready. {reason}', { model: offlineState.preferredLocalModel, reason: offlineState.unavailableReason || '' }).trim();
       }
       if (offlineState.preferredLocalModel) {
-        return `Selected model ${offlineState.preferredLocalModel} is not available in the local catalog.`;
+        return jt('offline.status.selectedModelMissing', 'Selected model {model} is not available in the local catalog.', { model: offlineState.preferredLocalModel });
       }
-      return 'No local inference model is selected.';
+      return jt('offline.status.noModelSelected', 'No local inference model is selected.');
     }
 
     /* Runtime posture is represented by the composer gear dot and tooltip. */
@@ -219,20 +220,20 @@
       dotNode.setAttribute('data-state', dotChipState);
       const postureTooltip = !localOnly
         ? (offlineState.resolved === false
-          ? 'Runtime posture is still loading.'
+          ? jt('offline.status.runtimePostureLoading', 'Runtime posture is still loading.')
           : offlineState.localChatReady
-            ? 'A local runtime is ready. Force local inference is off, so configured inference providers may use the network.'
-            : 'Force local inference is off. Configured inference providers may use the network.')
+            ? jt('offline.status.localRuntimeReadyNetworkAllowed', 'A local runtime is ready. Force local inference is off, so configured inference providers may use the network.')
+            : jt('offline.status.forceLocalOffNetworkAllowed', 'Force local inference is off. Configured inference providers may use the network.'))
         : offlineState.localChatReady
           ? (offlineState.localVisionReady
-            ? `Force local inference: using ${offlineState.preferredLocalModel} for chat and current-turn vision.`
-            : `Force local inference: using ${offlineState.preferredLocalModel} for chat. Vision remains unavailable for this model.`)
-          : (offlineState.unavailableReason || offlineState.summary || 'Force local inference is enabled but unavailable.');
+            ? jt('offline.status.usingModelWithVision', 'Force local inference: using {model} for chat and current-turn vision.', { model: offlineState.preferredLocalModel })
+            : jt('offline.status.usingModelWithoutVision', 'Force local inference: using {model} for chat. Vision remains unavailable for this model.', { model: offlineState.preferredLocalModel }))
+          : (offlineState.unavailableReason || offlineState.summary || jt('offline.status.forceLocalUnavailable', 'Force local inference is enabled but unavailable.'));
       const gear = documentRef?.getElementById('composerSettingsButton') || null;
       if (gear) {
         /* data-tooltip (not title) so the inventory tooltip shows the
          * combined string without a native double-tooltip. */
-        gear.setAttribute('data-tooltip', `Session settings · ${postureTooltip}`);
+        gear.setAttribute('data-tooltip', jt('offline.sessionSettings.tooltip', 'Session settings · {posture}', { posture: postureTooltip }));
         gear.removeAttribute('title');
       }
     }
@@ -264,10 +265,10 @@
         if (chipUtils && typeof chipUtils.applyStatusChip === 'function') {
           chipUtils.applyStatusChip(offlineBadge, {
             state: badgeChipState,
-            label: offlineState.resolved === false ? 'Checking...' : badgeLabel,
+            label: offlineState.resolved === false ? jt('offline.status.checking', 'Checking...') : badgeLabel,
           });
         } else {
-          offlineBadge.textContent = offlineState.resolved === false ? 'Checking...' : badgeLabel;
+          offlineBadge.textContent = offlineState.resolved === false ? jt('offline.status.checking', 'Checking...') : badgeLabel;
         }
       }
       // Prefer the sidecar-curated summary when one is provided — it carries
@@ -276,11 +277,11 @@
       const offlineSummaryMessage = String(offlineState.summary || '').trim()
         || (offlineState.mode === 'local_only'
           ? (offlineState.localChatReady
-            ? `Force local inference is on. Jenny will use ${String(offlineState.preferredLocalModel || 'a local model')} for model inference.`
-            : `Force local inference is on, but model inference is blocked: ${String(offlineState.unavailableReason || 'the local runtime is not ready')}`)
+            ? jt('offline.status.forceLocalUsingModel', 'Force local inference is on. Jenny will use {model} for model inference.', { model: String(offlineState.preferredLocalModel || 'a local model') })
+            : jt('offline.status.forceLocalBlocked', 'Force local inference is on, but model inference is blocked: {reason}', { reason: String(offlineState.unavailableReason || 'the local runtime is not ready') }))
           : offlineState.localChatReady
-            ? `Local runtime is ready with ${String(offlineState.preferredLocalModel || 'a local model')}.`
-            : 'Force local inference is off.');
+            ? jt('offline.status.localRuntimeReadyWithModel', 'Local runtime is ready with {model}.', { model: String(offlineState.preferredLocalModel || 'a local model') })
+            : jt('offline.status.forceLocalOff', 'Force local inference is off.'));
       if (offlineSummary) {
         renderStatusRowHost(offlineSummary, {
           tone: offlineState.mode === 'local_only'
@@ -290,7 +291,7 @@
               : String(offlineState.unavailableReason || '').trim()
                 ? 'warning'
                 : 'default',
-          label: 'Force local inference',
+          label: jt('offline.localOnly.label', 'Force local inference'),
           message: offlineSummaryMessage,
           badgeText: offlineState.mode === 'local_only'
             ? 'Forced'
@@ -306,7 +307,7 @@
         offlineStatus.textContent = '';
       }
       renderOfflineToggleList(offlineLocalOnlyList, [
-        { id: 'offlineLocalOnlyToggle', label: 'Force local inference', checked: offlineState.mode === 'local_only' },
+        { id: 'offlineLocalOnlyToggle', label: jt('offline.localOnly.label', 'Force local inference'), checked: offlineState.mode === 'local_only' },
       ]);
       if (offlineModelStatus) {
         offlineModelStatus.textContent = getModelStatusText(offlineState);
@@ -316,7 +317,7 @@
         offlineModelActions.innerHTML = typeof actionButton === 'function' ? actionButton({
           plain: true,
           className: 'settings-secondary',
-          label: offlineState.preferredLocalModel ? 'Manage in Model Library' : 'Choose in Model Library',
+          label: offlineState.preferredLocalModel ? jt('offline.modelLibrary.manage', 'Manage in Model Library') : jt('offline.modelLibrary.choose', 'Choose in Model Library'),
           dataset: { action: 'openOfflineModelLibrary' },
         }) : '';
       }

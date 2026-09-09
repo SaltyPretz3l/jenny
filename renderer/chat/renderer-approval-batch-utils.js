@@ -6,7 +6,8 @@
   root.rendererApprovalBatchUtils = factory(root.stringUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TURN_NODE_SELECTOR = '.chat-thread-node[data-thread-message-id]';
   // Plan-variant gap rows are deliberately actionless (the plan card owns the
   // decision), so they never join the batch Allow All / Deny All count.
@@ -33,13 +34,11 @@
   function buildBatchBannerMarkup(count, turnId) {
     const safeCount = escapeHtml(String(count));
     const safeTurn = escapeHtml(turnId);
-    const phrase = count === 1
-      ? '1 tool waiting for approval'
-      : safeCount + ' tools waiting for approval';
+    const phrase = jtn('approval.batch.waitingTools', count, { count: count }, '1 tool waiting for approval', '{count} tools waiting for approval');
     return ''
       + '<div class="' + BATCH_BANNER_CLASS + '" ' + BATCH_BANNER_DATA + '="' + safeTurn + '"'
       + ' data-pending-count="' + safeCount + '"'
-      + ' role="region" aria-label="Pending tool approvals">'
+      + ' role="region" aria-label="' + escapeHtml(jt('approval.batch.pendingToolApprovals', 'Pending tool approvals')) + '">'
       + '<div class="approval-batch-banner-body">'
       + '<span class="approval-batch-banner-icon" aria-hidden="true"></span>'
       + '<span class="approval-batch-banner-title">' + escapeHtml(phrase) + '</span>'
@@ -47,13 +46,13 @@
       + '<div class="approval-batch-banner-actions">'
       + '<button type="button" class="approval-batch-action approval-batch-action--allow"'
       + ' data-approval-batch-action="approve-all"'
-      + ' data-turn-id="' + safeTurn + '">Allow All</button>'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAll', 'Allow All')) + '</button>'
       + '<button type="button" class="approval-batch-action approval-batch-action--allow-once"'
       + ' data-approval-batch-action="approve-all-once"'
-      + ' data-turn-id="' + safeTurn + '">Allow All Once</button>'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAllOnce', 'Allow All Once')) + '</button>'
       + '<button type="button" class="approval-batch-action approval-batch-action--deny"'
       + ' data-approval-batch-action="deny-all"'
-      + ' data-turn-id="' + safeTurn + '">Deny All</button>'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.denyAll', 'Deny All')) + '</button>'
       + '</div>'
       + '</div>';
   }

@@ -42,7 +42,7 @@
  * controller; everything inside is positioned in content coordinates. */
 .ide-explode-content {
   position: absolute;
-  left: 0;
+  left: 0; /* rtl:physical */
   top: 0;
   transform-origin: 0 0;
   will-change: transform;
@@ -61,8 +61,8 @@
 .ide-explode-band-label {
   position: absolute;
   top: 8px;
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   text-align: center;
   font-family: var(--font-family-mono);
   font-size: 11px;
@@ -125,7 +125,7 @@
   padding: calc(8px * var(--explode-node-scale)) calc(12px * var(--explode-node-scale));
   max-width: calc(200px * var(--explode-node-scale));
   border: 1px solid var(--line);
-  border-left: 3px solid var(--explode-node-kind);
+  border-inline-start: 3px solid var(--explode-node-kind);
   border-radius: 9px;
   background: var(--surface-card-background, var(--bg-panel));
   color: var(--text-primary);
@@ -326,7 +326,7 @@
 }
 
 .ide-viewmode-seg-btn + .ide-viewmode-seg-btn {
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
 }
 
 .ide-viewmode-seg-btn:hover {

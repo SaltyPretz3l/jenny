@@ -118,6 +118,8 @@ function createBackendServiceWithDeps({
   }
   const backendService = new BackendService({
     appVersion: app.getVersion(),
+    // Source setup forwards this process-only choice through start.js.
+    skipOllamaAutoStart: Array.isArray(processRef.argv) && processRef.argv.includes('--existing-server'),
     chromiumSandbox,
     userDataPath: app.getPath('userData'),
     repoRoot: usePackagedSidecarRuntime ? undefined : (configuredRepoRoot || undefined),
@@ -160,6 +162,15 @@ function createBackendServiceWithDeps({
     bundledSkillsRoot: skillsService ? skillsService.getBundledRoot() : '',
     resolvePackagedLaunch,
   });
+  const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
+  backendService.commandSandbox = new DesktopSandboxService({
+    userDataPath: app.getPath('userData'),
+    sourceRoot: app.isPackaged ? path.join(processRef.resourcesPath, 'command-worker') : appRoot,
+    configService: shellConfigService, getBackend: () => backendService,
+    platform: processRef.platform, logger: log,
+  });
+  backendService.commandSandbox.on('changed', (state) => sendBridgeEvent('commandSandbox.onChanged', state));
+  void backendService.commandSandbox.start().catch(() => {});
   backendService.workspaceActiveUseTracker = createTrackerForService(backendService, {
     app,
     getWindow: getMainWindow,

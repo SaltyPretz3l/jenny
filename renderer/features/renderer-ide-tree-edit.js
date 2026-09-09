@@ -8,6 +8,7 @@
   }
   root.rendererIdeTreeEdit = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const ERROR_ID = 'ide-tree-edit-error';
   const INVALID_CLASS = 'ide-tree-edit-field--invalid';
 
@@ -23,24 +24,24 @@
     },
     {
       matches: (name) => name === '.' || name === '..',
-      message: () => 'A name can\'t be "." or "..".',
+      message: () => jt('ide.treeEdit.dotName', 'A name can\'t be "." or "..".'),
     },
     {
       matches: (name) => /[\\/:*?"<>|]/.test(name)
         || Array.prototype.some.call(name, (ch) => ch.charCodeAt(0) < 0x20),
-      message: () => 'A name can\'t contain any of: \\ / : * ? " < > |',
+      message: () => jt('ide.treeEdit.invalidCharacters', 'A name can\'t contain any of: \\ / : * ? " < > |'),
     },
     {
       matches: (name) => /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(name),
-      message: (name) => `"${name}" is a reserved name in Windows.`,
+      message: (name) => jt('ide.treeEdit.reservedWindowsName', '"{name}" is a reserved name in Windows.', { name }),
     },
     {
       matches: (name) => /[. ]$/.test(name),
-      message: () => 'A name can\'t end with a space or a period.',
+      message: () => jt('ide.treeEdit.trailingSpaceOrPeriod', 'A name can\'t end with a space or a period.'),
     },
     {
       matches: (name) => name.length > 255,
-      message: () => 'That name is too long (255 characters max).',
+      message: () => jt('ide.treeEdit.nameTooLong', 'That name is too long (255 characters max).'),
     },
     {
       matches: (name, context) => {
@@ -53,7 +54,7 @@
           (sibling) => comparableName(sibling, context.isWin32) === candidate
         );
       },
-      message: (name) => `A file or folder named "${name}" already exists here.`,
+      message: (name) => jt('ide.treeEdit.nameExists', 'A file or folder named "{name}" already exists here.', { name }),
     },
   ];
 

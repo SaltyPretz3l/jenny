@@ -19,6 +19,7 @@
   }
   root.rendererIdeBreadcrumbs = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -49,7 +50,7 @@
     const files = list.filter((entry) => entry.kind !== 'directory');
     const ordered = dirs.concat(files);
     if (!ordered.length) {
-      return [{ label: 'Empty folder', disabled: true, action: noop }];
+      return [{ label: jt('ide.breadcrumbs.emptyFolder', 'Empty folder'), disabled: true, action: noop }];
     }
     return ordered.map((entry) => {
       const path = String(entry.relPath);
@@ -99,7 +100,7 @@
         appendClientLog('WARN', 'ide.breadcrumb_list_failed', {
           message: String(error?.message || error || ''),
         });
-        items = [{ label: 'Could not open folder', disabled: true, action: noop }];
+        items = [{ label: jt('ide.breadcrumbs.openFailed', 'Could not open folder'), disabled: true, action: noop }];
       }
       // The await above is not cancellable; if the module was disposed while the
       // listing was in flight, bail before re-opening a menu (and re-attaching its

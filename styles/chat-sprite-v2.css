@@ -1,15 +1,11 @@
 /* D5 — Sprite / assistant avatar V2 visual refresh.
  * Base: styles/chat-thread.css (lines ~411-566) + --sprite-holo-* /
  * --widget-sprite-* / --holo-duration-* tokens in foundation.css.
- * Mixes --accent-cyan into the streaming border so the sprite picks
- * up the same accent the streaming chat-bubble rail (D1) and
- * reasoning V2 use. The scale-up composes with the conic-gradient
- * rotation on ::before because that rotation lives in a separate
- * transform context. */
+ * Status effects never own transform: the positioning pipeline owns
+ * translation, and geometry corrections must not animate behind content. */
 
 .chat-assistant-sprite {
   transition:
-    transform var(--transition-emphasis),
     border-color var(--transition-emphasis),
     box-shadow var(--transition-emphasis),
     filter var(--transition-emphasis),
@@ -24,7 +20,6 @@
    * the V2 accent so themes that haven't migrated the widget token
    * still get the V2 vocabulary. */
   border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--widget-sprite-streaming-border));
-  transform: scale(1.04);
 }
 
 .chat-assistant-sprite[data-sprite-state="complete"] {
@@ -51,6 +46,11 @@
   transition: opacity var(--transition-regular);
 }
 
+/* Never fade an old session's identity over the next thread. */
+.chat-sprite-layer:not(.visible) {
+  transition: none;
+}
+
 /* Holo-off keeps the live status treatment but owns no invisible animation
    or compositor promotion. */
 :root[data-sprite-holo="off"] .chat-assistant-sprite.is-streaming,
@@ -68,9 +68,6 @@
   .chat-assistant-sprite,
   .chat-sprite-layer {
     transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
-  }
-  .chat-assistant-sprite.is-streaming {
-    transform: none;
   }
   .chat-assistant-sprite::before,
   .chat-assistant-sprite::after,

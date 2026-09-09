@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Names for the effects a payload can declare -- not an ordering.
   // getApprovalFacts returns each tool's facts most consequential first.
   const APPROVAL_FACT_KINDS = Object.freeze({
@@ -58,9 +59,9 @@
           );
           if (!source) return [];
           // Command/code text conceals any effect: never scan it for facts. cwd is declared.
-          const facts = [{ kind: APPROVAL_FACT_KINDS.EXECUTE, label: 'Jenny cannot check what this does' }];
+          const facts = [{ kind: APPROVAL_FACT_KINDS.EXECUTE, label: jt('approval.facts.cannotInspect', 'Jenny cannot check what this does') }];
           const cwd = kind === 'python_execute' ? '' : normalizeString(args.cwd);
-          if (cwd) facts.push({ kind: APPROVAL_FACT_KINDS.EXECUTE, label: 'Runs in ' + cwd });
+          if (cwd) facts.push({ kind: APPROVAL_FACT_KINDS.EXECUTE, label: jt('approval.facts.runsIn', 'Runs in {directory}', { directory: cwd }) });
           return facts;
         }
         case 'Read':
@@ -68,9 +69,10 @@
         case 'Edit':
         case 'delete_file': {
           if (!path) return [];
-          const [factKind, verb] = PATH_FACT_TARGETS[kind];
-          const subtree = kind === 'delete_file' && args.recursive === true ? ' and everything under it' : '';
-          return [{ kind: factKind, label: verb + ' ' + path + subtree }];
+          const [factKind] = PATH_FACT_TARGETS[kind];
+          const subtree = kind === 'delete_file' && args.recursive === true;
+          const label = kind === 'Read' ? jt('approval.facts.readsPath', 'Reads {path}', { path }) : kind === 'Write' ? jt('approval.facts.writesPath', 'Writes {path}', { path }) : kind === 'Edit' ? jt('approval.facts.changesPath', 'Changes {path}', { path }) : subtree ? jt('approval.facts.deletesTree', 'Deletes {path} and everything under it', { path }) : jt('approval.facts.deletesPath', 'Deletes {path}', { path });
+          return [{ kind: factKind, label }];
         }
         case 'Move':
         case 'move_file': {
@@ -79,13 +81,12 @@
             || !normalizeString(move.source) || !normalizeString(move.destination));
           if (hasInvalidPair) return [];
           // overwrite is the declared difference between a move and a replacement.
-          const writeVerb = args.overwrite === true ? 'Replaces ' : 'Writes ';
           const one = moves.length === 1 ? moves[0] : null;
           return [
             { kind: APPROVAL_FACT_KINDS.DELETE,
-              label: 'Removes ' + (one ? normalizeString(one.source) : moves.length + ' source paths') },
+              label: one ? jt('approval.facts.removesPath', 'Removes {path}', { path: normalizeString(one.source) }) : jt('approval.facts.removesSourcePaths', 'Removes {count} source paths', { count: moves.length }) },
             { kind: APPROVAL_FACT_KINDS.WRITE,
-              label: writeVerb + (one ? normalizeString(one.destination) : moves.length + ' destination paths') },
+              label: one ? (args.overwrite === true ? jt('approval.facts.replacesPath', 'Replaces {path}', { path: normalizeString(one.destination) }) : jt('approval.facts.writesPath', 'Writes {path}', { path: normalizeString(one.destination) })) : (args.overwrite === true ? jt('approval.facts.replacesDestinationPaths', 'Replaces {count} destination paths', { count: moves.length }) : jt('approval.facts.writesDestinationPaths', 'Writes {count} destination paths', { count: moves.length })) },
           ];
         }
         case 'fetch_url': {
@@ -93,20 +94,20 @@
           if (!url) return [];
           try {
             const host = new URL(url).host;
-            return host ? [{ kind: APPROVAL_FACT_KINDS.NETWORK, label: 'Connects to ' + host }] : [];
+            return host ? [{ kind: APPROVAL_FACT_KINDS.NETWORK, label: jt('approval.facts.connectsTo', 'Connects to {host}', { host }) }] : [];
           } catch (_error) {
             return [];
           }
         }
         case 'web_search':
           return normalizeString(args.query)
-            ? [{ kind: APPROVAL_FACT_KINDS.NETWORK, label: 'Searches the web' }] : [];
+            ? [{ kind: APPROVAL_FACT_KINDS.NETWORK, label: jt('approval.facts.searchesWeb', 'Searches the web') }] : [];
         case 'Glob':
         case 'glob_files':
         case 'Grep':
         case 'grep_search': {
           const noun = kind === 'Glob' || kind === 'glob_files' ? 'file names' : 'files';
-          const label = path ? 'Reads ' + noun + ' under ' + path : 'Reads matching ' + noun;
+          const label = path ? (noun === 'file names' ? jt('approval.facts.readsFileNamesUnder', 'Reads file names under {path}', { path }) : jt('approval.facts.readsFilesUnder', 'Reads files under {path}', { path })) : (noun === 'file names' ? jt('approval.facts.readsMatchingFileNames', 'Reads matching file names') : jt('approval.facts.readsMatchingFiles', 'Reads matching files'));
           return normalizeString(args.pattern) ? [{ kind: APPROVAL_FACT_KINDS.READ, label }] : [];
         }
         default:

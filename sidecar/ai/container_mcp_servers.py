@@ -18,11 +18,13 @@ from sidecar.ai.config import (
     RuntimeConfig,
     resolve_operation_ledger_root,
 )
+from sidecar.ai.execution_policy import desktop_policy_is_enforced
 from sidecar.ai.feature_flags import (
     FEATURE_GIT_TRACKING,
     FEATURE_SHELL_SECURITY,
     is_feature_flag_enabled,
 )
+from sidecar.ai.host_policy import host_policy_is_enforced
 
 
 def _argv_safe_url(raw_url: str | None) -> str:
@@ -91,6 +93,63 @@ def _skill_scope_mcp_args(config: RuntimeConfig) -> list[str]:
     return args
 
 
+def _host_policy_mcp_args(config: RuntimeConfig) -> list[str]:
+    return [
+        "--host-mode",
+        config.host_mode,
+        "--host-execution-policy-version",
+        "" if config.host_execution_policy_version is None else str(
+            config.host_execution_policy_version
+        ),
+    ]
+
+
+def _desktop_policy_mcp_args(config: RuntimeConfig) -> list[str]:
+    return [
+        "--desktop-execution-policy-version",
+        ""
+        if config.desktop_execution_policy_version is None
+        else str(config.desktop_execution_policy_version),
+    ]
+
+
+def _connection_mcp_args(config: RuntimeConfig) -> list[str]:
+    if host_policy_is_enforced(config) or desktop_policy_is_enforced(config):
+        return []
+    return [
+        token
+        for server in config.mcp_servers
+        if server.transport != "stdio"
+        for token in (
+            "--connections-mcp-server",
+            server.name,
+            server.transport,
+            _fail_soft_hostname(server.url),
+        )
+    ]
+
+
+def _knowledge_mcp_args(config: RuntimeConfig) -> list[str]:
+    args = ["--knowledge-enabled", "1" if config.tools_knowledge_enabled else "0"]
+    if config.tools_knowledge_enabled:
+        for knowledge_root in config.knowledge_roots:
+            args.extend(["--knowledge-root", knowledge_root])
+    return args
+
+
+def _execution_policy_mcp_args(config: RuntimeConfig) -> list[str]:
+    return [
+        "--shell-enabled",
+        (
+            "0"
+            if desktop_policy_is_enforced(config)
+            else ("1" if config.tools_shell_enabled else "0")
+        ),
+        *_host_policy_mcp_args(config),
+        *_desktop_policy_mcp_args(config),
+    ]
+
+
 def _default_mcp_servers(
     config: RuntimeConfig,
     workspace_root: Path | None,
@@ -115,7 +174,7 @@ def _default_mcp_servers(
             str(resolve_operation_ledger_root(config)),
         ]
     )
-    args.extend(["--shell-enabled", "1" if config.tools_shell_enabled else "0"])
+    args.extend(_execution_policy_mcp_args(config))
     args.extend(["--glob-enabled", "1" if config.tools_glob_enabled else "0"])
     args.extend(["--grep-enabled", "1" if config.tools_grep_enabled else "0"])
     args.extend(["--edit-enabled", "1" if config.tools_edit_file_enabled else "0"])
@@ -153,11 +212,7 @@ def _default_mcp_servers(
         ]
     )
     args.extend(["--rich-files-enabled", "1" if config.tools_rich_files_enabled else "0"])
-    args.extend(["--knowledge-enabled", "1" if config.tools_knowledge_enabled else "0"])
-    if config.tools_knowledge_enabled:
-        # Flag-off must not advertise the user's folder paths in argv.
-        for knowledge_root in config.knowledge_roots:
-            args.extend(["--knowledge-root", knowledge_root])
+    args.extend(_knowledge_mcp_args(config))
     args.extend(
         [
             "--python-runtime-enabled", "1" if config.tools_python_runtime_enabled else "0",
@@ -166,9 +221,7 @@ def _default_mcp_servers(
             "--connections-enabled", "1" if config.tools_connections_enabled else "0",
             "--connections-engine-type", config.engine_type,
             "--connections-engine-host", _fail_soft_hostname(config.api_url),
-            *[token for server in config.mcp_servers if server.transport != "stdio"
-              for token in ("--connections-mcp-server", server.name, server.transport,
-                            _fail_soft_hostname(server.url))],
+            *_connection_mcp_args(config),
         ]
     )
     args.extend(
@@ -239,6 +292,8 @@ def _default_mcp_servers(
             cooperative_cancel=True,
         ),
     )
+    if host_policy_is_enforced(config) or desktop_policy_is_enforced(config):
+        return builtin_servers
     if config.mcp_servers:
         if any(server.name == "jenny_local_tools" for server in config.mcp_servers):
             return config.mcp_servers

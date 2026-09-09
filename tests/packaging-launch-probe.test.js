@@ -44,6 +44,7 @@ function withTempPackagedSidecar(options, fn) {
     JSON.stringify({
       artifact_name: artifactName,
       api_version: API_VERSION,
+      build_platform: process.platform,
       sha256: artifactSha,
       ...manifestOverrides,
     }),

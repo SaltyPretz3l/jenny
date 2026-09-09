@@ -16,6 +16,7 @@ const {
   artifactError,
 } = require('./artifact-workspace-errors');
 const { parsePngDimensions } = require('./png-metadata-utils');
+const { createPreviewScreenshot } = require('./preview-screenshot-store');
 const { isJennyStateDirRoot } = require('./workspace-root-identity');
 
 const MAX_EDITABLE_BYTES = 512 * 1024;
@@ -377,6 +378,7 @@ class ArtifactWorkspaceService {
   }
 
   async createBinaryArtifact(sessionId, input = {}) {
+    if (input.previewScreenshot === true) return createPreviewScreenshot(this, sanitizeSessionId(sessionId), input, buildArtifactId);
     const safeSessionId = sanitizeSessionId(sessionId);
     const content = Buffer.isBuffer(input.content)
       ? input.content

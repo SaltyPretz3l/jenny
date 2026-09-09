@@ -683,9 +683,9 @@ test('dock body is the chatdock @container and re-derives the chat width vars', 
 });
 
 test('dock thread indentation spends no extra gutter at depth 1 and flattens after depth 2', () => {
-  assert.match(DOCK_CSS, /chat-thread-children\[data-thread-depth="1"\]\s*\{\s*padding-left:\s*0;/);
-  assert.match(DOCK_CSS, /chat-thread-children\[data-thread-depth="2"\]\s*\{\s*padding-left:\s*var\(--space-3\);/);
-  assert.match(DOCK_CSS, /chat-thread-children:not\(\[data-thread-depth="1"\]\):not\(\[data-thread-depth="2"\]\)\s*\{\s*padding-left:\s*0;/);
+  assert.match(DOCK_CSS, /chat-thread-children\[data-thread-depth="1"\]\s*\{\s*padding-inline-start:\s*0;/);
+  assert.match(DOCK_CSS, /chat-thread-children\[data-thread-depth="2"\]\s*\{\s*padding-inline-start:\s*var\(--space-3\);/);
+  assert.match(DOCK_CSS, /chat-thread-children:not\(\[data-thread-depth="1"\]\):not\(\[data-thread-depth="2"\]\)\s*\{\s*padding-inline-start:\s*0;/);
 });
 
 test('compact dock nodes keep primary semantic fills with a protected edge gutter', () => {
@@ -694,7 +694,7 @@ test('compact dock nodes keep primary semantic fills with a protected edge gutte
   assert.ok(compactStart >= 0, 'compact dock container exists');
   assert.ok(compactEnd > compactStart, 'compact overrides end before stacked layout rules');
   const compactCss = DOCK_CSS.slice(compactStart, compactEnd);
-  assert.match(compactCss, /\.chat-thread-column\s*\{[\s\S]*?padding-left:\s*var\(--space-3\);/);
+  assert.match(compactCss, /\.chat-thread-column\s*\{[\s\S]*?padding-inline-start:\s*var\(--space-3\);/);
   assert.match(compactCss, /--thread-dot-size:\s*calc\(7px \* var\(--chat-zoom-factor, 1\)\);/);
   assert.match(
     compactCss,

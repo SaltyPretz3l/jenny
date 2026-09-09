@@ -39,6 +39,7 @@
   root.rendererIdeMapStates = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -135,31 +136,31 @@
 
     function buildIdleMarkup() {
       return ''
-        + buildStatusRowMarkup({ message: 'Generate a map of this workspace.', tone: 'default' })
-        + buildActionMarkup('Generate Map', 'generate');
+        + buildStatusRowMarkup({ message: jt('ide.map.states.generatePrompt', 'Generate a map of this workspace.'), tone: 'default' })
+        + buildActionMarkup(jt('ide.map.states.generateMap', 'Generate Map'), 'generate');
     }
 
     function buildLoadingMarkup() {
-      return buildStatusRowMarkup({ message: 'Building the map…', tone: 'pending', spinner: true });
+      return buildStatusRowMarkup({ message: jt('ide.map.states.building', 'Building the map…'), tone: 'pending', spinner: true });
     }
 
     function buildEmptyMarkup() {
-      return buildStatusRowMarkup({ message: 'Workspace is empty — nothing to map.', tone: 'default' });
+      return buildStatusRowMarkup({ message: jt('ide.map.states.emptyWorkspace', 'Workspace is empty — nothing to map.'), tone: 'default' });
     }
 
     function buildErrorMarkup(payload) {
       // statusRow's message field is escaped internally, so pass the raw
       // string through here — escaping twice would double-encode entities.
-      const message = String((payload && payload.message) || 'Unknown error.');
+      const message = String((payload && payload.message) || jt('ide.map.unknownError', 'Unknown error.'));
       return ''
-        + buildStatusRowMarkup({ message: `Couldn't build the map. ${message}`, tone: 'danger' })
+        + buildStatusRowMarkup({ message: jt('ide.map.states.buildFailed', "Couldn't build the map. {message}", { message }), tone: 'danger' })
         + buildActionMarkup('Retry', 'retry', { tone: 'danger' });
     }
 
     function buildNoRootMarkup() {
       return ''
-        + buildStatusRowMarkup({ message: 'Choose a workspace folder to map.', tone: 'default' })
-        + buildActionMarkup('Choose Folder', 'choose-folder');
+        + buildStatusRowMarkup({ message: jt('ide.map.states.chooseWorkspace', 'Choose a workspace folder to map.'), tone: 'default' })
+        + buildActionMarkup(jt('ide.tree.chooseFolder', 'Choose Folder'), 'choose-folder');
     }
 
     function markupFor(stateName, payload) {

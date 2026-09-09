@@ -15,6 +15,8 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_POLICY_DENIED,
 )
+from sidecar.ai.execution_policy import desktop_policy_is_enforced
+from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.routing import delegate as _delegate
 from sidecar.ai.routing import harness_helpers as _harness_helpers
 from sidecar.ai.routing import loop_events as _loop_events
@@ -68,8 +70,6 @@ from sidecar.runtime.tool_execution_support import (
     validate_tool_arguments,
 )
 from sidecar.runtime.turn_state import (
-    TERMINAL_SUBCODE_TIMEOUT_TOOL,
-    TURN_STATE_TIMEOUT,
     current_live_run_mode_state,
 )
 
@@ -82,6 +82,8 @@ assistant_tool_call_message = _results.assistant_tool_call_message
 bounded_tool_output = _results.bounded_tool_output
 tool_result_message = _results.tool_result_message
 _bounded_tool_output = _results.bounded_tool_output
+_coerce_tool_failure_code = _results.coerce_tool_failure_code
+_merge_result_metadata = _results.merge_result_metadata
 derive_idempotency_key = _operation_ledger.derive_idempotency_key
 inject_idempotency_key = _operation_ledger.inject_idempotency_key
 __all__ = (
@@ -213,6 +215,22 @@ def _dispatch_tool_call(
     on_output_chunk: Any = None,
 ):
     dispatch_kwargs: dict[str, Any] = {}
+    if (
+        call.tool_id == "run_command"
+        and str(getattr(kernel._config, "host_mode", "") or "") == "server"
+        and (
+            int(getattr(kernel._config, "host_execution_policy_version", 0) or 0)
+            == HOST_EXECUTION_POLICY_VERSION
+        )
+        and getattr(descriptor, "server_name", "") != "electron_tool_bridge"
+    ):
+        # v2 has one execution owner. A forged/direct builtin-MCP dispatch must
+        # never reach the sidecar's local shell handler.
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_DISABLED,
+            message="hosted run_command requires the Electron execution worker bridge",
+            retryable=False,
+        )
     if on_output_chunk is not None:
         # Passed conditionally so MCP-client fakes without the parameter stay
         # byte-compatible; only streaming-capable calls ever build an emitter.
@@ -222,6 +240,11 @@ def _dispatch_tool_call(
         and getattr(descriptor, "server_name", "") == "electron_tool_bridge"
     ):
         request_context = getattr(runtime, "request_context", None)
+        if call.tool_id == "run_command":
+            # Builtin snapshot freezing adds private attribution. Electron binds
+            # identity from the request envelope; keep its command schema closed.
+            tool_arguments = {key: value for key, value in tool_arguments.items()
+                              if not key.startswith("_jenny_")}
         return execute_electron_tool(ElectronToolBridgeRequest(
             tool_name=call.tool_id,
             arguments=tool_arguments,
@@ -266,27 +289,7 @@ def _tool_timeout_for_runtime(
 ) -> float | None:
     from sidecar.ai.routing import iteration_limits as _iteration_limits
 
-    configured_timeout = _iteration_limits.effective_tools_execution_timeout_seconds(
-        kernel._config
-    )
-    if call is not None and call.tool_id == "run_command":
-        requested = call.arguments.get("timeout_seconds")
-        if isinstance(requested, (int, float)) and not isinstance(requested, bool):
-            # The outer transport deadline must not preempt the handler's
-            # advertised timeout before it can terminate and report the child.
-            configured_timeout = max(configured_timeout, min(600.0, float(requested)) + 5.0)
-    if runtime is None:
-        return configured_timeout
-    remaining = runtime.remaining_wall_clock_seconds()
-    if remaining is not None and remaining <= 0:
-        raise TerminalChatStateError(
-            status=TURN_STATE_TIMEOUT,
-            terminal_subcode=TERMINAL_SUBCODE_TIMEOUT_TOOL,
-            message="Tool execution skipped because the loop wall-clock budget is exhausted.",
-        )
-    if call is not None and call.tool_id == "ask_user" and remaining is not None:
-        return remaining
-    return runtime.tool_timeout_seconds(configured_timeout)
+    return _iteration_limits.tool_timeout_for_runtime(kernel._config, runtime, call)
 
 
 def _descriptor_validation_outcome(
@@ -405,12 +408,18 @@ def approval_if_needed(
                 message=f"model requested unknown tool '{call.tool_id}'",
                 retryable=False,
             )
+        _route_policy_runtime.require_desktop_tool_dispatch(descriptor, kernel._config)
         if descriptor.name == "run_command" and not kernel._config.tools_shell_enabled:
             raise ToolExecutionFailure(
                 code=CMP_TOOL_DISABLED,
                 message="shell tool is disabled by configuration",
                 retryable=False,
             )
+        desktop_bridge_command = (
+            desktop_policy_is_enforced(kernel._config)
+            and descriptor.name == "run_command"
+            and getattr(descriptor, "server_name", "") == "electron_tool_bridge"
+        )
         call_side_effecting = _tool_actions.effective_side_effecting(descriptor, call.arguments)
         plan_artifact_write = _plan_artifact_policy.is_plan_artifact_write_eligible(
             descriptor,
@@ -427,6 +436,16 @@ def approval_if_needed(
                 message=f"side-effecting tools are disabled in '{mode}' mode",
                 retryable=False,
             )
+        # Electron performs the authoritative sandbox admission and explicit
+        # approval for bridge-owned run_command.  Sidecar must not prompt a
+        # second time or apply its host-shell classifier to that call.
+        if desktop_bridge_command:
+            continue
+        hosted_approval = _route_policy_runtime.hosted_approval_request(
+            kernel._config, approvals_pre_granted, ApprovalRequest_, call, descriptor, mode
+        )
+        if hosted_approval is not None:
+            return hosted_approval
         shell_classification = classify_run_command_for_approval(
             kernel,
             call,
@@ -660,45 +679,6 @@ def assert_valid_tool_call(call: ToolCallRequest) -> None:
         )
 
 
-def _merge_result_metadata(
-    base_metadata: dict[str, object],
-    audit_metadata: dict[str, object] | None,
-) -> dict[str, object]:
-    metadata = dict(base_metadata)
-    if audit_metadata:
-        metadata.update(dict(audit_metadata))
-    return metadata
-
-
-# ---------------------------------------------------------------------------
-# execute_tool
-# ---------------------------------------------------------------------------
-
-
-# Error-code prefixes the renderer's chat-error-recovery `classifyAssistantError`
-# (services/backend/chat-error-recovery.js) routes to the recoverable *tool*
-# class. A tool failure must carry one of these so it never lands in the generic
-# `unknown` ("Turn failed") bucket that has no actionable recovery.
-_TOOL_RECOVERABLE_CODE_PREFIXES = ("CMP-TOOL-", "CMP-MCP-", "CMP-WEB-", "CMP-TSRCH-")
-
-
-def _coerce_tool_failure_code(code: Any) -> str:
-    """Guarantee a tool-recoverable error code on a tool execution failure.
-
-    A tool failure must reach the renderer with a code the chat-error recovery
-    layer routes to the *tool* class (retry / diagnostics), not the generic
-    ``unknown`` bucket. Runtime MCP servers and the Electron tool bridge can pass
-    an arbitrary, empty, or wrong-domain ``code`` through ``MCPError``; only a
-    well-formed upper-case code in a tool-recoverable family (CMP-TOOL-/MCP-/WEB-
-    /TSRCH-, e.g. ``CMP-MCP-0004``) is preserved for its diagnostics. Anything
-    else is defaulted to ``CMP_TOOL_EXECUTION_FAILED`` (CMP-TOOL-0008).
-    """
-    text = str(code or "").strip()
-    if text == text.upper() and text.startswith(_TOOL_RECOVERABLE_CODE_PREFIXES):
-        return text
-    return CMP_TOOL_EXECUTION_FAILED
-
-
 def inject_dispatch_trace_id(
     tool_arguments: dict[str, object],
     *,
@@ -780,6 +760,19 @@ def execute_tool(
         )
     descriptor = (
         entry.descriptor if entry is not None else kernel._mcp_client.tool_descriptor(call.tool_id)
+    )
+    host_allowed, host_reason = _route_policy_runtime.hosted_tool_dispatch_decision(
+        descriptor if descriptor is not None else call.tool_id,
+        getattr(kernel, "_config", None),
+    )
+    if not host_allowed:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_POLICY_DENIED,
+            message=host_reason or "tool denied by hosted execution policy",
+            retryable=False,
+        )
+    _route_policy_runtime.require_desktop_tool_dispatch(
+        descriptor if descriptor is not None else call.tool_id, getattr(kernel, "_config", None)
     )
     # Delegate validation normalizes aliases and isolates malformed array items.
     if call.tool_id == "delegate":
@@ -895,7 +888,7 @@ def execute_tool(
         # non-`CMP-` code; normalise to a `CMP-TOOL-*` subcode so the failure
         # never reaches the chat error path uncoded (which would classify as
         # `unknown` instead of a recoverable tool failure).
-        failure_code = _coerce_tool_failure_code(error.code)
+        failure_code = _results.coerce_tool_failure_code(error.code)
         log_event(
             logger,
             logging.WARNING,
@@ -964,7 +957,15 @@ def execute_tool(
         tool_name=result_tool_name,
         max_chars=MAX_RESPONSE_CHARS,
     )
-    metadata = _merge_result_metadata(result.metadata, audit_metadata)
+    metadata = _results.merge_result_metadata(result.metadata, audit_metadata)
+    from sidecar.ai.routing import preview_vision as _preview_vision
+
+    delivery, notice = _preview_vision.admit_preview(
+        runtime, getattr(kernel, "_engine", None), call, result, descriptor,
+    )
+    if delivery:
+        metadata["model_delivery_status"] = delivery
+        sanitized_output += "\n" + notice
     if call.tool_id == "read_file":
         snapshot = metadata.get("read_snapshot")
         scope = snapshot.get("scope") if isinstance(snapshot, dict) else None

@@ -40,13 +40,10 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-// Make dumpTurnDiagnostic({ service }) reject by giving service.options a getter
-// that throws. managed-sidecar-chat.js never reads service.options itself; only
-// turn-diagnostic-dump.js does, at its very first line, so this isolates the
-// rejection to the diagnostic dump (and its sibling provider fetch never touches
-// service.options).
+// Fail diagnostic storage lookup while keeping execution policy options readable.
 function installThrowingOptionsGetter(service, message) {
-  Object.defineProperty(service, 'options', {
+  service.options = { ...service.options };
+  Object.defineProperty(service.options, 'userDataPath', {
     configurable: true,
     get() {
       throw new Error(message);

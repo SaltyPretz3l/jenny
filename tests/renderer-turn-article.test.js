@@ -145,8 +145,6 @@ function createPipeline(options = {}) {
       refreshActiveSurfaceEffect() {},
       appendClientLog() {},
       renderHeader() {},
-      renderPrompts() {},
-      stopFallbackRotation() {},
     },
   });
 }
@@ -703,7 +701,7 @@ test('F8: legacy user message articles include estimated token hover meta', () =
     null
   );
 
-  assert.match(model.innerHtml, /data-meta-label="~2 tokens est\. · ~2 cumulative"/);
+  assert.match(model.innerHtml, /data-meta-label="~2 tokens est\. · ~2 cumulative text tokens est\."/);
 });
 
 test('F8: projected turn article hover meta preserves assistant meta and appends token estimates', () => {
@@ -729,7 +727,7 @@ test('F8: projected turn article hover meta preserves assistant meta and appends
     projectionContext: createProjectionContext(messages, turn),
   });
 
-  assert.match(html, /data-meta-label="meta:assistant_tokens · ~3 tokens est\. · ~5 cumulative"/);
+  assert.match(html, /data-meta-label="meta:assistant_tokens · ~3 visible-reply tokens est\. \(whole turn\)"/);
 });
 
 test('F8 hardening: token meta cache refreshes when same message array is mutated', () => {
@@ -748,7 +746,7 @@ test('F8 hardening: token meta cache refreshes when same message array is mutate
     null,
     null
   );
-  assert.match(first.innerHtml, /data-meta-label="meta:assistant_cache · ~1 tokens est\. · ~2 cumulative"/);
+  assert.match(first.innerHtml, /data-meta-label="meta:assistant_cache · ~1 tokens est\. · ~2 cumulative text tokens est\."/);
 
   messages[0].content = '123456789012';
   const second = pipeline.buildMessageInnerMarkup(
@@ -761,7 +759,7 @@ test('F8 hardening: token meta cache refreshes when same message array is mutate
     null
   );
 
-  assert.match(second.innerHtml, /data-meta-label="meta:assistant_cache · ~1 tokens est\. · ~4 cumulative"/);
+  assert.match(second.innerHtml, /data-meta-label="meta:assistant_cache · ~1 tokens est\. · ~4 cumulative text tokens est\."/);
 });
 
 test('context compaction notice renders single-event savings without a count chip', () => {

@@ -12,6 +12,7 @@
   root.conversationFormatUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const SKIPPED_KINDS_DEFAULT = new Set(['question_batch', 'interactive_round_recap']);
   const EXPORT_FORMAT_VERSION = 1;
@@ -180,7 +181,7 @@
       if (includeAttachmentNames) {
         const names = collectAttachmentNames(message);
         if (names.length) {
-          lines.push(`Attachments: ${names.join(', ')}`);
+          lines.push(jt('markdown.conversation.attachments', 'Attachments: {names}', { names: names.join(', ') }));
         }
       }
 

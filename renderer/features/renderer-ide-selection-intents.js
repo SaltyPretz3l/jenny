@@ -26,6 +26,7 @@
   root.rendererIdeSelectionIntents = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -70,10 +71,10 @@
   // toggle; the intents follow at 4-7, then blame-lite (8) and squiggle-fix (9),
   // so the "jenny" group reads top to bottom.
   const INTENT_ACTIONS = Object.freeze([
-    { id: 'jenny.selection.explain', label: 'Jenny: Explain selection', intent: 'explain', order: 4 },
-    { id: 'jenny.selection.fix', label: 'Jenny: Fix selection', intent: 'fix', order: 5 },
-    { id: 'jenny.selection.refactor', label: 'Jenny: Refactor selection', intent: 'refactor', order: 6 },
-    { id: 'jenny.selection.tests', label: 'Jenny: Generate tests for selection', intent: 'tests', order: 7 },
+    { id: 'jenny.selection.explain', label: jt('ide.selection.explain', 'Jenny: Explain selection'), intent: 'explain', order: 4 },
+    { id: 'jenny.selection.fix', label: jt('ide.selection.fix', 'Jenny: Fix selection'), intent: 'fix', order: 5 },
+    { id: 'jenny.selection.refactor', label: jt('ide.selection.refactor', 'Jenny: Refactor selection'), intent: 'refactor', order: 6 },
+    { id: 'jenny.selection.tests', label: jt('ide.selection.generateTests', 'Jenny: Generate tests for selection'), intent: 'tests', order: 7 },
   ]);
 
   function createIdeSelectionIntents(deps) {
@@ -182,7 +183,7 @@
       if (!client || typeof client.blameRange !== 'function') {
         // Symmetric with the no-history notice below - a silently-missing git
         // bridge is the more degraded case, so it should not be the quieter one.
-        onNotice('Git is not available in this workspace.');
+        onNotice(jt('ide.selection.gitUnavailable', 'Git is not available in this workspace.'));
         return false;
       }
       // Supersede any blame still in flight; the latest click wins.
@@ -192,7 +193,7 @@
       // Surface the in-flight state: blameRange is an async git call and the
       // composer only fills on success, so without this the action looks dead
       // while the lookup runs.
-      onNotice('Looking up who changed these lines…');
+      onNotice(jt('ide.selection.lookingUpHistory', 'Looking up who changed these lines…'));
       const controller = typeof AbortController === 'function' ? new AbortController() : null;
       blameAbort = controller;
       const token = ++blameSeq;
@@ -220,7 +221,7 @@
         ? summarizeBlameCommits(result.lines)
         : [];
       if (!commits.length) {
-        onNotice('No git history found for these lines.');
+        onNotice(jt('ide.selection.noGitHistory', 'No git history found for these lines.'));
         return false;
       }
       emitCodeSelection({
@@ -258,7 +259,7 @@
       if (!marker) {
         // The action has no precondition, so it is always clickable - tell the
         // user when the cursor is not sitting on a diagnostic.
-        onNotice('No problem at the cursor to fix.');
+        onNotice(jt('ide.selection.noCursorProblem', 'No problem at the cursor to fix.'));
         return false;
       }
       const slice = sliceSurroundingLines(
@@ -286,7 +287,7 @@
       }
       editorHost.addEditorAction({
         id: 'jenny.send-selection.current',
-        label: 'Send to Jenny — current chat',
+        label: jt('ide.selection.sendCurrentChat', 'Send to Jenny — current chat'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 1,
         precondition: 'editorHasSelection',
@@ -294,7 +295,7 @@
       });
       editorHost.addEditorAction({
         id: 'jenny.send-selection.new',
-        label: 'Send to Jenny — new chat',
+        label: jt('ide.selection.sendNewChat', 'Send to Jenny — new chat'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 2,
         precondition: 'editorHasSelection',
@@ -315,7 +316,7 @@
       // degrading silently when none does.
       editorHost.addEditorAction({
         id: 'jenny.selection.blame',
-        label: 'Jenny: Who changed this & why',
+        label: jt('ide.selection.whoChanged', 'Jenny: Who changed this & why'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 8,
         precondition: 'editorHasSelection',
@@ -323,7 +324,7 @@
       });
       editorHost.addEditorAction({
         id: 'jenny.selection.fix-squiggle',
-        label: 'Jenny: Fix the problem under the cursor',
+        label: jt('ide.selection.fixCursorProblem', 'Jenny: Fix the problem under the cursor'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 9,
         run: () => sendSquiggleFix('current'),
@@ -337,11 +338,11 @@
       return [
         { separator: true },
         {
-          label: 'Send to Jenny — current chat',
+          label: jt('ide.selection.sendCurrentChat', 'Send to Jenny — current chat'),
           action: () => onSendToJenny({ kind: 'file_path', target: 'current', path }),
         },
         {
-          label: 'Send to Jenny — new chat',
+          label: jt('ide.selection.sendNewChat', 'Send to Jenny — new chat'),
           action: () => onSendToJenny({ kind: 'file_path', target: 'new', path }),
         },
       ];

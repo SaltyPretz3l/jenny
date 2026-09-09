@@ -13,6 +13,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -65,8 +66,8 @@
     var lineNumbers = Boolean(o.lineNumbers);
     var hasLabel = o.label != null && o.label !== '';
     var caption = hasLabel ? escapeHtml(o.label) : (lang || 'text');
-    var copyAria = hasLabel ? 'Copy ' + escapeHtml(String(o.label).toLowerCase()) : 'Copy code';
-    var ariaLabel = escapeHtml(o.ariaLabel || 'Code output');
+    var copyAria = escapeHtml(hasLabel ? jt('inventory.codeblock.copyLabel', 'Copy {label}', { label: String(o.label).toLowerCase() }) : jt('inventory.codeblock.copyCode', 'Copy code'));
+    var ariaLabel = escapeHtml(o.ariaLabel || jt('inventory.codeblock.codeOutput', 'Code output'));
     var copyId = o.copyId ? escapeHtml(o.copyId) : '';
     var wrapCls = 'inv-codeblock-wrap';
     var extraClassName = sanitizeClassName(o.className);
@@ -225,7 +226,7 @@
           applyFeedback('Copied', 'Copied', 'copied');
         };
         var onFail = function () {
-          applyFeedback('Failed', 'Copy failed', 'failed');
+          applyFeedback('Failed', jt('inventory.codeblock.copyFailed', 'Copy failed'), 'failed');
         };
 
         if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -266,10 +267,10 @@
           var isCollapsed = wrap.classList.toggle('collapsed');
           var label = overlay.querySelector('span');
           if (label) {
-            label.textContent = isCollapsed ? 'Show more' : 'Show less';
+            label.textContent = isCollapsed ? jt('inventory.codeblock.showMore', 'Show more') : jt('inventory.codeblock.showLess', 'Show less');
           }
           overlay.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-          overlay.setAttribute('aria-label', isCollapsed ? 'Show more code' : 'Show less code');
+          overlay.setAttribute('aria-label', isCollapsed ? jt('inventory.codeblock.showMoreLabel', 'Show more code') : jt('inventory.codeblock.showLessLabel', 'Show less code'));
         }
       }
     });

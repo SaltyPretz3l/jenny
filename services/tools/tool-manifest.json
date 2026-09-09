@@ -969,7 +969,7 @@
           },
           "screenshot": {
             "type": "boolean",
-            "description": "Attach a PNG screenshot of the rendered page as a session artifact. Default false."
+            "description": "Capture the rendered page for the active vision-capable model and a screenshot artifact when storage has room (4 per session, 32 per workspace). Default false. Pixel delivery continues when storage is full and is distinct from a completed visual review."
           },
           "events": {
             "type": "array",

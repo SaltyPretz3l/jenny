@@ -11,13 +11,14 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var navigationIntentUtils = (typeof globalThis !== 'undefined' && globalThis.rendererNavigationIntent)
     || (typeof require === 'function' ? require('./renderer-navigation-intent') : null);
   if (!navigationIntentUtils || typeof navigationIntentUtils.getOrCreateNavigationIntentOwner !== 'function') {
     throw new Error('renderer-chat-branch-utils requires renderer-navigation-intent.');
   }
 
-  var BRANCH_BUSY_REASON = 'Wait for the current response to finish before branching.';
+  var BRANCH_BUSY_REASON = jt('chat.branch.waitForCurrentResponse', 'Wait for the current response to finish before branching.');
   var BRANCH_UNSUPPORTED_REASON = 'unsupported_message';
 
   function noopFn() { /* no-op */ }
@@ -90,7 +91,7 @@
 
     function resolveBusyReason(sessionId) {
       if (!sessionId) {
-        return 'Start a conversation before branching.';
+        return jt('chat.branch.startConversationFirst', 'Start a conversation before branching.');
       }
       if (isSessionStreaming(sessionId) || hasPendingToolApprovalForSession(sessionId)) {
         return BRANCH_BUSY_REASON;
@@ -110,7 +111,7 @@
       var busyReason = resolveBusyReason(sessionId);
       if (busyReason) {
         logBlocked(targetId, 'busy');
-        showComposerActionError(new Error(busyReason), 'Branch Unavailable');
+        showComposerActionError(new Error(busyReason), jt('chat.branch.unavailableTitle', 'Branch Unavailable'));
         return null;
       }
       var targetMessage = findMessage(targetId);
@@ -124,7 +125,7 @@
           sessionId: sessionId,
           messageId: targetId,
         });
-        showComposerActionError(missingError, 'Branch Unavailable');
+        showComposerActionError(missingError, jt('chat.branch.unavailableTitle', 'Branch Unavailable'));
         return null;
       }
 
@@ -156,8 +157,8 @@
         var navigationResult = await navigationIntent.navigateOrNotify(navigationToken, branch.id, {
           navigate: openBranch,
           showToastMessage: showToastMessage,
-          message: 'A branch was created while you were working in another chat.',
-          title: 'Branch Created',
+          message: jt('chat.branch.backgroundCreatedMessage', 'A branch was created while you were working in another chat.'),
+          title: jt('chat.branch.createdTitle', 'Branch Created'),
           dedupeKey: 'chat.branch.open:' + normalizeId(branch.id),
         });
         appendClientLog('INFO', 'chat.branch_created', {
@@ -166,8 +167,8 @@
           messageId: targetId,
         });
         if (navigationResult.navigated) {
-          showToastMessage('Opened a new branch from this message.', {
-            title: 'Branch Created',
+          showToastMessage(jt('chat.branch.openedToast', 'Opened a new branch from this message.'), {
+            title: jt('chat.branch.createdTitle', 'Branch Created'),
             tone: 'success',
           });
         }
@@ -179,7 +180,7 @@
           messageId: targetId,
           message: error && error.message ? error.message : String(error),
         });
-        showComposerActionError(error, 'Branch Failed');
+        showComposerActionError(error, jt('chat.transcript.branchFailedTitle', 'Branch Failed'));
         return null;
       }
     }

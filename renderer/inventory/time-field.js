@@ -1,7 +1,7 @@
 /**
  * renderer/inventory/time-field.js
  *
- * Inventory time-field primitive — labeled <input type="time"> (UMD).
+ * Inventory time-field primitive — native time or explicit HH:MM entry (UMD).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -11,7 +11,7 @@
   root.inventoryTimeField = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -64,7 +64,10 @@
     var value = sanitizeTimeValue(o.value);
     var step = String(o.step || '').trim();
     var hint = String(o.hint || '').trim();
-    var ariaLabel = String(o.ariaLabel || label || 'Time input');
+    var ariaLabel = String(o.ariaLabel || label || jt('inventory.timeField.inputLabel', 'Time input'));
+    // Native time controls use the OS clock format, ignoring Intl hourCycle.
+    var use24HourTime = globalThis.jennyI18n?.timeOptions?.().hourCycle === 'h23';
+    if (use24HourTime) ariaLabel = jt('inventory.timeField.label24Hour', '{label} (24-hour time)', { label: ariaLabel });
     var cls = 'inv-time-field';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;
@@ -79,7 +82,9 @@
     }
     var control = '<input'
       + (id ? ' id="' + id + '"' : '')
-      + ' type="time"'
+      + (use24HourTime
+        ? ' type="text" placeholder="HH:MM" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"'
+        : ' type="time"')
       + ' class="inv-time-field-control"'
       + (value ? ' value="' + value + '"' : '')
       + ' aria-label="' + escapeHtml(ariaLabel) + '"'

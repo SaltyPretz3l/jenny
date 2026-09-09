@@ -21,6 +21,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var RESET_ARM_TIMEOUT_MS = 5000;
 
   function hasOwn(value, key) {
@@ -49,7 +51,7 @@
   function describeDefault(field) {
     return field.default != null
       ? 'Default ' + field.default + formatUnit(field.unit)
-      : 'Auto = engine decides';
+      : jt('settings.advanced.autoEngineDecides', 'Auto = engine decides');
   }
 
   function createAdvancedTuningSection(deps) {
@@ -99,7 +101,7 @@
         // A field with no sidecar default has to be able to show "unset";
         // inventing a number would read as a value the user chose.
         allowEmpty: field.default == null,
-        placeholder: field.default == null ? 'Auto' : String(field.default),
+        placeholder: field.default == null ? jt('settings.advanced.auto', 'Auto') : String(field.default),
         suffix: field.unit,
         ariaLabel: field.label,
         dataset: { 'tuning-input': field.key },
@@ -115,11 +117,11 @@
         if (actionButton) {
           metaMarkup += actionButton({
             id: 'advancedTuningReset-' + field.key,
-            label: '\u21BA Revert',
+            label: jt('settings.advanced.revertButton', '\u21BA Revert'),
             plain: true,
             className: 'settings-field-reset',
-            ariaLabel: 'Revert ' + field.label + ' to its default',
-            title: 'Revert to default',
+            ariaLabel: jt('settings.advanced.revertFieldAria', 'Revert {label} to its default', { label: field.label }),
+            title: jt('settings.advanced.revertToDefault', 'Revert to default'),
             dataset: { 'tuning-reset': field.key },
           });
         }
@@ -150,7 +152,7 @@
       if (!presets.length || !actionButton) return '';
       var effective = isModified(field) ? Number(lastState.values[field.key]) : field.default;
       var html = '<div class="settings-tuning-presets" role="group" aria-label="'
-        + escapeHtml('Quick picks for ' + field.label) + '">';
+        + escapeHtml(jt('settings.advanced.quickPicksFor', 'Quick picks for {label}', { label: field.label })) + '">';
       for (var i = 0; i < presets.length; i += 1) {
         var preset = presets[i];
         var pressed = effective != null && Number(preset.value) === Number(effective);
@@ -158,7 +160,7 @@
           id: 'advancedTuningPreset-' + field.key + '-' + String(preset.value).replace(/[^0-9a-zA-Z]/g, '_'),
           label: preset.label,
           ariaLabel: field.label + ': ' + preset.label,
-          title: field.label + ' preset: ' + preset.label,
+          title: jt('settings.advanced.presetTitle', '{label} preset: {preset}', { label: field.label, preset: preset.label }),
           variant: 'ghost',
           size: 'sm',
           className: 'settings-tuning-preset' + (pressed ? ' is-pressed' : ''),
@@ -183,7 +185,7 @@
     function buildFieldsMarkup() {
       var groups = Array.isArray(lastState.groups) ? lastState.groups : [];
       var fields = fieldsForScope();
-      if (!fields.length) return '<p class="settings-copy">No tunable settings for this profile.</p>';
+      if (!fields.length) return '<p class="settings-copy">' + escapeHtml(jt('settings.advanced.noTunableSettings', 'No tunable settings for this profile.')) + '</p>';
       var html = '';
       for (var g = 0; g < groups.length; g += 1) {
         var group = groups[g];
@@ -210,11 +212,11 @@
       if (!segmented) return '';
       return segmented({
         id: 'advancedTuningProfile',
-        ariaLabel: 'Tuning profile',
+        ariaLabel: jt('settings.advanced.tuningProfile', 'Tuning profile'),
         value: scope,
         options: [
-          { value: 'local', label: 'Local' },
-          { value: 'cloud', label: 'Cloud' },
+          { value: 'local', label: jt('settings.advanced.local', 'Local') },
+          { value: 'cloud', label: jt('settings.advanced.cloud', 'Cloud') },
         ],
       });
     }
@@ -230,32 +232,32 @@
       return actionButton({
         id: 'advancedTuningResetAll',
         label: armed
-          ? 'Confirm: reset every ' + paneLabel() + ' setting to default'
-          : 'Reset ' + paneLabel() + ' settings to defaults',
-        ariaLabel: (armed ? 'Confirm reset of ' : 'Reset ') + 'every setting on the '
-          + paneLabel() + ' pane, including the shared ones, to its default',
-        title: (armed ? 'Confirm reset of ' : 'Reset ') + 'every setting on the '
-          + paneLabel() + ' pane, including the shared ones, to its default',
+          ? jt('settings.advanced.confirmResetPaneButton', 'Confirm: reset every {pane} setting to default', { pane: paneLabel() })
+          : jt('settings.advanced.resetPaneButton', 'Reset {pane} settings to defaults', { pane: paneLabel() }),
+        ariaLabel: armed ? jt('settings.advanced.confirmResetPane', 'Confirm reset of every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() })
+          : jt('settings.advanced.resetPane', 'Reset every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() }),
+        title: armed ? jt('settings.advanced.confirmResetPane', 'Confirm reset of every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() })
+          : jt('settings.advanced.resetPane', 'Reset every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() }),
         variant: armed ? 'danger' : 'secondary',
         dataset: { 'tuning-reset-all': armed ? 'confirm' : 'arm' },
       });
     }
 
     function paneLabel() {
-      return scope === 'cloud' ? 'Cloud' : 'Local';
+      return scope === 'cloud' ? jt('settings.advanced.cloud', 'Cloud') : jt('settings.advanced.local', 'Local');
     }
 
     function statusMessage() {
       if (lastState.activeStream) {
-        return { tone: 'warning', text: 'Finish the current reply before changing engine limits.' };
+        return { tone: 'warning', text: jt('settings.advanced.finishReplyBeforeChanging', 'Finish the current reply before changing engine limits.') };
       }
       var count = fieldsForScope().filter(isModified).length;
       if (!count) {
-        return { tone: 'default', text: 'All settings are at their engine defaults.' };
+        return { tone: 'default', text: jt('settings.advanced.allDefaults', 'All settings are at their engine defaults.') };
       }
       return {
         tone: 'pending',
-        text: count + (count === 1 ? ' setting differs' : ' settings differ') + ' from the defaults.',
+        text: jtn('settings.advanced.settingsDiffer', count, { count: count }, '{count} setting differs from the defaults.', '{count} settings differ from the defaults.'),
       };
     }
 
@@ -328,7 +330,7 @@
         setState(payload, dom);
       } catch (_error) {
         if (!lifecycleGate.isCurrent(refreshToken)) return;
-        onStatus({ tone: 'danger', text: 'Could not read engine settings.' });
+        onStatus({ tone: 'danger', text: jt('settings.advanced.readFailed', 'Could not read engine settings.') });
       }
     }
 
@@ -372,7 +374,7 @@
         if (result && result.state) setState(result.state, dom);
         else await refresh(dom);
         if (status === 'applied' && result && result.reason === 'deferred') {
-          onStatus({ tone: 'success', text: 'Saved. The engine is not running right now, so this applies the next time it starts.' });
+          onStatus({ tone: 'success', text: jt('settings.advanced.savedForNextStart', 'Saved. The engine is not running right now, so this applies the next time it starts.') });
         }
         if (status && status !== 'applied') {
           var message = describeFailure(result);
@@ -385,7 +387,7 @@
           onStatus({ tone: 'danger', text: message });
         }
       } catch (_error) {
-        onStatus({ tone: 'danger', text: 'Engine settings update failed.' });
+        onStatus({ tone: 'danger', text: jt('settings.advanced.updateFailed', 'Engine settings update failed.') });
       } finally {
         inFlight = false;
         // The result path re-renders (and so re-derives disabled from state);
@@ -396,17 +398,17 @@
 
     function describeFailure(result) {
       var reason = result && result.reason ? String(result.reason) : '';
-      if (reason === 'active_stream') return 'Finish the current reply first.';
-      if (reason === 'invalid_value') return 'That value is outside the allowed range.';
-      if (reason === 'invalid_field') return 'That setting is not recognized.';
-      if (reason === 'update_in_progress') return 'Another change is still applying.';
+      if (reason === 'active_stream') return jt('settings.advanced.finishCurrentReply', 'Finish the current reply first.');
+      if (reason === 'invalid_value') return jt('settings.advanced.valueOutOfRange', 'That value is outside the allowed range.');
+      if (reason === 'invalid_field') return jt('settings.advanced.unrecognizedSetting', 'That setting is not recognized.');
+      if (reason === 'update_in_progress') return jt('settings.advanced.updateInProgress', 'Another change is still applying.');
       if (result && result.status === 'rolled_back') {
-        return 'The engine rejected that value, so the previous setting was restored.';
+        return jt('settings.advanced.rejectedRestored', 'The engine rejected that value, so the previous setting was restored.');
       }
       if (result && result.status === 'degraded') {
-        return 'The change could not be applied or undone. Restart Jenny to resync.';
+        return jt('settings.advanced.applyUndoFailed', 'The change could not be applied or undone. Restart Jenny to resync.');
       }
-      return 'Engine settings update failed.';
+      return jt('settings.advanced.updateFailed', 'Engine settings update failed.');
     }
 
     /* FOUR delegated listeners for the whole surface. */

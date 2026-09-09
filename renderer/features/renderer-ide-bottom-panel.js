@@ -14,6 +14,7 @@
   }
   root.rendererIdeBottomPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -31,10 +32,10 @@
   // renderers (injected); Test Runner routes to its injected renderTestRunner
   // when wired, else falls through to the placeholder (mirrors how Run shipped).
   const VIEWS = [
-    { id: 'terminal', label: 'Terminal' },
-    { id: 'problems', label: 'Problems' },
-    { id: 'run', label: 'Run output' },
-    { id: 'test-runner', label: 'Test Runner' },
+    { id: 'terminal', label: jt('ide.terminal.title', 'Terminal') },
+    { id: 'problems', label: jt('ide.problems.title', 'Problems') },
+    { id: 'run', label: jt('ide.bottomPanel.runOutput', 'Run output') },
+    { id: 'test-runner', label: jt('ide.testRunner.title', 'Test Runner') },
   ];
 
   function resolveActionButton() {
@@ -152,12 +153,12 @@
       // Only role=tab children may live in a tablist, so the view tabs sit in an
       // inner role="tablist" wrapper (display:contents preserves the flex layout)
       // while the collapse button stays a sibling in the role="toolbar" bar.
-      const tablist = `<div class="ide-tablist-group" role="tablist" aria-label="Bottom panel views">${tabs.join('')}</div>`;
+      const tablist = `<div class="ide-tablist-group" role="tablist" aria-label="${escapeHtml(jt('ide.bottomPanel.viewsLabel', 'Bottom panel views'))}">${tabs.join('')}</div>`;
       const collapse = actionButton({
         plain: true,
         className: 'ide-bottom-collapse',
-        ariaLabel: 'Hide bottom panel',
-        title: 'Hide panel (Ctrl+`)',
+        ariaLabel: jt('ide.bottomPanel.hideLabel', 'Hide bottom panel'),
+        title: jt('ide.bottomPanel.hideTitle', 'Hide panel (Ctrl+`)'),
         dataset: { 'ide-bottom-collapse': '1' },
         trustedHtml: COLLAPSE_GLYPH,
       });
@@ -187,8 +188,8 @@
       return actionButton({
         plain: true,
         className: 'ide-bottom-handle-btn',
-        ariaLabel: `Show bottom panel (${label})`,
-        title: `Show panel: ${label} (Ctrl+\`)`,
+        ariaLabel: jt('ide.bottomPanel.showLabel', 'Show bottom panel ({panel})', { panel: label }),
+        title: jt('ide.bottomPanel.showTitle', 'Show panel: {panel} (Ctrl+`)', { panel: label }),
         dataset: { 'ide-bottom-handle': '1' },
         trustedHtml: `${HANDLE_GLYPH}<span class="ide-bottom-handle-label">${escapeHtml(label)}</span>`,
       });
@@ -209,11 +210,11 @@
     // Placeholder for a view with no content renderer yet (Run output). Reuses
     // the rail placeholder visual classes so the bottom panel never looks empty.
     function buildPlaceholderMarkup(view) {
-      const label = escapeHtml((view && view.label) || 'Output');
+      const label = escapeHtml((view && view.label) || jt('ide.bottomPanel.output', 'Output'));
       return `
         <div class="ide-rail-placeholder" data-ide-bottom-placeholder="${escapeHtml((view && view.id) || '')}">
           <div class="ide-rail-placeholder-title">${label}</div>
-          <p class="ide-rail-placeholder-copy">Run a script or task here - the ${label} view lands here.</p>
+          <p class="ide-rail-placeholder-copy">${escapeHtml(jt('ide.bottomPanel.placeholder', 'Run a script or task here - the {view} view lands here.', { view: (view && view.label) || jt('ide.bottomPanel.output', 'Output') }))}</p>
         </div>
       `;
     }

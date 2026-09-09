@@ -11,6 +11,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, inventoryActionButton) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const normalizeId = typeof stringUtils.normalizeId === 'function'
     ? stringUtils.normalizeId
     : function fallbackNormalizeId(value) { return String(value || '').trim(); };
@@ -26,7 +27,7 @@
     const scope = normalizeId(reviewableChange.scope) === 'turn' ? 'turn' : 'change';
     if (!turnId || (scope === 'change' && !changeId)) return '';
     const escape = typeof options?.escapeHtml === 'function' ? options.escapeHtml : escapeHtml;
-    const label = 'Review changes';
+    const label = jt('chat.codeReview.reviewChanges', 'Review changes');
     const dataset = {
       'jenny-code-review': '',
       scope,
@@ -41,7 +42,7 @@
       className: 'jenny-code-review-affordance',
       label,
       ariaLabel: label,
-      title: 'Review this change in the diff panel',
+      title: jt('chat.codeReview.openDiffTitle', 'Review this change in the diff panel'),
       dataset,
       trustedHtml: escape(label),
     });

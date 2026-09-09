@@ -10,7 +10,8 @@
   root.rendererModelTuningDrawer = factory(root, root.inventoryNumberInput, root.rendererModelTuningEngineUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, bundledNumberInput, engineUtils) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var GENERATION_PROFILE_BOUNDS = {
     temperature: { min: 0, max: 2 },
     topP: { min: 0, max: 1 },
@@ -22,27 +23,27 @@
   };
   var FIELD_GROUPS = [
     {
-      title: 'Context and memory',
+      title: jt('models.tuning.contextAndMemory', 'Context and memory'),
       fields: [
-        { key: 'contextLength', label: 'Context window', kind: 'context' },
-        { key: 'ratio', label: 'Summarize at', kind: 'ratio' },
+        { key: 'contextLength', label: jt('models.tuning.contextWindow', 'Context window'), kind: 'context' },
+        { key: 'ratio', label: jt('models.tuning.summarizeAt', 'Summarize at'), kind: 'ratio' },
       ],
     },
     {
-      title: 'Sampling',
+      title: jt('models.tuning.sampling', 'Sampling'),
       fields: [
-        { key: 'temperature', label: 'Temperature', kind: 'profile' },
-        { key: 'topP', label: 'Top P', kind: 'profile' },
-        { key: 'topK', label: 'Top K', kind: 'profile' },
-        { key: 'minP', label: 'Min P', kind: 'profile' },
+        { key: 'temperature', label: jt('models.tuning.temperature', 'Temperature'), kind: 'profile' },
+        { key: 'topP', label: jt('models.tuning.topP', 'Top P'), kind: 'profile' },
+        { key: 'topK', label: jt('models.tuning.topK', 'Top K'), kind: 'profile' },
+        { key: 'minP', label: jt('models.tuning.minP', 'Min P'), kind: 'profile' },
       ],
     },
     {
-      title: 'Repetition and length',
+      title: jt('models.tuning.repetitionAndLength', 'Repetition and length'),
       fields: [
-        { key: 'repetitionPenalty', label: 'Repetition penalty', kind: 'profile' },
-        { key: 'presencePenalty', label: 'Presence penalty', kind: 'profile' },
-        { key: 'maxOutputTokens', label: 'Maximum output', kind: 'profile' },
+        { key: 'repetitionPenalty', label: jt('models.tuning.repetitionPenalty', 'Repetition penalty'), kind: 'profile' },
+        { key: 'presencePenalty', label: jt('models.tuning.presencePenalty', 'Presence penalty'), kind: 'profile' },
+        { key: 'maxOutputTokens', label: jt('models.tuning.maximumOutput', 'Maximum output'), kind: 'profile' },
       ],
     },
   ];
@@ -163,7 +164,7 @@
 
     function formatContextLength(value) {
       var parsed = Number(value) || 0;
-      return parsed ? Math.round(parsed / 1024) + 'K' : 'Model default';
+      return parsed ? Math.round(parsed / 1024) + 'K' : jt('models.tuning.modelDefault', 'Model default');
     }
 
     function resolveProfile() {
@@ -174,7 +175,7 @@
       if (engineType === 'ollama') return 'Ollama';
       if (engineType === 'vllm') return 'vLLM';
       if (engineType === 'openai-compatible') return 'llama-server';
-      return engineType || 'engine unknown';
+      return engineType || jt('models.tuning.engineUnknown', 'engine unknown');
     }
 
     function profileBounds(field) {
@@ -197,7 +198,7 @@
           label: '',
           ariaLabel: definition.label,
           value: String(contextValue || ''),
-          options: [{ value: '', label: 'Model default' }].concat(contextSteps.map(function (step) {
+          options: [{ value: '', label: jt('models.tuning.modelDefault', 'Model default') }].concat(contextSteps.map(function (step) {
             return { value: String(step), label: formatContextLength(step) };
           })),
           disabled: controlsDisabled,
@@ -222,12 +223,12 @@
           max: bounds.max,
           step: step,
           allowEmpty: true,
-          placeholder: 'Model default',
+          placeholder: jt('models.tuning.modelDefault', 'Model default'),
           disabled: controlsDisabled,
           dataset: { 'model-tuning-field': definition.key },
         });
-        range = 'range ' + escapeHtml(Number(bounds.min).toLocaleString('en-US'))
-          + '–' + escapeHtml(Number(bounds.max).toLocaleString('en-US'));
+        range = 'range ' + escapeHtml(Number(bounds.min).toLocaleString(globalThis.jennyI18n?.tag?.()))
+          + '–' + escapeHtml(Number(bounds.max).toLocaleString(globalThis.jennyI18n?.tag?.()));
       }
       return '<div class="model-tuning-row" data-model-tuning-row="' + escapeHtml(definition.key) + '">'
         + '<span class="model-tuning-row-label">' + escapeHtml(definition.label) + '</span>'
@@ -256,12 +257,12 @@
       var selectField = inventory.selectField || windowRef.inventorySelectField;
       var numberInput = inventory.numberInput || windowRef.inventoryNumberInput || bundledNumberInput;
       var actionButton = inventory.actionButton || windowRef.inventoryActionButton;
-      if (!selectField || !numberInput || !actionButton) return '<p>Model tuning controls are unavailable.</p>';
+      if (!selectField || !numberInput || !actionButton) return '<p>' + escapeHtml(jt('models.tuning.controlsUnavailable', 'Model tuning controls are unavailable.')) + '</p>';
       var engineType = resolveEngineType();
       var engineUnknown = !engineType;
       if (engineType && !supportsTuning()) {
-        return '<p class="model-tuning-drawer-copy">Advanced generation tuning is not available for '
-          + '<strong>' + escapeHtml(activeModelId) + '</strong>. This engine owns its generation controls.</p>';
+        return '<p class="model-tuning-drawer-copy">' + escapeHtml(jt('models.tuning.advancedUnavailableFor', 'Advanced generation tuning is not available for'))
+          + ' <strong>' + escapeHtml(activeModelId) + '</strong>' + escapeHtml(jt('models.tuning.engineOwnsControlsSuffix', '. This engine owns its generation controls.')) + '</p>';
       }
       var controlsDisabled = pending || engineUnknown;
       var contextSteps = Array.isArray(activeState?.contextLengthSteps) ? activeState.contextLengthSteps : [];
@@ -276,18 +277,18 @@
         }).join('');
         return '<section class="model-tuning-section">'
           + '<h4 class="model-tuning-section-title">' + escapeHtml(group.title) + '</h4>'
-          + (group.title === 'Context and memory' && (engineUnknown || supportsContextTuning())
-            ? '<p class="model-tuning-section-hint">Larger context windows retain more history and tool output but consume more RAM or VRAM.</p>'
+          + (group.fields[0]?.key === 'contextLength' && (engineUnknown || supportsContextTuning())
+            ? '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.tuning.contextWindowHint', 'Larger context windows retain more history and tool output but consume more RAM or VRAM.')) + '</p>'
             : '')
           + rows
           + '</section>';
       }).join('');
       return ''
         + '<p class="model-tuning-drawer-subtitle">' + escapeHtml(activeModelId) + ' · '
-        + escapeHtml(engineLabel(engineType)) + ' · applies after the runtime confirms</p>'
+        + escapeHtml(engineLabel(engineType)) + ' ' + escapeHtml(jt('models.tuning.appliesAfterRuntimeConfirms', '· applies after the runtime confirms')) + '</p>'
         + (engineUnknown
-          ? '<div class="model-tuning-drawer-warning" role="status"><span>Jenny can\'t verify this model\'s engine yet, so tuning is paused.</span>'
-            + actionButton({ id: 'recheck-model-tuning-engine', label: 'Re-check', variant: 'ghost', size: 'sm' })
+          ? '<div class="model-tuning-drawer-warning" role="status"><span>' + escapeHtml(jt('models.tuning.engineUnverified', 'Jenny can\'t verify this model\'s engine yet, so tuning is paused.')) + '</span>'
+            + actionButton({ id: 'recheck-model-tuning-engine', label: jt('models.tuning.recheck', 'Re-check'), variant: 'ghost', size: 'sm' })
             + '</div>'
           : '')
         // One block-level wrapper: the drawer body is a grid, and a sticky footer
@@ -297,8 +298,8 @@
         + buildEngineSection() + sections
         + '</div>'
         + '<div class="model-tuning-drawer-footer">'
-        + actionButton({ id: 'save-model-tuning', label: pending ? 'Applying…' : 'Apply 0 changes', variant: 'primary', disabled: true })
-        + actionButton({ id: 'reset-model-tuning', label: 'Reset to defaults', variant: 'secondary', disabled: controlsDisabled })
+        + actionButton({ id: 'save-model-tuning', label: pending ? jt('models.tuning.applying', 'Applying…') : jt('models.tuning.applyNoChanges', 'Apply 0 changes'), variant: 'primary', disabled: true })
+        + actionButton({ id: 'reset-model-tuning', label: jt('models.tuning.resetToDefaults', 'Reset to defaults'), variant: 'secondary', disabled: controlsDisabled })
         + '<p class="model-tuning-drawer-status" aria-live="polite">' + escapeHtml(statusMessage) + '</p>'
         + '</div>'
         + '</div>';
@@ -307,7 +308,7 @@
     function recheckEngine() {
       statusMessage = resolveEngineType()
         ? ''
-        : "Still can't verify the engine. Refresh the model list and try again.";
+        : jt('models.tuning.engineStillUnverified', "Still can't verify the engine. Refresh the model list and try again.");
       render();
     }
 
@@ -348,8 +349,8 @@
       var saveButton = host?.querySelector?.('[data-action="save-model-tuning"]');
       if (saveButton) {
         saveButton.textContent = pending
-          ? 'Applying…'
-          : 'Apply ' + dirty.length + (dirty.length === 1 ? ' change' : ' changes');
+          ? jt('models.tuning.applying', 'Applying…')
+          : jtn('models.tuning.applyChanges', dirty.length, { count: dirty.length }, 'Apply {count} change', 'Apply {count} changes');
         saveButton.disabled = pending || !supportsTuning() || dirty.length === 0;
       }
       host?.querySelectorAll?.('[data-model-tuning-row]').forEach(function (row) {
@@ -399,7 +400,7 @@
         (inventory.segmentedControl || windowRef.inventorySegmentedControl)?.select?.(group, 'llama-server');
       } catch (_error) {
         if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-          statusMessage = 'Could not open the file picker.';
+          statusMessage = jt('models.tuning.filePickerFailed', 'Could not open the file picker.');
           render();
         }
       }
@@ -436,7 +437,7 @@
       rendering = true;
       try {
         var opened = drawer.open({
-          title: 'Tune ' + (activeDisplayName || activeModelId),
+          title: jt('models.tuning.tuneModel', 'Tune {model}', { model: activeDisplayName || activeModelId }),
           bodyHtml: buildBodyHtml(),
           restoreFocusTo: returnFocusTarget,
         });
@@ -460,14 +461,14 @@
     async function applyPatch(patch) {
       if (pending || disposed) return false;
       if (!supportsTuning()) {
-        statusMessage = 'This engine owns its generation controls.';
+        statusMessage = jt('models.tuning.engineOwnsControls', 'This engine owns its generation controls.');
         render();
         return false;
       }
       var operationGeneration = generation;
       var operationModelId = activeModelId;
       pending = true;
-      statusMessage = 'Applying and checking the runtime…';
+      statusMessage = jt('models.tuning.applyingCheckingRuntime', 'Applying and checking the runtime…');
       render();
       try {
         var result = await api()?.update?.(Object.assign({ modelId: operationModelId }, patch));
@@ -479,7 +480,7 @@
         return result?.status === 'applied';
       } catch (_error) {
         if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-          statusMessage = 'The change could not be applied.';
+          statusMessage = jt('models.tuning.changeApplyFailed', 'The change could not be applied.');
         }
         return false;
       } finally {
@@ -503,24 +504,22 @@
           if (typeof confirmDialog?.confirm === 'function') {
             try {
               confirmed = await confirmDialog.confirm({
-                title: 'Restart llama-server?',
-                message: streamingCount === 1
-                  ? 'A chat is still streaming. Restarting llama-server will end that response. The new context window only takes effect after a restart.'
-                  : streamingCount + ' chats are still streaming. Restarting llama-server will end those responses. The new context window only takes effect after a restart.',
-                confirmLabel: 'Restart anyway',
-                cancelLabel: 'Not now',
+                title: jt('models.tuning.restartConfirmTitle', 'Restart llama-server?'),
+                message: jtn('models.tuning.restartStreamingWarning', streamingCount, { count: streamingCount }, 'A chat is still streaming. Restarting llama-server will end that response. The new context window only takes effect after a restart.', '{count} chats are still streaming. Restarting llama-server will end those responses. The new context window only takes effect after a restart.'),
+                confirmLabel: jt('models.tuning.restartAnyway', 'Restart anyway'),
+                cancelLabel: jt('models.tuning.notNow', 'Not now'),
                 variant: 'danger',
               });
             } catch (_error) { /* unavailable confirmations cancel safely */ }
           }
           if (!confirmed) {
             if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-              statusMessage = 'Setting saved. The new context window will take effect on the next llama-server restart.';
+              statusMessage = jt('models.tuning.contextSavedNextRestart', 'Setting saved. The new context window will take effect on the next llama-server restart.');
             }
             return false;
           }
         }
-        statusMessage = 'Restarting llama-server…';
+        statusMessage = jt('models.tuning.restartingLlamaServer', 'Restarting llama-server…');
         render();
         var restartResult = null;
         var restartFailed = false;
@@ -543,8 +542,8 @@
         deriveEngineState();
         var restarted = !restartFailed && serverStatus?.ok !== false && engineView?.serving;
         statusMessage = restarted
-          ? 'Restarted llama-server. The new context window is live.'
-          : 'llama-server restart failed. The setting was saved and is not live yet.';
+          ? jt('models.tuning.restartSucceeded', 'Restarted llama-server. The new context window is live.')
+          : jt('models.tuning.restartFailedSettingSaved', 'llama-server restart failed. The setting was saved and is not live yet.');
         return restarted;
       } finally {
         pending = false;
@@ -562,7 +561,7 @@
         return;
       }
       if (resolveEngineType() !== 'openai-compatible' || disposed || !visible) return;
-      statusMessage = 'Saved. The new context window applies the next time llama-server starts.';
+      statusMessage = jt('models.tuning.contextSavedNextStart', 'Saved. The new context window applies the next time llama-server starts.');
       render();
     }
 
@@ -596,7 +595,7 @@
       // Engine write first; the tuning patch follows ONLY when the runtime reflected
       // the entry. `finally` clears pending even for a stale (closed/re-targeted) result.
       var followUp = null;
-      pending = true; statusMessage = 'Applying and checking the runtime…'; render();
+      pending = true; statusMessage = jt('models.tuning.applyingCheckingRuntime', 'Applying and checking the runtime…'); render();
       try {
         var result = await windowRef.jennyShell.engines.updateSettings(request.payload);
         // The write landed: the library (app-wide state) hears it even if this drawer went stale.
@@ -604,16 +603,16 @@
         if (disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId) return;
         var reflected = engineUtils.returnedEntryMatches(result?.localEngines, engineView.key, request.entry);
         if (!reflected) {
-          statusMessage = 'Could not update the engine settings.'; // draft kept: Apply stays live for a retry
+          statusMessage = jt('models.tuning.engineSettingsUpdateFailed', 'Could not update the engine settings.'); // draft kept: Apply stays live for a retry
         } else {
           engineSettings = Object.assign({}, engineSettings || {}, { localEngines: result.localEngines });
           deriveEngineState();
           if (tuningDirty.length) followUp = patch;
-          else statusMessage = 'Applied. Press Use on this model to run it with these settings.';
+          else statusMessage = jt('models.tuning.appliedPressUse', 'Applied. Press Use on this model to run it with these settings.');
         }
       } catch (_error) {
         if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-          statusMessage = 'The engine settings could not be applied.';
+          statusMessage = jt('models.tuning.engineSettingsApplyFailed', 'The engine settings could not be applied.');
         }
       } finally {
         if (!disposed) {
@@ -650,7 +649,7 @@
       activeDisplayName = String(options?.displayName || normalizedModelId).trim() || normalizedModelId;
       engineSettings = null; localGgufs = null; serverStatus = null; engineView = null; engineDraft = null;
       engineHints = options?.engines || null; // the library card's merged engine facts, when opened from a card
-      statusMessage = 'Loading model profile…';
+      statusMessage = jt('models.tuning.loadingProfile', 'Loading model profile…');
       render();
       var requests = [Promise.resolve().then(function () { return api()?.getState?.(); })];
       if (engineSectionEnabled()) requests.push(
@@ -661,7 +660,7 @@
       var results = await Promise.allSettled(requests);
       if (disposed || requestGeneration !== generation) return false;
       activeState = results[0].status === 'fulfilled' && results[0].value && typeof results[0].value === 'object' ? results[0].value : {};
-      statusMessage = results[0].status === 'rejected' ? 'Model profile is unavailable.' : '';
+      statusMessage = results[0].status === 'rejected' ? jt('models.tuning.profileUnavailable', 'Model profile is unavailable.') : '';
       if (requests.length > 1) {
         engineSettings = results[1].status === 'fulfilled' ? results[1].value : null;
         localGgufs = results[2].status === 'fulfilled' ? results[2].value : null;

@@ -65,6 +65,14 @@ test('viewport layout utils measure safe offset and gutter widths', () => {
     preserveFollowLatest: true,
     preserveSurfaceEffectWidths: false,
   });
+  // Opening a queue editor shrinks the timeline without changing its gap to the composer.
+  setRect(chatThreadStage, { top: 0, bottom: 320, height: 320 });
+  setRect(composerWrap, { top: 340, height: 160 });
+  layout.updateComposerSafeOffset({ syncViewport: true });
+  assert.equal(syncCalls.length, 2, 'timeline height changes must synchronize even with an unchanged safe offset');
+  assert.equal(syncCalls[1].options.preserveFollowLatest, true);
+  layout.updateComposerSafeOffset({ syncViewport: true });
+  assert.equal(syncCalls.length, 2, 'unchanged layout does not reschedule scrolling');
 });
 
 function withFakeResizeObserverAndRaf(run) {

@@ -699,7 +699,7 @@ test('skills service returns isolated state snapshots', () => {
   assert.equal(nextState.counts.total, 1);
 });
 
-test('phase7D bundled skills are pruned to the supported six', () => {
+test('bundled skills match the supported catalog', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-skills-service-phase7d-'));
   trackDirectory(userDataPath);
   const configService = new ShellConfigService({ userDataPath });
@@ -715,11 +715,12 @@ test('phase7D bundled skills are pruned to the supported six', () => {
     'claude_code_delegation',
     'deep_research',
     'humanizer',
+    'insight',
     'meeting_notes',
-    'mermaid-artifact-workflow',
+    'po-review',
     'verification-specialist',
   ]);
-  const textOnly = new Set(['claude_code_delegation', 'deep_research', 'humanizer', 'meeting_notes']);
+  const textOnly = new Set(['claude_code_delegation', 'deep_research', 'humanizer', 'insight', 'meeting_notes']);
 
   const state = service.getState();
   const byDir = new Map(

@@ -87,6 +87,9 @@
       changed = writeSendLifecycle(chatView, currentLifecycle) || changed;
       changed = writeSendLifecycle(composerWrap, currentLifecycle) || changed;
       changed = writeSendLifecycle(composer, currentLifecycle) || changed;
+      if (typeof windowRef.rendererRemoteControlBannerSync === 'function') {
+        windowRef.rendererRemoteControlBannerSync();
+      }
       if (typeof onSurfaceLifecycleSync === 'function') {
         onSurfaceLifecycleSync({ sessionId: state.currentSessionId });
       }

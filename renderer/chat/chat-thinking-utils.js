@@ -540,7 +540,29 @@
     return matches[matches.length - 1] || null;
   }
 
+  function syncLiveReasoningStatusLabel(chatTimeline, options = {}) {
+    const { thinkingText, thinkingId } = options;
+    const el = resolveLiveReasoningStatusRow(chatTimeline, options);
+    if (!el || !thinkingId) return;
+    const cleanedText = String(thinkingText || '').trim();
+    const iterMatch = cleanedText.match(/^Starting iteration (\d+)\/(\d+)/);
+    if (iterMatch) {
+      if (el.getAttribute('data-reasoning-iteration') !== iterMatch[1]) {
+        el.setAttribute('data-reasoning-iteration', iterMatch[1]);
+      }
+      return;
+    }
+    const main = el.querySelector('.reasoning-row-main');
+    if (!main || !cleanedText) return;
+    // Live deltas use the same plain-text heading grammar as settled rows.
+    const labelText = markdownToPlainReasoningLabel(cleanedText);
+    if (!labelText) return;
+    if (main.textContent !== labelText) main.textContent = labelText;
+    if (!main.classList.contains('shimmer-active')) main.classList.add('shimmer-active');
+  }
+
   return {
+    syncLiveReasoningStatusLabel,
     DEFAULT_SCROLL_THRESHOLD,
     clearLiveReasoningShimmer,
     PAUSE_REASON_READER_AWAY,

@@ -1,3 +1,4 @@
+const { HOST_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const { SidecarClient } = require('./sidecar-client');
 const {
   handleMonitorNotification,
@@ -113,6 +114,10 @@ async function initializeManagedSidecar(
   { signal = null, timeoutMs = null, onProgress = null, applyResult = true } = {}
 ) {
   ensureSidecarClientAttached(service);
+  const initializingProcess = service.sidecarManager.process;
+  if (service.hostMode === 'server') service._hostedPolicyProcess = null;
+  const desktopSandboxEnabled = service.configService?.getState?.()?.commandSandbox?.enabled === true;
+  service._desktopPolicyProcess = null;
   const telemetrySettings = getConfiguredTelemetrySettings(service);
   const payload = await service.sidecarClient.initialize({
     config: buildManagedSidecarConfig(service, { telemetrySettings }),
@@ -123,6 +128,44 @@ async function initializeManagedSidecar(
     timeoutMs,
     onProgress,
   });
+  if (service.hostMode === 'server') {
+    const expectedVersion = Number(
+      service.options?.hostExecutionPolicyVersion ?? service.hostExecutionPolicyVersion ?? 1
+    );
+    const worker = service.hostExecutionBroker || service.options?.hostExecutionBroker || null;
+    const workerAvailable = worker?.status?.().available === true;
+    if (signal?.aborted || !initializingProcess || service.sidecarManager.process !== initializingProcess
+      || payload?.host_execution_policy_version !== expectedVersion
+      || (expectedVersion === 2
+        && (!workerAvailable || payload?.host_execution_worker_enabled !== true))) {
+      service._emitServiceLog('ERROR', 'backend.host_execution_policy_missing', { expectedVersion });
+      const error = new Error('Hosted sidecar execution policy is unavailable.');
+      Object.assign(error, { error_code: HOST_ERROR_CODES.INVALID, category: 'policy', retryable: false });
+      throw error;
+    }
+    if (payload.feature_flags?.multiplexer !== true || payload.feature_flags?.chat_cancel !== true) {
+      service._emitServiceLog('ERROR', 'backend.host_transport_missing', {});
+      const error = new Error('Hosted sidecar streaming and cancellation are unavailable.');
+      Object.assign(error, { error_code: HOST_ERROR_CODES.UNAVAILABLE, category: 'transport', retryable: false });
+      throw error;
+    }
+    if (payload.active_engine !== service.options?.modelEndpoint?.engine) {
+      service._emitServiceLog('ERROR', 'backend.host_engine_mismatch', {});
+      const error = new Error('Configured hosted model endpoint is unavailable.');
+      Object.assign(error, { error_code: HOST_ERROR_CODES.UNAVAILABLE, category: 'engine', retryable: true });
+      throw error;
+    }
+    service._hostedPolicyProcess = initializingProcess;
+  }
+  if (desktopSandboxEnabled) {
+    if (signal?.aborted || !initializingProcess || service.sidecarManager.process !== initializingProcess
+      || payload?.desktop_execution_policy_version !== 1) {
+      throw Object.assign(new Error('Desktop sandbox policy acknowledgement missing.'), {
+        error_code: TOOL_ERROR_CODES.POLICY_DENIED, reason: 'sandbox_policy_unacknowledged', retryable: false,
+      });
+    }
+    service._desktopPolicyProcess = initializingProcess;
+  }
   return applyResult ? applyManagedInitializePayload(service, payload) : payload;
 }
 

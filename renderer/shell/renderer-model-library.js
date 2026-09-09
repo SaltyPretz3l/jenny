@@ -8,6 +8,7 @@
   root.rendererModelLibrary = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var GROUP_ID = 'modelLibraryGroup';
   var MODEL_LOAD_TIMEOUT_MS = 120000;
@@ -113,40 +114,40 @@
     var localInferenceEligible = entry.engineType === 'ollama' || entry.engineType === 'vllm';
     var isLocalInferenceModel = localInferenceEligible
       && canonicalOllamaTag(entry.id) === canonicalOllamaTag(preferredLocalModel);
-    var localBadgeHtml = isLocalInferenceModel ? '<span class="settings-badge">Local inference</span>' : '';
+    var localBadgeHtml = isLocalInferenceModel ? '<span class="settings-badge">' + escapeHtml(jt('models.library.localInference', 'Local inference')) + '</span>' : '';
     // State-or-action: the designated model shows only the "Local inference"
     // badge; the select action renders only on the other eligible models.
     var localActionHtml = (localInferenceEligible && !isLocalInferenceModel) ? actionButton({
       plain: true,
       className: 'settings-secondary',
-      label: pendingLocalModelId === entry.id ? 'Selecting…' : 'Use for local inference',
-      ariaLabel: 'Use ' + entry.id + ' for local inference',
-      title: 'Set as the model used for local inference',
+      label: pendingLocalModelId === entry.id ? jt('models.library.selecting', 'Selecting…') : jt('models.library.useForLocalInference', 'Use for local inference'),
+      ariaLabel: jt('models.library.useModelForLocalInference', 'Use {model} for local inference', { model: entry.id }),
+      title: jt('models.library.useForLocalInferenceTitle', 'Set as the model used for local inference'),
       disabled: Boolean(pendingLocalModelId) || runtimeBusy || !entry.available,
       dataset: { 'model-library-action': 'select-local-inference', 'model-id': entry.id },
     }) : '';
     var runtimeLabel = isActive
-      ? (pendingRuntimeAction === 'unload' ? 'Unloading…' : 'Unload')
+      ? (pendingRuntimeAction === 'unload' ? jt('models.library.unloading', 'Unloading…') : jt('models.library.unload', 'Unload'))
       : (pendingRuntimeAction === 'load' && pendingRuntimeModelId === entry.id
-        ? (activeModel ? 'Switching…' : 'Loading…')
-        : (activeModel ? 'Switch' : 'Load'));
+        ? (activeModel ? jt('models.library.switching', 'Switching…') : jt('models.library.loading', 'Loading…'))
+        : (activeModel ? jt('models.library.switch', 'Switch') : jt('models.library.load', 'Load')));
     var runtimeActionHtml = actionButton({
       plain: true,
       className: isActive ? 'settings-secondary' : 'settings-primary',
       label: runtimeLabel,
-      ariaLabel: (isActive ? 'Unload ' : (activeModel ? 'Switch to ' : 'Load ')) + entry.id,
+      ariaLabel: isActive ? jt('models.library.unloadModel', 'Unload {model}', { model: entry.id }) : (activeModel ? jt('models.library.switchToModel', 'Switch to {model}', { model: entry.id }) : jt('models.library.loadModel', 'Load {model}', { model: entry.id })),
       title: isActive
-        ? 'Unload this model from the runtime'
-        : (activeModel ? 'Switch the active model to this one' : 'Load this model into the runtime'),
+        ? jt('models.library.unloadTitle', 'Unload this model from the runtime')
+        : (activeModel ? jt('models.library.switchTitle', 'Switch the active model to this one') : jt('models.library.loadTitle', 'Load this model into the runtime')),
       disabled: runtimeBusy || (!isActive && !entry.available),
       dataset: { 'model-library-action': isActive ? 'unload' : 'load', 'model-id': entry.id },
     });
     var removeActionHtml = isActive ? '' : actionButton({
         plain: true,
         className: 'settings-secondary model-library-remove-btn',
-        label: isPendingDelete ? 'Removing…' : 'Remove',
-        ariaLabel: 'Remove ' + entry.id,
-        title: 'Delete this model from disk (cannot be undone)',
+        label: isPendingDelete ? jt('models.library.removing', 'Removing…') : jt('common.remove', 'Remove'),
+        ariaLabel: jt('models.library.removeModel', 'Remove {model}', { model: entry.id }),
+        title: jt('models.library.removeTitle', 'Delete this model from disk (cannot be undone)'),
         disabled: isPendingDelete || runtimeBusy,
         dataset: { 'model-library-action': 'remove', 'model-id': entry.id },
       });
@@ -155,9 +156,9 @@
     var tuneActionHtml = tuningSupported ? actionButton({
       plain: true,
       className: 'settings-secondary',
-      label: 'Tune',
-      ariaLabel: 'Tune ' + entry.id,
-      title: 'Open per-model tuning parameters',
+      label: jt('models.library.tune', 'Tune'),
+      ariaLabel: jt('models.library.tuneModel', 'Tune {model}', { model: entry.id }),
+      title: jt('models.library.tuneTitle', 'Open per-model tuning parameters'),
       disabled: runtimeBusy,
       dataset: { 'model-library-action': 'tune', 'model-id': entry.id },
     }) : '';
@@ -166,17 +167,17 @@
     var tuningPending = pendingTuningModelId === entry.id;
     var advancedOpen = Array.isArray(openAdvancedModelIds) && openAdvancedModelIds.includes(entry.id);
     var timeoutOptions = [
-      { value: '', label: 'Automatic' },
-      { value: '60', label: '60 seconds' },
-      { value: '120', label: '120 seconds' },
-      { value: '180', label: '180 seconds' },
-      { value: '300', label: '300 seconds' },
+      { value: '', label: jt('models.library.timeoutAutomatic', 'Automatic') },
+      { value: '60', label: jt('models.library.timeout60Seconds', '60 seconds') },
+      { value: '120', label: jt('models.library.timeout120Seconds', '120 seconds') },
+      { value: '180', label: jt('models.library.timeout180Seconds', '180 seconds') },
+      { value: '300', label: jt('models.library.timeout300Seconds', '300 seconds') },
     ];
     var timeoutSelect = resolveSelectField()({
-      label: 'Stream inactivity timeout',
+      label: jt('models.library.streamInactivityTimeout', 'Stream inactivity timeout'),
       value: timeoutValue == null ? '' : String(timeoutValue),
       options: timeoutOptions,
-      ariaLabel: 'Stream inactivity timeout for ' + entry.id,
+      ariaLabel: jt('models.library.streamInactivityTimeoutFor', 'Stream inactivity timeout for {model}', { model: entry.id }),
       className: 'model-library-timeout-field',
       dataset: {
         'model-library-action': 'stream-timeout',
@@ -185,7 +186,7 @@
     });
     var pendingCopy = tuningPending
       ? 'Saving…'
-      : 'Applies the next time the model runtime initializes.';
+      : jt('models.library.appliesNextRuntime', 'Applies the next time the model runtime initializes.');
     return ''
       + '<div class="settings-field-row model-library-row" data-model-id="' + escapeHtml(entry.id) + '">'
       + '<div class="settings-field-row-text">'
@@ -199,7 +200,7 @@
       + '<details class="model-library-advanced"' + (advancedOpen ? ' open' : '') + '>'
       + '<summary aria-label="Advanced settings for ' + escapeHtml(entry.id) + '">Advanced</summary>'
       + '<div class="model-library-advanced-body">'
-      + '<p class="settings-field-description">How long this model may stay silent between streamed chunks.</p>'
+      + '<p class="settings-field-description">' + escapeHtml(jt('models.library.streamTimeoutHint', 'How long this model may stay silent between streamed chunks.')) + '</p>'
       + timeoutSelect
       + '<p class="settings-note model-library-apply-note" aria-live="polite">' + escapeHtml(pendingCopy) + '</p>'
       + '</div></details>'
@@ -213,12 +214,12 @@
     return stepModal.renderStepModal({
       id: 'model-library-confirm-delete',
       tone: 'danger',
-      title: 'Remove model?',
-      summary: 'This deletes "' + modelId + '" from your local engine (ollama rm). This cannot be undone.',
+      title: jt('models.library.removeConfirmTitle', 'Remove model?'),
+      summary: jt('models.library.removeConfirmSummary', 'This deletes "{model}" from your local engine (ollama rm). This cannot be undone.', { model: modelId }),
       bodyHtml: '',
       actions: [
-        { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-        { id: 'confirm', label: 'Remove', variant: 'danger' },
+        { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+        { id: 'confirm', label: jt('common.remove', 'Remove'), variant: 'danger' },
       ],
     });
   }
@@ -239,7 +240,7 @@
           view.pendingLocalModelId
         );
       }).join('')
-      : '<p class="settings-note">No local models installed yet.</p>';
+      : '<p class="settings-note">' + escapeHtml(jt('models.library.noLocalModels', 'No local models installed yet.')) + '</p>';
 
     var actionButton = resolveActionButton();
     var pullDisabled = view.pullStatus === 'running';
@@ -247,7 +248,7 @@
       ? actionButton({
         plain: true,
         className: 'settings-secondary',
-        label: 'Cancel',
+        label: jt('common.cancel', 'Cancel'),
         dataset: { 'model-library-action': 'cancel-pull' },
       })
       : '';
@@ -264,20 +265,20 @@
 
     return ''
       + '<div class="settings-group model-library-group" role="group" aria-labelledby="modelLibraryHeading" id="' + GROUP_ID + '">'
-      + '<h4 class="settings-group-heading" id="modelLibraryHeading">Model library</h4>'
-      + '<p class="settings-group-copy">Load, switch, unload, pull, tune, or remove models on your local engine.</p>'
+      + '<h4 class="settings-group-heading" id="modelLibraryHeading">' + escapeHtml(jt('models.library.heading', 'Model library')) + '</h4>'
+      + '<p class="settings-group-copy">' + escapeHtml(jt('models.library.description', 'Load, switch, unload, pull, tune, or remove models on your local engine.')) + '</p>'
       + '<div class="model-library-list">' + rowsHtml + '</div>'
       + '<div class="settings-field-row model-library-pull-row">'
       + '<div class="settings-field-row-text">'
       + '<label class="settings-field-label" for="modelLibraryPullInput">Pull a model</label>'
-      + '<p class="settings-field-description">Enter any Ollama model tag (e.g. hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M).</p>'
+      + '<p class="settings-field-description">' + escapeHtml(jt('models.library.tagHint', 'Enter any Ollama model tag (e.g. hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M).')) + '</p>'
       + '</div>'
       + resolveTextField()({
         id: 'modelLibraryPullInput',
-        placeholder: 'hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M',
+        placeholder: jt('models.library.modelTagPlaceholder', 'hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M'),
         value: view.pullInputValue || '',
         disabled: pullDisabled,
-        ariaLabel: 'Model tag to pull',
+        ariaLabel: jt('models.library.modelTagToPull', 'Model tag to pull'),
         className: 'model-library-pull-input',
       })
       + '</div>'
@@ -285,7 +286,7 @@
       + actionButton({
         plain: true,
         className: 'settings-primary',
-        label: pullDisabled ? 'Pulling…' : 'Pull',
+        label: pullDisabled ? jt('models.library.pulling', 'Pulling…') : jt('models.library.pull', 'Pull'),
         disabled: pullDisabled,
         dataset: { 'model-library-action': 'pull' },
       })
@@ -454,8 +455,8 @@
             if (modelList.available === false && !view.statusMessage) {
               var reason = boundedErrorMessage(modelList.reason, '');
               view.statusMessage = reason
-                ? 'Local engine unavailable: ' + reason + ' Use Ollama engine health below or Diagnostics.'
-                : 'Local engine unavailable. Use Ollama engine health below or Diagnostics.';
+                ? jt('models.library.engineUnavailableWithReason', 'Local engine unavailable: {reason} Use Ollama engine health below or Diagnostics.', { reason: reason })
+                : jt('models.library.engineUnavailable', 'Local engine unavailable. Use Ollama engine health below or Diagnostics.');
             }
           }
         })
@@ -517,21 +518,21 @@
       }
       if (payload.status === 'completed') {
         view.pullStatus = 'idle';
-        view.statusMessage = 'Pull complete: ' + view.pullInputValue + '.';
+        view.statusMessage = jt('models.library.pullComplete', 'Pull complete: {model}.', { model: view.pullInputValue });
         teardownPullSubscription();
         refreshModelListAndPickers();
         return;
       }
       if (payload.status === 'failed') {
         view.pullStatus = 'idle';
-        view.statusMessage = boundedErrorMessage(payload.error || payload.summary, 'Pull failed.');
+        view.statusMessage = boundedErrorMessage(payload.error || payload.summary, jt('models.library.pullFailed', 'Pull failed.'));
         teardownPullSubscription();
         render();
         return;
       }
       if (payload.status === 'cancelled') {
         view.pullStatus = 'idle';
-        view.statusMessage = 'Pull cancelled.';
+        view.statusMessage = jt('models.library.pullCancelled', 'Pull cancelled.');
         teardownPullSubscription();
         render();
         return;
@@ -554,13 +555,13 @@
 
     function handleStartPull() {
       if (!setupService) {
-        view.statusMessage = 'Pull is unavailable right now.';
+        view.statusMessage = jt('models.library.pullUnavailable', 'Pull is unavailable right now.');
         render();
         return;
       }
       var tag = readPullInput();
       if (!tag) {
-        view.statusMessage = 'Enter a model tag first.';
+        view.statusMessage = jt('models.library.enterTagFirst', 'Enter a model tag first.');
         render();
         return;
       }
@@ -570,7 +571,7 @@
       view.pullPercent = 0;
       view.pullBytes = 0;
       view.pullTotalBytes = 0;
-      view.pullSummary = 'Starting Ollama pull.';
+      view.pullSummary = jt('models.library.startingOllamaPull', 'Starting Ollama pull.');
       view.statusMessage = '';
       render();
       teardownPullSubscription();
@@ -583,7 +584,7 @@
           }
           if (result && result.status === 'failed') {
             view.pullStatus = 'idle';
-            view.statusMessage = boundedErrorMessage(result.error || result.message || result.summary, 'Could not start the pull.');
+            view.statusMessage = boundedErrorMessage(result.error || result.message || result.summary, jt('models.library.pullStartFailed', 'Could not start the pull.'));
             teardownPullSubscription();
             render();
           }
@@ -591,7 +592,7 @@
         .catch(function (error) {
           if (disposed) return;
           view.pullStatus = 'idle';
-          view.statusMessage = boundedErrorMessage(error, 'Could not start the pull.');
+          view.statusMessage = boundedErrorMessage(error, jt('models.library.pullStartFailed', 'Could not start the pull.'));
           teardownPullSubscription();
           appendClientLog('WARN', 'model_library.pull_start_failed', { message: view.statusMessage });
           render();
@@ -604,12 +605,12 @@
       }
       setupService.cancelOllamaPull({ requestId: view.pullRequestId, model: view.pullInputValue }).then(function (result) {
           if (disposed) return;
-          if (!result || result.cancelled !== true) { view.statusMessage = boundedErrorMessage(result && (result.error || result.message), 'Could not cancel the pull.'); appendClientLog('WARN', 'model_library.pull_cancel_failed', { message: view.statusMessage }); render(); return; }
-          view.pullStatus = 'idle'; view.statusMessage = 'Pull cancelled.'; teardownPullSubscription(); render();
+          if (!result || result.cancelled !== true) { view.statusMessage = boundedErrorMessage(result && (result.error || result.message), jt('models.library.pullCancelFailed', 'Could not cancel the pull.')); appendClientLog('WARN', 'model_library.pull_cancel_failed', { message: view.statusMessage }); render(); return; }
+          view.pullStatus = 'idle'; view.statusMessage = jt('models.library.pullCancelled', 'Pull cancelled.'); teardownPullSubscription(); render();
         })
         .catch(function (error) {
           if (disposed) return;
-          view.statusMessage = boundedErrorMessage(error, 'Could not cancel the pull.'); appendClientLog('WARN', 'model_library.pull_cancel_failed', { message: view.statusMessage }); render();
+          view.statusMessage = boundedErrorMessage(error, jt('models.library.pullCancelFailed', 'Could not cancel the pull.')); appendClientLog('WARN', 'model_library.pull_cancel_failed', { message: view.statusMessage }); render();
         });
     }
 
@@ -640,19 +641,19 @@
       var activeModel = readActiveModel();
       var entry = view.models.find(function (candidate) { return candidate.id === modelId; });
       if (action === 'load' && (!entry || entry.available === false)) {
-        view.statusMessage = entry && entry.reason ? entry.reason : 'That model is unavailable right now.';
+        view.statusMessage = entry && entry.reason ? entry.reason : jt('models.library.modelUnavailable', 'That model is unavailable right now.');
         render();
         return;
       }
       if (action === 'unload' && canonicalOllamaTag(activeModel) !== canonicalOllamaTag(modelId)) {
-        view.statusMessage = 'The loaded model changed. Refreshing the model library.';
+        view.statusMessage = jt('models.library.loadedModelChanged', 'The loaded model changed. Refreshing the model library.');
         refreshModelListAndPickers();
         return;
       }
       var modelsBridge = windowRef.jennyShell && windowRef.jennyShell.models;
       var invoke = action === 'unload' ? modelsBridge && modelsBridge.unload : modelsBridge && modelsBridge.load;
       if (typeof invoke !== 'function') {
-        view.statusMessage = 'Model lifecycle controls are unavailable right now.';
+        view.statusMessage = jt('models.library.lifecycleUnavailable', 'Model lifecycle controls are unavailable right now.');
         render();
         return;
       }
@@ -662,7 +663,7 @@
       view.pendingRuntimeModelId = modelId;
       view.statusMessage = action === 'unload'
         ? 'Unloading "' + modelId + '"…'
-        : (switching ? 'Switching to "' + modelId + '"…' : 'Loading "' + modelId + '"…');
+        : (switching ? jt('models.library.switchingTo', 'Switching to "{model}"…', { model: modelId }) : 'Loading "' + modelId + '"…');
       render();
       var payload = entry && entry.engineType
         ? { model: entry.id, engine_type: entry.engineType }
@@ -671,16 +672,16 @@
         function () { return action === 'unload' ? invoke() : invoke(payload); },
         action === 'unload' ? MODEL_UNLOAD_TIMEOUT_MS : MODEL_LOAD_TIMEOUT_MS,
         action === 'unload'
-          ? 'The unload request timed out. Model state will be re-checked.'
-          : 'The load request timed out. Model state will be re-checked.'
+          ? jt('models.library.unloadTimeout', 'The unload request timed out. Model state will be re-checked.')
+          : jt('models.library.loadTimeout', 'The load request timed out. Model state will be re-checked.')
       )
         .then(function () {
           if (disposed || operationId !== runtimeOperationId) return;
           view.pendingRuntimeAction = '';
           view.pendingRuntimeModelId = '';
           view.statusMessage = action === 'unload'
-            ? 'Model unloaded.'
-            : (switching ? 'Switched to "' + modelId + '".' : 'Loaded "' + modelId + '".');
+            ? jt('models.library.modelUnloaded', 'Model unloaded.')
+            : (switching ? jt('models.library.switchedTo', 'Switched to "{model}".', { model: modelId }) : 'Loaded "' + modelId + '".');
           appendClientLog('INFO', action === 'unload' ? 'models.unloaded' : 'models.loaded', { model: modelId });
           return refreshModelListAndPickers();
         })
@@ -688,7 +689,7 @@
           if (disposed || operationId !== runtimeOperationId) return;
           view.pendingRuntimeAction = '';
           view.pendingRuntimeModelId = '';
-          var message = boundedErrorMessage(error, action === 'unload' ? 'Could not unload the model.' : 'Could not load the model.');
+          var message = boundedErrorMessage(error, action === 'unload' ? jt('models.library.unloadFailed', 'Could not unload the model.') : jt('models.library.loadFailed', 'Could not load the model.'));
           view.statusMessage = message;
           appendClientLog('WARN', action === 'unload' ? 'model_library.unload_failed' : 'model_library.load_failed', {
             model: modelId,
@@ -706,7 +707,7 @@
     function handleLocalInferenceSelection(modelId) {
       if (!modelId || view.pendingLocalModelId) return;
       var update = windowRef.jennyShell?.offline?.updateSettings;
-      if (typeof update !== 'function') { view.statusMessage = 'Local inference selection is unavailable right now.'; render(); return; }
+      if (typeof update !== 'function') { view.statusMessage = jt('models.library.localInferenceUnavailable', 'Local inference selection is unavailable right now.'); render(); return; }
       view.pendingLocalModelId = modelId; render();
       Promise.resolve(update({ preferredLocalModel: modelId })).then(function (payload) {
         if (disposed) return;
@@ -714,10 +715,10 @@
         if (canonicalOllamaTag(selected) !== canonicalOllamaTag(modelId)) throw new Error('Local inference selection was not acknowledged.');
         state.offline = { ...(state.offline || {}), ...payload };
         view.preferredLocalModel = selected; view.pendingLocalModelId = '';
-        view.statusMessage = 'Selected "' + modelId + '" for local inference.'; render();
+        view.statusMessage = jt('models.library.selectedForLocalInference', 'Selected "{model}" for local inference.', { model: modelId }); render();
       }).catch(function (error) {
         if (disposed) return;
-        view.pendingLocalModelId = ''; view.statusMessage = boundedErrorMessage(error, 'Could not select the local inference model.');
+        view.pendingLocalModelId = ''; view.statusMessage = boundedErrorMessage(error, jt('models.library.localInferenceSelectFailed', 'Could not select the local inference model.'));
         appendClientLog('WARN', 'model_library.local_inference_selection_failed', { model: modelId, message: view.statusMessage }); render();
       });
     }
@@ -733,7 +734,7 @@
       var update = windowRef.jennyShell && windowRef.jennyShell.modelTuning
         && windowRef.jennyShell.modelTuning.update;
       if (!modelId || typeof update !== 'function') {
-        view.statusMessage = 'Model tuning is unavailable right now.';
+        view.statusMessage = jt('models.library.tuningUnavailable', 'Model tuning is unavailable right now.');
         render();
         return;
       }
@@ -759,22 +760,22 @@
           if (!result || (result.status && result.status !== 'applied')) {
             view.modelTuning = previousTuning;
             view.pendingTuningModelId = '';
-            view.statusMessage = 'Stream timeout was not saved: '
-              + String(result.reason || 'validation failed').replaceAll('_', ' ') + '.';
+            view.statusMessage = jt('models.library.streamTimeoutNotSaved', 'Stream timeout was not saved: {reason}.',
+              { reason: String(result.reason || 'validation failed').replaceAll('_', ' ') });
             render();
             return;
           }
           var tuning = result?.state || result;
           view.modelTuning = tuning && typeof tuning === 'object' ? tuning : view.modelTuning;
           view.pendingTuningModelId = '';
-          view.statusMessage = 'Stream timeout saved for "' + modelId + '". It applies on the next runtime initialization.';
+          view.statusMessage = jt('models.library.streamTimeoutSaved', 'Stream timeout saved for "{model}". It applies on the next runtime initialization.', { model: modelId });
           render();
         })
         .catch(function (error) {
           if (disposed) return;
           view.modelTuning = previousTuning;
           view.pendingTuningModelId = '';
-          view.statusMessage = boundedErrorMessage(error, 'Could not save model tuning.');
+          view.statusMessage = boundedErrorMessage(error, jt('models.library.tuningSaveFailed', 'Could not save model tuning.'));
           render();
         });
     }
@@ -793,7 +794,7 @@
       }
       var stillExists = view.models.some(function (entry) { return entry.id === modelId; });
       if (!stillExists) {
-        view.statusMessage = '"' + modelId + '" is no longer in the model list.';
+        view.statusMessage = jt('models.library.noLongerListed', '"{model}" is no longer in the model list.', { model: modelId });
         render();
         return;
       }
@@ -802,7 +803,7 @@
       var deleteFn = windowRef.jennyShell && windowRef.jennyShell.models && windowRef.jennyShell.models.delete;
       if (typeof deleteFn !== 'function') {
         view.pendingDeleteId = '';
-        view.statusMessage = 'Delete is unavailable right now.';
+        view.statusMessage = jt('models.library.deleteUnavailable', 'Delete is unavailable right now.');
         render();
         return;
       }
@@ -816,21 +817,21 @@
           }
           var code = result && result.code;
           if (code === 'model_in_use') {
-            view.statusMessage = '"' + modelId + '" is currently loaded. Unload it first.';
+            view.statusMessage = jt('models.library.currentlyLoaded', '"{model}" is currently loaded. Unload it first.', { model: modelId });
           } else if (code === 'not_found') {
-            view.statusMessage = '"' + modelId + '" was already removed.';
+            view.statusMessage = jt('models.library.alreadyRemoved', '"{model}" was already removed.', { model: modelId });
             return refreshModelListAndPickers();
           } else if (code === 'invalid_tag') {
-            view.statusMessage = 'That model tag is not valid.';
+            view.statusMessage = jt('models.library.invalidTag', 'That model tag is not valid.');
           } else {
-            view.statusMessage = boundedErrorMessage(result && result.message, 'Could not remove that model.');
+            view.statusMessage = boundedErrorMessage(result && result.message, jt('models.library.removeFailed', 'Could not remove that model.'));
           }
           render();
         })
         .catch(function (error) {
           if (disposed) return;
           view.pendingDeleteId = '';
-          view.statusMessage = boundedErrorMessage(error, 'Could not remove that model.');
+          view.statusMessage = boundedErrorMessage(error, jt('models.library.removeFailed', 'Could not remove that model.'));
           appendClientLog('WARN', 'model_library.delete_failed', { message: view.statusMessage });
           render();
         });

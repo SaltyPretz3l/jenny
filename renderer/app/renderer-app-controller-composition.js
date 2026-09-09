@@ -1,4 +1,5 @@
 (function (root) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createControllerComposition(ctx) {
     let result = null;
     with (ctx) {
@@ -128,6 +129,7 @@
     syncComposerInputHeight = noop,
     syncComposerModelSelectWidth = noop,
   } = settingsShellController || {});
+  window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
   /* logRendererController */
   const logRenderUtils = window.rendererDiagnosticsRenderUtils || {};
   const logRendererController = logRenderUtils.createLogRenderer?.({
@@ -152,10 +154,9 @@
     setActiveSettingsSection: (sectionId) => openSettingsSection(sectionId),
     /* EH-W10: flag-gated intake route (error-center only). */
     reportError: (...a) => reportErrorWhenActive(...a),
+    showToastMessage: (...a) => showToastMessage(...a),
     /* EH-W11: badge + Recent errors popover section; optional. */
     errorCenterStore,
-    /* Linux decision 2: one sticky no-sandbox notice per profile, raised from the status poll. */
-    showToastMessage: (...a) => showToastMessage(...a),
   }) || null;
   if (healthPillController) {
     registerRendererCleanup(() => healthPillController.dispose?.());
@@ -194,15 +195,6 @@
   }) || null;
   registerRendererCleanup(() => headerController?.dispose?.());
   const { renderHeader: _extRenderHeader = noop } = headerController || {};
-  /* suggestionController */
-  const suggestionUtils = globalThis.rendererSuggestionUtils || {};
-  const suggestionController = suggestionUtils.createSuggestionController?.({
-    state, staticModel,
-    dom: { promptGrid },
-    callbacks: { escapeHtml },
-  }) || null;
-  const { renderPrompts: _extRenderPrompts = noop, stopFallbackRotation: _extStopFallbackRotation = noop } = suggestionController || {};
-  registerRendererCleanup(() => _extStopFallbackRotation());
   // B7a: bind the inline interactive batch-row builder once (it needs the
   // session pending batch + draft + question-state helpers, all in ctx) and
   // forward it to the render pipeline -> createTurnRowRenderUtils.buildBatchRowMarkup.
@@ -227,7 +219,7 @@
   /* renderPipelineController */
   const renderPipelineController = renderPipelineUtils.createRenderPipeline?.({
     state, constants: { MESSAGE_STATUS, ACTIVITY_SCOPE, staticModel },
-    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, promptGrid, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, composerSettingsButton, jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel },
+    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, composerSettingsButton, jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel },
     callbacks: {
       escapeHtml, getLatestAssistantMessageId, getLatestReplyAssistantMessageId, getLatestUserMessageId, resolveRegenerateRequest, buildAssistantMetaLabel, shouldShowThinkingToggle,
       buildLogViewModel, getActivitySnapshot, getMostRecentActivity, isActivityBusy, applyActivityAttributes,
@@ -295,10 +287,10 @@
       refreshActiveSurfaceEffect: (...a) => refreshActiveSurfaceEffect(...a), onSurfaceLifecycleSync: (...a) => (typeof onSurfaceLifecycleSync === 'function' ? onSurfaceLifecycleSync(...a) : undefined),
       appendClientLog: (...a) => appendClientLog(...a),
       renderHeader: (...a) => _extRenderHeader(...a),
-      renderPrompts: (...a) => _extRenderPrompts(...a),
-      stopFallbackRotation: (...a) => _extStopFallbackRotation(...a),
     },
-    controllers: { thinkingController, reducedMotionQuery, thinkingIndicator, logRenderer: logRendererController, scrollCoordinator: chatScrollCoordinator },
+    controllers: { thinkingController, reducedMotionQuery, thinkingIndicator, logRenderer: logRendererController, scrollCoordinator: chatScrollCoordinator,
+      getSendOutboxActions: () => chatShellController?.sendOutboxActions,
+    },
     runtime: { uiRuntime, spriteRuntime },
   }) || null;
   /* approvalBatchController (Phase 6F-B) */
@@ -317,7 +309,7 @@
           message: error?.message || String(error),
         });
         // Surface batch failures with the same visible toast used by single-row approval actions.
-        showComposerActionError?.(error, action === 'deny-all' ? 'Deny Failed' : 'Approval Failed');
+        showComposerActionError?.(error, action === 'deny-all' ? jt('app.controller.denyFailedTitle', 'Deny Failed') : jt('app.controller.approvalFailedTitle', 'Approval Failed'));
       },
     },
   }) || null;
@@ -389,7 +381,7 @@
     escapeSelectorValue = (v) => String(v || ''),
     hideAssistantSprite = noop, applyAssistantSprite = noop,
     updateAssistantSpritePosition = noop,
-    renderLayout = noop, renderHeader = noop, renderPrompts = noop,
+    renderLayout = noop, renderHeader = noop,
     renderMessages = noop, renderHero = noop,
     renderLogs = noop, syncComposerVisualState = noop,
     renderComposerJumpControls = noop,
@@ -452,8 +444,8 @@
         categoryId, message: error?.message || String(error),
       });
       if (details.isCurrent === false) return;
-      showToastMessage('Could not save this chat\'s tool override. The previous value was restored.', {
-        title: 'Tool Override Not Saved', tone: 'danger',
+      showToastMessage(jt('app.shell.toolOverrideSaveFailed', 'Could not save this chat\'s tool override. The previous value was restored.'), {
+        title: jt('app.shell.toolOverrideNotSavedTitle', 'Tool Override Not Saved'), tone: 'danger',
         source: TOAST_SOURCE.chatStream,
         dedupeKey: `${TOAST_SOURCE.chatStream}:tool-override-persist`,
       });
@@ -467,7 +459,7 @@
     prepareDroppedAttachments = noopAsync, queueInlineImageAttachment = noopAsync, setDropActive = noop,
     suppressFileDropNavigation = (e) => { e.preventDefault(); e.stopPropagation(); }, getDroppedFilePaths = noopArr,
     loadSessions = noopAsync, openSession = noopAsync, refreshSessionSummaries = noopAsync,
-    refreshSnapshots = noopAsync, bootstrap = noopAsync, refreshSuggestions = noopAsync,
+    refreshSnapshots = noopAsync, bootstrap = noopAsync,
     handleCreateSession = noopAsync, handleRenameSession = noopAsync, handleDeleteSession = noopAsync,
     handleJumpToTop = noop, handleJumpToLastPrompt = noop, handleJumpToBottom = noop,
     viewportReveal = null,
@@ -522,7 +514,6 @@
       syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
       applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a),
       renderSessions: (...a) => renderSessions(...a),
-      refreshSuggestions: (...a) => refreshSuggestions(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
       openArtifactTarget: (...a) => openArtifactTarget(...a), openIdeFileAtLine: (...a) => openIdeFileAtLineSafe(...a), openFilePreviewTarget: (...a) => openFilePreviewTarget(...a),
     },
@@ -642,7 +633,7 @@
       captureToScratchpad: (text, options) => (
         scratchpadCaptureActions
           ? scratchpadCaptureActions.captureToScratchpad(text, options)
-          : Promise.resolve({ error: 'Scratchpad is unavailable.' })
+          : Promise.resolve({ error: jt('app.controller.scratchpadUnavailable', 'Scratchpad is unavailable.') })
       ),
       areInteractiveQuestionsAnswered,
       getInteractiveNextUnansweredIndex,
@@ -774,7 +765,6 @@
       pushIncomingLog: (...a) => pushIncomingLog(...a),
       syncBackendActivityFromStatus: (...a) => syncBackendActivityFromStatus(...a),
       getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
-      refreshSuggestions: (...a) => refreshSuggestions(...a),
       refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
       resetArtifactsState: (...a) => resetArtifactsState(...a),
       resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
@@ -854,7 +844,7 @@
         try {
           return await openCodeReviewTarget(payload);
         } catch (error) {
-          showComposerActionError?.(error, 'Code Review Failed');
+          showComposerActionError?.(error, jt('app.controller.codeReviewFailedTitle', 'Code Review Failed'));
           return false;
         }
       },
@@ -868,14 +858,14 @@
         try {
           setActiveView('ide');
           const opened = await Promise.resolve(openIdeChangeDiffSafe(changeId));
-          // 'read_failed' means the diff controller already showed its specific
+          // Read/workspace refusals already showed the controller's specific
           // "Jenny's Changes" toast for this click — don't stack a generic one.
-          if (opened !== true && opened !== 'read_failed') {
-            showComposerActionError?.(new Error('Could not find that change in the current session.'), 'Open Diff Failed');
+          if (opened !== true && opened !== 'read_failed' && opened !== 'workspace_unavailable') {
+            showComposerActionError?.(new Error('Could not find that change in the current session.'), jt('app.controller.openDiffFailedTitle', 'Open Diff Failed'));
           }
           return opened === true;
         } catch (error) {
-          showComposerActionError?.(error, 'Open Diff Failed');
+          showComposerActionError?.(error, jt('app.controller.openDiffFailedTitle', 'Open Diff Failed'));
           return false;
         }
       },
@@ -927,7 +917,6 @@
       updateAssistantSpritePosition,
       renderLayout,
       renderHeader,
-      renderPrompts,
       renderMessages,
       renderHero,
       renderLogs,
@@ -965,7 +954,6 @@
       refreshSessionSummaries,
       refreshSnapshots,
       bootstrap,
-      refreshSuggestions,
       handleCreateSession,
       handleRenameSession,
       handleDeleteSession,

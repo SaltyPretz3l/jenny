@@ -13,6 +13,7 @@
   }
   root.rendererIdeTerminalPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -131,7 +132,7 @@
       const panel = getPanelEl();
       const status = panel?.querySelector?.('[data-ide-terminal-status]') || null;
       if (status) {
-        status.textContent = isRunning() ? 'running' : 'stopped';
+        status.textContent = isRunning() ? jt('ide.terminal.running', 'running') : jt('ide.terminal.stopped', 'stopped');
         status.classList.toggle('ide-terminal-status--running', isRunning());
       }
     }
@@ -148,24 +149,24 @@
 
     function buildPanelMarkup() {
       if (typeof actionButton !== 'function' || typeof textField !== 'function') {
-        return '<div class="ide-rail-placeholder">Terminal is unavailable in this shell mode.</div>';
+        return '<div class="ide-rail-placeholder">' + (actionButton.escapeHtml || String)(jt('ide.terminal.unavailable', 'Terminal is unavailable in this shell mode.')) + '</div>';
       }
       return '<div class="ide-terminal-panel">'
         + '<div class="ide-terminal-toolbar">'
         + '<span class="ide-terminal-title">Terminal</span>'
         + '<span class="ide-terminal-status" data-ide-terminal-status></span>'
         + '<span class="ide-terminal-toolbar-actions">'
-        + buildToolbarButton('signal', '^C', 'Stop the running command (kills and ends the session)')
-        + buildToolbarButton('clear', 'Clear', 'Clear scrollback')
-        + buildToolbarButton('restart', 'Restart', 'Restart the shell session')
+        + buildToolbarButton('signal', '^C', jt('ide.terminal.stopRunningCommand', 'Stop the running command (kills and ends the session)'))
+        + buildToolbarButton('clear', 'Clear', jt('ide.terminal.clearScrollback', 'Clear scrollback'))
+        + buildToolbarButton('restart', 'Restart', jt('ide.terminal.restartSession', 'Restart the shell session'))
         + '</span>'
         + '</div>'
         + '<pre class="ide-terminal-scrollback" data-ide-terminal-scrollback role="log" aria-live="polite" aria-relevant="additions text" tabindex="0"></pre>'
         + '<div class="ide-terminal-input">'
         + textField({
           className: 'ide-terminal-field',
-          placeholder: 'Type a command and press Enter…',
-          ariaLabel: 'Terminal command input',
+          placeholder: jt('ide.terminal.commandPlaceholder', 'Type a command and press Enter…'),
+          ariaLabel: jt('ide.terminal.commandInputLabel', 'Terminal command input'),
           dataset: { 'ide-terminal-input': '1' },
         })
         + '</div>'
@@ -187,7 +188,7 @@
 
     async function startSessionOnce(api) {
       if (typeof api?.start !== 'function') {
-        appendOutput('[terminal] Terminal access is unavailable in this shell mode.\n');
+        appendOutput(jt('ide.terminal.accessUnavailableOutput', '[terminal] Terminal access is unavailable in this shell mode.\n'));
         return false;
       }
       try {
@@ -197,21 +198,21 @@
           // A session with no id leaves isRunning() false while the service
           // believes it started: surface it as a failure so the next Enter
           // does not silently re-start onto an unknown session.
-          showError('The terminal session could not be started (no session id).', {
-            title: 'Terminal',
+          showError(jt('ide.terminal.noSessionId', 'The terminal session could not be started (no session id).'), {
+            title: jt('ide.terminal.title', 'Terminal'),
             dedupeKey: 'ide:terminal:start',
           });
           appendClientLog('WARN', 'ide.terminal_start_no_session', {});
-          appendOutput('[terminal] Could not start the terminal (no session id).\n');
+          appendOutput(jt('ide.terminal.missingSessionIdOutput', '[terminal] Could not start the terminal (no session id).\n'));
           return false;
         }
         sessionId = startedId;
         sessionShell = String(result?.shell || '');
         sessionCwd = String(result?.cwd || '');
-        appendOutput(`[terminal] ${result?.shell || 'shell'} session started in ${result?.cwd || ''}\n`);
+        appendOutput(jt('ide.terminal.sessionStarted', '[terminal] {shell} session started in {cwd}\n', { shell: result?.shell || jt('ide.terminal.shellFallback', 'shell'), cwd: result?.cwd || '' }));
       } catch (error) {
-        showError(toErrorMessage(error, 'Could not start the terminal.'), {
-          title: 'Terminal',
+        showError(toErrorMessage(error, jt('ide.ptyTerminal.startError', 'Could not start the terminal.')), {
+          title: jt('ide.terminal.title', 'Terminal'),
           dedupeKey: 'ide:terminal:start',
         });
         appendClientLog('WARN', 'ide.terminal_start_failed', {
@@ -274,7 +275,7 @@
       try {
         await api.write({ sessionId, data: `${command}\r\n` });
       } catch (error) {
-        appendOutput(`[terminal] ${toErrorMessage(error, 'Write failed.')}\n`);
+        appendOutput(`[terminal] ${toErrorMessage(error, jt('ide.terminal.writeFailed', 'Write failed.'))}\n`);
       }
     }
 
@@ -287,7 +288,7 @@
       try {
         await api.signal({ sessionId });
       } catch (error) {
-        appendOutput(`[terminal] ${toErrorMessage(error, 'Signal failed.')}\n`);
+        appendOutput(`[terminal] ${toErrorMessage(error, jt('ide.terminal.signalFailed', 'Signal failed.'))}\n`);
       }
     }
 
@@ -321,8 +322,8 @@
       // The dead process can never finish an escape sequence it left open —
       // reset before the exit banner so a dangling CSI/OSC never swallows it.
       ansiStripper.reset();
-      const code = payload?.code === null || payload?.code === undefined ? '' : ` (code ${payload.code})`;
-      appendOutput(`[terminal] session ended${code}\n`);
+      const code = payload?.code === null || payload?.code === undefined ? '' : jt('ide.terminal.exitCode', ' (code {code})', { code: payload.code });
+      appendOutput(jt('ide.terminal.sessionEnded', '[terminal] session ended{code}\n', { code }));
       syncStatus();
     }
 

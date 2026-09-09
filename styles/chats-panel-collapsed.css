@@ -179,7 +179,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 
 .chats-strip__lockdown-badge {
   position: absolute;
-  left: 2px;
+  inset-inline-start: 2px;
   bottom: 2px;
   width: 13px;
   height: 13px;
@@ -207,7 +207,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
   content: "";
   position: absolute;
   top: 3px;
-  right: 3px;
+  inset-inline-end: 3px;
   width: 6px;
   height: 6px;
   border-radius: var(--radius-pill);
@@ -217,10 +217,10 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 
 /* State dot (bottom-right), colored by the same tokens as the row dots. */
 .chats-strip__chip[data-session-dominant-state="streaming"]::after,
-.chats-strip__chip[data-session-dominant-state="approval"]::after {
+.chats-strip__chip:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"])::after {
   content: "";
   position: absolute;
-  right: 3px;
+  inset-inline-end: 3px;
   bottom: 3px;
   width: 7px;
   height: 7px;
@@ -234,7 +234,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
   background: var(--sidebar-state-streaming-color);
 }
 
-.chats-strip__chip[data-session-dominant-state="approval"]::after {
+.chats-strip__chip:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"])::after {
   background: var(--sidebar-state-approval-color);
 }
 
@@ -248,7 +248,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
    keeps working; pointer-events off so it can never trap the hover. */
 .chats-strip__peek {
   position: fixed;
-  left: 0;
+  left: 0; /* rtl:physical */
   top: 0;
   z-index: 90;
   min-width: 180px;

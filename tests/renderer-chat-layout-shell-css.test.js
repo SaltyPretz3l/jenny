@@ -281,16 +281,6 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatComposerCss,
-    /\.chat-view\.chat-empty\s+\.prompt-grid\s*\{[\s\S]*?display:\s*flex;[\s\S]*?pointer-events:\s*auto;/,
-    'empty-chat prompt grid should be visible and interactive above the composer'
-  );
-  assert.match(
-    chatComposerCss,
-    /\.chat-view\.chat-active\s+\.prompt-grid\s*\{[\s\S]*?display:\s*none;/,
-    'active-thread prompt grid should hide once chat enters thread mode'
-  );
-  assert.match(
-    chatComposerCss,
     /\.chat-view\s+\.hero-stage\s*\{[\s\S]*?grid-row:\s*1;/,
     'hero-stage should begin in row 1 of the two-row chat grid'
   );
@@ -427,7 +417,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatThreadCss,
-    /\.chat-thread-column\s*\{[\s\S]*?padding:\s*var\(--chat-thread-offset\)\s+0\s+var\(--composer-safe-offset\)\s+var\(--chat-sprite-rail-offset\);/,
+    /\.chat-thread-column\s*\{[\s\S]*?padding-block:\s*var\(--chat-thread-offset\)\s+var\(--composer-safe-offset\);[\s\S]*?padding-inline-start:\s*var\(--chat-sprite-rail-offset\);[\s\S]*?padding-inline-end:\s*0;/,
     'chat-thread-column should reserve a dedicated sprite gutter'
   );
   assert.match(
@@ -452,7 +442,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatThreadCss,
-    /\.chat-thread-children::before\s*\{[\s\S]*?left:\s*calc\(var\(--thread-dot-hit-size\)\s*\+\s*var\(--space-5\)\s*\+\s*\(var\(--thread-dot-hit-size\)\s*\/\s*2\)\);/,
+    /\.chat-thread-children::before\s*\{[\s\S]*?inset-inline-start:\s*calc\(var\(--thread-dot-hit-size\)\s*\+\s*var\(--space-5\)\s*\+\s*\(var\(--thread-dot-hit-size\)\s*\/\s*2\)\s*-\s*var\(--thread-rail-width\)\s*\/\s*2\);/,
     'thread rails should align with the center of the nested dot lane'
   );
   assert.doesNotMatch(
@@ -495,7 +485,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatMediaQueriesCss,
-    /@media \(max-width:\s*700px\)\s*\{[\s\S]*?--chat-sprite-rail-offset:\s*clamp\(24px,\s*7vw,\s*32px\);[\s\S]*?--chat-user-bubble-max-width:\s*100%;[\s\S]*?\.chat-view \.chat-entry\.assistant\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);[\s\S]*?gap:\s*0;[\s\S]*?\.chat-view \.chat-thread-children\s*\{[\s\S]*?padding-left:\s*calc\(var\(--thread-dot-hit-size\)\s*\+\s*var\(--space-4\)\);[\s\S]*?\.chat-view > \.chat-context-panel\s*\{[\s\S]*?display:\s*none;/,
+    /@media \(max-width:\s*700px\)\s*\{[\s\S]*?--chat-sprite-rail-offset:\s*clamp\(24px,\s*7vw,\s*32px\);[\s\S]*?--chat-user-bubble-max-width:\s*100%;[\s\S]*?\.chat-view \.chat-entry\.assistant\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);[\s\S]*?gap:\s*0;[\s\S]*?\.chat-view \.chat-thread-children\s*\{[\s\S]*?padding-inline-start:\s*calc\(var\(--thread-dot-hit-size\)\s*\+\s*var\(--space-4\)\);[\s\S]*?\.chat-view > \.chat-context-panel\s*\{[\s\S]*?display:\s*none;/,
     '700px breakpoint should keep the sprite gutter proportional, preserve the larger dot hit area, and hide the context panel'
   );
   assert.match(
@@ -637,7 +627,7 @@ test('expanded tool details use flat indentation, bounded clamps, and no nested 
   assert.match(tokens, /--tl-detail-indent:\s*22px/);
   assert.match(tokens, /--tl-detail-clamp-lines:\s*14/);
   assert.match(tokens, /#ideChatDock[\s\S]*--tl-detail-indent:\s*18px[\s\S]*--tl-detail-clamp-lines:\s*10/);
-  assert.match(readCssRuleBlock(detailCss, '.tool-detail-body'), /margin-left:\s*var\(--tl-detail-indent\)/);
+  assert.match(readCssRuleBlock(detailCss, '.tool-detail-body'), /margin-inline-start:\s*var\(--tl-detail-indent\)/);
   const clampedRule = readCssRuleBlock(
     detailCss,
     '.tool-call-section [data-detail-clamped="true"]'

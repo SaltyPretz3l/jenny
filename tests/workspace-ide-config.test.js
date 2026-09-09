@@ -837,7 +837,7 @@ test('v36 migration adds the generated-directory preference and preserves explic
 });
 
 test('explorer sort mode round-trips as an additive global preference', () => {
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   const state = normalizeState({
     version: CONFIG_VERSION,
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,

@@ -131,6 +131,18 @@ function makeService({ engine = 'ollama' } = {}) {
   return service;
 }
 
+test('existing-server startup skips the Ollama manager but initializes the sidecar', async () => {
+  const service = makeService();
+  service.options = { skipOllamaAutoStart: true };
+  service.ollamaManager.start = () => { throw new Error('Ollama must not be probed or spawned'); };
+  const status = await startBackendService(service, {});
+  assert.equal(status.phase, 'ready');
+  assert.ok(service.calls.includes('sidecar:initialize'));
+  assert.ok(service.calls.includes('status:refresh'));
+  assert.ok(service.logs.some(row => row[1] === 'ollama.auto_start_skipped'
+    && row[2].reason === 'existing_server_setup'));
+});
+
 test('startBackendService retries a sidecar spawn exactly once and announces retrying first', async () => {
   const service = makeService({ engine: 'replay' });
   service.sidecarManager.start = async () => {

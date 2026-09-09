@@ -177,7 +177,8 @@
         .some((attachment) => String(attachment?.kind || '').trim() !== 'audio');
       return replace(entry, {
         prompt: editedPrompt,
-        status: editedPrompt.trim() || hasPromptBearingAttachment ? 'ready' : 'needs_review',
+        status: editedPrompt.trim() || hasPromptBearingAttachment
+          ? (capturePromises.has(entry.id) ? 'capturing_context' : 'ready') : 'needs_review',
         failure: null,
       });
     }
@@ -198,9 +199,9 @@
         if (timer !== null) clearTimeoutImpl(timer);
         if (disposed || result.cancelled) return null;
         const current = findById(entry.id)?.entry || null;
-        if (!current) return null;
+        if (!current || ['sending', 'sent'].includes(current.status)) return null;
         return replace(current, {
-          status: 'ready',
+          status: current.status === 'needs_review' ? 'needs_review' : 'ready',
           meta: result.omitted ? {
             ...current.meta,
             mentionContentsSnapshot: [],
@@ -219,7 +220,7 @@
     }
 
     async function awaitContextCapture(entry) {
-      if (!entry || entry.status !== 'capturing_context') return entry;
+      if (!entry || !capturePromises.has(entry.id)) return entry;
       await capturePromises.get(entry.id)?.promise;
       return findById(entry.id)?.entry || null;
     }

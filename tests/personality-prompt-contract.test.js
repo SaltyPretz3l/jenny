@@ -8,13 +8,16 @@ const {
   PERSONALITY_PRECEDENCE_TEMPLATE,
   buildPersonalityMessage,
 } = require('../services/personality-workspace-service');
+const {
+  PERSONALITY_PRECEDENCE_TEMPLATE: RENDERER_PERSONALITY_PRECEDENCE_TEMPLATE,
+} = require('../renderer/features/renderer-personality-counters');
 
 // The one prompt string that crosses the JSON-RPC seam twice: the sidecar
 // prepends it to every non-minimal turn, and the Settings preview renders it
 // locally so "Show exact text" is exact rather than approximate. Two copies in
 // two languages is the risk; this test is the gate.
 const SPEC_HEADING = '## Personality';
-const SPEC_PRECEDENCE = 'Your name is {name}. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.';
+const SPEC_PRECEDENCE = 'Your name is {name}. You are software, not a living being: you have no body, feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.';
 
 const PYTHON_SOURCE = path.join(__dirname, '..', 'sidecar', 'ai', 'personality', '__init__.py');
 
@@ -35,6 +38,7 @@ function readPythonConstant(source, name) {
 test('the Electron personality literals match the approved prompt contract', () => {
   assert.equal(PERSONALITY_HEADING, SPEC_HEADING);
   assert.equal(PERSONALITY_PRECEDENCE_TEMPLATE, SPEC_PRECEDENCE);
+  assert.equal(RENDERER_PERSONALITY_PRECEDENCE_TEMPLATE, SPEC_PRECEDENCE);
   assert.match(PERSONALITY_PRECEDENCE_TEMPLATE, /\{name\}/);
   assert.equal(
     buildPersonalityMessage('Ada', ''),

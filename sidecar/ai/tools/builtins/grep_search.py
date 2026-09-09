@@ -53,6 +53,7 @@ from sidecar.ai.tools.builtins.grep_search_settings import (
 )
 from sidecar.ai.tools.builtins.regex_safety import compile_safe_pattern
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
+from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io, hosted_file_io_enabled
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime.diagnostics import log_event
 
@@ -379,6 +380,7 @@ class _RegexSearchWorker:
             "pattern": compiled.pattern,
             "flags": int(compiled.flags),
             "workspace_root": str(workspace_root) if workspace_root is not None else "",
+            "hosted_file_io": hosted_file_io_enabled(),
             "context_lines": context_lines,
             "max_output_matches": max_output_matches,
             "max_output_bytes": max_output_bytes,
@@ -694,6 +696,10 @@ def _run_worker_request(request: object) -> dict[str, object]:
             Path(workspace_root_value)
             if isinstance(workspace_root_value, str) and workspace_root_value
             else None
+        )
+        configure_hosted_file_io(
+            str(workspace_root) if workspace_root else None,
+            enabled=request.get("hosted_file_io") is True,
         )
         result = _search_file(
             Path(path_value),

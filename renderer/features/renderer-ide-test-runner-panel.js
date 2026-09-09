@@ -29,6 +29,7 @@
   }
   root.rendererIdeTestRunnerPanel = factory(root.rendererIdeTestRunnerHistoryStrip, root.rendererIdeTestRunnerGateUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (historyStripModule, gateUtilsModule) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const renderTestRunnerHistoryStrip = historyStripModule
     && typeof historyStripModule.renderTestRunnerHistoryStrip === 'function'
@@ -43,12 +44,12 @@
     failed: 'Failed',
     error: 'Error',
     aborted: 'Aborted',
-    timeout: 'Timed out',
+    timeout: jt('ide.testRunner.timedOut', 'Timed out'),
     interrupted: 'Interrupted',
     running: 'Running',
     // A Jenny run that never started because the user's own run held the lock.
     skipped: 'Skipped',
-    none: 'Never run',
+    none: jt('ide.testRunner.neverRun', 'Never run'),
   };
 
   function defaultEscapeHtml(value) {
@@ -131,8 +132,8 @@
       return buildActionButton({
         variant: 'ghost',
         className: 'ide-test-runner-panel__run',
-        label: isRunning ? 'Running…' : 'Run',
-        ariaLabel: `Run ${config.label || config.id}`,
+        label: isRunning ? jt('ide.testRunner.runningEllipsis', 'Running…') : jt('ide.testRunner.run', 'Run'),
+        ariaLabel: jt('ide.testRunner.runConfig', 'Run {label}', { label: config.label || config.id }),
         disabled: runDisabled,
         dataset: { 'test-runner-run': config.id },
       });
@@ -144,8 +145,8 @@
       return buildActionButton({
         variant: 'danger',
         className: 'ide-test-runner-panel__abort',
-        label: 'Stop',
-        ariaLabel: `Stop ${label}`,
+        label: jt('ide.testRunner.stop', 'Stop'),
+        ariaLabel: jt('ide.testRunner.stopConfig', 'Stop {label}', { label }),
         dataset: { 'test-runner-abort': id },
       });
     }
@@ -160,8 +161,8 @@
       return buildActionButton({
         variant: 'ghost',
         className: 'ide-test-runner-panel__remove',
-        label: 'Remove',
-        ariaLabel: `Remove ${config.label || config.id}`,
+        label: jt('common.remove', 'Remove'),
+        ariaLabel: jt('ide.testRunner.removeConfig', 'Remove {label}', { label: config.label || config.id }),
         disabled: removeDisabled === true,
         dataset: { 'test-runner-remove': config.id },
       });
@@ -184,7 +185,7 @@
       // The gate is marked with a filled dot before the label -- never a
       // left-border bar (design law).
       const gateDot = config.gate === true
-        ? '<span class="ide-test-runner-panel__gate-dot" role="img" aria-label="Verification gate" title="Verification gate"></span>'
+        ? '<span class="ide-test-runner-panel__gate-dot" role="img" aria-label="' + escapeHtml(jt('ide.testRunner.verificationGate', 'Verification gate')) + '" title="' + escapeHtml(jt('ide.testRunner.verificationGate', 'Verification gate')) + '"></span>'
         : '';
       return `<div class="ide-test-runner-panel__row" data-config-id="${escapeHtml(id)}"${config.gate === true ? ' data-gate="1"' : ''}>`
         + `<span class="ide-test-runner-panel__label">${gateDot}${escapeHtml(config.label || id)}</span>`
@@ -199,7 +200,7 @@
         + '</div>';
     }
 
-    function buildField(id, label, placeholder, maxLength) {
+    function buildField(id, label, placeholder, maxLength, dataset) {
       if (typeof textField !== 'function') {
         return '';
       }
@@ -208,6 +209,7 @@
         label,
         placeholder,
         maxLength,
+        dataset,
         ariaLabel: label,
         className: 'ide-test-runner-panel__field',
       });
@@ -219,18 +221,18 @@
           variant: 'primary',
           size: 'sm',
           className: 'ide-test-runner-panel__add',
-          label: 'Add test',
-          ariaLabel: 'Add test configuration',
-          title: 'Add a test configuration',
+          label: jt('ide.testRunner.addTest', 'Add test'),
+          ariaLabel: jt('ide.testRunner.addTestConfiguration', 'Add test configuration'),
+          title: jt('ide.testRunner.addTestConfigurationTitle', 'Add a test configuration'),
           dataset: { 'test-runner-add': '1' },
         })
         : '';
       return '<div class="ide-test-runner-panel__form">'
-        + '<div class="ide-test-runner-panel__form-title">New configuration</div>'
+        + '<div class="ide-test-runner-panel__form-title">' + escapeHtml(jt('ide.testRunner.newConfiguration', 'New configuration')) + '</div>'
         + buildField('ideTestRunnerFieldId', 'Id', 'unit', 64)
-        + buildField('ideTestRunnerFieldLabel', 'Label', 'Unit tests', 80)
-        + buildField('ideTestRunnerFieldCommand', 'Command', 'npm test', 1000)
-        + buildField('ideTestRunnerFieldCwd', 'Working dir', '(workspace root)', 300)
+        + buildField('ideTestRunnerFieldLabel', 'Label', jt('ide.testRunner.unitTests', 'Unit tests'), 80)
+        + buildField('ideTestRunnerFieldCommand', 'Command', 'npm test', 1000, { ltr: 'true' })
+        + buildField('ideTestRunnerFieldCwd', jt('ide.testRunner.workingDir', 'Working dir'), jt('ide.testRunner.workspaceRoot', '(workspace root)'), 300, { ltr: 'true' })
         // Why a save dropped the new entry (invalid or duplicate id, ...). Set
         // imperatively after the save resolves; hidden while empty.
         + '<div class="ide-test-runner-panel__form-note" role="status" hidden></div>'
@@ -286,16 +288,16 @@
       }
       const activeConfigId = String(state.activeConfigId || '');
       const config = configs.find((c) => c && c.id === activeConfigId) || null;
-      const label = config ? (config.label || config.id) : (activeConfigId || 'a removed configuration');
+      const label = config ? (config.label || config.id) : (activeConfigId || jt('ide.testRunner.removedConfiguration', 'a removed configuration'));
       const stopBtn = buildActionButton({
         variant: 'danger',
         className: 'ide-test-runner-panel__active-run-stop',
-        label: 'Stop',
-        ariaLabel: `Stop ${label}`,
+        label: jt('ide.testRunner.stop', 'Stop'),
+        ariaLabel: jt('ide.testRunner.stopConfig', 'Stop {label}', { label }),
         dataset: { 'test-runner-abort': activeConfigId || 'active' },
       });
       return '<div class="ide-test-runner-panel__active-run" role="status">'
-        + `<span class="ide-test-runner-panel__active-run-label">Running: ${escapeHtml(label)}</span>`
+        + `<span class="ide-test-runner-panel__active-run-label">${escapeHtml(jt('ide.testRunner.runningLabel', 'Running: {label}', { label }))}</span>`
         + stopBtn
         + '</div>';
     }
@@ -332,7 +334,7 @@
         + buildGateHeader(state, configs)
         + buildActiveRunCard(state, configs)
         + '<div class="ide-test-runner-panel__list">'
-        + (rows || '<div class="ide-test-runner-panel__empty">No test configurations yet.</div>')
+        + (rows || '<div class="ide-test-runner-panel__empty">' + escapeHtml(jt('ide.testRunner.noConfigurations', 'No test configurations yet.')) + '</div>')
         + '</div>'
         + buildForm()
         + '</div>';
@@ -395,7 +397,7 @@
       // A duplicate never reaches the store: the user's mental model is "I
       // already have a `unit`", so say exactly that instead of a silent drop.
       if (currentConfigs().some((c) => c && c.id === id)) {
-        setFormNote(gateUtils ? gateUtils.describeRejection({ id, reason: 'duplicate_id' }) : `"${id}" already exists.`);
+        setFormNote(gateUtils ? gateUtils.describeRejection({ id, reason: 'duplicate_id' }) : jt('ide.testRunner.alreadyExists', '"{id}" already exists.', { id }));
         return;
       }
       setFormNote('');
@@ -421,7 +423,7 @@
           ? result.rejected.find((entry) => entry && String(entry.id || '') === id)
           : null;
         if (rejection) {
-          setFormNote(gateUtils ? gateUtils.describeRejection(rejection) : `"${id}" was not saved.`);
+          setFormNote(gateUtils ? gateUtils.describeRejection(rejection) : jt('ide.testRunner.notSaved', '"{id}" was not saved.', { id }));
           return;
         }
         const live = getMountEl();

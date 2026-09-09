@@ -18,6 +18,8 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_DISABLED,
     CMP_TSRCH_DEFERRED_TOOL,
 )
+from sidecar.ai.execution_policy import desktop_policy_is_enforced, desktop_tool_decision
+from sidecar.ai.host_policy import host_policy_is_enforced, host_tool_decision
 from sidecar.ai.mode_policy import policy_for_mode
 from sidecar.ai.tools import (
     config_utils as _config_utils,
@@ -362,6 +364,12 @@ def _base_unavailable_reason(
     disabled_tool_families: frozenset[str],
     enabled_tools: frozenset[str],
 ) -> str | None:
+    desktop_allowed, desktop_reason = desktop_tool_decision(descriptor, context.config)
+    if not desktop_allowed:
+        return desktop_reason
+    host_allowed, host_reason = host_tool_decision(descriptor, context.config)
+    if not host_allowed:
+        return host_reason
     if descriptor.availability.plan_mode_only and not context.plan_mode:
         return PLAN_MODE_ONLY_REASON
     if descriptor.availability.always_available:
@@ -373,7 +381,10 @@ def _base_unavailable_reason(
         return ENGINE_UNSUPPORTED_REASON
     if not _tools_enabled(context.config):
         return RUNTIME_UNAVAILABLE_REASON
-    if not _config_flag_enabled(context.config, descriptor.availability.config_flag):
+    sandbox_bridge_command = desktop_policy_is_enforced(context.config) and descriptor.name == "run_command"
+    if not sandbox_bridge_command and not _config_flag_enabled(
+        context.config, descriptor.availability.config_flag
+    ):
         return CONFIG_DISABLED_REASON
     if _strict_safety_mode_blocks(descriptor, context):
         return SAFETY_MODE_STRICT_REASON
@@ -469,6 +480,11 @@ def assemble_tool_contract(
 
     for descriptor in ordered_descriptors:
         if descriptor.name == TOOL_SEARCH_TOOL_NAME:
+            # The synthetic search call can disclose and register deferred
+            # schemas. Hosted mode has a closed typed-tool surface, so do not
+            # offer this descriptor at all; dispatch also guards forged calls.
+            if host_policy_is_enforced(context.config):
+                continue
             tool_search_descriptor = descriptor
             continue
         reason = _base_unavailable_reason(

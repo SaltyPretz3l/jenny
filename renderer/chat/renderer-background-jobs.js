@@ -25,6 +25,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (injectedActionButton) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var MAX_VISIBLE_CHIPS = 4;
   var MAX_CHIP_COMMAND_CHARS = 60;
   var TICK_INTERVAL_MS = 1000;
@@ -42,7 +43,7 @@
   }
 
   function chipCommandLabel(command) {
-    var text = String(command || '').trim() || 'background job';
+    var text = String(command || '').trim() || jt('chat.backgroundJobs.backgroundJob', 'background job');
     return text.length > MAX_CHIP_COMMAND_CHARS
       ? text.slice(0, MAX_CHIP_COMMAND_CHARS - 1) + '…'
       : text;
@@ -94,11 +95,11 @@
           var label = chipCommandLabel(job.command);
           var activeSessionId = String(getActiveSessionId() || '').trim();
           var sessionSuffix = job.sessionId && activeSessionId && job.sessionId !== activeSessionId
-            ? ' (other session)'
+            ? jt('chat.backgroundJobs.otherSessionSuffix', ' (other session)')
             : '';
           var message = job.state === 'completed'
-            ? 'Background job finished: ' + label + sessionSuffix
-            : 'Background job failed: ' + label + sessionSuffix;
+            ? jt('chat.backgroundJobs.finished', 'Background job finished: {label}{sessionSuffix}', { label: label, sessionSuffix: sessionSuffix })
+            : jt('chat.backgroundJobs.failed', 'Background job failed: {label}{sessionSuffix}', { label: label, sessionSuffix: sessionSuffix });
           showToastMessage(message, { dedupeKey: 'background-job-' + job.jobId });
         }
         lastSeenStates[job.jobId] = job.state;
@@ -125,12 +126,12 @@
       }
       Promise.resolve(api.kill(jobId)).then(function (result) {
         if (!result || result.ok !== true) {
-          showToastMessage('Could not stop the background job.', {
+          showToastMessage(jt('chat.backgroundJobs.stopFailed', 'Could not stop the background job.'), {
             dedupeKey: 'background-job-kill-' + jobId,
           });
         }
       }).catch(function () {
-        showToastMessage('Could not stop the background job.', {
+        showToastMessage(jt('chat.backgroundJobs.stopFailed', 'Could not stop the background job.'), {
           dedupeKey: 'background-job-kill-' + jobId,
         });
       });
@@ -170,11 +171,10 @@
         chip.insertAdjacentHTML('beforeend', actionButton({
           plain: true,
           className: 'background-job-chip-action',
-          label: active ? 'Stop' : '✕',
+          label: active ? jt('chat.backgroundJobs.stop', 'Stop') : '✕',
           disabled: job.state === 'killing',
-          ariaLabel: (active ? 'Stop background job: ' : 'Dismiss background job: ')
-            + chipCommandLabel(job.command),
-          title: active ? 'Stop this background job' : 'Dismiss this job',
+          ariaLabel: active ? jt('chat.backgroundJobs.stopAriaLabel', 'Stop background job: {command}', { command: chipCommandLabel(job.command) }) : jt('chat.backgroundJobs.dismissAriaLabel', 'Dismiss background job: {command}', { command: chipCommandLabel(job.command) }),
+          title: active ? jt('chat.backgroundJobs.stopTitle', 'Stop this background job') : jt('chat.backgroundJobs.dismissTitle', 'Dismiss this job'),
         }));
         var action = chip.lastElementChild;
         if (action) {
@@ -215,7 +215,7 @@
       if (visible.length > MAX_VISIBLE_CHIPS) {
         var overflow = doc.createElement('span');
         overflow.className = 'background-job-chip background-job-chip-overflow';
-        overflow.textContent = '+' + (visible.length - MAX_VISIBLE_CHIPS) + ' more';
+        overflow.textContent = jt('chat.backgroundJobs.moreCount', '+{count} more', { count: visible.length - MAX_VISIBLE_CHIPS });
         container.appendChild(overflow);
       }
       syncTicker();

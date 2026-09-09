@@ -124,6 +124,20 @@ outside an explicitly selected workspace `.jenny` folder, and the Linux
 user-space Ollama install directory `~/.local/share/jenny/ollama` are never
 removed; delete that directory by hand to uninstall Ollama.
 
+## Docker data is separate
+
+The browser host's profile, workspace, secret and worker-control volumes are
+separate from the desktop uninstall flow. Stopping the Docker profile preserves
+those volumes. Follow the [hosting quick start](HOSTED_QUICKSTART.md) for backup
+and lifecycle commands; do not use volume removal as a substitute for a verified
+backup or worker recovery.
+
+The optional desktop sandbox owns only its profile-labelled Docker resources.
+Its prepared image and control volume may remain for reuse. Do not assume desktop
+uninstall removes every Docker resource or run a broad Docker prune to remove
+Jenny. Preserve unresolved worker receipts until cleanup is confirmed; see
+[desktop sandbox recovery](DESKTOP_COMMAND_SANDBOX.md).
+
 ## Failure recovery
 
 - An incomplete `.partial` archive is not a restore candidate and may be removed

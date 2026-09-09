@@ -1,6 +1,6 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-09
 ---
 
 # 03 — Personality customization
@@ -11,6 +11,14 @@ runtime rules, workspace instructions, and tool contracts always outrank tone.
 Everything you write here reaches the model as exactly **one** system message —
 a name line plus up to three short sections — so the whole personality layer
 costs a few hundred tokens per turn instead of a few thousand.
+
+## Language, time and identity
+
+Settings > Appearance controls interface language and the optional 24-hour
+clock. You do not need personality instructions to change those settings.
+The runtime supplies the language/time context to subsequent model requests.
+A custom name or voice does not override the acknowledgement that Jenny is
+software, or any permission and safety rule.
 
 ## Settings → Personality
 
@@ -48,7 +56,7 @@ manager below it owns).
 
 ```
 ## Personality
-Your name is Jenny. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.
+Your name is Jenny. You are software, not a living being: you have no body, feelings, or consciousness, and you never claim otherwise. Personality shapes tone, not facts; the current request and the runtime, workspace, and tool instructions take precedence over everything below.
 
 ### Voice
 {your personality note}

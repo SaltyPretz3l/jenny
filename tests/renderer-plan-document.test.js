@@ -10,6 +10,15 @@ const { createPlanDocumentController } = require('../renderer/chat/renderer-plan
 const actionButton = require('../renderer/inventory/action-button');
 const textField = require('../renderer/inventory/text-field');
 
+const PLAN_UI_PATH = require.resolve('../renderer/features/renderer-plan-document');
+const PLAN_CONTROLLER_PATH = require.resolve('../renderer/chat/renderer-plan-document-controller');
+
+test.afterEach(() => {
+  delete globalThis.jennyI18n;
+  delete require.cache[PLAN_UI_PATH];
+  delete require.cache[PLAN_CONTROLLER_PATH];
+});
+
 test('pending plan renders as an expanded first-class document with safe markup', () => {
   const markup = documentUi.fullDocumentMarkup({
     plan_id: 'p', tool_call_id: 'call', title: '<Plan>', summary: 'Summary',
@@ -102,6 +111,9 @@ test('plan document controller mounts decisions, focuses Build it, and submits b
   });
   const host = dom.window.document.querySelector('[data-plan-document]');
   assert.equal(host.querySelectorAll('[data-plan-decision]').length, 3);
+  assert.equal(host.querySelector('[data-plan-decision="approved"]').textContent.trim(), 'Build it');
+  assert.equal(host.querySelector('[data-plan-decision="approved_auto"]').textContent.trim(), 'Build it, auto mode');
+  assert.equal(require('../locales/en.json')['chat.planDocument.buildWithoutAsking'], 'Build it, auto mode');
   assert.equal(dom.window.document.activeElement.dataset.planDecision, 'approved');
   assert.equal(host.querySelector('[data-plan-drag-handle]').title, 'Drag to reorder step');
   assert.equal(host.querySelector('[data-plan-remove-step]').title, 'Remove this step');
@@ -123,6 +135,33 @@ test('plan document controller mounts decisions, focuses Build it, and submits b
   dom.window.document.body.append(detached);
   await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   assert.equal(detached.querySelectorAll('button').length, 0);
+  dom.window.close();
+});
+
+test('localized plan meta keeps exactly one structured step count after mount', () => {
+  const i18n = require('../renderer/shared/i18n-utils').createI18n();
+  i18n.load({ tag: 'qps-ploc', strings: {
+    'artifacts.plan.stepCount': '{count} étapes',
+    'artifacts.plan.filesRead': '{count} fichiers lus',
+    'chat.planDocument.stepCount': '{count} étapes{suffix}',
+  } });
+  globalThis.jennyI18n = i18n;
+  delete require.cache[PLAN_UI_PATH];
+  delete require.cache[PLAN_CONTROLLER_PATH];
+  const localizedUi = require(PLAN_UI_PATH);
+  const { createPlanDocumentController: createLocalizedController } = require(PLAN_CONTROLLER_PATH);
+  const dom = new JSDOM(`<!doctype html><body><main id="chatTimeline">${localizedUi.fullDocumentMarkup({
+    tool_call_id: 'call-localized', title: 'Plan', steps: ['Inspect', 'Build'],
+    files_read: ['src/a.js'], state: 'pending',
+  })}</main></body>`);
+  dom.window.jennyShell = { tools: { approve: async () => true } };
+
+  const controller = createLocalizedController({ windowRef: dom.window, actionButton, textField });
+  const meta = dom.window.document.querySelector('.plan-document__meta').textContent;
+
+  assert.equal((meta.match(/2 étapes/g) || []).length, 1);
+  assert.equal(meta, '2 étapes · 1 fichiers lus');
+  controller.dispose();
   dom.window.close();
 });
 

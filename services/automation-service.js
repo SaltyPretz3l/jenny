@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeString } = require('../renderer/shared/string-utils');
+const { t } = require('./i18n-main');
 const { redactLogValue } = require('./log-entry-normalizer');
 const {
   readScheduledTasksFileAsync,
@@ -146,7 +147,7 @@ class AutomationService {
       return {
         success: false,
         reason: 'not_found',
-        message: `Automation "${id || 'unknown'}" was not found.`,
+        message: t('main.automation.notFound', 'Automation "{id}" was not found.', { id: id || 'unknown' }),
       };
     }
     return {

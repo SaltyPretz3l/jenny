@@ -458,6 +458,7 @@ function budgetAttachmentEntries(entries, options = {}) {
 }
 
 module.exports = {
+  truncateTextToLimit,
   ALLOWED_AUDIO_EXTENSIONS,
   ALLOWED_IMAGE_EXTENSIONS,
   ALLOWED_TEXT_EXTENSIONS,

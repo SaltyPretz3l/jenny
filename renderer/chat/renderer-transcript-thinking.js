@@ -15,6 +15,8 @@
     root.rendererErrorRecoveryUtils
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (agentStepUtils, reasoningV2Utils, subagentView, rendererErrorRecoveryUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const createReasoningV2RendererFn = typeof reasoningV2Utils?.createReasoningV2Renderer === 'function'
     ? reasoningV2Utils.createReasoningV2Renderer
     : null;
@@ -70,7 +72,7 @@
       if (subagentSteps.length && typeof subagentView.renderLiveSummary === 'function') {
         return subagentView.renderLiveSummary(subagentSteps);
       }
-      const label = 'Companion task';
+      const label = jt('chat.thinking.companionTask', 'Companion task');
 
       if (steps.length >= 1) {
         const lastStep = steps[steps.length - 1];
@@ -78,7 +80,7 @@
         const stepsHtml = steps.map((step) => {
           const display = resolveAgentStepDisplay(step);
           const stage = humanizeStage(step.stage) || 'Working';
-          const summary = String(step.summary || '').trim() || 'Working on it.';
+          const summary = String(step.summary || '').trim() || jt('chat.thinking.working', 'Working on it.');
           const percent = Number.isFinite(Number(step.percent))
             ? Math.min(100, Math.max(0, Math.round(Number(step.percent))))
             : null;
@@ -115,7 +117,7 @@
         `;
       }
 
-      const summary = String(lifecycle.summary || '').trim() || 'Working on it.';
+      const summary = String(lifecycle.summary || '').trim() || jt('chat.thinking.working', 'Working on it.');
       const stage = humanizeStage(lifecycle.stage);
       const percent = Number.isFinite(Number(lifecycle.percent))
         ? Math.min(100, Math.max(0, Math.round(Number(lifecycle.percent))))
@@ -150,32 +152,32 @@
       const summaryStatus = String(compaction?.summaryStatus || '');
       const phase = String(compaction?.phase || '');
       const tier = summaryStatus === 'created'
-        ? 'Summarized older context with the model'
+        ? jt('chat.thinking.summarizedWithModel', 'Summarized older context with the model')
         : summaryStatus === 'not_applicable'
-          ? 'Trimmed without summarizing'
+          ? jt('chat.thinking.trimmedWithoutSummarizing', 'Trimmed without summarizing')
           : summaryStatus === 'failed'
-            ? 'Summarizer failed; used a bounded fallback'
-            : 'Reduced to fit';
+            ? jt('chat.thinking.summarizerFailedFallback', 'Summarizer failed; used a bounded fallback')
+            : jt('chat.thinking.reducedToFit', 'Reduced to fit');
       const details = [tier];
       if (phase === 'preflight') {
-        details.push('Before sending the request');
+        details.push(jt('chat.thinking.beforeRequest', 'Before sending the request'));
       } else if (phase === 'tool_loop') {
-        details.push('Mid-task, inside the tool loop');
+        details.push(jt('chat.thinking.insideToolLoop', 'Mid-task, inside the tool loop'));
       }
       const droppedMessages = Math.max(0, Number(compaction?.droppedMessages || 0) || 0);
       const droppedBytes = Math.max(0, Number(compaction?.droppedBytes || 0) || 0);
       const folded = [
-        droppedMessages > 0 ? `${droppedMessages.toLocaleString()} messages` : '',
-        droppedBytes > 0 ? `${droppedBytes.toLocaleString()} bytes` : '',
+        droppedMessages > 0 ? jtn('chat.thinking.compactedMessages', droppedMessages, { count: droppedMessages.toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} message', '{count} messages') : '',
+        droppedBytes > 0 ? jtn('chat.thinking.compactedBytes', droppedBytes, { count: droppedBytes.toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} byte', '{count} bytes') : '',
       ].filter(Boolean);
       if (folded.length) {
-        details.push(`Folded ${folded.join(' / ')}`);
+        details.push(jt('chat.thinking.foldedSummary', 'Folded {summary}', { summary: folded.join(' / ') }));
       }
       details.push(compaction?.summaryPersisted === true
-        ? 'Summary saved for future turns'
-        : 'Applied to this request only');
+        ? jt('chat.thinking.summarySaved', 'Summary saved for future turns')
+        : jt('chat.thinking.requestOnly', 'Applied to this request only'));
       if (compaction?.inputComplete === false) {
-        details.push('Some older messages were omitted from the summarizer input');
+        details.push(jt('chat.thinking.summarizerInputOmitted', 'Some older messages were omitted from the summarizer input'));
       }
       return details;
     }
@@ -187,21 +189,21 @@
         const breakdown = list.map((entry, index) => {
           const occurredAt = String(entry?.occurredAt || '');
           const stamp = occurredAt && Number.isFinite(Date.parse(occurredAt))
-            ? new Date(occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            ? new Date(occurredAt).toLocaleTimeString(globalThis.jennyI18n?.tag?.(), { hour: '2-digit', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit', second: '2-digit' })
             : '';
-          const position = `Compaction ${index + 1}${index === latestIndex ? ' (latest)' : ''}`;
+          const position = index === latestIndex ? jt('chat.thinking.compactionLatest', 'Compaction {index} (latest)', { index: index + 1 }) : jt('chat.thinking.compaction', 'Compaction {index}', { index: index + 1 });
           const time = stamp ? ` at ${stamp}` : '';
           const before = Number(entry?.tokensBefore || 0) || 0;
           const after = Number(entry?.tokensAfter || 0) || 0;
           const tokens = before > 0 && after > 0 && after < before
-            ? `${before.toLocaleString()} → ${after.toLocaleString()} tokens (${(before - after).toLocaleString()} saved) · `
+            ? jt('chat.thinking.tokensBeforeAfterSaved', '{before} → {after} tokens ({saved} saved) · ', { before: before.toLocaleString(globalThis.jennyI18n?.tag?.()), after: after.toLocaleString(globalThis.jennyI18n?.tag?.()), saved: (before - after).toLocaleString(globalThis.jennyI18n?.tag?.()) })
             : '';
           const description = tokens + describeCompaction(entry).join(' · ');
           return `<li class="context-compacted-notice-breakdown-item">${escapeHtml(`${position}${time}: ${description}`)}</li>`;
         }).join('');
         detailItems = `
           <li>
-            Compactions in order
+            ${escapeHtml(jt('chat.thinking.compactionsInOrder', 'Compactions in order'))}
             <ul class="context-compacted-notice-breakdown">${breakdown}</ul>
           </li>
         `;
@@ -212,10 +214,10 @@
       }
       return `
         <details class="context-compacted-notice-details">
-          <summary>How this worked</summary>
+          <summary>${escapeHtml(jt('chat.thinking.howThisWorked', 'How this worked'))}</summary>
           <ul>
             ${detailItems}
-            <li>Your transcript is intact. Compaction only changes what is sent to the model.</li>
+            <li>${escapeHtml(jt('chat.thinking.transcriptIntact', 'Your transcript is intact. Compaction only changes what is sent to the model.'))}</li>
           </ul>
         </details>
       `;
@@ -246,9 +248,9 @@
       // over the whole list and keeps its own guard so an earlier compaction's
       // savings survive a latest entry that reports no usable token pair.
       const latestPair = tokensBefore > 0 && tokensAfter > 0 && tokensAfter < tokensBefore
-        ? `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`
+        ? jt('chat.thinking.tokensBeforeAfter', '{before} → {after} tokens', { before: tokensBefore.toLocaleString(globalThis.jennyI18n?.tag?.()), after: tokensAfter.toLocaleString(globalThis.jennyI18n?.tag?.()) })
         : '';
-      const meta = [latestPair, aggregateSaved > 0 ? `${aggregateSaved.toLocaleString()} saved` : '']
+      const meta = [latestPair, aggregateSaved > 0 ? jt('chat.thinking.tokensSaved', '{count} saved', { count: aggregateSaved.toLocaleString(globalThis.jennyI18n?.tag?.()) }) : '']
         .filter(Boolean)
         .join(' · ');
       const strategy = String(compacted.strategy || '');
@@ -256,27 +258,27 @@
       const reasonCode = String(compacted.reasonCode || '');
       const scope = String(compacted.historyScopeFallback || '');
       const phase = String(compacted.phase || '');
-      let label = 'Older context was reduced to fit this request';
+      let label = jt('chat.thinking.olderContextReduced', 'Older context was reduced to fit this request');
       if (summaryStatus === 'created') {
         label = phase === 'tool_loop'
-          ? 'Working memory was summarized mid-task to keep going'
+          ? jt('chat.thinking.workingMemorySummarized', 'Working memory was summarized mid-task to keep going')
           : compacted.summaryPersisted
-            ? 'Older turns were summarized for this request and future turns'
-            : 'Older turns were summarized for this request';
+            ? jt('chat.thinking.olderTurnsSummarizedFuture', 'Older turns were summarized for this request and future turns')
+            : jt('chat.thinking.olderTurnsSummarized', 'Older turns were summarized for this request');
       } else if (summaryStatus === 'not_applicable') {
-        label = 'Older context was trimmed to fit this request';
+        label = jt('chat.thinking.olderContextTrimmed', 'Older context was trimmed to fit this request');
       } else if (summaryStatus === 'failed') {
-        label = 'Automatic summarization failed; a bounded fallback was used';
+        label = jt('chat.thinking.automaticSummarizationFailedFallback', 'Automatic summarization failed; a bounded fallback was used');
       } else if (strategy === 'narrowed' && scope) {
-        label = `Request history was narrowed to ${scope === 'recent' ? 'the last 6 turns' : 'the new prompt only'}`;
+        label = scope === 'recent' ? jt('chat.thinking.historyNarrowedRecent', 'Request history was narrowed to the last 6 turns') : jt('chat.thinking.historyNarrowedPrompt', 'Request history was narrowed to the new prompt only');
       } else if (strategy === 'narrowed' || reasonCode === 'semantic_history_limit') {
-        label = 'Older complete turns were omitted to fit the context limit';
+        label = jt('chat.thinking.olderTurnsOmitted', 'Older complete turns were omitted to fit the context limit');
       }
       // One aggregated notice with an expandable breakdown is intentional: the
       // existing projector contract has one single-slot row, while stacking
       // compactions would require a new row kind.
       const count = list.length > 1
-        ? `<span class="context-compacted-notice-count">×${escapeHtml(list.length.toLocaleString())}</span>`
+        ? `<span class="context-compacted-notice-count">×${escapeHtml(list.length.toLocaleString(globalThis.jennyI18n?.tag?.()))}</span>`
         : '';
       // The live region holds only the one-line status. role="status" is
       // atomic, so keeping the <details> breakdown outside it means a later

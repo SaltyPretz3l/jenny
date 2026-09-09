@@ -20,7 +20,7 @@ test('shell config state migrates codex CLI defaults and drops active frontier c
     frontierDiagnostics: { enabled: true, model: 'gpt-5-mini' },
   });
 
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   assert.deepEqual(state.codexCli, DEFAULT_CODEX_CLI);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'frontierDiagnostics'), false);
 });
@@ -142,7 +142,7 @@ test('shell config state v20 migration drops legacy jen-e config without throwin
     },
   });
 
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'jenE'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'jen_e'), false);
 });
@@ -156,7 +156,7 @@ test('shell config state v21 migration drops legacy local_speech config without 
     },
   });
 
-  assert.equal(CONFIG_VERSION, 51);
+  assert.equal(CONFIG_VERSION, 53);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'speech'), false);
 });
 

@@ -371,7 +371,7 @@
             setArtifactDocumentViewMode: (surfaceKey, mode) => artifactSurfaceController?.setArtifactDocumentViewMode?.(surfaceKey, mode),
             getArtifactDocumentViewMode: (surfaceKey) => artifactSurfaceController?.getArtifactDocumentViewMode?.(surfaceKey),
             copySelectedArtifact: () => artifactSurfaceController?.copySelectedArtifactSource?.(),
-            getSelectedArtifactSource: () => artifactSurfaceController?.getSelectedArtifactSource?.() || '',
+            getSelectedArtifactSource: () => artifactSurfaceController?.getSelectedArtifactSource?.() ?? null,
             setArtifactViewMode: (kind, mode) => artifactSurfaceController?.setArtifactViewMode?.(kind, mode),
             getArtifactViewMode: (kind) => artifactSurfaceController?.getArtifactViewMode?.(kind),
             getArtifacts: () => {

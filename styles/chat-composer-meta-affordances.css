@@ -128,7 +128,7 @@
 .composer-wayfinder-host .chat-wayfinder-copy {
   display: grid;
   min-width: 0;
-  text-align: left;
+  text-align: start;
 }
 
 .composer-wayfinder-host .chat-wayfinder-label,

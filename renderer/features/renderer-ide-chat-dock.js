@@ -23,6 +23,7 @@
   root.rendererIdeChatDock = factory(root.rendererIdeChipPicker, root.chatScrollUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (chatSessionPickerModule, scrollUtils) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -36,8 +37,8 @@
 
   // 15px Tabler glyphs, stroke 1.6, currentColor (featherweight header spec).
   const PLUS_GLYPH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5l0 14"></path><path d="M5 12l14 0"></path></svg>';
-  const CHEVRON_LEFT_GLYPH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
-  const CHEVRON_RIGHT_GLYPH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
+  const CHEVRON_LEFT_GLYPH = '<svg class="icon-mirror-rtl" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
+  const CHEVRON_RIGHT_GLYPH = '<svg class="icon-mirror-rtl" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
 
   function resolveInventoryPrimitive(globalName, requirePath) {
     if (typeof globalRef[globalName] === 'function') {
@@ -478,12 +479,12 @@
         return '';
       }
       const sessionControl = sessionPicker?.buildMarkup()
-        || '<span class="ide-chat-dock-label">Jenny &middot; same session as Chat</span>';
+        || '<span class="ide-chat-dock-label">' + (actionButton.escapeHtml || String)(jt('ide.chatDock.sameSession', 'Jenny · same session as Chat')) + '</span>';
       const newChat = actionButton({
         plain: true,
         className: 'ide-chat-dock-action ide-chat-dock-new-chat',
-        ariaLabel: 'New chat',
-        title: 'New chat',
+        ariaLabel: jt('ide.chatDock.newChat', 'New chat'),
+        title: jt('ide.chatDock.newChat', 'New chat'),
         dataset: { 'ide-chatdock-new-chat': '1' },
         trustedHtml: PLUS_GLYPH,
       });
@@ -491,8 +492,8 @@
       const collapse = actionButton({
         plain: true,
         className: 'ide-chat-dock-action ide-chat-dock-collapse',
-        ariaLabel: 'Collapse chat dock',
-        title: 'Collapse chat dock',
+        ariaLabel: jt('ide.chatDock.collapse', 'Collapse chat dock'),
+        title: jt('ide.chatDock.collapse', 'Collapse chat dock'),
         dataset: { 'ide-chatdock-collapse': '1' },
         trustedHtml: dockSide() === 'left' ? CHEVRON_LEFT_GLYPH : CHEVRON_RIGHT_GLYPH,
       });
@@ -573,7 +574,9 @@
       }
       // The grab edge is the dock's INNER edge (facing the editor): dock on the
       // left -> dragging right widens; dock on the right -> dragging left widens.
-      const delta = dockSide() === 'left'
+      // Under dir=rtl the grid mirrors, so the persisted side is the physical opposite.
+      const rtl = (event.target?.ownerDocument || event.target?.document || (typeof document !== 'undefined' ? document : null))?.documentElement?.dir === 'rtl';
+      const delta = (dockSide() === 'left') !== rtl
         ? event.clientX - dragState.startX
         : dragState.startX - event.clientX;
       getIde().chatDockWidth = clampWidth(dragState.startWidth + delta, dynamicMaxWidth());

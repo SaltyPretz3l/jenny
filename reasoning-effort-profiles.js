@@ -29,11 +29,12 @@
     max: 'Maximum',
   });
 
-  // First-party Codex model catalog captured 2026-08-06. `ultra` is deliberately
-  // excluded: Codex defines it as maximum reasoning plus automatic delegation,
-  // while Jenny does not yet support sub-agents. The direct ChatGPT transport
-  // must not imply that unavailable behavior by presenting it as an effort level.
+  // First-party Codex comparison metadata; Astra captured 2026-09-07 with
+  // medium default. This is not private-endpoint traffic evidence. `ultra` is
+  // excluded: Codex defines it as automatic delegation as well as reasoning.
+  // The direct ChatGPT transport must not present that orchestration as an effort.
   const CHATGPT_MODEL_PROFILES = Object.freeze({
+    'gpt-6-astra': Object.freeze({ defaultEffort: 'medium', efforts: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) }),
     'gpt-5.6-sol': Object.freeze({ defaultEffort: 'low', efforts: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) }),
     'gpt-5.6-terra': Object.freeze({ defaultEffort: 'medium', efforts: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) }),
     'gpt-5.6-luna': Object.freeze({ defaultEffort: 'medium', efforts: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) }),
@@ -114,9 +115,10 @@
 
   function normalizeManagedReasoningEffortForModel(value, engineType, options = {}) {
     const normalized = normalizeReasoningEffort(value);
-    const modelId = String(options.modelId || '').trim();
+    const modelId = String(options.modelId || '').trim().toLowerCase();
     const normalizedEngine = String(engineType || '').trim().toLowerCase();
-    if (normalizedEngine === 'chatgpt' || normalizedEngine === 'codex-cli' || /^gpt-5([.:-]|$)/i.test(modelId)) {
+    if (normalizedEngine === 'chatgpt' || normalizedEngine === 'codex-cli'
+      || modelId === 'gpt-6-astra' || /^gpt-5([.:-]|$)/.test(modelId)) {
       return normalizeReasoningEffortForModel(normalized, modelId, options.modelCapabilities);
     }
     if (normalizedEngine === 'ollama' && normalized !== 'none' && !supportsOllamaGradedThinking(modelId)) {

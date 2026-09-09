@@ -5,6 +5,7 @@
   }
   root.rendererViewportCopyFeedbackUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createViewportCopyFeedbackUtils(deps) {
     const settings = deps || {};
     const chatTimeline = settings.chatTimeline || null;
@@ -62,9 +63,9 @@
       chip.className = 'chat-copy-chip';
       chip.dataset.messageId = key;
       chip.setAttribute('aria-hidden', 'true');
-      chip.textContent = 'Copied!';
+      chip.textContent = jt('toast.copyFeedback.copied', 'Copied!');
       container.appendChild(chip);
-      announce('Message copied.', { key: `message-copy:${key}` });
+      announce(jt('toast.copyFeedback.messageCopied', 'Message copied.'), { key: `message-copy:${key}` });
 
       const buttonRect = button.getBoundingClientRect();
       const chipWidth = chip.offsetWidth;

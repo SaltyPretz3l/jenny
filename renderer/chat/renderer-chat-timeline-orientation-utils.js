@@ -10,6 +10,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var DEFAULT_TIME_DIVIDER_GAP_MS = 5 * 60 * 1000;
   var MINUTE_MS = 60 * 1000;
   var HOUR_MS = 60 * MINUTE_MS;
@@ -45,33 +47,27 @@
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function pluralUnit(value, singular) {
-    return value === 1 ? singular : singular + 's';
-  }
-
   function formatGap(gapMs) {
     var safeGapMs = Math.max(0, Number(gapMs) || 0);
     var value;
-    var unit;
     if (safeGapMs >= DAY_MS) {
       value = Math.floor(safeGapMs / DAY_MS);
-      unit = 'day';
       return {
-        label: value + ' ' + unit + (value === 1 ? '' : 's') + ' later',
-        ariaLabel: value + ' ' + pluralUnit(value, unit) + ' later',
+        label: jtn('chat.orientation.daysLater', value, { count: value }, '{count} day later', '{count} days later'),
+        ariaLabel: jtn('chat.orientation.daysLater', value, { count: value }, '{count} day later', '{count} days later'),
       };
     }
     if (safeGapMs >= HOUR_MS) {
       value = Math.floor(safeGapMs / HOUR_MS);
       return {
-        label: value + ' hr later',
-        ariaLabel: value + ' ' + pluralUnit(value, 'hour') + ' later',
+        label: jt('chat.orientation.hoursLaterShort', '{count} hr later', { count: value }),
+        ariaLabel: jtn('chat.orientation.hoursLater', value, { count: value }, '{count} hour later', '{count} hours later'),
       };
     }
     value = Math.floor(safeGapMs / MINUTE_MS);
     return {
-      label: value + ' min later',
-      ariaLabel: value + ' ' + pluralUnit(value, 'minute') + ' later',
+      label: jt('chat.orientation.minutesLaterShort', '{count} min later', { count: value }),
+      ariaLabel: jtn('chat.orientation.minutesLater', value, { count: value }, '{count} minute later', '{count} minutes later'),
     };
   }
 

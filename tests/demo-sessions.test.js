@@ -14,7 +14,7 @@ const {
   buildSeededSessions,
   buildSeededCalendarEvents,
 } = require('../scripts/demo/demo-sessions');
-const { seedDemoSessions, seedDemoCalendar, seedDemoToolPolicy } = require('../scripts/demo/demo-profile');
+const { seedDemoSessions, seedDemoCalendar, seedDemoToolPolicy, demoWorkspaceDir, cleanupDemoProfile } = require('../scripts/demo/demo-profile');
 
 // A fixed local clock so the assertions can name the dates they expect.
 const NOW = new Date(2026, 8, 7, 15, 0, 0).getTime(); // Monday 2026-09-07 15:00 local
@@ -27,6 +27,55 @@ function tempProfile(t) {
   });
   return dir;
 }
+
+test('demo workspaces never reuse existing projects or another recording', (t) => {
+  const parentDir = tempProfile(t);
+  const existing = path.join(parentDir, 'ledger-cli');
+  fs.mkdirSync(existing);
+  const sentinel = path.join(existing, 'user-work.txt');
+  fs.writeFileSync(sentinel, 'keep this work');
+  const first = demoWorkspaceDir({ parentDir });
+  const second = demoWorkspaceDir({ parentDir });
+  assert.notStrictEqual(first, second);
+  assert.notStrictEqual(first, existing);
+  assert.strictEqual(path.dirname(first), parentDir);
+  fs.writeFileSync(path.join(second, 'recording.txt'), 'still recording');
+  cleanupDemoProfile({ base: existing, workspace: first });
+  assert.strictEqual(fs.existsSync(first), false);
+  assert.strictEqual(fs.readFileSync(sentinel, 'utf8'), 'keep this work');
+  assert.strictEqual(fs.readFileSync(path.join(second, 'recording.txt'), 'utf8'), 'still recording');
+  cleanupDemoProfile({ workspace: first }); // repeated cleanup is harmless
+  cleanupDemoProfile({ workspace: existing }); // unowned paths are never deleted
+  assert.strictEqual(fs.readFileSync(sentinel, 'utf8'), 'keep this work');
+  cleanupDemoProfile({ workspace: second });
+  assert.strictEqual(fs.existsSync(second), false);
+});
+
+test('demo cleanup refuses a workspace replaced by a junction or symlink', (t) => {
+  const parentDir = tempProfile(t);
+  const target = path.join(parentDir, 'user-project');
+  fs.mkdirSync(target);
+  const sentinel = path.join(target, 'keep.txt');
+  fs.writeFileSync(sentinel, 'keep');
+  const workspace = demoWorkspaceDir({ parentDir });
+  fs.rmdirSync(workspace); // known empty directory allocated by this test
+  fs.symlinkSync(target, workspace, process.platform === 'win32' ? 'junction' : 'dir');
+  cleanupDemoProfile({ workspace });
+  assert.strictEqual(fs.readFileSync(sentinel, 'utf8'), 'keep');
+  assert.strictEqual(fs.lstatSync(workspace).isSymbolicLink(), true);
+});
+
+test('demo cleanup does not remove a different directory at an owned path', (t) => {
+  const parentDir = tempProfile(t);
+  const workspace = demoWorkspaceDir({ parentDir });
+  // Retain the original inode so the replacement cannot coincidentally reuse it.
+  fs.renameSync(workspace, path.join(parentDir, 'original-recording'));
+  fs.mkdirSync(workspace);
+  const sentinel = path.join(workspace, 'new-owner.txt');
+  fs.writeFileSync(sentinel, 'keep');
+  cleanupDemoProfile({ workspace });
+  assert.strictEqual(fs.readFileSync(sentinel, 'utf8'), 'keep');
+});
 
 test('seeded sessions are promo-facing, newest first, and one is pinned', () => {
   const sessions = buildSeededSessions(NOW);

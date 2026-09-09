@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (turnElapsedClockUtils) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const formatElapsedLabel = turnElapsedClockUtils.formatElapsedLabel;
   const TERMINAL_TURN_PHASES = new Set([
     'done', 'review_artifact', 'error', 'cancelled', 'canceled', 'denied',
@@ -38,7 +39,7 @@
   // Tabler arrows-diagonal geometry as ICONS.expand in
   // renderer-artifact-card-utils.js; rendered through the inventory
   // actionButton primitive (emits nothing when the primitive is unavailable).
-  const ARTIFACT_PANEL_EXPAND_SVG = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M7.5 2H10v2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 2L7 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.5 10H2V7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 10l3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  const ARTIFACT_PANEL_EXPAND_SVG = '<svg class="icon-mirror-rtl" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M7.5 2H10v2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 2L7 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.5 10H2V7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 10l3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
   const inventoryActionButton = (function resolveInventoryActionButton() {
     if (typeof globalThis !== 'undefined' && globalThis.inventoryActionButton) {
       return globalThis.inventoryActionButton;
@@ -54,8 +55,8 @@
     return inventoryActionButton({
       plain: true,
       className: 'inv-artifact-action inv-artifact-panel',
-      ariaLabel: 'Open in panel',
-      title: 'Open in panel',
+      ariaLabel: jt('chat.toolRow.openInPanel', 'Open in panel'),
+      title: jt('chat.toolRow.openInPanel', 'Open in panel'),
       trustedHtml: ARTIFACT_PANEL_EXPAND_SVG,
       dataset: {
         'inv-artifact-action': 'panel',
@@ -80,6 +81,8 @@
     || (typeof require === 'function' ? require('./renderer-tool-detail-body') : null);
   const taskSpawnChip = (typeof globalThis !== 'undefined' && globalThis.rendererTaskSpawnChip)
     || (typeof require === 'function' ? require('./renderer-task-spawn-chip') : null);
+  const calendarChatBlock = (typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock)
+    || (typeof require === 'function' ? require('./renderer-calendar-chat-block') : null);
 
   function getToolStatusSeverity(status, normalizeId) {
     const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
@@ -266,7 +269,7 @@
         .trim();
       return {
         summaryMarkup: escapeHtml(surroundingSummary),
-        pathMarkup: `<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="${escapeHtml(chipPath)}" title="Open ${escapeHtml(chipPath)} in the IDE">${escapeHtml(path)}</span>`,
+        pathMarkup: `<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="${escapeHtml(chipPath)}" title="${escapeHtml(jt('chat.toolRow.openInIde', 'Open {path} in the IDE', { path: chipPath }))}">${escapeHtml(path)}</span>`,
       };
     }
 
@@ -301,7 +304,8 @@
       const canonicalResult = resultMessage?.tool_result && typeof resultMessage.tool_result === 'object'
         ? resultMessage.tool_result
         : null;
-      const toolName = String(payload.tool_name || 'Tool call');
+      const toolName = String(payload.tool_name || jt('chat.toolRow.toolCall', 'Tool call'));
+      if (toolCallUtils?.hasPlanDocumentForTool(toolName, toolCallId, messages)) return '';
       let summaryInput = payload.input && typeof payload.input === 'object' && !Array.isArray(payload.input)
         ? payload.input
         : null;
@@ -432,6 +436,13 @@
         escapeHtml,
         getLinkedSessionId: taskSpawnChip.getLinkedSessionId,
       }) || '';
+      const calendarBlockMarkup = resultPayload && calendarChatBlock
+        && typeof calendarChatBlock.buildHomeResultBlockMarkup === 'function'
+        ? calendarChatBlock.buildHomeResultBlockMarkup(resultPayload.metadata, {
+          escapeHtml,
+          // Resolved per render: the bindings module owns the live-journal set.
+          hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
+        }) : '';
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
         ? toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name)
         : toolName;
@@ -443,6 +454,7 @@
       const headerInner = toolCallUtils && typeof toolCallUtils.buildToolHeaderInner === 'function'
         ? toolCallUtils.buildToolHeaderInner({
             displayToolName,
+            lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
             summary: rowSummary === displayToolName ? '' : rowSummary,
             status,
             isRunning,
@@ -499,7 +511,7 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${taskSpawnChipMarkup}
+          ${taskSpawnChipMarkup}${calendarBlockMarkup}
           ${mermaidFallbackMarkup}
           ${artifactTeasersMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
@@ -690,6 +702,7 @@
     function buildToolResultRowMarkup(row, _messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const toolCallId = resolveProjectedRowCallId(row);
+      if (toolCallUtils?.hasPlanDocumentForTool(payload.tool_name, toolCallId, _messages)) return '';
       const durationLabel = formatDurationMs(payload.duration_ms);
       const isError = payload.is_error === true || payload.result_is_error === true;
       const resultOutcome = isError ? classifyToolResultOutcome(payload) : '';

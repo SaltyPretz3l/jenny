@@ -44,6 +44,7 @@
 ) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var CARD_SELECTOR = '.settings-card[data-settings-section="modelLibrary"]';
   var NAV_SELECTOR = '.settings-nav [data-settings-section="modelLibrary"]';
   var TOOLBAR_HOST_ID = 'modelLibrarySectionToolbarHost';
@@ -221,14 +222,14 @@
         + inventoryTextField({
           id: 'modelLibrarySectionPullInput',
           value: view.pullTag,
-          placeholder: 'ollama tag, e.g. qwen3:8b',
-          ariaLabel: 'Ollama model tag',
+          placeholder: jt('settings.modelLibrary.tagPlaceholder', 'ollama tag, e.g. qwen3:8b'),
+          ariaLabel: jt('settings.modelLibrary.tagAria', 'Ollama model tag'),
           className: 'model-library-section-pull-input',
           dataset: { 'model-library-section-input': 'pull-tag' },
         })
         + inventoryActionButton({
           id: 'pull-tag',
-          label: 'Pull',
+          label: jt('settings.modelLibrary.pull', 'Pull'),
           variant: 'secondary',
           size: 'sm',
           dataset: { 'model-library-section-action': 'pull-tag' },
@@ -236,7 +237,7 @@
         + inventoryActionButton({
           id: 'refresh',
           label: '↻',
-          ariaLabel: 'Refresh catalog',
+          ariaLabel: jt('settings.modelLibrary.refreshCatalog', 'Refresh catalog'),
           variant: 'ghost',
           size: 'sm',
           className: 'model-library-section-refresh',
@@ -311,13 +312,12 @@
       section.insertAdjacentHTML('beforeend', stepModal.renderStepModal({
         id: MODAL_ID,
         tone: 'danger',
-        title: 'Remove model?',
-        summary: 'This deletes "' + pendingConfirmModel
-          + '" from your local engine (ollama rm). This cannot be undone.',
+        title: jt('settings.modelLibrary.removeModelTitle', 'Remove model?'),
+        summary: jt('settings.modelLibrary.removeModelSummary', 'This deletes "{model}" from your local engine (ollama rm). This cannot be undone.', { model: pendingConfirmModel }),
         bodyHtml: '',
         actions: [
-          { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-          { id: 'confirm', label: 'Remove', variant: 'danger' },
+          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+          { id: 'confirm', label: jt('common.remove', 'Remove'), variant: 'danger' },
         ],
       }));
     }
@@ -433,7 +433,7 @@
         return result;
       }).catch(function (error) {
         if (!disposed) {
-          setStatusMessage(boundedErrorMessage(error, 'Could not refresh the model library.'));
+          setStatusMessage(boundedErrorMessage(error, jt('settings.modelLibrary.refreshFailed', 'Could not refresh the model library.')));
           appendClientLog('WARN', 'model_library.section_refresh_failed', {
             message: view.statusMessage,
           });
@@ -461,13 +461,13 @@
       var previousPullStatus = pullRenderStatus[key] || '';
       pullRenderStatus[key] = String(pull.status || '');
       if (pull.status === 'done') {
-        setStatusMessage('Pull complete: ' + pull.tag + '.');
+        setStatusMessage(jt('settings.modelLibrary.pullComplete', 'Pull complete: {tag}.', { tag: pull.tag }));
         void refresh({ force: true }).then(function () { refreshModelPickers(); });
         return;
       }
-      if (pull.status === 'error') setStatusMessage(pull.message || 'Pull failed.');
+      if (pull.status === 'error') setStatusMessage(pull.message || jt('settings.modelLibrary.pullFailed', 'Pull failed.'));
       if (pull.cancelFailed === true) {
-        setStatusMessage(pull.message || 'Could not cancel the pull.');
+        setStatusMessage(pull.message || jt('settings.modelLibrary.cancelPullFailed', 'Could not cancel the pull.'));
       }
       if (!replaceRow(key) && pullRenderStatus[key] !== previousPullStatus) renderRows();
     }
@@ -523,16 +523,16 @@
       removeConfirmModal();
       if (!modelId) return;
       if (pendingDeleteModel) {
-        setStatusMessage('Still removing the previous model.');
+        setStatusMessage(jt('settings.modelLibrary.removeInProgress', 'Still removing the previous model.'));
         return;
       }
       if (!findModel(modelId)) {
-        setStatusMessage('"' + modelId + '" is no longer in the model list.');
+        setStatusMessage(jt('settings.modelLibrary.noLongerListed', '"{model}" is no longer in the model list.', { model: modelId }));
         return;
       }
       var deleteFn = windowRef.jennyShell?.models?.delete;
       if (typeof deleteFn !== 'function') {
-        setStatusMessage('Delete is unavailable right now.');
+        setStatusMessage(jt('settings.modelLibrary.deleteUnavailable', 'Delete is unavailable right now.'));
         return;
       }
       pendingDeleteModel = modelId;
@@ -545,23 +545,23 @@
         }
         var code = result && result.code;
         if (code === 'model_in_use') {
-          setStatusMessage('"' + modelId + '" is currently loaded. Unload it first.');
+          setStatusMessage(jt('settings.modelLibrary.unloadBeforeRemove', '"{model}" is currently loaded. Unload it first.', { model: modelId }));
         } else if (code === 'not_found') {
-          setStatusMessage('"' + modelId + '" was already removed.');
+          setStatusMessage(jt('settings.modelLibrary.alreadyRemoved', '"{model}" was already removed.', { model: modelId }));
           return refresh({ force: true }).then(function () { refreshModelPickers(); });
         } else if (code === 'invalid_tag') {
-          setStatusMessage('That model tag is not valid.');
+          setStatusMessage(jt('settings.modelLibrary.invalidTag', 'That model tag is not valid.'));
         } else {
           setStatusMessage(boundedErrorMessage(
             result && result.message,
-            'Could not remove that model.'
+            jt('settings.modelLibrary.removeFailed', 'Could not remove that model.')
           ));
         }
         return null;
       }).catch(function (error) {
         if (disposed) return;
         pendingDeleteModel = '';
-        setStatusMessage(boundedErrorMessage(error, 'Could not remove that model.'));
+        setStatusMessage(boundedErrorMessage(error, jt('settings.modelLibrary.removeFailed', 'Could not remove that model.')));
         appendClientLog('WARN', 'model_library.delete_failed', {
           model: modelId,
           message: view.statusMessage,
@@ -572,11 +572,11 @@
     function startPull(tag) {
       var model = String(tag || '').trim();
       if (!model) {
-        setStatusMessage('Enter a model tag first.');
+        setStatusMessage(jt('settings.modelLibrary.enterTagFirst', 'Enter a model tag first.'));
         return;
       }
       view.pullTag = model;
-      setStatusMessage('Starting Ollama pull.');
+      setStatusMessage(jt('settings.modelLibrary.startingPull', 'Starting Ollama pull.'));
       void ensurePullController().start(model);
     }
 
@@ -609,7 +609,7 @@
                 // Same gate the standalone Remove button carried: ollama only,
                 // and never the loaded model (the main process rejects that
                 // delete with model_in_use, so offering it is a dead end).
-                label: 'Remove…',
+                label: jt('settings.modelLibrary.removeMenu', 'Remove…'),
                 danger: true,
                 disabled: String(model.engineType || '').toLowerCase() !== 'ollama'
                   || model.active === true,
@@ -622,11 +622,11 @@
                 // Returned so the menu wrapper owns the rejection and the
                 // status line reports what actually happened - a denied or
                 // absent clipboard must not read as a successful copy.
-                label: 'Copy tag',
+                label: jt('settings.modelLibrary.copyTag', 'Copy tag'),
                 action: function () {
                   var writeText = windowRef.navigator?.clipboard?.writeText;
                   if (typeof writeText !== 'function') {
-                    setStatusMessage('Clipboard access is unavailable right now.');
+                    setStatusMessage(jt('settings.modelLibrary.clipboardUnavailable', 'Clipboard access is unavailable right now.'));
                     return null;
                   }
                   return Promise.resolve(writeText.call(windowRef.navigator.clipboard, tag))
@@ -635,7 +635,7 @@
                       return null;
                     })
                     .catch(function () {
-                      if (!disposed) setStatusMessage('Could not copy ' + tag + ' to the clipboard.');
+                      if (!disposed) setStatusMessage(jt('settings.modelLibrary.copyFailed', 'Could not copy {tag} to the clipboard.', { tag: tag }));
                       return null;
                     });
                 },

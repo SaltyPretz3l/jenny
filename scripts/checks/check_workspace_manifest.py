@@ -36,6 +36,7 @@ REQUIRED_DOMAIN_MANIFESTS = {
     "electron-wiring": "docs/manifests/electron-wiring.md",
     "sidecar-runtime": "docs/manifests/sidecar-runtime.md",
     "plugin-system": "docs/manifests/plugin-system.md",
+    "hosted-runtime": "docs/manifests/hosted-runtime.md",
 }
 # Domains whose 'paths:' are excluded from freshness enforcement. ui-ux is
 # refreshed on explicit user request, not paired with each renderer edit;

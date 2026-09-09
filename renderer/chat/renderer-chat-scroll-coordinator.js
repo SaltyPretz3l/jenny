@@ -95,6 +95,7 @@
           cap: 2,
           threshold: FOLLOW_THRESHOLD,
           preferEntries: true,
+          refineEntries: true,
           getContentGeneration: function getContentGeneration() { return contentGeneration; },
         })
       : null;
@@ -270,8 +271,10 @@
       var bottomDistance = Math.max(0, scrollHeight - (scrollTop + clientHeight));
       var direction = scrollTop > lastScrollTop ? 'down' : scrollTop < lastScrollTop ? 'up' : 'none';
       var intentIsFresh = userIntentUntil > 0 && timestamp <= userIntentUntil;
-      var userInitiated = (pendingUserIntent && intentIsFresh)
-        || pointerActive || touchActive || intentIsFresh;
+      // Input can bubble from a nested scroller without moving the timeline.
+      // Only actual outer movement promotes candidate input to reader intent.
+      var userInitiated = direction !== 'none' && ((pendingUserIntent && intentIsFresh)
+        || pointerActive || touchActive || intentIsFresh);
       return Object.freeze({
         scrollTop: scrollTop,
         scrollHeight: scrollHeight,
@@ -451,15 +454,17 @@
       pendingUserIntent = true;
       userIntentUntil = now(win) + USER_INTENT_WINDOW_MS;
       stats.inputEvents += 1;
-      try { viewportController?.noteScrollInputIntent?.(); } catch (_error) {
-        logRateLimited('chat.scroll_consumer_failed', { consumer: 'viewport_intent' });
-      }
       scheduleFrame();
     }
 
     function handleNativeScroll() {
       if (disposed) return;
       stats.scrollEvents += 1;
+      if (readSnapshot(now(win)).userInitiated) {
+        try { viewportController?.noteScrollInputIntent?.(); } catch (_error) {
+          logRateLimited('chat.scroll_consumer_failed', { consumer: 'viewport_intent' });
+        }
+      }
       scheduleFrame();
     }
 

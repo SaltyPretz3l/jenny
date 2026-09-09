@@ -96,7 +96,6 @@
       metricList: $('metricList'),
       conversationGroups: $('conversationGroups'),
       conversationCount: $('conversationCount'),
-      promptGrid: $('promptGrid'),
       homeView: $('homeView'),
       chatView: $('chatView'),
       ideView: $('ideView'),
@@ -224,6 +223,7 @@
       setupProgressContainer: $('setupProgressContainer'),
       settingsControlTowerHost: $('settingsControlTowerHost'),
       usageSettingsNavItem: $('usageSettingsNavItem'),
+      remoteSettingsSection: documentRef.querySelector('[data-settings-section="remote"]'),
       titlebar: documentRef.querySelector('.titlebar'),
       sidebar: documentRef.querySelector('.sidebar'),
       composer: documentRef.querySelector('.composer'),
@@ -236,6 +236,10 @@
         ? chatSpriteHolo.getContext('2d')
         : null,
       composerWrap: $('composerWrap'),
+      composerRemoteBanner: $('composerRemoteBanner'),
+      composerRemoteBannerLabel: $('composerRemoteBannerLabel'),
+      composerRemoteTakeControl: $('composerRemoteTakeControl'),
+      composerRemoteStop: $('composerRemoteStop'),
       workbenchHealthPillSlot: $('workbenchHealthPillSlot'),
       chatOriginChip: $('chatOriginChip'),
       chatOriginLabel: $('chatOriginLabel'),
@@ -321,6 +325,7 @@
         setupSettingsActions: dom.setupSettingsActions,
         settingsControlTowerHost: dom.settingsControlTowerHost,
         usageSettingsNavItem: dom.usageSettingsNavItem,
+        remoteSettingsSection: dom.remoteSettingsSection,
         getSectionDom: typeof lazyResolvers?.getSettingsSectionDom === 'function'
           ? lazyResolvers.getSettingsSectionDom
           : function noopGetSettingsSectionDom() { return {}; },
@@ -336,7 +341,6 @@
       },
       chat: {
         homeNavButton: dom.homeNavButton,
-        promptGrid: dom.promptGrid,
         chatInput: dom.chatInput,
         newChatButton: dom.newChatButton,
         stopStreamButton: dom.stopStreamButton,
@@ -349,6 +353,10 @@
         chatSurfaceEffects: dom.chatSurfaceEffects,
         chatThreadScroll: dom.chatThreadScroll,
         composerWrap: dom.composerWrap,
+        composerRemoteBanner: dom.composerRemoteBanner,
+        composerRemoteBannerLabel: dom.composerRemoteBannerLabel,
+        composerRemoteTakeControl: dom.composerRemoteTakeControl,
+        composerRemoteStop: dom.composerRemoteStop,
         chatTimeline: dom.chatTimeline,
         toastViewport: dom.toastViewport,
         composerModelSelect: dom.composerModelSelect,

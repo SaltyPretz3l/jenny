@@ -68,6 +68,7 @@ function createShutdownImplFakes() {
       shutdownAnyLocalOllamaSyncImpl: (opts) => {
         order.push('ollama');
         calls.ollama.push(opts);
+        return { skipped: 'no_owned_state' };
       },
     },
   };
@@ -186,7 +187,7 @@ test('emergency runtime shutdown reports ok when every kill is confirmed', () =>
     log: (level, event, fields) => entries.push({ level, event, fields }),
     shutdownLlamaServerSyncImpl: () => ({ hadState: true, killed: true, pid: 42 }),
     shutdownManagedSidecarSyncImpl: () => ({ hadState: true, killed: true, pid: 7 }),
-    shutdownAnyLocalOllamaSyncImpl: () => ({ discoveredPids: [], killedPids: [] }),
+    shutdownAnyLocalOllamaSyncImpl: () => ({ discoveredPids: [], killedPids: [], verifiedAllKilled: true }),
   });
 
   controller.runEmergencyRuntimeShutdownSync();

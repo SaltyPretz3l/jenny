@@ -20,15 +20,15 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
+  inset-inline-start: -3px;
   width: 6px;
   cursor: col-resize;
   z-index: 2;
 }
 
 .ide-shell[data-rail-side="right"] .ide-secondary-sidebar-resizer {
-  left: auto;
-  right: -3px;
+  left: auto; /* rtl:physical */
+  right: -3px; /* rtl:physical */
 }
 
 .ide-secondary-sidebar-resizer.hidden {
@@ -55,7 +55,7 @@
 }
 
 .ide-secondary-sidebar-collapse {
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 4px 8px;
   border: 0;
   border-radius: 4px;
@@ -92,7 +92,7 @@
  * control sit together at the rail's far edge. */
 .ide-rail-secondary-toggle {
   flex-shrink: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
   display: inline-flex;
   align-items: center;
   padding: 4px 6px;
@@ -124,5 +124,5 @@
  * (ide-view.css) so the two don't split the free space — which made the toggle
  * drift left as primary panels were moved out to the secondary sidebar. */
 .ide-rail-secondary-toggle ~ .ide-rail-flip {
-  margin-left: 0;
+  margin-inline-start: 0;
 }

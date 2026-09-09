@@ -13,6 +13,12 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
+from sidecar.ai.tools.builtins.file_atomic_write import (
+    build_write_metadata,
+    mutation_failure_metadata,
+    write_bytes_atomic,
+    write_hosted_bytes_after_read,
+)
 from sidecar.ai.tools.builtins.file_history import (
     CheckpointInfo,
     checkpoint_lock_for,
@@ -40,7 +46,6 @@ from sidecar.ai.tools.builtins.file_state import (
     refuse_reserved_internal_path,
     require_full_read_snapshot,
     validate_current_snapshot,
-    write_bytes_atomic,
 )
 from sidecar.ai.tools.builtins.filesystem_content import is_supported_media_path, read_media_file
 from sidecar.ai.tools.builtins.filesystem_rich import RICH_FILE_SUFFIXES, read_rich_file
@@ -58,6 +63,7 @@ from sidecar.ai.tools.contracts import (
     ToolHandlerResult,
     canonicalize_tool_arguments,
 )
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_regular_file
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 logger = logging.getLogger(__name__)
@@ -200,6 +206,13 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             code=CMP_TOOL_INVALID_PATH,
             message="tool argument 'headings' is only supported for Markdown files",
             retryable=False,
+        )
+    if hosted_file_io_enabled() and (
+        is_supported_media_path(resolved) or resolved.suffix.lower() in RICH_FILE_SUFFIXES
+    ):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message="Hosted workspace reading supports text files.", retryable=False,
         )
     if _FILESYSTEM_SETTINGS["image_read_enabled"] and is_supported_media_path(resolved):
         return read_media_file(
@@ -429,7 +442,7 @@ def _read_file_window_streaming(
         return end_line is None or line_index < end_line
 
     try:
-        with resolved.open("rb") as handle:
+        with open_regular_file(resolved, "rb") as handle:
             while True:
                 chunk = handle.read(READ_WINDOW_CHUNK_BYTES)
                 if not chunk:
@@ -816,6 +829,7 @@ def _write_file_locked(
     checkpoint_plan = CheckpointInfo(created=False)
     old_text = ""
     diff_status = "created"
+    expected_bytes = None
     journal = workspace.mutation_journal
     try:
         workspace.ensure_safe_mutation_path(resolved)
@@ -863,6 +877,7 @@ def _write_file_locked(
                 },
             )
         old_text = existing_state.text
+        expected_bytes = existing_state.raw_bytes
         diff_status = "modified"
         if journal is not None:
             checkpoint_plan = plan_checkpoint(resolved, workspace.require_root())
@@ -900,13 +915,12 @@ def _write_file_locked(
     checkpoint = checkpoint_result
 
     try:
-        write_bytes_atomic(resolved, encoded, workspace=workspace)
+        if hosted_file_io_enabled():
+            write_hosted_bytes_after_read(resolved, encoded, expected=expected_bytes)
+        else:
+            write_bytes_atomic(resolved, encoded, workspace=workspace)
     except ToolExecutionFailure as error:
-        failure_metadata: dict[str, object] = {"path": relative_path}
-        if prepared is not None and journal is not None:
-            failure_metadata["workspace_change_set"] = journal.mark_failed_sequence(
-                prepared, prepared.sequences[0]
-            )
+        failure_metadata = mutation_failure_metadata(error, relative_path, journal, prepared)
         return failure_result(
             message=f"Failed to write file: {error.message}",
             error_code=error.code,
@@ -981,24 +995,6 @@ def workspace_relative_path(path: Path, root: Path | None) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def build_write_metadata(
-    *,
-    path: str,
-    bytes_written: int,
-    checkpoint: CheckpointInfo | None = None,
-) -> dict[str, object]:
-    metadata: dict[str, object] = {
-        "path": path,
-        "bytes_written": bytes_written,
-        "checkpoint_created": False,
-    }
-    if checkpoint and checkpoint.created:
-        metadata["checkpoint_created"] = True
-        metadata["checkpoint_version"] = checkpoint.version
-        metadata["checkpoint_display_path"] = checkpoint.display_path
-    return metadata
 
 
 def failure_result(

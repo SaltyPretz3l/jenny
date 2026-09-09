@@ -33,6 +33,7 @@ _FIXTURE_DOMAINS = (
     ("electron-wiring", "docs/manifests/electron-wiring.md", "Electron", "Electron Wiring"),
     ("sidecar-runtime", "docs/manifests/sidecar-runtime.md", "Runtime", "Sidecar Runtime"),
     ("plugin-system", "docs/manifests/plugin-system.md", "Plugins", "Plugin System"),
+    ("hosted-runtime", "docs/manifests/hosted-runtime.md", "Host", "Hosted Runtime"),
 )
 
 
@@ -248,6 +249,17 @@ def _write_valid_fixture(repo_root: Path) -> None:
                 "tests/sidecar/ai/plugins/test_plugin_contract_parity.py",
             ],
             related_docs=["AGENTS.md", "PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md"],
+        ),
+    )
+
+    _write_file(repo_root / "server/main.js")
+    _write_file(repo_root / "tests/server/http-server.test.js")
+    _write_file(
+        repo_root / "docs/manifests/hosted-runtime.md",
+        _domain_manifest(
+            domain="hosted-runtime", summary="Private browser host",
+            paths=["server/"], entrypoints=["server/main.js"],
+            tests=["tests/server/http-server.test.js"], related_docs=["AGENTS.md"],
         ),
     )
 

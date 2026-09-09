@@ -3,6 +3,28 @@ const assert = require('node:assert/strict');
 
 const { createSessionLifecycleController } = require('../renderer/shell/renderer-session-lifecycle-utils');
 
+test('session switching restores a live input request without a permission record', async () => {
+  const { createMultiStreamController } = require('../renderer/chat/renderer-multi-stream-utils');
+  const state = { currentSessionId: 'old', sessionMessageAccessOrder: new Map(),
+    pendingToolApprovals: new Map(), messagesBySession: new Map() };
+  const multiStream = createMultiStreamController({ getState: () => state });
+  const controller = createSessionLifecycleController({ state,
+    getMultiStreamController: () => multiStream,
+    sessionCacheController: { async evictColdSessionCaches() {} },
+    thinkingController: { resumeAutoScroll() {} },
+    jennyShell: {
+      sessions: { async getMessages() { return { data: [{ role: 'assistant', kind: 'tool_use',
+        tool_call: { parent_stream_id: 'live', status: 'pending_user_input', tool_name: 'ask_user' } }], turn_events: [] }; } },
+      chat: { async getActiveTurnState() { return { stream_id: 'live', request_id: 'request', state: 'running' }; } },
+    },
+    callbacks: { setSessionMessages: (id, messages) => state.messagesBySession.set(id, messages) },
+  });
+  await controller.openSession('new', { silent: true });
+  assert.equal(multiStream.getStreamIdForSession('new'), 'live');
+  assert.equal(multiStream.getSessionAttentionStates(['new']).get('new'), 'input_needed');
+  assert.equal(multiStream.isSessionSendBusy('new'), true);
+});
+
 test('opening a different session clears one-send active-file consent', async () => {
   const state = {
     currentSessionId: 'session-old',

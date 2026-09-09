@@ -115,6 +115,10 @@
 }
 .workspace-rail-indicator:empty { display: none; }
 
+.workspace-rail-tab:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .workspace-rail-indicator {
+  color: var(--sidebar-state-approval-color);
+}
+
 .workspace-rail-link-button,
 .workspace-rail-close-button {
   flex-shrink: 0;
@@ -223,7 +227,7 @@
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
 }
 .workspace-tab-context-menu-item:is(:hover, :focus-visible) {
   background: var(--widget-action-bg);

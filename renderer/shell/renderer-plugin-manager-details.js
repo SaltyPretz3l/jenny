@@ -7,17 +7,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, drawerModule, asyncFenceModule) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // A view opens only while its contribution is effectively enabled. The button stays
   // visible but inert rather than vanishing, because an enabled-looking control that
   // fails with the host's generic "could not open this isolated view" reads as a broken
   // view instead of a plugin that is simply turned off.
   var VIEW_BLOCKED_COPY = Object.freeze({
-    master_disabled: 'Turn this plugin on to open its view.',
-    managed_policy: 'Managed policy blocks this plugin view.' });
+    master_disabled: jt('plugins.manager.turnOnToOpenView', 'Turn this plugin on to open its view.'),
+    managed_policy: jt('plugins.manager.policyBlocksView', 'Managed policy blocks this plugin view.') });
 
   function viewBlockedTitle(contribution) {
     return VIEW_BLOCKED_COPY[String(contribution?.blocked_reason || '')]
-      || 'This plugin view is not running.';
+      || jt('plugins.manager.viewNotRunning', 'This plugin view is not running.');
   }
 
   function createPluginDetailsController(deps) {
@@ -91,28 +92,27 @@
       }).join('');
       return '<div class="plugin-settings-fields" data-plugin-detail-settings="'
         + escapeHtml(item.contribution_id) + '" aria-busy="' + String(busy) + '">' + controls
-        + button({ label: busy ? 'Saving…' : 'Save settings', size: 'sm', disabled: busy,
+        + button({ label: busy ? jt('plugins.manager.saving', 'Saving…') : jt('plugins.manager.saveSettings', 'Save settings'), size: 'sm', disabled: busy,
           dataset: { 'plugin-details-action': 'settings-save',
             'contribution-id': item.contribution_id, 'generation-id': plugin.generation_id } }) + '</div>';
     }
 
     function contributionMarkup(plugin) {
       var contributions = Array.isArray(plugin.contributions) ? plugin.contributions : [];
-      if (!contributions.length) return '<div class="settings-note">No renderer-visible contributions.</div>';
+      if (!contributions.length) return '<div class="settings-note">' + escapeHtml(jt('plugins.manager.noRendererContributions', 'No renderer-visible contributions.')) + '</div>';
       return contributions.map(function (item) {
-        var permissions = item.mcp ? 'MCP · ' + String(item.mcp.auth_policy || 'no auth')
+        var permissions = item.mcp ? 'MCP · ' + String(item.mcp.auth_policy || jt('plugins.manager.noAuth', 'no auth'))
           : item.view ? 'View · ' + String(item.view.view_kind || 'sandboxed')
-          : item.theme ? 'Theme tokens' : item.settings ? 'Typed settings'
+          : item.theme ? jt('plugins.manager.themeTokens', 'Theme tokens') : item.settings ? jt('plugins.manager.typedSettings', 'Typed settings')
           : String(item.kind || 'contribution');
-        var detail = item.settings ? '<small>Settings revision ' + escapeHtml(item.settings.revision || 0)
-          + ' · ' + escapeHtml(Object.keys(item.settings.values || {}).length) + ' stored value(s)</small>'
-          : item.view ? '<small>' + escapeHtml((item.view.artifact_kinds || []).join(', ') || 'No artifact kinds') + '</small>'
+        var detail = item.settings ? '<small>' + escapeHtml(jt('plugins.manager.settingsRevisionValues', 'Settings revision {revision} · {count} stored value(s)', { revision: item.settings.revision || 0, count: Object.keys(item.settings.values || {}).length })) + '</small>'
+          : item.view ? '<small>' + escapeHtml((item.view.artifact_kinds || []).join(', ') || jt('plugins.manager.noArtifactKinds', 'No artifact kinds')) + '</small>'
           : item.mcp ? '<small>' + escapeHtml(item.mcp.transport_class || '') + ' · '
-            + escapeHtml(item.mcp.active ? 'authorized' : 'inactive or revoked') + '</small>' : '';
+            + escapeHtml(item.mcp.active ? jt('plugins.manager.authorized', 'authorized') : jt('plugins.manager.inactiveOrRevoked', 'inactive or revoked')) + '</small>' : '';
         var opensView = item.kind === 'view' || item.kind === 'setup_scene' || Boolean(item.view);
         var viewReady = item.effective_enabled === true;
         var openButton = opensView ? button({
-          label: item.kind === 'setup_scene' || item.view?.view_kind === 'setup_scene' ? 'Set up' : 'Open',
+          label: item.kind === 'setup_scene' || item.view?.view_kind === 'setup_scene' ? jt('plugins.manager.setUp', 'Set up') : jt('common.open', 'Open'),
           disabled: !viewReady, title: viewReady ? '' : viewBlockedTitle(item),
           variant: 'ghost', size: 'sm', dataset: { 'plugins-settings-action': 'open-view',
             'publisher-id': plugin.publisher_id, 'plugin-id': plugin.plugin_id,
@@ -131,32 +131,32 @@
       var lifecycle = plugin.lifecycle || {};
       var revocation = plugin.revocation || {};
       return '<dl><div><dt>Publisher</dt><dd>' + escapeHtml(plugin.publisher_id) + '</dd></div>'
-        + '<div><dt>Plugin ID</dt><dd>' + escapeHtml(plugin.plugin_id) + '</dd></div>'
+        + '<div><dt>' + escapeHtml(jt('plugins.manager.pluginId', 'Plugin ID')) + '</dt><dd>' + escapeHtml(plugin.plugin_id) + '</dd></div>'
         + '<div><dt>Version</dt><dd>' + escapeHtml(plugin.resolved_version || '') + '</dd></div>'
-        + '<div><dt>Source</dt><dd>' + escapeHtml(source.kind || 'verified package') + '</dd></div>'
-        + '<div><dt>Source evidence</dt><dd><code>' + escapeHtml(source.evidence_digest || 'verified') + '</code></dd></div>'
-        + '<div><dt>Signing key</dt><dd><code>' + escapeHtml(signature.publisher_key_id || 'current publisher trust') + '</code></dd></div>'
-        + '<div><dt>Artifact digest</dt><dd><code>' + escapeHtml(signature.artifact_digest || '') + '</code></dd></div>'
-        + '<div><dt>Effective state</dt><dd>' + escapeHtml(lifecycle.effective_state || plugin.effective_state || '') + '</dd></div>'
-        + '<div><dt>Cleanup</dt><dd>' + escapeHtml(lifecycle.cleanup_status || 'not pending') + '</dd></div>'
+        + '<div><dt>Source</dt><dd>' + escapeHtml(source.kind || jt('plugins.manager.verifiedPackage', 'verified package')) + '</dd></div>'
+        + '<div><dt>' + escapeHtml(jt('plugins.manager.sourceEvidence', 'Source evidence')) + '</dt><dd><code>' + escapeHtml(source.evidence_digest || 'verified') + '</code></dd></div>'
+        + '<div><dt>' + escapeHtml(jt('plugins.manager.signingKey', 'Signing key')) + '</dt><dd><code>' + escapeHtml(signature.publisher_key_id || jt('plugins.manager.currentPublisherTrust', 'current publisher trust')) + '</code></dd></div>'
+        + '<div><dt>' + escapeHtml(jt('plugins.manager.artifactDigest', 'Artifact digest')) + '</dt><dd><code>' + escapeHtml(signature.artifact_digest || '') + '</code></dd></div>'
+        + '<div><dt>' + escapeHtml(jt('plugins.manager.effectiveState', 'Effective state')) + '</dt><dd>' + escapeHtml(lifecycle.effective_state || plugin.effective_state || '') + '</dd></div>'
+        + '<div><dt>Cleanup</dt><dd>' + escapeHtml(lifecycle.cleanup_status || jt('plugins.manager.notPending', 'not pending')) + '</dd></div>'
         + '<div><dt>Revocation</dt><dd>' + escapeHtml(revocation.status || 'current') + '</dd></div></dl>';
     }
 
     function authenticationMarkup(plugin) {
       var rows = Array.isArray(plugin.authentication) ? plugin.authentication : [];
-      if (!rows.length) return '<div class="settings-note">No plugin-managed authentication.</div>';
+      if (!rows.length) return '<div class="settings-note">' + escapeHtml(jt('plugins.manager.noManagedAuthentication', 'No plugin-managed authentication.')) + '</div>';
       return rows.map(function (row) { return '<div class="plugin-detail-contribution"><strong>'
         + escapeHtml(row.contribution_id) + '</strong><span>' + escapeHtml(row.kind + ' · ' + row.policy)
-        + ' · ' + escapeHtml(row.active ? 'authorized' : 'inactive or revoked') + '</span></div>'; }).join('');
+        + ' · ' + escapeHtml(row.active ? jt('plugins.manager.authorized', 'authorized') : jt('plugins.manager.inactiveOrRevoked', 'inactive or revoked')) + '</span></div>'; }).join('');
     }
 
     function body(plugin) {
       var active = plugin.effective_state === 'active';
-      var actions = button({ label: active ? 'Disable' : 'Enable', size: 'sm',
+      var actions = button({ label: active ? jt('plugins.manager.disable', 'Disable') : jt('plugins.manager.enable', 'Enable'), size: 'sm',
         disabled: !active && plugin.activation_eligible !== true,
         dataset: { 'plugins-settings-action': active ? 'disable' : 'enable',
           'publisher-id': plugin.publisher_id, 'plugin-id': plugin.plugin_id } })
-        + button({ label: 'Uninstall', variant: 'danger', size: 'sm',
+        + button({ label: jt('plugins.manager.uninstall', 'Uninstall'), variant: 'danger', size: 'sm',
           dataset: { 'plugins-settings-action': 'uninstall', 'publisher-id': plugin.publisher_id,
             'plugin-id': plugin.plugin_id, 'display-name': plugin.display_name } });
       var error = lastError ? '<div class="settings-note plugins-settings-error" role="alert">'
@@ -170,7 +170,7 @@
 
     function draw() {
       if (!currentPlugin || !drawer.isOpen()) return;
-      drawer.open({ title: currentPlugin.display_name || currentIdentity?.displayName || 'Plugin details',
+      drawer.open({ title: currentPlugin.display_name || currentIdentity?.displayName || jt('plugins.manager.pluginDetails', 'Plugin details'),
         bodyHtml: body(currentPlugin), restoreFocusTo: currentRestoreFocusTarget() });
     }
 
@@ -191,16 +191,16 @@
         });
         if (!isActiveRequest() || !drawer.isOpen()) return;
         if (!result?.ok || !result.plugin) {
-          drawer.open({ title: requestedIdentity.displayName || 'Plugin details',
-            bodyHtml: '<div class="settings-note plugins-settings-error">Plugin details are unavailable.</div>',
+          drawer.open({ title: requestedIdentity.displayName || jt('plugins.manager.pluginDetails', 'Plugin details'),
+            bodyHtml: '<div class="settings-note plugins-settings-error">' + escapeHtml(jt('plugins.manager.detailsUnavailable', 'Plugin details are unavailable.')) + '</div>',
             restoreFocusTo: currentRestoreFocusTarget() });
           return;
         }
         currentPlugin = result.plugin;
         draw();
       } catch (_error) {
-        if (isActiveRequest() && drawer.isOpen()) drawer.open({ title: requestedIdentity.displayName || 'Plugin details',
-          bodyHtml: '<div class="settings-note plugins-settings-error">Plugin details are unavailable.</div>',
+        if (isActiveRequest() && drawer.isOpen()) drawer.open({ title: requestedIdentity.displayName || jt('plugins.manager.pluginDetails', 'Plugin details'),
+          bodyHtml: '<div class="settings-note plugins-settings-error">' + escapeHtml(jt('plugins.manager.detailsUnavailable', 'Plugin details are unavailable.')) + '</div>',
           restoreFocusTo: currentRestoreFocusTarget() });
       }
     }
@@ -241,7 +241,7 @@
       busy = false;
       if (disposed || !drawer.isOpen()) return;
       if (!result?.ok) {
-        lastError = 'Settings update failed: ' + String(result?.reason || result?.code || 'unknown failure');
+        lastError = jt('plugins.manager.settingsUpdateFailed', 'Settings update failed: {reason}', { reason: String(result?.reason || result?.code || 'unknown failure') });
         draw();
         return;
       }
@@ -261,8 +261,8 @@
       restoreFocusTo = focusTarget;
       restoreFocusIdentity = identityFor(focusTarget);
       lastError = '';
-      drawer.open({ title: identity.displayName || 'Plugin details',
-        bodyHtml: '<div class="settings-note">Loading verified plugin details…</div>',
+      drawer.open({ title: identity.displayName || jt('plugins.manager.pluginDetails', 'Plugin details'),
+        bodyHtml: '<div class="settings-note">' + escapeHtml(jt('plugins.manager.loadingDetails', 'Loading verified plugin details…')) + '</div>',
         restoreFocusTo: currentRestoreFocusTarget() });
       await loadCurrent();
     }
@@ -283,7 +283,7 @@
       });
       var status = panel.querySelector('[data-plugin-drawer-operation-status]');
       if (active && !status) panel.querySelector('.inv-drawer-body')?.insertAdjacentHTML('afterbegin',
-        '<p class="settings-note" role="status" data-plugin-drawer-operation-status>Working…</p>');
+        '<p class="settings-note" role="status" data-plugin-drawer-operation-status>' + escapeHtml(jt('plugins.manager.working', 'Working…')) + '</p>');
       else if (!active) status?.remove();
     }
 

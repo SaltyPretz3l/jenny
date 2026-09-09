@@ -104,6 +104,19 @@ def build_restored_tool_contract_overlay(
     return "\n".join(line.rstrip() for line in lines)
 
 
+def _insert_transition_system_message(
+    working_messages: list[dict[str, object]], content: str
+) -> None:
+    # These are authoritative policy changes, not recency nudges. Providers
+    # demote system rows after the leading run to user messages; appending here
+    # would leave the stale read-only digest at higher instruction authority.
+    index = next(
+        (i for i, message in enumerate(working_messages) if message.get("role") != "system"),
+        len(working_messages),
+    )
+    working_messages.insert(index, {"role": "system", "content": content})
+
+
 def apply_restored_tool_contract(
     *,
     working_messages: list[dict[str, object]],
@@ -122,11 +135,9 @@ def apply_restored_tool_contract(
             )
         )
     ]
-    working_messages.append(
-        {
-            "role": "system",
-            "content": build_restored_tool_contract_overlay(tool_statuses=tool_statuses),
-        }
+    _insert_transition_system_message(
+        working_messages,
+        build_restored_tool_contract_overlay(tool_statuses=tool_statuses),
     )
     _log_transition(
         logging.INFO,
@@ -219,7 +230,7 @@ def transition_after_exit_outcome(
         )
     ]
     plan = metadata.get("plan") if isinstance(metadata.get("plan"), dict) else None
-    working_messages.append({"role": "system", "content": build_approved_plan_overlay(plan)})
+    _insert_transition_system_message(working_messages, build_approved_plan_overlay(plan))
     approval_mode = "auto_run" if metadata.get("run_mode_restored") == "auto" else "prompt"
     _log_transition(
         logging.INFO,

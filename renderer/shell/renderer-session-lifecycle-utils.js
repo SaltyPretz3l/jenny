@@ -86,6 +86,10 @@
           ? snapshot.pending_approval
           : null;
       if (!pendingApproval) {
+        // A live ask_user request has no approval record, but still owns a
+        // stream. Restore that identity so current-turn attention can be read.
+        const streamId = String(snapshot?.stream_id || snapshot?.request_id || '').trim();
+        if (streamId) getMultiStreamController()?.registerStream?.(normalizedSessionId, streamId);
         return snapshot;
       }
       const callId = String(pendingApproval.call_id || '').trim();
@@ -119,7 +123,7 @@
       if (!toolUseMessage) {
         return snapshot;
       }
-      const streamId = String(snapshot?.request_id || toolUseMessage.tool_call?.parent_stream_id || '').trim();
+      const streamId = String(snapshot?.stream_id || snapshot?.request_id || toolUseMessage.tool_call?.parent_stream_id || '').trim();
       const approvalId = String(
         pendingApproval.approval_id
         || pendingApproval.approvalId

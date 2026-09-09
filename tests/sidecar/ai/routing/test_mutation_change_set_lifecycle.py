@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,11 @@ from typing import Any
 import pytest
 
 from sidecar.ai.config import RuntimeConfig
-from sidecar.ai.mcp.builtin_server import BuiltinTool, _prepare_call_arguments
+from sidecar.ai.mcp.builtin_server import (
+    BuiltinTool,
+    _build_workspace_guard,
+    _prepare_call_arguments,
+)
 from sidecar.ai.routing import mutation_change_set_lifecycle as lifecycle_module
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.mutation_change_set_lifecycle import (
@@ -20,6 +25,7 @@ from sidecar.ai.routing.mutation_change_set_lifecycle import (
 )
 from sidecar.ai.routing.tool_execution_snapshots import freeze_effective_execution_inputs
 from sidecar.ai.routing.tool_loop import run_tool_loop
+from sidecar.ai.tools.builtins.edit_file import edit_file_tool
 from sidecar.ai.tools.builtins.file_history import create_checkpoint
 from sidecar.ai.tools.builtins.filesystem import write_file_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -841,3 +847,110 @@ def test_exceptional_generation_exit_settles_change_set_once(
     run = captured_runs[0]
     assert run._jenny_mutation_context_token is None
     finish_run_change_set(run, approval_paused=False, reason="second_call")
+
+
+def _live_edit_fixture(tmp_path: Path) -> tuple[Any, ...]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = tmp_path / "state"
+    guard = _build_workspace_guard(Namespace(
+        workspace_root=str(workspace), pre_change_snapshot_root=None,
+        workspace_recovery_root=str(state_root / "workspace-recovery" / "v1"),
+    ))
+    journal = guard.mutation_journal
+    config = SimpleNamespace(
+        tools_workspace_root=str(workspace), electron_state_root=str(state_root),
+    )
+
+    def run(session: str, turn: str, change_set_id: str = "") -> SimpleNamespace:
+        return SimpleNamespace(
+            session_id=session, request_id=turn, _jenny_change_set_id=change_set_id,
+            kernel=SimpleNamespace(_config=config), runtime=None, outcomes=[],
+        )
+
+    def edit(owner: Any, call: str, name: str, old: str, new: str) -> Any:
+        attribution = inject_tool_attribution(
+            tool_name="edit_file", tool_call_id=call, session_id=owner.session_id,
+        )
+        return edit_file_tool({
+            **attribution, "_jenny_session_id": owner.session_id,
+            "file_path": name, "old_string": old, "new_string": new,
+        }, guard)
+
+    return workspace, journal, run, edit
+
+
+@pytest.mark.parametrize("approval_paused", [False, True])
+@pytest.mark.parametrize("commit_path", ["turn_finish", "store_callback"])
+def test_other_turn_commit_preserves_live_edit_context(
+    tmp_path: Path, approval_paused: bool, commit_path: str,
+) -> None:
+    workspace, journal, run, edit = _live_edit_fixture(tmp_path)
+    store = journal.store
+    workspace_id = workspace_identity(workspace).workspace_id
+
+    (workspace / "a.txt").write_bytes(b"a0")
+    (workspace / "b.txt").write_bytes(b"b0")
+    active = run("session-a", "turn-a")
+    bind_run_context(active)
+    try:
+        assert edit(active, "a1", "a.txt", "a0", "a1").success
+        assert edit(active, "a2", "a.txt", "a1", "a2").success
+        active_id = active._jenny_change_set_id
+        before = store.load(workspace_id, active_id).record
+        assert before["state"] == "in_progress"
+        if approval_paused:
+            finish_run_change_set(active, approval_paused=True, reason="approval_required")
+
+        other = run("session-b", "turn-b")
+        bind_run_context(other)
+        try:
+            assert edit(other, "b1", "b.txt", "b0", "b1").success
+            if commit_path == "store_callback":
+                assert journal.finalize(other._jenny_change_set_id).ok
+        finally:
+            finish_run_change_set(
+                other, approval_paused=commit_path == "store_callback",
+                reason="final_response",
+            )
+
+        if approval_paused:
+            active = run("session-a", "turn-a", active_id)
+            bind_run_context(active)
+        after = store.load(workspace_id, active_id).record
+        result = edit(active, "a3", "a.txt", "a2", "a3")
+        assert result.success, result.output
+        assert after["state"] == "in_progress"
+        assert after["operations"] == before["operations"]
+        assert after["retention"]["referenced_object_ids"] == before["retention"]["referenced_object_ids"]
+        assert active._jenny_change_set_id == active_id
+        assert (workspace / "a.txt").read_bytes() == b"a3"
+    finally:
+        finish_run_change_set(active, approval_paused=False, reason="final_response")
+
+    committed = store.load(workspace_id, active_id).record
+    assert committed["state"] == "committed"
+    assert committed["completed_sequences"] == [1, 2, 3]
+    assert committed["session_id"] == "session-a"
+    assert committed["turn_id"] == "turn-a"
+    finish_run_change_set(active, approval_paused=False, reason="duplicate_finish")
+    assert store.load(workspace_id, active_id).record == committed
+    assert preflight_undo(store, workspace, active_id)["status"] == "preflight"
+
+
+def test_fresh_turn_after_commit_has_independent_attribution(tmp_path: Path) -> None:
+    workspace, journal, run, edit = _live_edit_fixture(tmp_path)
+    (workspace / "a.txt").write_bytes(b"a0")
+    previous_id = ""
+    for number in range(2):
+        active = run("session-a", f"turn-{number}")
+        bind_run_context(active)
+        try:
+            assert edit(active, f"call-{number}", "a.txt", f"a{number}", f"a{number + 1}").success
+            assert active._jenny_change_set_id != previous_id
+            previous_id = active._jenny_change_set_id
+        finally:
+            finish_run_change_set(active, approval_paused=False, reason="final_response")
+        record = journal.store.load(workspace_identity(workspace).workspace_id, previous_id).record
+        assert record["state"] == "committed"
+        assert record["turn_id"] == f"turn-{number}"

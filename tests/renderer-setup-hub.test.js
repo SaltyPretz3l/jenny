@@ -20,6 +20,7 @@ function payload({ steps = DEFAULT_STEPS, firstRunCompleted = false, setupComple
   return normalizeSetupPayload({
     setup_complete: setupComplete,
     setup_state: {
+      acknowledged_version: '1',
       first_run_completed: firstRunCompleted,
       setup_complete: setupComplete,
       completed_at: completedAt,
@@ -176,7 +177,7 @@ test('checklist renders every registry step in order and marks exactly the requi
   const rows = [...h.root.querySelectorAll('[data-setup-step-id]')];
   assert.deepEqual(rows.map((row) => row.dataset.setupStepId), sceneUtils.STEP_ORDER);
   assert.deepEqual(rows.filter((row) => row.querySelector('.setup-hub-required')).map((row) => row.dataset.setupStepId),
-    ['workspaceRoot', 'localModel']);
+    ['workspaceRoot', 'localModel', 'endpoint']);
   assert.match(rows[0].textContent, /C:\/dev\/jenny/);
   assert.match(rows[1].textContent, /qwen3:8b/);
   assert.match(rows[3].textContent, /June/);
@@ -416,7 +417,7 @@ test('backend refusal keeps the hub open with fresh model-readiness guidance', a
   assert.match(warning.textContent, /can't reach a model right now/);
   const fix = warning.querySelector('[data-action="fixRequired"]');
   assert.equal(fix.dataset.stepId, 'localEngine');
-  assert.match(fix.textContent, /Check local engine/);
+  assert.match(fix.textContent, /Check Ollama/);
 
   fix.click();
   assert.deepEqual(h.mounts, ['ollamaEngine']);

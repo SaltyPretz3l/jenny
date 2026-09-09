@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, asyncFence) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var POPOVER_MARGIN_PX = 12;
   var POPOVER_GAP_PX = 8;
   var previewGate = asyncFence.createGenerationGate();
@@ -103,28 +104,28 @@
 
   function formatSummary(summary) {
     if (!summary || summary.status !== 'estimated') {
-      return 'Next-turn estimate is unavailable.';
+      return jt('chat.contextMeter.unavailable', 'Next-turn estimate is unavailable.');
     }
     var scope = summary.history_scope === 'recent' ? 'Last 6 turns'
-      : summary.history_scope === 'fresh' ? 'New prompt only' : 'Full session';
+      : summary.history_scope === 'fresh' ? jt('settings.context.historyScope.newPromptOnly', 'New prompt only') : jt('settings.context.fullSession', 'Full session');
     var categories = summary.context_categories || {};
     var enabled = [];
-    if (categories.personality) enabled.push('personality');
-    if (categories.approved_memory) enabled.push('approved memory');
-    if (categories.git) enabled.push('git');
-    if (categories.codebase) enabled.push('codebase');
-    if (categories.active_file) enabled.push('active file');
-    if (categories.mentions) enabled.push('mentions');
+    if (categories.personality) enabled.push(jt('chat.contextMeter.personality', 'personality'));
+    if (categories.approved_memory) enabled.push(jt('chat.contextMeter.approvedMemory', 'approved memory'));
+    if (categories.git) enabled.push(jt('chat.contextMeter.git', 'git'));
+    if (categories.codebase) enabled.push(jt('chat.contextMeter.codebase', 'codebase'));
+    if (categories.active_file) enabled.push(jt('chat.contextMeter.activeFile', 'active file'));
+    if (categories.mentions) enabled.push(jt('chat.contextMeter.mentions', 'mentions'));
     var attachmentCount = boundedCount(categories.attachments, 64);
     var historyCount = boundedCount(summary.history_message_count, 1000000);
     var availableCount = boundedCount(summary.available_history_message_count, 1000000);
     if (attachmentCount > 0) enabled.push(attachmentCount + ' attachment(s)');
     var narrowing = summary.automatic_narrowing
-      ? ' Automatic narrowing will omit ' + Math.max(0, availableCount - historyCount) + ' older message(s).'
+      ? jt('chat.contextMeter.automaticNarrowing', ' Automatic narrowing will omit {count} older message(s).', { count: Math.max(0, availableCount - historyCount) })
       : '';
-    return scope + ': ' + historyCount + ' history message(s). '
-      + (enabled.length ? 'Additional context planned: ' + enabled.join(', ') + '.' : 'No optional context is planned.')
-      + (summary.compaction_snapshot_present ? ' A bounded compacted snapshot may replace its covered prefix.' : '')
+    return jt('chat.contextMeter.historySummary', '{scope}: {count} history message(s). ', { scope: scope, count: historyCount })
+      + (enabled.length ? jt('chat.contextMeter.additionalContextPlanned', 'Additional context planned: {context}.', { context: enabled.join(', ') }) : jt('chat.contextMeter.noOptionalContext', 'No optional context is planned.'))
+      + (summary.compaction_snapshot_present ? jt('chat.contextMeter.compactedSnapshot', ' A bounded compacted snapshot may replace its covered prefix.') : '')
       + narrowing;
   }
 
@@ -135,7 +136,7 @@
     previewGate.bump();
     var previewToken = previewGate.capture();
     output.dataset.contextPreviewPending = 'true';
-    output.textContent = 'Calculating from the canonical session…';
+    output.textContent = jt('chat.contextMeter.calculating', 'Calculating from the canonical session…');
     try {
       var queuedAttachments = Array.isArray(state?.attachments?.queued) ? state.attachments.queued : [];
       var mentionPaths = root?.rendererIdeMentionAutocomplete?.collectMentionPaths?.();
@@ -152,7 +153,7 @@
     } catch (_error) {
       if (previewGate.isCurrent(previewToken) && output.isConnected
         && String(state?.currentSessionId || '').trim() === sessionId) {
-        output.textContent = 'Next-turn estimate is unavailable.';
+        output.textContent = jt('chat.contextMeter.unavailable', 'Next-turn estimate is unavailable.');
         delete output.dataset.contextPreviewPending;
         positionPopover(popover, popover.__invPopoverTrigger);
       }

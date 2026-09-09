@@ -11,12 +11,13 @@
   }
   root.rendererChatsStrip = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   // Keep in lockstep with --view-panel-strip-width (styles/foundation.css).
   // renderer-top-nav-shell.js feeds this into the panel registry's collapsed
   // width so the JS width vars and the CSS grid column cannot drift.
   var STRIP_WIDTH = 56;
   var STRIP_MAX_CHIPS = 12;
-  var STATE_LABELS = { open: 'Open', streaming: 'Streaming', approval: 'Approval' };
 
   function escapeHtmlText(value) {
     return String(value == null ? '' : value)
@@ -80,7 +81,7 @@
       if (days < 7) return `${days}d`;
       const options = { month: 'short', day: 'numeric' };
       if (parsed.getFullYear() !== now.getFullYear()) options.year = 'numeric';
-      return parsed.toLocaleDateString('en-US', options);
+      return parsed.toLocaleDateString(globalThis.jennyI18n?.tag?.(), options);
     }
 
     function formatModelLabel(session) {
@@ -100,7 +101,7 @@
         ? deriveDisplayState(state, session?.id)
         : null;
       const count = Math.max(Number(displayState?.messageCount ?? session?.message_count ?? 0), 0);
-      return `${count} message${count === 1 ? '' : 's'}`;
+      return jtn('sidebar.chatsStrip.messageCount', count, { count: count }, '{count} message', '{count} messages');
     }
 
     // Pinned first (each bucket by recency), archived and pending-delete
@@ -144,6 +145,7 @@
         .map((approval) => String(approval?.sessionId || '').trim())
         .filter(Boolean);
       const approvalIds = runtimeSessionIds('getApprovalPendingSessionIds', fallbackApprovalIds);
+      const attentionStates = rootRef.rendererMultiStreamController?.getSessionAttentionStates?.(ids);
       const resolvePresentation = rootRef.rendererWorkspaceChromeUtils?.resolveSessionPresentation;
       const openSet = new Set(openIds.map((id) => String(id || '').trim()).filter(Boolean));
       const streamingSet = new Set(streamingIds.map((id) => String(id || '').trim()).filter(Boolean));
@@ -156,6 +158,7 @@
             openIds: openSet,
             streamingIds: streamingSet,
             approvalIds: approvalSet,
+            attentionStates,
           }).dominantState);
           return;
         }
@@ -230,7 +233,7 @@
 
     function refreshPeekState(chip) {
       if (!peekEl || !chip) return;
-      const stateLabel = STATE_LABELS[chip.dataset.sessionDominantState]
+      const stateLabel = rootRef.rendererWorkspaceChromeUtils?.sessionStatusLabel?.(chip.dataset.sessionDominantState)
         || (chip.classList.contains('chats-strip__chip--pinned') ? 'Pinned' : '');
       const stateRow = peekEl.querySelector('#chatsStripPeekState');
       stateRow.textContent = stateLabel;
@@ -245,7 +248,7 @@
         .find((entry) => entry?.id === sessionId);
       if (!session) return;
       closePeek({ clearSession: false });
-      peekEl.querySelector('#chatsStripPeekTitle').textContent = session.title || 'New Chat';
+      peekEl.querySelector('#chatsStripPeekTitle').textContent = session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title);
       peekEl.querySelector('#chatsStripPeekMeta').textContent = [
         formatRelativeTime(session.updated_at || session.created_at),
         formatModelLabel(session),
@@ -317,7 +320,7 @@
       stripEl.id = 'chatsStrip';
       stripEl.className = 'chats-strip';
       stripEl.hidden = true;
-      stripEl.setAttribute('aria-label', 'Collapsed chats');
+      stripEl.setAttribute('aria-label', jt('sidebar.chatsStrip.collapsed', 'Collapsed chats'));
       // The expand toggle leads the strip (a fixed sibling of #chatsStripChips,
       // so chip re-renders never touch it); its collapse counterpart lives in
       // the expanded panel's header (renderer-top-nav-shell.js).
@@ -326,18 +329,18 @@
         plain: true,
         className: 'icon-button chats-strip__panel-toggle',
         domId: 'chatsStripPanelToggle',
-        ariaLabel: 'Expand chats panel',
+        ariaLabel: jt('sidebar.chatsStrip.expandPanel', 'Expand chats panel'),
         ariaControls: 'viewPanel',
         ariaExpanded: false,
-        title: 'Expand chats panel (Ctrl+B)',
-        trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="M6 2.75v10.5" /></svg>',
+        title: jt('sidebar.chatsStrip.expandPanelShortcut', 'Expand chats panel (Ctrl+B)'),
+        trustedHtml: '<svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="M6 2.75v10.5" /></svg>',
       }) + actionButton({
         id: 'chats-strip-new-chat',
         plain: true,
         className: 'icon-button chats-strip__new-chat',
         domId: 'chatsStripNewChat',
-        ariaLabel: 'New chat',
-        title: 'New chat (Ctrl+N)',
+        ariaLabel: jt('sidebar.chatsStrip.newChat', 'New chat'),
+        title: jt('sidebar.chatsStrip.newChatShortcut', 'New chat (Ctrl+N)'),
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>',
       })
         + '<div class="chats-strip__chips" id="chatsStripChips"></div>';
@@ -346,7 +349,7 @@
           id: 'chats-strip-peek',
           domId: 'chatsStripPeek',
           className: 'chats-strip__peek',
-          ariaLabel: 'Chat preview',
+          ariaLabel: jt('sidebar.chatsStrip.chatPreview', 'Chat preview'),
           trustedHtml: '<div class="chats-strip__peek-title" id="chatsStripPeekTitle"></div>'
             + '<div class="chats-strip__peek-meta" id="chatsStripPeekMeta"></div>'
             + '<div class="chats-strip__peek-state" id="chatsStripPeekState" hidden></div>',
@@ -391,7 +394,6 @@
           title: session.title || '',
           pinned: session.pinned === true,
           active: session.id === state.currentSessionId,
-          dominantState: stateById.get(session.id) || 'idle',
           timestamp: session.updated_at || session.created_at || '',
           model: formatModelLabel(session),
           messageCount: formatMessageCount(session),
@@ -402,7 +404,7 @@
           lockdown: isOfflineLockdownVisible(session),
         })),
       });
-      if (signature === _chipsSignature) return;
+      if (signature === _chipsSignature) { patchRuntimeState(); return; }
       _chipsSignature = signature;
       const openPeekSessionId = _peekSessionId;
       const openPeekInteraction = _peekInteraction;
@@ -412,7 +414,7 @@
         : '';
       closePeek({ clearSession: false });
       chipsEl.innerHTML = items.map((session) => {
-        const title = session.title || 'New Chat';
+        const title = session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title);
         const isActive = session.id === state.currentSessionId;
         const isPluginSession = session.session_type === 'plugin';
         const usesPhotoIcon = isPluginSession && session.plugin_session?.icon_token === 'image';
@@ -426,7 +428,7 @@
         const lockdownHtml = lockdown
           ? '<span class="session-offline-lockdown-badge chats-strip__lockdown-badge'
             + (reduceMotion ? '' : ' session-offline-lockdown-badge--fade')
-            + '" title="Offline lockdown" aria-hidden="true">'
+            + '" title="' + escapeHtml(jt('sidebar.chatsStrip.offlineLockdown', 'Offline lockdown')) + '" aria-hidden="true">'
             + '<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg>'
             + '</span>'
           : '';
@@ -436,9 +438,8 @@
           className: 'chats-strip__chip'
             + (isActive ? ' chats-strip__chip--active' : '')
             + (session.pinned === true ? ' chats-strip__chip--pinned' : ''),
-          ariaLabel: `Open ${isPluginSession ? `${session.plugin_session?.provider_name || 'plugin'} session` : 'session'} ${title}`
-            + (lockdown ? ', Offline lockdown' : ''),
-          title: lockdown ? 'Offline lockdown' : `Open ${title}`,
+          ariaLabel: jt('sidebar.chatsStrip.openSessionLabel', 'Open {sessionType} {title}{lockdownSuffix}', { sessionType: isPluginSession ? jt('sidebar.chatsStrip.pluginSessionType', '{provider} session', { provider: session.plugin_session?.provider_name || jt('sidebar.chatsStrip.pluginFallback', 'plugin') }) : jt('sidebar.chatsStrip.sessionType', 'session'), title, lockdownSuffix: lockdown ? jt('sidebar.chatsStrip.offlineLockdownSuffix', ', Offline lockdown') : '' }),
+          title: lockdown ? jt('sidebar.chatsStrip.offlineLockdown', 'Offline lockdown') : jt('sidebar.chatsStrip.openChat', 'Open {title}', { title }),
           dataset: {
             'strip-session-id': session.id,
             'session-dominant-state': stateById.get(session.id) || 'idle',
@@ -450,12 +451,13 @@
         id: 'chats-strip-more',
         plain: true,
         className: 'chats-strip__chip chats-strip__more',
-        ariaLabel: `Show ${listed.total - STRIP_MAX_CHIPS} more chats`,
-        title: 'Expand and search chats',
+        ariaLabel: jt('sidebar.chatsStrip.showMoreChats', 'Show {count} more chats', { count: listed.total - STRIP_MAX_CHIPS }),
+        title: jt('sidebar.chatsStrip.expandAndSearch', 'Expand and search chats'),
         dataset: { 'strip-more': 'true' },
         trustedHtml: `<span aria-hidden="true">+${listed.total - STRIP_MAX_CHIPS}</span>`,
       }) : '');
       chipsEl.querySelector('.chats-strip__chip--active')?.setAttribute('aria-current', 'true');
+      patchRuntimeState();
       const refreshedFocusedChip = focusedSessionId && [...chipsEl.querySelectorAll('[data-strip-session-id]')]
         .find((chip) => chip.dataset.stripSessionId === focusedSessionId);
       if (refreshedFocusedChip) {
@@ -502,6 +504,10 @@
       const stateById = chipStateById(chips.map((chip) => chip.dataset.stripSessionId));
       chips.forEach((chip) => {
         chip.dataset.sessionDominantState = stateById.get(chip.dataset.stripSessionId) || 'idle';
+        const label = rootRef.rendererWorkspaceChromeUtils?.sessionStatusLabel?.(chip.dataset.sessionDominantState) || '';
+        if (!chip.dataset.sessionBaseLabel) chip.dataset.sessionBaseLabel = chip.getAttribute('aria-label') || '';
+        chip.setAttribute('aria-label', chip.dataset.sessionBaseLabel + (label
+          ? jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: label }) : ''));
       });
       const openChip = _peekSessionId && [...chipsEl.querySelectorAll('[data-strip-session-id]')]
         .find((chip) => chip.dataset.stripSessionId === _peekSessionId);

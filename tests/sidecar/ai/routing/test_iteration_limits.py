@@ -21,6 +21,7 @@ from sidecar.ai.routing.iteration_limits import (
     max_iterations_for_mode,
     should_emit_wind_down,
     wind_down_threshold,
+    tool_timeout_for_runtime,
 )
 
 CLOUD_ENGINE_TYPES = ("chatgpt", "codex-cli")
@@ -262,3 +263,16 @@ def test_effective_helpers_fail_open_on_malformed_and_missing_attributes() -> No
     # Attributes missing entirely (pre-field config objects) fall back too.
     assert effective_max_tool_calls_per_session(malformed) == 2_000
     assert effective_max_web_tool_calls_per_turn(SimpleNamespace()) == 10
+
+
+@pytest.mark.parametrize("host_mode,version,requested,expected", [
+    ("server", 2, 120, 175),
+    ("desktop", None, 600, 605),
+])
+def test_command_timeout_preserves_worker_cleanup_or_desktop_margin(host_mode, version, requested, expected):
+    config = SimpleNamespace(
+        engine_type="ollama", feature_flags={}, tools_execution_timeout_seconds=10,
+        host_mode=host_mode, host_execution_policy_version=version,
+    )
+    call = SimpleNamespace(tool_id="run_command", arguments={"timeout_seconds": requested})
+    assert tool_timeout_for_runtime(config, None, call) == expected

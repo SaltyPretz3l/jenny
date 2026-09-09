@@ -204,7 +204,7 @@ function createPreviewTestTool({
         },
         screenshot: {
           type: 'boolean',
-          description: 'Attach a PNG screenshot of the rendered page as a session artifact. Default false.',
+          description: 'Capture the rendered page for the active vision-capable model and a screenshot artifact when storage has room (4 per session, 32 per workspace). Default false. Pixel delivery continues when storage is full and is distinct from a completed visual review.',
         },
         events: {
           type: 'array',
@@ -448,7 +448,7 @@ function createPreviewTestTool({
         let screenshotError = '';
         if (typeof service.screenshot === 'function') {
           try {
-            screenshotCapture = await service.screenshot(sessionId);
+            screenshotCapture = await service.screenshot(sessionId, { modelImage: input?.screenshot === true });
             const thumbnail = screenshotCapture?.thumbnail;
             renderSummary = summarizeRenderBitmap({
               bitmap: thumbnail?.bitmap,
@@ -472,26 +472,24 @@ function createPreviewTestTool({
         const consoleErrorCount = consoleEntries.length + pageEntries.length;
         let generatedArtifacts;
         let screenshotLine = '';
+        const modelImage = input?.screenshot === true ? screenshotCapture?.model_image : null;
+        let artifactError = '';
         if (input?.screenshot === true) {
           const chatSessionId = normalizeString(context.sessionId);
           if (
             !chatSessionId
             || typeof context.artifactService?.createBinaryArtifact !== 'function'
           ) {
-            screenshotError ||= 'artifact service unavailable';
-          } else if (!Buffer.isBuffer(screenshotCapture?.buffer)) {
-            screenshotError ||= 'screenshot capture unavailable';
+            artifactError = 'artifact service unavailable';
+          } else if (!Buffer.isBuffer(modelImage?.buffer)) {
+            artifactError = 'bounded screenshot unavailable';
           } else {
             try {
               const created = await context.artifactService.createBinaryArtifact(chatSessionId, {
-                content: screenshotCapture.buffer,
-                mimeType: 'image/png',
-                artifactKind: 'image',
-                title: 'preview_test screenshot',
-                fileName: 'preview-test-screenshot.png',
-                width: screenshotCapture.width,
-                height: screenshotCapture.height,
-                png_validated: true,
+                previewScreenshot: true,
+                content: modelImage.buffer,
+                width: modelImage.width,
+                height: modelImage.height,
               });
               // The artifact service returns `{ output, metadata }`; the
               // bridge consumes the metadata record (artifact_id, display_path, ...).
@@ -500,9 +498,9 @@ function createPreviewTestTool({
                 throw new Error('artifact service returned no artifact record');
               }
               generatedArtifacts = [artifact];
-              screenshotLine = `Screenshot attached: ${artifact.display_path}`;
+              screenshotLine = `Screenshot attached: ${artifact.display_path} (bounded storage; new captures do not evict saved screenshots).`;
             } catch (error) {
-              screenshotError = redactKnownPaths(error?.message || error, sensitiveValues);
+              artifactError = redactKnownPaths(error?.message || error, sensitiveValues);
             }
           }
         }
@@ -511,6 +509,12 @@ function createPreviewTestTool({
           formatRenderSummary(renderSummary),
         ];
         if (screenshotLine) contentLines.push(screenshotLine);
+        if (input?.screenshot === true) {
+          contentLines.push(`Screenshot capture: ${screenshotCapture ? 'captured' : 'unavailable'}.`);
+          if (artifactError) contentLines.push(`Screenshot save failed: ${artifactError}`);
+          if (!modelImage) contentLines.push('Model image unavailable: bounded screenshot encoding failed.');
+        }
+        if (screenshotError) contentLines.push(`Screenshot capture failed: ${screenshotError}`);
         const verdictSuffix = ['blank', 'near-uniform'].includes(renderSummary?.verdict)
           ? `; render ${renderSummary.verdict}`
           : '';
@@ -527,12 +531,20 @@ function createPreviewTestTool({
           events: eventResults,
         };
         if (screenshotError) metadata.screenshot_error = screenshotError;
+        if (artifactError) metadata.screenshot_error ||= artifactError;
+        if (input?.screenshot === true) {
+          metadata.capture_status = screenshotCapture ? 'captured' : 'unavailable';
+          metadata.artifact_status = generatedArtifacts ? 'saved_temporary' : 'unavailable';
+          metadata.model_delivery_status = modelImage ? 'pending' : 'unavailable';
+          if (modelImage) metadata.model_image_dimensions = { width: modelImage.width, height: modelImage.height };
+        }
         if (generatedArtifacts) metadata.generatedArtifacts = generatedArtifacts;
         return {
           content: contentLines.join('\n'),
           summary: `Preview-tested ${relPath}: ${consoleErrorCount} console error(s)${verdictSuffix}`,
           isError: false,
           metadata,
+          ...(modelImage ? { previewImage: modelImage } : {}),
         };
       } catch (error) {
         const reason = redactKnownPaths(error?.message || error, sensitiveValues);

@@ -439,7 +439,7 @@ async function waitForToolApproval(service, streamId, sessionId, requestId, para
   });
 }
 
-function handleToolNotification(service, context, notification) {
+function handleToolNotification(service, context, notification, options = {}) {
   const {
     seenToolCalls,
     toolSummaries,
@@ -453,7 +453,6 @@ function handleToolNotification(service, context, notification) {
     ? notification.params
     : {};
   const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
-
   if (notification.method === 'tool.executing') {
     const callId = String(params.tool_call_id || '').trim();
     if (!callId) {
@@ -549,6 +548,7 @@ function handleToolNotification(service, context, notification) {
     service.emit('chat-stream', {
       type: 'tool_use',
       ...eventBase,
+      ...(options.nextAssistantMessageId ? { next_assistant_message_id: options.nextAssistantMessageId } : {}),
       callId,
       ...(policyDecisionId ? { policyDecisionId } : {}),
       toolName,

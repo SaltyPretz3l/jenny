@@ -11,7 +11,7 @@
   root.rendererSetupSceneUtils = factory(root);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function resolveDependency(globalKey, requirePath) {
     if (root && typeof root[globalKey] !== 'undefined') {
       return root[globalKey];
@@ -51,28 +51,30 @@
   // step cannot silently drift another surface.
   var SETUP_STEP_REGISTRY = Object.freeze([
     Object.freeze({ id: 'workspaceRoot', snake: 'workspace_root', order: 0,
-      title: 'Choose workspace root', description: 'Pick the folder Jenny should treat as your working project.',
+      title: jt('setup.common.workspaceRootTitle', 'Choose workspace root'), description: jt('setup.common.workspaceRootDescription', 'Pick the folder Jenny should treat as your working project.'),
       tile: true, health: 'workspace' }),
     Object.freeze({ id: 'localModel', snake: 'local_model', order: 1,
-      title: 'Pull a local model', description: 'Stream an Ollama model so chat works fully offline.',
+      title: jt("sceneUtils.useOllamaOnThisComputer", "Use Ollama on this computer"), description: jt("sceneUtils.installOrSelectAModelHereOrConnectAn", "Install or select a model here, or connect an existing server below."),
       tile: true, health: 'model' }),
     Object.freeze({ id: 'endpoint', snake: 'endpoint', order: 2,
-      title: 'Validate your endpoint', description: 'Reach a local Ollama, vLLM, or OpenAI-compatible server.',
+      title: jt("sceneUtils.connectAnExistingServer", "Connect an existing server"), description: jt("sceneUtils.useALocalOrPrivateNetworkServerNoOllama", "Use a local or private-network server. No Ollama install or model download required."),
       tile: true, health: 'model' }),
     Object.freeze({ id: 'personality', snake: 'personality', order: 3,
-      title: 'Personality & name', description: 'Pick a profile, name your assistant, and add custom flavor.',
+      title: jt('setup.common.personalityTitle', 'Personality & name'), description: jt('setup.common.personalityDescription', 'Pick a profile, name your assistant, and add custom flavor.'),
       tile: true, health: 'optional' }),
     Object.freeze({ id: 'skills', snake: 'skills', order: 4,
-      title: 'Review skills & MCP', description: 'Glance at the skills and MCP tools Jenny will use.',
+      title: jt('setup.common.skillsTitle', 'Review skills & MCP'), description: jt('setup.common.skillsDescription', 'Glance at the skills and MCP tools Jenny will use.'),
       tile: true, health: 'optional' }),
     Object.freeze({ id: 'capabilities', snake: 'capabilities', order: 5,
-      title: 'Choose tools & permissions', description: 'Review network, workspace, and memory capabilities.',
+      title: jt('setup.common.capabilitiesTitle', 'Choose tools & permissions'), description: jt('setup.common.capabilitiesDescription', 'Review network, workspace, and memory capabilities.'),
       tile: true, health: 'optional' }),
   ]);
   var STEPS = Object.freeze(SETUP_STEP_REGISTRY.reduce(function buildStepMap(result, spec) {
     result[spec.id] = spec;
     return result;
   }, {}));
+  // Bump only when the disclosure text changes materially.
+  var DISCLOSURE_VERSION = '1';
   var STEP_ORDER = Object.freeze(SETUP_STEP_REGISTRY.map(function readId(spec) { return spec.id; }));
   var STEP_SCENE = Object.freeze({
     workspaceRoot: 'workspaceRoot',
@@ -96,10 +98,10 @@
   }
 
   var STATUS_META = Object.freeze({
-    done: { tone: 'success', label: 'Done' },
-    skipped: { tone: 'muted', label: 'Skipped' },
-    error: { tone: 'danger', label: 'Needs attention' },
-    pending: { tone: 'pending', label: 'Pending' },
+    done: { tone: 'success', label: jt('common.done', 'Done') },
+    skipped: { tone: 'muted', label: jt('setup.common.skipped', 'Skipped') },
+    error: { tone: 'danger', label: jt('setup.common.needsAttention', 'Needs attention') },
+    pending: { tone: 'pending', label: jt('setup.common.pending', 'Pending') },
   });
 
   function statusMeta(status) {
@@ -213,6 +215,7 @@
     bindActionDelegation: bindActionDelegation,
     STEPS: STEPS,
     SETUP_STEP_REGISTRY: SETUP_STEP_REGISTRY,
+    DISCLOSURE_VERSION: DISCLOSURE_VERSION,
     STEP_ORDER: STEP_ORDER,
     STEP_SCENE: STEP_SCENE,
     STATUS_META: STATUS_META,

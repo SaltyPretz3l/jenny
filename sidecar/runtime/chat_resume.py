@@ -1,17 +1,8 @@
-"""Approval-resume + live-context validation cluster for the chat runtime hub.
+"""Approval-resume entry point and live-context validation for the chat hub.
 
-Owns the resume-after-approval entry point
-(``resume_chat_send_response_from_approval_plan``) and its supporting
-live-context recomputation/validation helpers.  Import direction: this module
-imports shared leaf helpers from ``chat_response_builders`` and the decision
-serializer from ``chat_decision_render``.
-
-Several helpers here are monkeypatched by tests on the ``sidecar.runtime.chat``
-module object (``_validate_approval_plan_live_context``,
-``_build_live_approval_system_prompt``, ``_build_live_dynamic_system_messages``,
-``build_dynamic_system_messages``, ``describe_approval_plan_changes``).  Every
-call to one of those names is resolved late through ``_chat_hub`` so a patch on
-``chat.NAME`` is honored regardless of which sibling the caller lives in.
+Imports leaf helpers from chat_response_builders and chat_decision_render.
+Calls to live prompt, dynamic-system-message, and approval-plan helpers resolve
+through _chat_hub so tests patching sidecar.runtime.chat retain their seam.
 """
 
 from __future__ import annotations
@@ -355,6 +346,14 @@ def _build_live_dynamic_system_messages(
             if str(item.get("role") or "") != "system":
                 break
             content = item.get("content")
+            # Match the replacement boundary in chat_resume_prefix. Runtime
+            # overlays beyond a typed context row remain in the frozen tail;
+            # copying them here as well duplicates them and self-triggers drift.
+            if not _is_live_dynamic_system_message(
+                content,
+                personality_row_replaceable=personality_row_is_replaceable(plan, config),
+            ):
+                break
             if ContextBuilder.is_runtime_system_message(content):
                 messages.append({"role": "system", "content": str(content)})
     return messages

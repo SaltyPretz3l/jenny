@@ -18,7 +18,7 @@ function read(relativePath) {
 
 test('calendar styles contain no accent side bars, raw colors, or literal motion durations', () => {
   const css = FILES.map(read).join('\n');
-  assert.doesNotMatch(css, /border-left:\s*3px/);
+  assert.doesNotMatch(css, /border-inline-start:\s*3px/);
   assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i);
   assert.doesNotMatch(css, /rgba?\(/i);
   assert.doesNotMatch(css, /\b\d+(?:\.\d+)?ms\b/);
@@ -32,7 +32,7 @@ test('calendar shell, agenda, week, and month retain their load-bearing contract
   assert.match(base, /\.dashboard-card\[data-widget-id="calendar"\] \.dashboard-card__header\s*\{[\s\S]*?display:\s*none/);
   assert.match(base, /@container \(max-width: 720px\)/);
   assert.match(agenda, /\.cal-agenda__list::before/);
-  assert.match(agenda, /left:\s*64px/);
+  assert.match(agenda, /inset-inline-start:\s*64px/);
   assert.match(week, /grid-template-columns:\s*44px repeat\(7/);
   assert.match(week, /height:\s*1440px/);
   assert.match(week, /\.cal-week__allday-cell\s*\{[\s\S]*?position:\s*relative/);

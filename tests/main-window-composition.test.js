@@ -77,8 +77,9 @@ function makeFakeBrowserWindowClass() {
       this.maximized = true;
     }
 
-    loadFile(file) {
+    loadFile(file, options) {
       this.loadedFile = file;
+      this.loadOptions = options;
     }
   }
   FakeBrowserWindow.created = created;
@@ -228,6 +229,31 @@ test('loads index.html, hides the menu bar, and attaches windowStateService', ()
   assert.equal(win.menuBarVisible, false);
   assert.equal(calls.attach.length, 1, 'windowStateService.attach called once');
   assert.equal(calls.attach[0], win, 'attached with the created window');
+});
+
+test('projects a non-English UI language into the renderer query', () => {
+  const { deps } = makeDeps({ getUiLanguage: () => 'ja' });
+  const win = createMainWindowWithDeps(deps);
+
+  assert.deepEqual(win.loadOptions, { query: { jennyUiLanguage: 'ja' } });
+});
+
+test('projects English into the renderer query', () => {
+  const { deps } = makeDeps({ getUiLanguage: () => 'en' });
+  const win = createMainWindowWithDeps(deps);
+
+  assert.deepEqual(win.loadOptions, { query: { jennyUiLanguage: 'en' } });
+});
+
+test('omits the UI language query when the projection dependency throws', () => {
+  const { deps } = makeDeps({
+    getUiLanguage() {
+      throw new Error('unavailable');
+    },
+  });
+  const win = createMainWindowWithDeps(deps);
+
+  assert.equal(win.loadOptions, undefined);
 });
 
 test('emits the window-created startup audit mark and registers a dom-ready audit hook', () => {

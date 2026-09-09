@@ -6,12 +6,13 @@
   }
   root.rendererCompanionActionUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRefDefault = typeof globalThis !== 'undefined' ? globalThis : {};
   const documentRefDefault = windowRefDefault.document || null;
   const DEFAULT_DEFER_PRESETS = Object.freeze([
-    { preset: 'later_today', label: 'Later today', deferredUntil: '' },
-    { preset: 'tomorrow', label: 'Tomorrow', deferredUntil: '' },
-    { preset: 'next_week', label: 'Next week', deferredUntil: '' },
+    { preset: 'later_today', label: jt('companion.defer.laterToday', 'Later today'), deferredUntil: '' },
+    { preset: 'tomorrow', label: jt('companion.defer.tomorrow', 'Tomorrow'), deferredUntil: '' },
+    { preset: 'next_week', label: jt('companion.defer.nextWeek', 'Next week'), deferredUntil: '' },
   ]);
 
   function noop() {}
@@ -90,12 +91,12 @@
       return 'Home';
     }
     if (/^start fresh session$/i.test(rawLabel)) {
-      return 'Home / New session';
+      return jt('companion.origin.newSession', 'Home / New session');
     }
     if (/^resume current session$/i.test(rawLabel)) {
       return 'Home / Resume';
     }
-    return `Home / ${rawLabel}`;
+    return jt('companion.origin.custom', 'Home / {label}', { label: rawLabel });
   }
 
   function createCompanionActionUtils(deps = {}) {
@@ -185,14 +186,14 @@
       const isEditing = formState.mode === 'edit';
       const isResolvedOnly = formState.loopStatus === 'resolved' || formState.loopStatus === 'archived';
       if (homeOpenLoopFormHeading) {
-        homeOpenLoopFormHeading.textContent = isEditing ? 'Edit Open Loop' : 'Add Open Loop';
+        homeOpenLoopFormHeading.textContent = isEditing ? jt('companion.openLoops.editHeading', 'Edit Open Loop') : jt('companion.openLoops.addHeading', 'Add Open Loop');
       }
       if (homeOpenLoopFormNote) {
         homeOpenLoopFormNote.textContent = isEditing
           ? isResolvedOnly
-            ? 'Edit the title or notes. Archived and completed loops keep their current status.'
-            : 'Adjust details or timing without leaving Home.'
-          : 'Create an active loop now or defer it to a later preset.';
+            ? jt('companion.openLoops.editResolvedDescription', 'Edit the title or notes. Archived and completed loops keep their current status.')
+            : jt('companion.openLoops.editDescription', 'Adjust details or timing without leaving Home.')
+          : jt('companion.openLoops.addDescription', 'Create an active loop now or defer it to a later preset.');
       }
       if (!homeOpenLoopDeferSelect) {
         return;
@@ -202,7 +203,7 @@
       homeOpenLoopDeferSelect.textContent = '';
       const nowOption = documentRef.createElement('option');
       nowOption.value = '';
-      nowOption.textContent = 'Active now';
+      nowOption.textContent = jt('companion.openLoops.activeNow', 'Active now');
       homeOpenLoopDeferSelect.append(nowOption);
       presets.forEach((preset) => {
         const option = documentRef.createElement('option');
@@ -224,10 +225,10 @@
       }
       if (homeOpenLoopSaveButton) {
         homeOpenLoopSaveButton.disabled = !companionState.loaded;
-        homeOpenLoopSaveButton.textContent = isEditing ? 'Save Changes' : 'Save Open Loop';
+        homeOpenLoopSaveButton.textContent = isEditing ? jt('companion.openLoops.saveChanges', 'Save Changes') : jt('companion.openLoops.save', 'Save Open Loop');
       }
       if (homeOpenLoopCancelButton) {
-        homeOpenLoopCancelButton.textContent = isEditing ? 'Cancel Edit' : 'Cancel';
+        homeOpenLoopCancelButton.textContent = isEditing ? jt('companion.openLoops.cancelEdit', 'Cancel Edit') : jt('common.cancel', 'Cancel');
       }
     }
 
@@ -243,7 +244,7 @@
       applyCompanionPayload(payload);
       if (successMessage) {
         showToastMessage(successMessage, {
-          title: 'Open Loops',
+          title: jt('companion.openLoops.title', 'Open Loops'),
           tone: 'success',
           source: 'shell.companion',
           dedupeKey,
@@ -361,7 +362,7 @@
       applyCompanionPayload(payload);
       if (toastMessage) {
         showToastMessage(toastMessage, {
-          title: 'Open Loops',
+          title: jt('companion.openLoops.title', 'Open Loops'),
           tone: 'info',
           source: 'shell.companion',
           dedupeKey,
@@ -369,7 +370,7 @@
           actions: [
             {
               id: 'undo',
-              label: 'Undo',
+              label: jt('companion.actions.undo', 'Undo'),
               kind: 'primary',
               onClick: async () => {
                 try {
@@ -378,9 +379,9 @@
                   renderAll();
                 } catch (error) {
                   showShellErrorToast(
-                    toErrorMessage(error, 'Could not restore that open loop.'),
+                    toErrorMessage(error, jt('companion.errors.restoreOpenLoop', 'Could not restore that open loop.')),
                     {
-                      title: 'Undo Failed',
+                      title: jt('companion.titles.undoFailed', 'Undo Failed'),
                       source: 'shell.companion',
                       dedupeKey: `shell.companion:undo:${followUpId}`,
                     }
@@ -399,16 +400,16 @@
       const companionState = getCompanionState();
       const presets = getAvailableDeferPresets(companionState);
       if (!presets.length) {
-        showToastMessage('No defer presets are available right now.', {
-          title: 'Open Loops',
+        showToastMessage(jt('companion.toasts.noDeferPresets', 'No defer presets are available right now.'), {
+          title: jt('companion.openLoops.title', 'Open Loops'),
           tone: 'warning',
           source: 'shell.companion',
           dedupeKey: 'shell.companion:defer:none',
         });
         return;
       }
-      showToastMessage('Choose when this should resurface.', {
-        title: 'Defer Open Loop',
+      showToastMessage(jt('companion.toasts.chooseResurfaceTime', 'Choose when this should resurface.'), {
+        title: jt('companion.titles.deferOpenLoop', 'Defer Open Loop'),
         tone: 'info',
         sticky: true,
         source: 'shell.companion',
@@ -421,12 +422,12 @@
             try {
               await runFollowUpMutation(
                 () => windowRef.jennyShell.companion.deferFollowUp(action.followUpId, preset.preset),
-                `Deferred until ${preset.label.toLowerCase()}.`,
+                jt('companion.followUps.deferredUntilPreset', 'Deferred until {when}.', { when: preset.label.toLowerCase() }),
                 `shell.companion:defer:saved:${action.followUpId}:${preset.preset}`
               );
             } catch (error) {
-              showShellErrorToast(toErrorMessage(error, 'Could not defer that open loop.'), {
-                title: 'Open Loop Failed',
+              showShellErrorToast(toErrorMessage(error, jt('companion.errors.deferOpenLoop', 'Could not defer that open loop.')), {
+                 title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
                 dedupeKey: `shell.companion:defer:error:${action.followUpId}:${preset.preset}`,
                 source: 'shell.companion',
               });
@@ -442,8 +443,8 @@
       const reminder = (Array.isArray(companionState.reminders) ? companionState.reminders : [])
         .find((entry) => String(entry?.id || '').trim() === reminderId);
       if (!reminder) {
-        showShellErrorToast('That reminder is no longer available.', {
-          title: 'Open Loop Failed',
+        showShellErrorToast(jt('companion.toasts.reminderUnavailable', 'That reminder is no longer available.'), {
+          title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
           dedupeKey: `shell.companion:promote-reminder:missing:${reminderId || 'unknown'}`,
           source: 'shell.companion',
         });
@@ -461,7 +462,7 @@
             reminderId: reminder.id,
           },
         }),
-        'Promoted reminder to an open loop.',
+        jt('companion.toasts.promotedReminder', 'Promoted reminder to an open loop.'),
         `shell.companion:promote-reminder:${reminder.id}`
       );
     }
@@ -531,7 +532,7 @@
         await runFollowUpMutationWithUndo({
           followUpId: action.followUpId,
           mutate: () => windowRef.jennyShell.companion.resolveFollowUp(action.followUpId),
-          toastMessage: 'Loop closed.',
+          toastMessage: jt('companion.toasts.loopClosed', 'Loop closed.'),
           dedupeKey: `shell.companion:resolve:${action.followUpId}`,
         });
         return;
@@ -539,7 +540,7 @@
       if (action.type === 'archive_follow_up' && action.followUpId) {
         await runFollowUpMutation(
           () => windowRef.jennyShell.companion.archiveFollowUp(action.followUpId),
-          'Archived open loop.',
+          jt('companion.toasts.archivedOpenLoop', 'Archived open loop.'),
           `shell.companion:archive:${action.followUpId}`
         );
         return;
@@ -547,7 +548,7 @@
       if (action.type === 'delete_follow_up' && action.followUpId) {
         await runFollowUpMutation(
           () => windowRef.jennyShell.companion.deleteFollowUp(action.followUpId),
-          'Loop deleted.',
+          jt('companion.toasts.loopDeleted', 'Loop deleted.'),
           `shell.companion:delete:${action.followUpId}`
         );
         return;
@@ -555,7 +556,7 @@
       if (action.type === 'unarchive_follow_up' && action.followUpId) {
         await runFollowUpMutation(
           () => windowRef.jennyShell.companion.unarchiveFollowUp(action.followUpId),
-          'Restored open loop.',
+          jt('companion.toasts.restoredOpenLoop', 'Restored open loop.'),
           `shell.companion:unarchive:${action.followUpId}`
         );
         return;
@@ -564,8 +565,8 @@
         await runFollowUpMutation(
           () => windowRef.jennyShell.companion.activateFollowUp(action.followUpId),
           /^reopen$/i.test(String(action.label || '').trim())
-            ? 'Reopened open loop.'
-            : 'Moved open loop back to active.',
+            ? jt('companion.toasts.reopenedOpenLoop', 'Reopened open loop.')
+            : jt('companion.toasts.movedOpenLoopActive', 'Moved open loop back to active.'),
           `shell.companion:activate:${action.followUpId}`
         );
         return;
@@ -635,8 +636,8 @@
       const deferPreset = String(homeOpenLoopDeferSelect?.value || '').trim();
       const editingFollowUpId = String(formState.followUpId || '').trim();
       if (!title) {
-        showToastMessage('Add a title before saving this open loop.', {
-          title: 'Open Loops',
+        showToastMessage(jt('companion.toasts.titleRequired', 'Add a title before saving this open loop.'), {
+          title: jt('companion.openLoops.title', 'Open Loops'),
           tone: 'warning',
           source: 'shell.companion',
           dedupeKey: 'shell.companion:add:title-required',
@@ -669,12 +670,12 @@
       closeManualAddForm();
       showToastMessage(
         isEditing
-          ? 'Saved open loop changes.'
+          ? jt('companion.toasts.changesSaved', 'Saved open loop changes.')
           : deferPreset
-            ? 'Saved to deferred open loops.'
-            : 'Saved to open loops.',
+            ? jt('companion.toasts.savedDeferred', 'Saved to deferred open loops.')
+            : jt('companion.toasts.saved', 'Saved to open loops.'),
         {
-          title: 'Open Loops',
+          title: jt('companion.openLoops.title', 'Open Loops'),
           tone: 'success',
           source: 'shell.companion',
           dedupeKey: isEditing
@@ -713,8 +714,8 @@
         try {
           await handleManualAddSubmit();
         } catch (error) {
-          showShellErrorToast(toErrorMessage(error, 'Could not save that open loop.'), {
-            title: 'Open Loop Failed',
+          showShellErrorToast(toErrorMessage(error, jt('companion.errors.saveOpenLoop', 'Could not save that open loop.')), {
+            title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
             dedupeKey: 'shell.companion:add:error',
             source: 'shell.companion',
           });
@@ -731,8 +732,8 @@
       try {
         await handleCompanionAction(action);
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not complete that companion action.'), {
-          title: 'Companion Action Failed',
+        showShellErrorToast(toErrorMessage(error, jt('companion.errors.actionFailed', 'Could not complete that companion action.')), {
+          title: jt('companion.titles.actionFailed', 'Companion Action Failed'),
           dedupeKey: 'shell.companion:action:error',
           source: 'shell.companion',
         });
@@ -748,8 +749,8 @@
       try {
         await handleManualAddSubmit();
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not save that open loop.'), {
-          title: 'Open Loop Failed',
+        showShellErrorToast(toErrorMessage(error, jt('companion.errors.saveOpenLoop', 'Could not save that open loop.')), {
+          title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
           dedupeKey: 'shell.companion:add:error',
           source: 'shell.companion',
         });

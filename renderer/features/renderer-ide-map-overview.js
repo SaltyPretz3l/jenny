@@ -44,6 +44,7 @@
   root.rendererIdeMapOverview = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -249,9 +250,9 @@
       const overview = deriveOverview(currentGraph);
       const parts = [];
       parts.push('<div class="ide-map-overview-title">'
-        + '<span>Project Overview</span>'
+        + '<span>' + escapeHtml(jt('ide.map.overview.projectOverview', 'Project Overview')) + '</span>'
         + (typeof actionButton === 'function'
-          ? actionButton({ id: 'close', label: '×', plain: true, className: 'ide-map-overview-close', ariaLabel: 'Close overview', title: 'Close overview' })
+          ? actionButton({ id: 'close', label: '×', plain: true, className: 'ide-map-overview-close', ariaLabel: jt('ide.map.overview.close', 'Close overview'), title: jt('ide.map.overview.close', 'Close overview') })
           : '')
         + '</div>');
 
@@ -262,7 +263,7 @@
         + '</div>');
 
       parts.push('<div class="ide-map-overview-section">'
-        + '<div class="ide-map-overview-heading">Top directories</div>'
+        + '<div class="ide-map-overview-heading">' + escapeHtml(jt('ide.map.overview.topDirectories', 'Top directories')) + '</div>'
         + overview.topDirs.map((entry) => renderRow(escapeHtml, entry.dir, String(entry.count))).join('')
         + '</div>');
 
@@ -278,7 +279,7 @@
         + '</div>');
 
       parts.push('<div class="ide-map-overview-section">'
-        + '<div class="ide-map-overview-heading">Entry points</div>'
+        + '<div class="ide-map-overview-heading">' + escapeHtml(jt('ide.map.overview.entryPoints', 'Entry points')) + '</div>'
         + overview.entryPoints.map((id) => renderRow(escapeHtml, id, '')).join('')
         + '</div>');
 
@@ -292,30 +293,30 @@
       // Map key: the non-obvious encodings only (language tint is already
       // shown by the chips above). Swatch colors ride palette-token classes.
       parts.push('<div class="ide-map-overview-section">'
-        + '<div class="ide-map-overview-heading">Map key</div>'
+        + '<div class="ide-map-overview-heading">' + escapeHtml(jt('ide.map.overview.mapKey', 'Map key')) + '</div>'
         + '<div class="ide-map-overview-legend">'
         + '<span class="ide-map-overview-legend-swatch ide-map-overview-legend-swatch--activity" aria-hidden="true"></span>'
-        + '<span>Warm glow — Jenny touched it this turn</span></div>'
+        + '<span>' + escapeHtml(jt('ide.map.overview.activityLegend', 'Warm glow — Jenny touched it this turn')) + '</span></div>'
         + '<div class="ide-map-overview-legend">'
         + '<span class="ide-map-overview-legend-swatch ide-map-overview-legend-swatch--deps" aria-hidden="true"></span>'
-        + '<span>Rays — the selected file’s imports</span></div>'
+        + '<span>' + escapeHtml(jt('ide.map.overview.dependenciesLegend', 'Rays — the selected file’s imports')) + '</span></div>'
         + '<div class="ide-map-overview-legend">'
         + '<span class="ide-map-overview-legend-swatch ide-map-overview-legend-swatch--health" aria-hidden="true"></span>'
-        + '<span>District tick — size-cap / cycle health</span></div>'
+        + '<span>' + escapeHtml(jt('ide.map.overview.healthLegend', 'District tick — size-cap / cycle health')) + '</span></div>'
         + '</div>');
 
       const questionField = typeof textField === 'function'
         ? textField({
           id: 'ide-map-overview-question',
           value: '',
-          placeholder: 'Ask about this project…',
+          placeholder: jt('ide.map.overview.questionPlaceholder', 'Ask about this project…'),
           spellcheck: true,
           className: 'ide-map-overview-question',
-          ariaLabel: 'Ask the map a question',
+          ariaLabel: jt('ide.map.overview.questionLabel', 'Ask the map a question'),
         })
         : '';
       const askButton = typeof actionButton === 'function'
-        ? actionButton({ id: 'ask', label: 'Ask Jenny', variant: 'primary', className: 'ide-map-overview-ask-btn' })
+        ? actionButton({ id: 'ask', label: jt('ide.map.overview.askJenny', 'Ask Jenny'), variant: 'primary', className: 'ide-map-overview-ask-btn' })
         : '';
       parts.push(`<div class="ide-map-overview-ask">${questionField}${askButton}</div>`);
 

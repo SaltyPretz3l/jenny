@@ -9,6 +9,7 @@
   }
   root.rendererIdeTabs = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function resolveActionButton() {
@@ -71,13 +72,13 @@
       // unsaved tab reads "(unsaved changes, pinned)".
       let ariaLabel = name;
       if (isDiff) {
-        ariaLabel = `${name} (diff view)`;
+        ariaLabel = jt('ide.tabs.diffView', '{name} (diff view)', { name });
       } else {
         const states = [];
         if (stale) {
-          states.push('changed on disk');
+          states.push(jt('ide.tabs.changedOnDiskState', 'changed on disk'));
         } else if (dirty) {
-          states.push('unsaved changes');
+          states.push(jt('ide.tabs.unsavedChangesState', 'unsaved changes'));
         }
         if (isPinned) {
           states.push('pinned');
@@ -105,7 +106,7 @@
         // Every tab drives the single shared editor stage (role="tabpanel").
         ariaControls: 'ideEditorStage',
         tabIndex: active ? 0 : -1,
-        title: isDiff ? name : stale ? `${tab.path} - changed on disk` : tab.path,
+        title: isDiff ? name : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: tab.path }) : tab.path,
         dataset: { 'ide-tab-path': tab.path },
         trustedHtml: pinGlyph
           + `<span class="ide-tab-name">${escapeHtml(name)}</span>`
@@ -115,8 +116,8 @@
       const closeButton = actionButton({
         plain: true,
         className: 'ide-tab-close',
-        ariaLabel: `Close ${name}`,
-        title: !isDiff && dirty ? `Close ${name} — discards unsaved changes (Ctrl+F4)` : `Close ${name} (Ctrl+F4)`,
+        ariaLabel: jt('ide.tabs.closeLabel', 'Close {name}', { name }),
+        title: !isDiff && dirty ? jt('ide.tabs.closeDirtyTitle', 'Close {name} — discards unsaved changes (Ctrl+F4)', { name }) : jt('ide.tabs.closeTitle', 'Close {name} (Ctrl+F4)', { name }),
         tabIndex: -1,
         dataset: { 'ide-tab-close': tab.path },
         trustedHtml: '<span aria-hidden="true">&times;</span>',
@@ -140,9 +141,9 @@
       return actionButton({
         plain: true,
         className: 'ide-tabstrip-overflow',
-        ariaLabel: 'Show all open tabs',
+        ariaLabel: jt('ide.tabs.showAll', 'Show all open tabs'),
         ariaHaspopup: 'menu',
-        title: 'Show all open tabs',
+        title: jt('ide.tabs.showAll', 'Show all open tabs'),
         tabIndex: 0,
         dataset: { 'ide-tab-overflow': '' },
         trustedHtml: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">'

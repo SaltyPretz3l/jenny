@@ -33,6 +33,7 @@
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   var DEFAULT_SLICE_RADIUS = 60; // lines kept on each side of the cursor
   var MAX_SLICE_CHARS = 8000; // renderer-side guard before the backend re-caps
@@ -201,8 +202,8 @@
         + actionButton({
           plain: true,
           className: 'active-file-context-chip-dismiss',
-          ariaLabel: 'Stop sharing the active file with Jenny',
-          title: 'Stop sharing the active file with Jenny',
+          ariaLabel: jt('ide.activeFile.stopSharing', 'Stop sharing the active file with Jenny'),
+          title: jt('ide.activeFile.stopSharing', 'Stop sharing the active file with Jenny'),
           dataset: { 'active-file-dismiss': '1' },
           trustedHtml: DISMISS_SVG,
         });
@@ -239,10 +240,10 @@
       var html = actionButton({
         plain: true,
         className: 'composer-popover-action composer-active-file-action',
-        ariaLabel: armed ? 'Active workspace file added to the next message' : 'Add active workspace file to the next message',
+        ariaLabel: armed ? jt('ide.activeFile.addedNextMessage', 'Active workspace file added to the next message') : jt('ide.activeFile.addNextMessage', 'Add active workspace file to the next message'),
         ariaPressed: armed,
         dataset: { 'active-file-arm': '1' },
-        trustedHtml: '<span>' + (armed ? 'Active File Added' : 'Add Active File') + '</span>'
+        trustedHtml: '<span>' + escape(armed ? jt('ide.activeFile.added', 'Active File Added') : jt('ide.activeFile.add', 'Add Active File')) + '</span>'
           + '<span class="composer-active-file-name">' + escape(name) + '</span>',
       });
       if (host.__jennyActiveFileActionMarkup !== html) {
@@ -286,13 +287,12 @@
         return;
       }
       if (labelEl) {
-        labelEl.textContent = 'Jenny can see ' + basename(path);
+        labelEl.textContent = jt('ide.activeFile.visibleLabel', 'Jenny can see {file}', { file: basename(path) });
       }
       if (budgetEl) {
-        budgetEl.textContent = '~' + approxTokenLabel(info.slice) + ' tokens';
+        budgetEl.textContent = jt('ide.activeFile.tokenCount', '~{count} tokens', { count: approxTokenLabel(info.slice) });
       }
-      chipEl.setAttribute('title', 'Jenny can see ' + path + ' (~' + approxTokenLabel(info.slice)
-        + ' tokens) — click ✕ to stop sharing it this turn.');
+      chipEl.setAttribute('title', jt('ide.activeFile.sharingTitle', 'Jenny can see {path} (~{count} tokens) — click ✕ to stop sharing it this turn.', { path: path, count: approxTokenLabel(info.slice) }));
       chipEl.classList.remove('hidden');
     }
 

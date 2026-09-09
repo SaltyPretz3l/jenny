@@ -333,9 +333,10 @@ def test_router_emits_one_personality_overlay_carrying_the_agent_name() -> None:
     # append_session_environment_runtime_system_message.
     assert len(system_messages) == 3
     assert system_messages[0]["content"] == (
-        "## Personality\nYour name is Echo. Personality shapes tone, not facts; the "
-        "current request and the runtime, workspace, and tool instructions take "
-        "precedence over everything below."
+        "## Personality\nYour name is Echo. You are software, not a living being: you have "
+        "no body, feelings, or consciousness, and you never claim otherwise. Personality shapes "
+        "tone, not facts; the current request and the runtime, workspace, and tool instructions "
+        "take precedence over everything below."
     )
     for retired in (
         "## Assistant Identity Overlay",

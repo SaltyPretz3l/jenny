@@ -56,10 +56,10 @@ test('renderer shows skills in Plugins & Extensions and retires the Tips setting
   assert.equal(window.document.getElementById('skillsSettingsSection').hidden, false);
   assert.equal(window.document.getElementById('tipsSettingsNavItem'), null);
   assert.equal(window.document.getElementById('tipsSettingsSection'), null);
-  assert.match(window.document.getElementById('promptGrid').textContent, /point jenny at a workspace/i);
+  assert.equal(window.document.getElementById('promptGrid'), null);
 });
 
-test('renderer workspace-root tip chip opens the Tools settings section', async (t) => {
+test('renderer keeps Tools settings navigation available without a workspace tip chip', async (t) => {
   const { window } = await loadRendererApp({
     shell: {
       tips: {
@@ -89,16 +89,15 @@ test('renderer workspace-root tip chip opens the Tools settings section', async 
 
   await waitForUi(window, 40);
 
-  const tipChip = window.document.querySelector('[data-tip-settings="tools"]');
-  assert.ok(tipChip);
-  tipChip.click();
+  assert.equal(window.document.querySelector('[data-tip-settings]'), null);
+  window.document.querySelector('nav.settings-nav [data-settings-section="tools"]').click();
   await waitForUi(window, 40);
 
   const activeSection = window.document.querySelector('.settings-section-active');
   assert.equal(activeSection?.dataset.settingsSection, 'tools');
 });
 
-test('renderer tip chip opens Home and skills actions call the shell', async (t) => {
+test('renderer keeps Home navigation and skill actions available without tip chips', async (t) => {
   const skillActions = [];
   const { window } = await loadRendererApp({
     shell: {
@@ -177,9 +176,8 @@ test('renderer tip chip opens Home and skills actions call the shell', async (t)
 
   await waitForUi(window, 40);
 
-  const tipChip = window.document.querySelector('[data-tip-settings="home"]');
-  assert.ok(tipChip);
-  tipChip.click();
+  assert.equal(window.document.querySelector('[data-tip-settings]'), null);
+  window.document.querySelector('nav.settings-nav [data-settings-section="home"]').click();
   await waitForUi(window, 40);
 
   const activeSection = window.document.querySelector('.settings-section-active');
@@ -245,7 +243,7 @@ test('renderer shows an error toast when opening a skill folder fails', async (t
   assert.match(toastViewport.textContent, /simulated shell\.openPath failure/i);
 });
 
-test('renderer refreshes skills and contextual tip surfaces after live shell events', async (t) => {
+test('renderer refreshes skills and accepts tip updates without rendering chips', async (t) => {
   const { window, shell } = await loadRendererApp({
     shell: {
       skills: {
@@ -296,7 +294,7 @@ test('renderer refreshes skills and contextual tip surfaces after live shell eve
   });
 
   await waitForUi(window, 40);
-  assert.match(window.document.getElementById('promptGrid').textContent, /skills stay file-backed/i);
+  assert.equal(window.document.getElementById('promptGrid'), null);
 
   await shell.__emitSkillsChanged({
     featureEnabled: true,
@@ -333,7 +331,9 @@ test('renderer refreshes skills and contextual tip surfaces after live shell eve
     /1 skill file skipped: Simulated load warning\./i,
   );
   assert.equal(window.document.getElementById('tipsCurrentPreview'), null);
-  assert.doesNotMatch(window.document.getElementById('promptGrid').textContent, /skills stay file-backed/i);
+  assert.equal(window.__rendererState.tips.activeTip, null);
+  assert.equal(window.__rendererState.tips.settings.sessionCount, 2);
+  assert.equal(window.document.getElementById('promptGrid'), null);
 });
 
 test('renderer exposes consolidated salvage feature controls in settings', async (t) => {
@@ -512,10 +512,13 @@ test('tools card keeps authority and internal guardrail controls out of Settings
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="tools"]');
 
-  // Workspace status/link, optional capabilities, and the approval-rules list
-  // (Settings > Tools > Approval rules) are the only direct groups.
+  // Tools exposes workspace status, optional capabilities, command isolation,
+  // and saved approval rules through accessible groups.
   const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.equal(groups.length, 3);
+  assert.deepEqual(Array.from(groups, (group) => group.getAttribute('aria-labelledby')), [
+    'toolsWorkspaceHeading', 'toolsCapabilitiesHeading',
+    'toolsCommandSandboxHeading', 'toolsApprovalRulesHeading',
+  ]);
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
     const headingId = group.getAttribute('aria-labelledby');

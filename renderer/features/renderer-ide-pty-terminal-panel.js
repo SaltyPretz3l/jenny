@@ -10,6 +10,7 @@
   root.rendererIdePtyTerminalPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -51,6 +52,7 @@
   function createIdePtyTerminalPanel(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
+    const escapeHtml = typeof deps?.escapeHtml === 'function' ? deps.escapeHtml : (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const getMountEl = typeof deps?.getMountEl === 'function'
       ? deps.getMountEl
       : () => getDom().ideBottomPanelContent || null;
@@ -185,7 +187,7 @@
         // UIUX-035: a counted, visible indicator once the write queue has had
         // to drop anything — never silent data loss (AGENTS.md section 9).
         status.textContent = writeDroppedEvents > 0
-          ? `${base} · output dropped (${writeDroppedBytes}B)`
+          ? jt('ide.ptyTerminal.outputDropped', '{status} · output dropped ({bytes}B)', { status: base, bytes: writeDroppedBytes })
           : base;
         status.classList.toggle('ide-terminal-status--running', isRunning());
         status.dataset.ptyWriteDroppedEvents = String(writeDroppedEvents);
@@ -210,17 +212,17 @@
 
     function buildPanelMarkup() {
       if (typeof actionButton !== 'function') {
-        return '<div class="ide-rail-placeholder">Terminal is unavailable in this shell mode.</div>';
+        return '<div class="ide-rail-placeholder">' + escapeHtml(jt('ide.ptyTerminal.unavailable', 'Terminal is unavailable in this shell mode.')) + '</div>';
       }
       return '<div class="ide-terminal-panel">'
         + '<div class="ide-terminal-toolbar">'
         + '<span class="ide-terminal-title">Terminal</span>'
         + '<span class="ide-terminal-status" data-ide-terminal-status></span>'
         + '<span class="ide-terminal-toolbar-actions">'
-        + buildToolbarButton('start', 'Start', 'Start a terminal session')
-        + buildToolbarButton('signal', '^C', 'Send an interrupt (Ctrl+C) to the running command')
-        + buildToolbarButton('clear', 'Clear', 'Clear the terminal')
-        + buildToolbarButton('restart', 'Restart', 'Restart the terminal session')
+        + buildToolbarButton('start', 'Start', jt('ide.ptyTerminal.startSession', 'Start a terminal session'))
+        + buildToolbarButton('signal', '^C', jt('ide.ptyTerminal.sendInterrupt', 'Send an interrupt (Ctrl+C) to the running command'))
+        + buildToolbarButton('clear', 'Clear', jt('ide.ptyTerminal.clear', 'Clear the terminal'))
+        + buildToolbarButton('restart', 'Restart', jt('ide.ptyTerminal.restartSession', 'Restart the terminal session'))
         + '</span>'
         + '</div>'
         + '<div class="ide-terminal-xterm" data-ide-pty-mount></div>'
@@ -441,9 +443,9 @@
       // after it — flush the coalesced write queue synchronously first.
       flushPendingWrites();
       sessionId = '';
-      const code = payload?.exitCode == null ? '' : ` (code ${payload.exitCode})`;
+      const code = payload?.exitCode == null ? '' : jt('ide.ptyTerminal.exitCode', ' (code {code})', { code: payload.exitCode });
       if (term) {
-        try { term.writeln(`\r\n[terminal] session ended${code}`); } catch (_error) { /* term gone */ }
+        try { term.writeln('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code })); } catch (_error) { /* term gone */ }
       }
       setStatusMessage('');
     }
@@ -511,7 +513,7 @@
     function failStart(status, logCode, message, extra) {
       setStatusMessage(status);
       appendClientLog('WARN', logCode, extra || {});
-      showError(message, { title: 'Terminal', dedupeKey: 'ide:pty:start' });
+      showError(message, { title: jt('ide.terminal.title', 'Terminal'), dedupeKey: 'ide:pty:start' });
       return false;
     }
 
@@ -522,7 +524,7 @@
       const api = getApi();
       if (!api || typeof api.spawn !== 'function') {
         return failStart('unavailable', 'ide.pty_start_unavailable',
-          'The PTY terminal is not available in this shell mode.');
+          jt('ide.ptyTerminal.ptyUnavailable', 'The PTY terminal is not available in this shell mode.'));
       }
       starting = true;
       const epoch = lifecycleEpoch;
@@ -540,7 +542,7 @@
         if (!xtermReady) {
           starting = false;
           return failStart('unavailable', 'ide.pty_start_unavailable',
-            'The terminal runtime could not be loaded. Check your connection and try again.');
+            jt('ide.ptyTerminal.runtimeLoadFailed', 'The terminal runtime could not be loaded. Check your connection and try again.'));
         }
       }
       // UIUX-011: subscribe BEFORE calling spawn, not after it resolves. Main
@@ -574,17 +576,17 @@
           return false;
         }
         if (result && result.available === false) {
-          return failStart('not enabled', 'ide.pty_not_enabled',
-            'The PTY terminal is not enabled. Enable workspace_pty_terminal to use it.');
+          return failStart(jt('ide.ptyTerminal.notEnabledStatus', 'not enabled'), 'ide.pty_not_enabled',
+            jt('ide.ptyTerminal.notEnabled', 'The PTY terminal is not enabled. Enable workspace_pty_terminal to use it.'));
         }
         if (!result || result.ok === false) {
-          const message = toErrorMessage(result?.message, result?.code || 'The terminal could not be started.');
+          const message = toErrorMessage(result?.message, result?.code || jt('ide.ptyTerminal.startFailed', 'The terminal could not be started.'));
           return failStart('failed', 'ide.pty_start_failed', message, { code: String(result?.code || ''), message });
         }
         sessionId = String(result.sessionId || '');
         if (!sessionId) {
           return failStart('failed', 'ide.pty_start_no_session',
-            'The terminal session could not be started (no session id).');
+            jt('ide.ptyTerminal.noSessionId', 'The terminal session could not be started (no session id).'));
         }
         sessionShell = String(result.shell || '');
         sessionCwd = String(result.cwd || '');
@@ -602,7 +604,7 @@
       } catch (error) {
         if (disposed || epoch !== lifecycleEpoch) return false;
         return failStart('failed', 'ide.pty_start_failed',
-          toErrorMessage(error, 'Could not start the terminal.'),
+          toErrorMessage(error, jt('ide.ptyTerminal.startError', 'Could not start the terminal.')),
           { message: String(error?.message || error || '') });
       } finally {
         starting = false;

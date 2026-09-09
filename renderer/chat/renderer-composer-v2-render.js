@@ -9,33 +9,34 @@
   root.rendererComposerV2Render = factory(root.inventoryActionButton, root.inventoryChip, root.rendererComposerV2State);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton, inventoryChip, composerState) {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const BLOCKED_SEND_REASONS = Object.freeze({
-    NO_SESSION: 'Start a conversation first.',
-    NOT_AUTHENTICATED: 'Sign in to send messages.',
-    BACKEND_PREFLIGHT: 'Connecting to the model…',
-    BACKEND_NOT_READY: 'Backend not ready yet.',
-    INTERACTIVE_PENDING: 'Answer the interactive questions above first.',
-    STREAMING: 'Wait for the current response to finish, or stop it.',
-    EMPTY_DRAFT: 'Type a message or attach a file.',
-    UNAVAILABLE: 'Send is currently unavailable.',
+    NO_SESSION: jt('composer.sendBlocked.noSession', 'Start a conversation first.'),
+    NOT_AUTHENTICATED: jt('composer.sendBlocked.notAuthenticated', 'Sign in to send messages.'),
+    BACKEND_PREFLIGHT: jt('composer.sendBlocked.connecting', 'Connecting to the model…'),
+    BACKEND_NOT_READY: jt('composer.sendBlocked.backendNotReady', 'Backend not ready yet.'),
+    INTERACTIVE_PENDING: jt('composer.sendBlocked.interactivePending', 'Answer the interactive questions above first.'),
+    STREAMING: jt('composer.sendBlocked.streaming', 'Wait for the current response to finish, or stop it.'),
+    EMPTY_DRAFT: jt('composer.sendBlocked.emptyDraft', 'Type a message or attach a file.'),
+    UNAVAILABLE: jt('composer.sendBlocked.unavailable', 'Send is currently unavailable.'),
   });
 
   const MODE_CHIP_COPY = Object.freeze({
     ask: Object.freeze({
-      label: 'Ask',
+      label: jt('composer.runMode.ask', 'Ask'),
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
-      hint: 'Jenny asks before running tools that change things.',
+      hint: jt('composer.runMode.askHint', 'Jenny asks before running tools that change things.'),
     }),
     auto: Object.freeze({
-      label: 'Auto',
+      label: jt('composer.runMode.auto', 'Auto'),
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
-      hint: 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.',
+      hint: jt('composer.runMode.autoHint', 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.'),
     }),
     plan: Object.freeze({
-      label: 'Plan',
+      label: jt('composer.runMode.plan', 'Plan'),
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
-      hint: 'Read-only: Jenny plans first and presents it before acting.',
+      hint: jt('composer.runMode.planHint', 'Read-only: Jenny plans first and presents it before acting.'),
     }),
   });
 
@@ -147,8 +148,8 @@
     const label = chip.querySelector('.inv-chip-label');
     if (icon) icon.innerHTML = copy.icon;
     if (label) label.textContent = copy.label;
-    chip.setAttribute('aria-label', `Run mode: ${copy.label}. Click to switch to ${nextCopy.label}.`);
-    chip.setAttribute('title', `Run mode: ${copy.label}. Click to switch to ${nextCopy.label}. (Shift+Tab to cycle)`);
+    chip.setAttribute('aria-label', jt('composer.runMode.switchAriaLabel', 'Run mode: {mode}. Click to switch to {nextMode}.', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)));
+    chip.setAttribute('title', jt('composer.runMode.switchTitle', 'Run mode: {mode}. Click to switch to {nextMode}. (Shift+Tab to cycle)', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)));
     chip.setAttribute('aria-keyshortcuts', 'Shift+Tab');
     chip.removeAttribute('aria-pressed');
     if (hint) hint.textContent = copy.hint;
@@ -177,7 +178,7 @@
       domId: 'composerRunModeChip',
       iconHtml: initialCopy.icon,
       label: initialCopy.label,
-      ariaLabel: `Run mode: ${initialCopy.label}.`,
+      ariaLabel: jt('composer.runMode.ariaLabel', 'Run mode: {mode}.', { mode: initialCopy.label }).replace('{mode}', () => String(initialCopy.label)),
       className: `composer-run-mode-chip composer-run-mode-${initialMode}${initialMode === 'auto' ? ' inv-chip--on' : ''}`,
     }));
     const chip = slot.querySelector('#composerRunModeChip');
@@ -220,7 +221,7 @@
       if (count === lastCount) return;
       lastCount = count;
       if (count > 0) {
-        pill.textContent = 'Queued (' + count + ')';
+        pill.textContent = jtn('composer.attachments.queuedCount', count, { count }, 'Queued ({count})', 'Queued ({count})').replace('{count}', () => String(count));
         pill.classList.remove('hidden');
       } else {
         pill.textContent = '';
@@ -468,19 +469,19 @@
         ? retryAvailability
         : { available: true, reason: '' };
       const retryMount = mountInventoryButton(actionsEl, {
-        label: 'Retry',
+        label: jt('common.retry', 'Retry'),
         className: 'composer-failed-send-notice-button composer-failed-send-notice-button--retry',
         dataset: { action: 'retry' },
         disabled: retryState.available === false,
         title: retryState.available === false
-          ? String(retryState.reason || 'Retry is unavailable.')
-          : 'Retry sending this message',
+          ? String(retryState.reason || jt('composer.failedSend.retryUnavailable', 'Retry is unavailable.'))
+          : jt('composer.failedSend.retryTitle', 'Retry sending this message'),
       }, retryState.available === false ? {} : { click: handlers.onRetry });
       const dismissMount = mountInventoryButton(actionsEl, {
-        label: 'Dismiss',
+        label: jt('common.dismiss', 'Dismiss'),
         className: 'composer-failed-send-notice-button composer-failed-send-notice-button--dismiss',
         dataset: { action: 'dismiss' },
-        title: 'Dismiss this error',
+        title: jt('composer.failedSend.dismissTitle', 'Dismiss this error'),
       }, { click: handlers.onDismiss });
       return { retryMount, dismissMount };
     }
@@ -540,11 +541,11 @@
       detachActionHandlers();
       let retryAvailability;
       try {
-        retryAvailability = getRetryAvailability(found) || { available: false, reason: 'Retry is unavailable.' };
+        retryAvailability = getRetryAvailability(found) || { available: false, reason: jt('composer.failedSend.retryUnavailable', 'Retry is unavailable.') };
       } catch (_error) {
-        retryAvailability = { available: false, reason: 'Retry is unavailable.' };
+        retryAvailability = { available: false, reason: jt('composer.failedSend.retryUnavailable', 'Retry is unavailable.') };
       }
-      activeMounts = renderNoticeBody('Last message failed to send. Retry or dismiss to move on.', {
+      activeMounts = renderNoticeBody(jt('composer.failedSend.notice', 'Last message failed to send. Retry or dismiss to move on.'), {
         onRetry() {
           try {
             onRetry({ sessionId: found.sessionId, messageId: found.messageId, failure: found.failure });

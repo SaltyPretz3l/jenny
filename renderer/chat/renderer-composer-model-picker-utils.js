@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function splitModelId(value) {
     if (typeof value !== 'string' || !value.trim()) {
       return { id: '', family: '', tag: '', tagHead: '', org: '', engineHint: '' };
@@ -44,13 +45,13 @@
     var id = typeof source.id === 'string' ? source.id.trim() : '';
     var engineType = String(source.engineType || '').trim().toLowerCase();
     if (/^codex-cli\//i.test(id) || engineType === 'codex-cli') {
-      return { key: 'codex-cli', label: 'Codex CLI', order: 50 };
+      return { key: 'codex-cli', label: jt('composer.modelPicker.codexCliGroup', 'Codex CLI'), order: 50 };
     }
     if (engineType === 'chatgpt') {
       return { key: 'chatgpt', label: 'ChatGPT', order: 40 };
     }
     if (/^(?:hf\.co|huggingface\.co)\//i.test(id)) {
-      return { key: 'huggingface', label: 'Hugging Face', order: 30 };
+      return { key: 'huggingface', label: jt('composer.modelPicker.huggingFaceGroup', 'Hugging Face'), order: 30 };
     }
     if (engineType === 'ollama') {
       return { key: 'ollama', label: 'Ollama', order: 10 };
@@ -59,17 +60,17 @@
       return { key: 'vllm', label: 'vLLM', order: 20 };
     }
     if (engineType === 'openai-compatible') {
-      return { key: 'openai-compatible', label: 'OpenAI-compatible', order: 25 };
+      return { key: 'openai-compatible', label: jt('composer.modelPicker.openAiCompatibleGroup', 'OpenAI-compatible'), order: 25 };
     }
     if (engineType === 'plugin_host') {
-      return { key: 'plugins', label: 'Plugins', order: 60 };
+      return { key: 'plugins', label: jt('composer.modelPicker.pluginsGroup', 'Plugins'), order: 60 };
     }
     // Name heuristic only when the catalog did not say which engine serves
     // the model: gpt-oss:20b on Ollama must stay in the Ollama group.
     if (/^gpt-/i.test(id)) {
       return { key: 'chatgpt', label: 'ChatGPT', order: 40 };
     }
-    return { key: 'other', label: 'Other', order: 90 };
+    return { key: 'other', label: jt('composer.modelPicker.otherGroup', 'Other'), order: 90 };
   }
 
   function defaultCanonicalize(value) {

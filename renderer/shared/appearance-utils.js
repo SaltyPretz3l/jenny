@@ -7,6 +7,7 @@
     globalScope.appearanceUtils = factory();
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function appearanceUtilsFactory() {
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var STORAGE_KEY = 'jenny.appearance.v2';
   var LEGACY_STORAGE_KEY = 'jenny.appearance.v1';
   // Conservative per-field fallback baseline used when normalizing existing or
@@ -34,80 +35,80 @@
   var PALETTE_PRESETS = {
     midnight: {
       id: 'midnight',
-      label: 'Midnight',
-      description: 'Current dark Jenny shell baseline.',
+      label: jt('appearance.palette.midnight.name', 'Midnight'),
+      description: jt('appearance.palette.midnight.description', 'Current dark Jenny shell baseline.'),
     },
     pewter: {
       id: 'pewter',
-      label: 'Pewter',
-      description: 'Tinted-charcoal monochrome with a quiet steel accent; vivid holo, syntax and live-cyan.',
+      label: jt('appearance.palette.pewter.name', 'Pewter'),
+      description: jt('appearance.palette.pewter.description', 'Tinted-charcoal monochrome with a quiet steel accent; vivid holo, syntax and live-cyan.'),
     },
     obsidian: {
       id: 'obsidian',
-      label: 'Obsidian',
-      description: 'Deep rich-black surfaces with neutral seams and a single vivid cyan signal accent — high-contrast dark theme.',
+      label: jt('appearance.palette.obsidian.name', 'Obsidian'),
+      description: jt('appearance.palette.obsidian.description', 'Deep rich-black surfaces with neutral seams and a single vivid cyan signal accent — high-contrast dark theme.'),
     },
     darkroom: {
       id: 'darkroom',
-      label: 'Darkroom',
-      description: 'Matte warm near-black studio instrument — near-monochrome chalk-on-ink with a single muted lavender accent.',
+      label: jt('appearance.palette.darkroom.name', 'Darkroom'),
+      description: jt('appearance.palette.darkroom.description', 'Matte warm near-black studio instrument — near-monochrome chalk-on-ink with a single muted lavender accent.'),
     },
     slate: {
       id: 'slate',
-      label: 'Slate',
-      description: 'One solid slate canvas — no gradients, no background effect, no timeline shading; hairlines and spacing carry the structure, with a quiet ice-blue accent.',
+      label: jt('appearance.palette.slate.name', 'Slate'),
+      description: jt('appearance.palette.slate.description', 'One solid slate canvas — no gradients, no background effect, no timeline shading; hairlines and spacing carry the structure, with a quiet ice-blue accent.'),
     },
     paper: {
       id: 'paper',
-      label: 'Paper',
-      description: 'Light neutral surfaces with softer accents.',
+      label: jt('appearance.palette.paper.name', 'Paper'),
+      description: jt('appearance.palette.paper.description', 'Light neutral surfaces with softer accents.'),
     },
     signal: {
       id: 'signal',
-      label: 'Signal',
-      description: 'Sharper contrast with brighter accent energy.',
+      label: jt('appearance.palette.signal.name', 'Signal'),
+      description: jt('appearance.palette.signal.description', 'Sharper contrast with brighter accent energy.'),
     },
     woolly: {
       id: 'woolly',
-      label: 'Woolly World',
-      description: 'Warm craft-paper tones with leaf green accents.',
+      label: jt('appearance.palette.woolly.name', 'Woolly World'),
+      description: jt('appearance.palette.woolly.description', 'Warm craft-paper tones with leaf green accents.'),
     },
     lexicon: {
       id: 'lexicon',
-      label: 'Lexicon',
-      description: 'Dark editorial surfaces with text-forward glow accents.',
+      label: jt('appearance.palette.lexicon.name', 'Lexicon'),
+      description: jt('appearance.palette.lexicon.description', 'Dark editorial surfaces with text-forward glow accents.'),
     },
     rocko: {
       id: 'rocko',
-      label: 'Retro Teal',
-      description: 'Dark teal surfaces with orange and hot-pink 90s cartoon energy.',
+      label: jt('appearance.palette.rocko.name', 'Retro Teal'),
+      description: jt('appearance.palette.rocko.description', 'Dark teal surfaces with orange and hot-pink 90s cartoon energy.'),
     },
     'jenny-day': {
       id: 'jenny-day',
-      label: 'Jenny XJ-9 — Daytime',
-      description: 'Cool icy teal-slate panels with Jenny-cyan body brand, dark-teal ink lines, and pigtail-amber and Brad-red pops.',
+      label: jt('appearance.palette.jennyDay.name', 'Jenny XJ-9 — Daytime'),
+      description: jt('appearance.palette.jennyDay.description', 'Cool icy teal-slate panels with Jenny-cyan body brand, dark-teal ink lines, and pigtail-amber and Brad-red pops.'),
     },
     'jenny-night': {
       id: 'jenny-night',
-      label: 'Jenny XJ-9 — Night Patrol',
-      description: 'Deep blue-black combat sky with neon cyan eye-glow, hot pink, and pigtail yellow.',
+      label: jt('appearance.palette.jennyNight.name', 'Jenny XJ-9 — Night Patrol'),
+      description: jt('appearance.palette.jennyNight.description', 'Deep blue-black combat sky with neon cyan eye-glow, hot pink, and pigtail yellow.'),
     },
   };
   var TYPOGRAPHY_PRESETS = {
     system: {
       id: 'system',
-      label: 'System',
-      description: 'Segoe-forward UI stack for default shell readability.',
+      label: jt('appearance.typography.system.name', 'System'),
+      description: jt('appearance.typography.system.description', 'Segoe-forward UI stack for default shell readability.'),
     },
     editorial: {
       id: 'editorial',
-      label: 'Editorial',
-      description: 'Serif-forward display feel with readable body fallback.',
+      label: jt('appearance.typography.editorial.name', 'Editorial'),
+      description: jt('appearance.typography.editorial.description', 'Serif-forward display feel with readable body fallback.'),
     },
     technical: {
       id: 'technical',
-      label: 'Technical',
-      description: 'Utilitarian sans stack with stronger code/editor influence.',
+      label: jt('appearance.typography.technical.name', 'Technical'),
+      description: jt('appearance.typography.technical.description', 'Utilitarian sans stack with stronger code/editor influence.'),
     },
   };
   /* Typography-scale axis (independent of palette/typography family).
@@ -117,26 +118,26 @@
   var FONT_SCALE_PRESETS = {
     small: {
       id: 'small',
-      label: 'Small',
-      description: 'Denser shell text for more on screen.',
+      label: jt('appearance.typography.fontScale.small.name', 'Small'),
+      description: jt('appearance.typography.fontScale.small.description', 'Denser shell text for more on screen.'),
       value: 0.85,
     },
     default: {
       id: 'default',
-      label: 'Default',
-      description: 'Standard Jenny text size.',
+      label: jt('appearance.typography.fontScale.default.name', 'Default'),
+      description: jt('appearance.typography.fontScale.default.description', 'Standard Jenny text size.'),
       value: 1,
     },
     large: {
       id: 'large',
-      label: 'Large',
-      description: 'Larger, easier-to-read shell text.',
+      label: jt('appearance.typography.fontScale.large.name', 'Large'),
+      description: jt('appearance.typography.fontScale.large.description', 'Larger, easier-to-read shell text.'),
       value: 1.15,
     },
     xlarge: {
       id: 'xlarge',
-      label: 'Extra Large',
-      description: 'Maximum shell text size.',
+      label: jt('appearance.typography.fontScale.xlarge.name', 'Extra Large'),
+      description: jt('appearance.typography.fontScale.xlarge.description', 'Maximum shell text size.'),
       value: 1.3,
     },
   };
@@ -148,25 +149,25 @@
   var CHAT_WIDTH_PRESETS = {
     default: {
       id: 'default',
-      label: 'Default',
-      description: 'Standard 760px reading measure.',
+      label: jt('appearance.typography.chatWidth.default.name', 'Default'),
+      description: jt('appearance.typography.chatWidth.default.description', 'Standard 760px reading measure.'),
     },
     wide: {
       id: 'wide',
-      label: 'Wide',
-      description: 'Roughly 45% more text per line, capped at 1100px.',
+      label: jt('appearance.typography.chatWidth.wide.name', 'Wide'),
+      description: jt('appearance.typography.chatWidth.wide.description', 'Roughly 45% more text per line, capped at 1100px.'),
     },
   };
   var SURFACE_EFFECT_PRESETS = {
     none: {
       id: 'none',
-      label: 'None',
-      description: 'No background surface effect.',
+      label: jt('appearance.effect.surface.none.name', 'None'),
+      description: jt('appearance.effect.surface.none.description', 'No background surface effect.'),
     },
     'reactive-grid': {
       id: 'reactive-grid',
-      label: 'Reactive Grid',
-      description: 'Animated dot grid that responds to pointer movement.',
+      label: jt('appearance.effect.surface.reactiveGrid.name', 'Reactive Grid'),
+      description: jt('appearance.effect.surface.reactiveGrid.description', 'Animated dot grid that responds to pointer movement.'),
       contractVersion: 3,
       inputMode: 'manager',
       activityMode: 'native',
@@ -184,8 +185,8 @@
     },
     'playlist-scroll': {
       id: 'playlist-scroll',
-      label: 'Playlist Scroll',
-      description: 'Music-sequencer arrangement backdrop with scrolling lanes and bar markers.',
+      label: jt('appearance.effect.surface.playlistScroll.name', 'Playlist Scroll'),
+      description: jt('appearance.effect.surface.playlistScroll.description', 'Music-sequencer arrangement backdrop with scrolling lanes and bar markers.'),
       contractVersion: 3,
       inputMode: 'manager',
       activityMode: 'native',
@@ -212,8 +213,8 @@
     },
     'atomic-burst': {
       id: 'atomic-burst',
-      label: 'Atomic Burst',
-      description: 'Sparse Y2K twinkles that breathe and flare under the pointer — XJ-9 sparkle field.',
+      label: jt('appearance.effect.surface.atomicBurst.name', 'Atomic Burst'),
+      description: jt('appearance.effect.surface.atomicBurst.description', 'Sparse Y2K twinkles that breathe and flare under the pointer — XJ-9 sparkle field.'),
       contractVersion: 3,
       inputMode: 'manager',
       activityMode: 'native',
@@ -239,8 +240,8 @@
     },
     'circuit-trace': {
       id: 'circuit-trace',
-      label: 'Circuit Trace',
-      description: 'Faint hex grid with flowing trace heads — XJ-9 internal HUD / motherboard.',
+      label: jt('appearance.effect.surface.circuitTrace.name', 'Circuit Trace'),
+      description: jt('appearance.effect.surface.circuitTrace.description', 'Faint hex grid with flowing trace heads — XJ-9 internal HUD / motherboard.'),
       contractVersion: 3,
       inputMode: 'manager',
       activityMode: 'native',
@@ -268,8 +269,8 @@
     },
     'context-weave': {
       id: 'context-weave',
-      label: 'Context Weave',
-      description: 'A woven cloth of warp and weft threads that catches the light around your pointer; click to pluck a thread.',
+      label: jt('appearance.effect.surface.contextWeave.name', 'Context Weave'),
+      description: jt('appearance.effect.surface.contextWeave.description', 'A woven cloth of warp and weft threads that catches the light around your pointer; click to pluck a thread.'),
       contractVersion: 3,
       inputMode: 'manager',
       activityMode: 'native',
@@ -295,13 +296,13 @@
   var COMPOSER_HOLO_OPTIONS = {
     off: {
       id: 'off',
-      label: 'Off',
-      description: 'Disable the holographic typing border.',
+      label: jt('appearance.effect.composerHolo.off.name', 'Off'),
+      description: jt('appearance.effect.composerHolo.off.description', 'Disable the holographic typing border.'),
     },
     on: {
       id: 'on',
-      label: 'On',
-      description: 'Show a cycling holographic gradient border on the chat input bar while typing.',
+      label: jt('appearance.effect.composerHolo.on.name', 'On'),
+      description: jt('appearance.effect.composerHolo.on.description', 'Show a cycling holographic gradient border on the chat input bar while typing.'),
     },
   };
 
@@ -311,8 +312,8 @@
     // maps any persisted 'explorer-minimal' preference back to 'default'.
     default: {
       id: 'default',
-      label: 'Default',
-      description: 'Standard chat row timeline.',
+      label: jt('appearance.effect.timeline.default.name', 'Default'),
+      description: jt('appearance.effect.timeline.default.description', 'Standard chat row timeline.'),
     },
   };
 
@@ -388,14 +389,14 @@
   var THEME_BUNDLES = {
     'jenny-default': {
       id: 'jenny-default',
-      label: 'Jenny Default',
-      description: 'Current Jenny shell baseline bundle.',
+      label: jt('appearance.palette.jennyDefaultTheme.name', 'Jenny Default'),
+      description: jt('appearance.palette.jennyDefaultTheme.description', 'Current Jenny shell baseline bundle.'),
       preferences: Object.assign({}, DEFAULT_FRESH_APPEARANCE),
     },
     pewter: {
       id: 'pewter',
-      label: 'Pewter',
-      description: 'Tinted-charcoal monochrome with a quiet steel accent and vivid expressive layer.',
+      label: jt('appearance.palette.pewterTheme.name', 'Pewter'),
+      description: jt('appearance.palette.pewterTheme.description', 'Tinted-charcoal monochrome with a quiet steel accent and vivid expressive layer.'),
       preferences: {
         paletteId: 'pewter',
         typographyId: 'technical',
@@ -405,8 +406,8 @@
     },
     obsidian: {
       id: 'obsidian',
-      label: 'Obsidian',
-      description: 'Deep rich-black surfaces with vivid cyan accents — high-contrast dark theme.',
+      label: jt('appearance.palette.obsidianTheme.name', 'Obsidian'),
+      description: jt('appearance.palette.obsidianTheme.description', 'Deep rich-black surfaces with vivid cyan accents — high-contrast dark theme.'),
       preferences: {
         paletteId: 'obsidian',
         typographyId: 'technical',
@@ -416,8 +417,8 @@
     },
     slate: {
       id: 'slate',
-      label: 'Slate',
-      description: 'Blank-space reading surface — flat dark canvas, no ambient background effect, crisp ice-blue holo accents.',
+      label: jt('appearance.palette.slateTheme.name', 'Slate'),
+      description: jt('appearance.palette.slateTheme.description', 'Blank-space reading surface — flat dark canvas, no ambient background effect, crisp ice-blue holo accents.'),
       preferences: {
         paletteId: 'slate',
         typographyId: 'system',
@@ -427,8 +428,8 @@
     },
     lexicon: {
       id: 'lexicon',
-      label: 'Lexicon',
-      description: 'Dark editorial palette with a quiet, text-forward chrome.',
+      label: jt('appearance.palette.lexiconTheme.name', 'Lexicon'),
+      description: jt('appearance.palette.lexiconTheme.description', 'Dark editorial palette with a quiet, text-forward chrome.'),
       preferences: {
         paletteId: 'lexicon',
         typographyId: 'editorial',
@@ -438,8 +439,8 @@
     },
     rocko: {
       id: 'rocko',
-      label: 'Retro Teal',
-      description: 'Teal + orange 90s palette with a bright, playful shell.',
+      label: jt('appearance.palette.rockoTheme.name', 'Retro Teal'),
+      description: jt('appearance.palette.rockoTheme.description', 'Teal + orange 90s palette with a bright, playful shell.'),
       preferences: {
         paletteId: 'rocko',
         typographyId: 'system',
@@ -449,8 +450,8 @@
     },
     'jenny-day': {
       id: 'jenny-day',
-      label: 'Jenny XJ-9 — Daytime',
-      description: 'Cool icy teal slate with Jenny-cyan brand and bold dark-teal ink — bright daytime mood with twinkling sparkles.',
+      label: jt('appearance.palette.jennyDayTheme.name', 'Jenny XJ-9 — Daytime'),
+      description: jt('appearance.palette.jennyDayTheme.description', 'Cool icy teal slate with Jenny-cyan brand and bold dark-teal ink — bright daytime mood with twinkling sparkles.'),
       preferences: {
         paletteId: 'jenny-day',
         typographyId: 'system',
@@ -460,8 +461,8 @@
     },
     'jenny-night': {
       id: 'jenny-night',
-      label: 'Jenny XJ-9 — Night Patrol',
-      description: 'Magenta-led combat sky with violet undertones and circuit-trace HUD overlay.',
+      label: jt('appearance.palette.jennyNightTheme.name', 'Jenny XJ-9 — Night Patrol'),
+      description: jt('appearance.palette.jennyNightTheme.description', 'Magenta-led combat sky with violet undertones and circuit-trace HUD overlay.'),
       preferences: {
         paletteId: 'jenny-night',
         typographyId: 'technical',

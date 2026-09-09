@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (enterKeydownUtils) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createNoopController() {
     return { dispose: function dispose() {} };
   }
@@ -89,7 +90,7 @@
         }
       } catch (error) {
         releaseClaim(messageId, button);
-        showComposerActionError?.(error, 'Resume Failed');
+        showComposerActionError?.(error, jt('chat.resumeTurn.failedTitle', 'Resume Failed'));
         appendClientLog?.('ERROR', 'chat.resume_failed', { messageId: messageId });
       }
     }

@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, actionButton) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const RESUMABLE_STOP_KINDS = Object.freeze([
     'tool_cap',
     'max_iterations',
@@ -22,12 +23,12 @@
     const normalizedSessionId = stringUtils.normalizeId(sessionId);
     const buttonMarkup = actionButton({
       id: 'resume-turn',
-      label: 'Resume',
+      label: jt('chat.resumeTurn.resume', 'Resume'),
       variant: 'secondary',
       size: 'sm',
       className: 'resume-turn-action',
-      ariaLabel: 'Resume this turn',
-      title: 'Resume this turn (Enter from an empty composer)',
+      ariaLabel: jt('chat.resumeTurn.ariaLabel', 'Resume this turn'),
+      title: jt('chat.resumeTurn.title', 'Resume this turn (Enter from an empty composer)'),
       disabled,
       dataset: {
         'resume-message-id': normalizedMessageId,
@@ -37,7 +38,7 @@
     return '<div class="resume-turn-affordance"'
       + ` data-resume-turn="${stringUtils.escapeHtml(normalizedMessageId)}"`
       + ` data-resume-kind="${stringUtils.escapeHtml(kind)}"`
-      + ' role="group" aria-label="Resume this turn">'
+      + ' role="group" aria-label="' + stringUtils.escapeHtml(jt('chat.resumeTurn.ariaLabel', 'Resume this turn')) + '">'
       + buttonMarkup
       + '<span class="resume-turn-hint" aria-hidden="true">&#9166;</span>'
       + '</div>';

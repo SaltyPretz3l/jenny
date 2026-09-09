@@ -219,6 +219,14 @@ Four tools for running scripts/commands and inspecting or stopping background co
 
 ### `run_command` (alias `Bash`)
 
+The ordinary desktop behavior below changes when an offline Docker worker is
+selected. Hosted policy-2 execution requires one-off approval; the optional
+desktop sandbox uses its current approval policy. Both run foreground Linux
+commands in disposable copies, with no network and no durable command-written
+files. Temporary scripts, background jobs and the other execution integrations
+are not thereby enabled. See [hosted execution](operations/HOSTED_EXECUTION.md)
+and [desktop sandbox](operations/DESKTOP_COMMAND_SANDBOX.md) for limits and recovery.
+
 Run a shell command from within the workspace root.
 
 - **Approval:** required (side-effecting).
@@ -720,7 +728,13 @@ Threat model (deliberately narrower than the retired `browser_*` family):
 - **Pixel summary and opt-in screenshot.** Every run reports a coarse render
   summary computed from a thumbnail no wider than 160 px: dominant color,
   distinct colors, a 3x3 grid, and a `blank` / `near-uniform` / `mixed`
-  verdict. Set `screenshot: true` to attach the full PNG as a session artifact.
+  verdict. With `screenshot: true`, native pixels can also reach the active
+  vision-capable local model in the same turn. Text-only models receive a
+  limitation; no model switching occurs. A screenshot artifact is saved only
+  when storage has room: four per session, 32 per workspace, at most 2 MiB
+  each. At capacity saving is refused while transient model delivery continues.
+  No screenshots are automatically deleted. Delivery is distinct from an
+  actual completed visual review.
 - Source: [`services/tools/builtin/preview-test-tool.js`](../services/tools/builtin/preview-test-tool.js)
   on the [`services/browser-session-service.js`](../services/browser-session-service.js)
   substrate (hidden `BrowserWindow` lifecycle, nonce'd in-memory partition,
@@ -1019,6 +1033,27 @@ error the model can correct.
 Nothing in Jenny *fires* reminders. They surface on Home as manual nudges, so
 `reminder_upsert` never schedules background work.
 
+### What the chat timeline renders
+
+`calendar_list` carries renderer-only `metadata.calendar`: schema/range/time
+fields, total and omitted counts, and up to 40 typed `instances`. Successful
+calendar/reminder writes carry `metadata.calendar_receipt`: kind, operation,
+record identity/state, and journal identity/status. The model never receives
+these objects; it continues to receive the human-readable `content` only.
+
+The tool computes timed overlaps and live same-session `recent` marks. Every
+calendar listing ends with: “(The user sees this list rendered as a calendar in
+chat. Summarize what matters — conflicts, gaps, what changed — rather than
+repeating every entry.)”
+
+In chat, a listing renders as a day-grouped agenda under the tool row (past days
+collapse to one line, at most 12 rows, then “N more · Open in Home”); a write
+renders a one-line receipt. Clicking a row or the footer link opens Home with
+that day selected. Receipts and same-session rows carry an Undo control that
+calls the same journal undo as Home; it is hidden once the journal entry is
+gone (undone, superseded, or evicted), so old transcripts never offer a dead
+undo.
+
 Bounds mirror the underlying schemas: event `title` 200 chars, `notes` 2000,
 500 events total; reminder `label` 200, `prompt` 4000, 50 reminders total.
 Over-long text is clipped at the tool boundary (and the result says so) rather
@@ -1136,17 +1171,6 @@ place would put Jenny's text and the user's text in the same undifferentiated
 blob, with no per-note attribution to badge and no natural undo unit. Calendar
 events and reminders are discrete records, which is what makes attribution and
 one-click undo tractable there.
-
-### Deliberate v1 deferral: no custom chat card
-
-`home` returns plain text plus `metadata.result_kind: 'home'`; it does **not**
-render a bespoke chat card. That is deferred on purpose. The undo affordance
-lives on Home, where the change is visible next to the record it touched, and a
-second undo surface inside the transcript would have to answer questions the
-Home strip already answers (what happens when the record changed since, what
-happens after a restart, which of two cards owns the record). Shipping the
-journal + the Home strip first keeps one owner for undo. The
-`metadata.result_kind` token is already in place for a card to key off later.
 
 ### Approval policy
 
@@ -1266,9 +1290,34 @@ Read a bundled/user/project skill's `SKILL.md` body by name and scope.
 - **Side-effecting:** no.
 - **Workspace required:** no. Skill scope roots (bundled/user/project) are configured independently of the tools workspace root — see [Storage](#storage) below.
 - **Gated by:** `tools_load_skill_enabled` (default on).
-- **Parameters:** `name` (required) — the skill's directory slug as shown in the index, e.g. `load_skill(name="mermaid-artifact-workflow", scope="bundled")`, not the human-readable frontmatter title. `scope` (optional, `bundled` | `user` | `project`) — disambiguates when the same slug exists in more than one scope; when omitted, resolution tries `bundled`, then `user`, then `project` and returns the first match.
+- **Parameters:** `name` (required) — the skill's directory slug as shown in the index, e.g. `load_skill(name="humanizer", scope="bundled")`, not the human-readable frontmatter title. `scope` (optional, `bundled` | `user` | `project`) — disambiguates when the same slug exists in more than one scope; when omitted, resolution tries `bundled`, then `user`, then `project` and returns the first match.
 - **Errors:** an invalid `name` (path separators, leading `.`, empty) or invalid `scope` value is rejected before any filesystem access (`CMP-TOOL-0004`). A `name`/`scope` combination that does not resolve to an indexed skill returns `CMP-TOOL-0040` with the list of currently available `scope/name` pairs.
 - **Source:** [`sidecar/ai/tools/builtins/skills.py`](../sidecar/ai/tools/builtins/skills.py).
+
+### Product Owner Review skill
+
+Use `/po-review <feature>` to attach the bundled **Product Owner Review** skill
+and submit the feature to review. `/po-review` alone attaches it so you can add
+the feature before sending. It reviews correctness, functionality, performance,
+and experience, then returns a handoff specification in chat. Product code stays
+read-only by instruction; implementation requires a separate request.
+
+The skill preserves minimal-container visual preferences and requires evidence,
+explicit uncertainty, and a user choice when a real design fork remains. Missing
+screenshots or unavailable tools become named verification gaps. Skill instructions
+do not enforce a tool sandbox; use Jenny's existing Plan Mode when a runtime
+read-only boundary is wanted.
+
+This is an on-demand bundled skill, not an executable `po_review` tool. It uses
+the existing skill settings, slash-command discovery, and request-local body
+injection, including on local models with the automatic skill index off. The
+existing `load_skill(name="po-review", scope="bundled")` path can also read it;
+the instructions require an explicit user request before applying the review.
+Disable `bundled/po-review` through the skill settings to remove its command and
+prevent body loading. Both desktop packaging and public export already include
+`skills/**/*`.
+
+Source: [`skills/po-review/SKILL.md`](../skills/po-review/SKILL.md).
 
 ### Why this tool exists
 
@@ -1281,7 +1330,7 @@ The context builder's skill index (`sidecar/ai/context/builder_skills.py`) lists
 Every indexed entry under "Available Skills" in the system prompt now names the exact call to make, e.g.:
 
 ```
-- Mermaid Artifact Workflow: Produce a Mermaid diagram plus a reusable artifact. [Allowed tools: mermaid_generate] (load with load_skill(name="mermaid-artifact-workflow", scope="bundled"))
+- Humanizer: Rewrite stiff or robotic text so it sounds natural, specific, and still truthful. (load with load_skill(name="humanizer", scope="bundled"))
 ```
 
 Jenny calls `load_skill` with that name and scope before following the skill's instructions. Skills marked `always: true` in frontmatter are inlined directly into the prompt and never need `load_skill` — only indexed (on-demand) skills do.

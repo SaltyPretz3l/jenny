@@ -134,6 +134,12 @@ function createShellStub(options = {}) {
         seen: true,
         dismissed: true,
         setup_complete: true,
+        // The default harness profile has already acknowledged the 1.0.1
+        // disclosure; otherwise the pre-hub gate mounts as a modal and owns
+        // Escape for every shell test. Pass options.setup.state to model an
+        // unacknowledged profile explicitly.
+        acknowledged_version: '1',
+        acknowledged_at: '2026-05-07T12:00:00.000Z',
         completed_at: '2026-05-07T12:00:00.000Z',
         updated_at: '2026-05-07T12:00:00.000Z',
         steps: {

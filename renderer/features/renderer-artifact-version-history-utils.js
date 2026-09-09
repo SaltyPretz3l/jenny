@@ -21,6 +21,7 @@
   // sessionId -> { messagesRef, artifacts } — same messagesRef-identity cache
   // trick renderer-artifacts-utils.js uses, so re-renders don't re-project.
   const projectionCache = new Map();
+  const versionCache = new WeakMap();
 
   function resolveProjection() {
     if (typeof globalThis !== 'undefined' && globalThis.rendererArtifactsProjection) {
@@ -93,24 +94,34 @@
    *   selector (unkeyable artifact, missing state, or fell off the cap window).
    */
   function resolveArtifactVersionInfo(artifact, state) {
-    const artifacts = getSessionArtifacts(artifact?.sessionId, state);
-    if (!artifacts || !artifacts.length) return null;
-    const candidateFileNames = new Set(artifacts.map(artifactFileName).map((name) => name.toLowerCase()).filter(Boolean));
+    const projected = getSessionArtifacts(artifact?.sessionId, state);
+    if (!projected) return null;
+    const deleted = state?.artifacts?.deletedArtifactIds || [];
+    const signature = JSON.stringify(deleted);
+    let cached = versionCache.get(projected);
+    if (!cached || cached.signature !== signature) {
+      cached = { signature, byId: new Map() };
+      versionCache.set(projected, cached);
+    }
+    const selectedId = String(artifact?.id || artifact?.generatedFile?.artifactId || '').trim();
+    if (cached.byId.has(selectedId)) return cached.byId.get(selectedId);
+    const artifacts = resolveProjection()?.filterDeletedArtifacts?.(projected, deleted, artifact?.sessionId) || projected;
+    if (!artifacts.length) return null;
+    const candidateFileNames = new Set(projected.map(artifactFileName).map((name) => name.toLowerCase()).filter(Boolean));
     const groupKey = artifactVersionKey(artifact, candidateFileNames);
     if (!groupKey) return null;
     const group = artifacts
       .filter((entry) => artifactVersionKey(entry, candidateFileNames) === groupKey)
       .sort(compareOldestFirst)
       .slice(-MAX_VERSION_HISTORY_ENTRIES);
-    const selectedId = String(artifact?.id || artifact?.generatedFile?.artifactId || '').trim();
-    const position = group.findIndex((entry) => String(entry?.id || '').trim() === selectedId);
-    if (position < 0) return null;
-    return {
+    group.forEach((entry, position) => cached.byId.set(String(entry.id || '').trim(), {
       index: position + 1,
       count: group.length,
       prevId: position > 0 ? String(group[position - 1]?.id || '') : '',
       nextId: position < group.length - 1 ? String(group[position + 1]?.id || '') : '',
-    };
+    }));
+    if (!cached.byId.has(selectedId)) cached.byId.set(selectedId, null);
+    return cached.byId.get(selectedId);
   }
 
   return {

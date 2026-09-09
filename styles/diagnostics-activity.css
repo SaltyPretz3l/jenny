@@ -52,7 +52,7 @@
   position: absolute;
   z-index: 1;
   top: 50%;
-  left: var(--space-5);
+  inset-inline-start: var(--space-5);
   width: 14px;
   height: 14px;
   transform: translateY(-50%);
@@ -63,7 +63,7 @@
 }
 
 .diagnostics-toolbar .logs-search-shell .inv-text-field-control {
-  padding-left: 32px;
+  padding-inline-start: 32px;
 }
 
 .diagnostics-activity .diagnostics-toolbar .inv-select-field-control,
@@ -81,7 +81,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-5);
-  margin-left: auto;
+  margin-inline-start: auto;
   padding-bottom: 1px;
   flex: 0 0 auto;
 }

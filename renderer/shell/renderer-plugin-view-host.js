@@ -7,12 +7,13 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, asyncFenceModule) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MIN_ZOOM = 0.5;
   const MAX_ZOOM = 2;
   // Refusals that name a condition the user can act on get their own copy; every
   // other reason keeps the generic line rather than leaking a raw enum.
   const OPEN_REFUSAL_COPY = Object.freeze({
-    view_contribution_not_active: 'This plugin is not running, so its view cannot open.',
+    view_contribution_not_active: jt('plugins.view.notRunning', 'This plugin is not running, so its view cannot open.'),
   });
 
   function createPluginViewHostController(options = {}) {
@@ -33,6 +34,7 @@
     let lifecycleEpoch = 0;
     let zoom = 1;
     let resizeObserver = null;
+    let activeViewObserver = null;
     let unsubscribeHostCommand = null;
     let unsubscribeChanged = null;
     let disposed = false;
@@ -52,12 +54,12 @@
       const button = root.inventoryActionButton;
       if (!actions || typeof button !== 'function') return;
       actions.innerHTML = [
-        button({ label: 'Back', ariaLabel: 'Back', title: 'Go back in the plugin view', size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'back' } }),
-        button({ label: '−', ariaLabel: 'Zoom out', title: 'Zoom out', size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-out' } }),
+        button({ label: jt('common.back', 'Back'), ariaLabel: jt('common.back', 'Back'), title: jt('plugins.view.goBack', 'Go back in the plugin view'), size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'back' } }),
+        button({ label: '−', ariaLabel: jt('plugins.view.zoomOut', 'Zoom out'), title: jt('plugins.view.zoomOut', 'Zoom out'), size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-out' } }),
         '<span class="plugin-view-zoom" id="pluginViewZoomLabel">' + Math.round(zoom * 100) + '%</span>',
-        button({ label: '+', ariaLabel: 'Zoom in', title: 'Zoom in', size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-in' } }),
-        button({ label: 'Reset', ariaLabel: 'Reset zoom', title: 'Reset zoom', size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-reset' } }),
-        button({ label: 'Close', ariaLabel: 'Close', title: 'Close the plugin view', size: 'sm', dataset: { 'plugin-view-action': 'close' } }),
+        button({ label: '+', ariaLabel: jt('plugins.view.zoomIn', 'Zoom in'), title: jt('plugins.view.zoomIn', 'Zoom in'), size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-in' } }),
+        button({ label: jt('common.reset', 'Reset'), ariaLabel: jt('plugins.view.resetZoom', 'Reset zoom'), title: jt('plugins.view.resetZoom', 'Reset zoom'), size: 'sm', variant: 'ghost', dataset: { 'plugin-view-action': 'zoom-reset' } }),
+        button({ label: jt('common.close', 'Close'), ariaLabel: jt('common.close', 'Close'), title: jt('plugins.view.close', 'Close the plugin view'), size: 'sm', dataset: { 'plugin-view-action': 'close' } }),
       ].join('');
     }
 
@@ -102,10 +104,10 @@
       activeSessionId = sessionId;
       lifecycleEpoch += 1;
       zoom = 1;
-      if (title) title.textContent = String(raw.display_name || 'Plugin view').trim().slice(0, 96) || 'Plugin view';
+      if (title) title.textContent = String(raw.display_name || jt('plugins.view.title', 'Plugin view')).trim().slice(0, 96) || jt('plugins.view.title', 'Plugin view');
       if (identity) identity.textContent = `${candidate.publisher_id} / ${candidate.plugin_id}`.slice(0, 160);
       renderActions();
-      setStatus('Opening isolated plugin content…');
+      setStatus(jt('plugins.view.opening', 'Opening isolated plugin content…'));
       options.setActiveView?.('plugin');
       await nextPaint();
       const bounds = currentBounds();
@@ -127,11 +129,11 @@
         activeIdentity = null;
         activeSessionId = '';
         setStatus(OPEN_REFUSAL_COPY[String(result?.reason || '')]
-          || 'Jenny could not open this isolated view.', 'error');
+          || jt('plugins.view.openFailed', 'Jenny could not open this isolated view.'), 'error');
         log('WARN', 'plugin_view.open_refused', { reason_code: String(result?.reason || 'unknown') });
         return result || { ok: false, reason: 'plugin_view_open_failed' };
       }
-      setStatus('Sandboxed · Network blocked', 'success');
+      setStatus(jt('plugins.view.sandboxedNetworkBlocked', 'Sandboxed · Network blocked'), 'success');
       syncBounds();
       return result;
     }
@@ -143,7 +145,7 @@
       try { result = await bridge()?.closeView?.(); }
       catch (_error) { result = { ok: false, reason: 'plugin_view_close_failed' }; }
       if (activeSessionId && result?.ok === false) {
-        setStatus('Jenny could not prove that the provider process stopped. Navigation is blocked.', 'error');
+        setStatus(jt('plugins.view.closeUnconfirmed', 'Jenny could not prove that the provider process stopped. Navigation is blocked.'), 'error');
         return result;
       }
       activeIdentity = null;
@@ -166,7 +168,7 @@
       const result = await bridge()?.setViewZoom?.({ zoom_factor: zoom });
       if (result?.ok && Number.isFinite(result.zoom_factor)) zoom = result.zoom_factor;
       renderActions();
-      setStatus(`Sandboxed · Network blocked · Zoom ${Math.round(zoom * 100)}%`, 'success');
+      setStatus(jt('plugins.view.sandboxedNetworkBlockedZoom', 'Sandboxed · Network blocked · Zoom {zoom}%', { zoom: Math.round(zoom * 100) }), 'success');
     }
 
     function focusChrome() {
@@ -207,10 +209,10 @@
         renderActions();
       } else if (payload.command === 'view_state') {
         const states = {
-          restarting: ['Plugin content crashed. Jenny is restarting it safely...', 'loading'],
-          crashed: ['Plugin content could not be restarted.', 'error'],
-          memory_warning: ['Plugin content is using unusually high memory.', 'warning'],
-          ready: [`Sandboxed · Network blocked · Zoom ${Math.round(zoom * 100)}%`, 'success'],
+          restarting: [jt('plugins.view.restartingAfterCrash', 'Plugin content crashed. Jenny is restarting it safely...'), 'loading'],
+          crashed: [jt('plugins.view.restartFailed', 'Plugin content could not be restarted.'), 'error'],
+          memory_warning: [jt('plugins.view.highMemory', 'Plugin content is using unusually high memory.'), 'warning'],
+          ready: [jt('plugins.view.sandboxedNetworkBlockedZoom', 'Sandboxed · Network blocked · Zoom {zoom}%', { zoom: Math.round(zoom * 100) }), 'success'],
         };
         const next = states[payload.state];
         if (next) setStatus(next[0], next[1]);
@@ -241,16 +243,16 @@
       // getElementById chrome lookups -- so build into ITS document.
       const surfaceDoc = surface.previewContent.ownerDocument || documentRef;
       const copy = surfaceDoc.createElement('p');
-      copy.textContent = `Open this ${ctx.artifact.artifactKind || 'plugin'} artifact in its isolated renderer.`;
+      copy.textContent = jt('plugins.view.openArtifact', 'Open this {kind} artifact in its isolated renderer.', { kind: ctx.artifact.artifactKind || 'plugin' });
       const buttonMarkup = root.inventoryActionButton;
       if (typeof buttonMarkup !== 'function') throw new Error('inventory button unavailable');
       const buttonHost = surfaceDoc.createElement('span');
-      buttonHost.innerHTML = buttonMarkup({ label: 'Open isolated renderer', size: 'sm' });
+      buttonHost.innerHTML = buttonMarkup({ label: jt('plugins.view.openIsolatedRenderer', 'Open isolated renderer'), size: 'sm' });
       const button = buttonHost.firstElementChild;
       if (!button) throw new Error('inventory button unavailable');
       button.addEventListener('click', () => void open({ ...contribution, artifact_payload_json: serialized }), { once: true });
       surface.previewContent.append(copy, button);
-      deps.setDetailNote(surface, 'Plugin rendering is isolated; Jenny retains navigation and trust controls.');
+      deps.setDetailNote(surface, jt('plugins.view.isolationNote', 'Plugin rendering is isolated; Jenny retains navigation and trust controls.'));
     }
 
     async function refreshPluginRenderers(snapshot = null) {
@@ -277,6 +279,16 @@
       }
     }
 
+    // The plugin content is a native view layered over the window, not DOM, so
+    // switching the shell's active view leaves it painted in place. Session-bound
+    // views are torn down by setActiveView's leave guard before the switch; an
+    // ephemeral view (a settings panel) has no such guard, so the host follows
+    // the shell's data-active-view attribute and closes itself on the way out.
+    function handleActiveViewChanged() {
+      if (disposed || !activeIdentity || state.ui?.activeView === 'plugin') return;
+      void close('view_switch', '', { navigate: false });
+    }
+
     function bind() {
       if (disposed || !host) return;
       renderActions();
@@ -286,6 +298,12 @@
       if (typeof windowRef.ResizeObserver === 'function' && content) {
         resizeObserver = new windowRef.ResizeObserver(syncBounds);
         resizeObserver.observe(content);
+      }
+      if (typeof windowRef.MutationObserver === 'function' && documentRef?.documentElement) {
+        activeViewObserver = new windowRef.MutationObserver(handleActiveViewChanged);
+        activeViewObserver.observe(documentRef.documentElement, {
+          attributes: true, attributeFilter: ['data-active-view'],
+        });
       }
       unsubscribeHostCommand = bridge()?.onViewHostCommand?.(handleHostCommand) || null;
       unsubscribeChanged = bridge()?.onChanged?.(() => {
@@ -305,6 +323,7 @@
       documentRef?.removeEventListener('keydown', handleKeydown);
       windowRef.removeEventListener('resize', syncBounds);
       resizeObserver?.disconnect?.();
+      activeViewObserver?.disconnect?.();
       root.rendererArtifactsRendererRegistry?.clearPluginRenderers?.();
       try { unsubscribeHostCommand?.(); } catch (_error) { /* ignore */ }
       try { unsubscribeChanged?.(); } catch (_error) { /* ignore */ }

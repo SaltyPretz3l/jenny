@@ -6,10 +6,11 @@
   root.rendererTurnRowRenderUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // Mid-turn phase → SR-only kicker label. Only commentary/intermediate get a
   // label; final_answer keeps full emphasis and no kicker.
-  const ASSISTANT_PHASE_KICKER_LABELS = { commentary: 'Commentary', intermediate: 'Continued response' };
+  const ASSISTANT_PHASE_KICKER_LABELS = { commentary: 'Commentary', intermediate: jt('chat.turnRow.continuedResponse', 'Continued response') };
 
   const stringUtils = (function resolveStringUtils() {
     if (typeof globalThis !== 'undefined' && globalThis.stringUtils) {
@@ -270,7 +271,7 @@
     /* Same tooltip copy the card chip uses; inlined constant so the legacy
      * bare-row fallback still reads correctly with the card module absent. */
     const LOGS_DEEP_LINK_TITLE = (errorRecoveryUtils && errorRecoveryUtils.LOGS_LINK_TITLE)
-      || "View this error's diagnostic event in Activity";
+      || jt('chat.errorRecovery.activityDiagnosticTitle', "View this error's diagnostic event in Activity");
     const turnRowErrorDedupeUtils = settings.turnRowErrorDedupeUtils || resolveTurnRowModule('rendererTurnRowErrorDedupeUtils', './renderer-turn-row-error-dedupe-utils');
     const resolveTurnErrorDedupe = turnRowErrorDedupeUtils?.resolveTurnErrorDedupe || function noop() { return { suppress: false, suppressedErrors: [] }; };
     const {
@@ -342,7 +343,7 @@
               ? buildStreamingBubbleHtml(text, renderOptions)
               : renderMarkdown(stripCitationMarkersForDisplay(text));
             const streamingAttrs = isStreaming
-              ? ' data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="Assistant response (streaming)"'
+              ? ` data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.turnRow.streamingAssistantResponse', 'Assistant response (streaming)'))}"`
               : '';
             return `<div class="${bubbleClassName}"${streamingAttrs}>${bubbleBodyHtml}</div>`;
           })()
@@ -453,7 +454,7 @@
         return `${widgetHtml}${truncationMarkup}`;
       }
       const chunkCount = Number(payload.chunk_count) || 0;
-      const label = chunkCount ? `Thinking\u2026 (${chunkCount} chunks)` : 'Thinking\u2026';
+      const label = chunkCount ? jt('chat.turnRow.thinkingChunks', 'Thinking… ({count} chunks)', { count: chunkCount }) : 'Thinking\u2026';
       return `<div class="thinking-placeholder" role="status" aria-live="polite">${escapeHtml(label)}</div>${truncationMarkup}`;
     }
 
@@ -567,7 +568,7 @@
         || payload.summary
         || payload.unknown_kind
         || payload.subkind
-        || 'System notice'
+        || jt('chat.turnRow.systemNotice', 'System notice')
       ).trim();
       if (!text) {
         return '';

@@ -13,6 +13,8 @@
   root.rendererChatsPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   var PAGE_SIZE = 100;
   var MAX_VISIBLE = 500;
@@ -62,12 +64,12 @@
     previousSevenDays.setDate(startOfToday.getDate() - 7);
     previousThirtyDays.setDate(startOfToday.getDate() - 30);
     var groups = [
-      { key: keyPrefix + 'pinned', label: 'Pinned', items: [] },
-      { key: keyPrefix + 'today', label: 'Today', items: [] },
-      { key: keyPrefix + 'yesterday', label: 'Yesterday', items: [] },
-      { key: keyPrefix + 'previous_7_days', label: 'Previous 7 days', items: [] },
-      { key: keyPrefix + 'previous_30_days', label: 'Previous 30 days', items: [] },
-      { key: keyPrefix + 'older', label: 'Older', items: [] },
+      { key: keyPrefix + 'pinned', label: jt('sidebar.chats.groups.pinned', 'Pinned'), items: [] },
+      { key: keyPrefix + 'today', label: jt('sidebar.chats.groups.today', 'Today'), items: [] },
+      { key: keyPrefix + 'yesterday', label: jt('sidebar.chats.groups.yesterday', 'Yesterday'), items: [] },
+      { key: keyPrefix + 'previous_7_days', label: jt('sidebar.chats.groups.previous7Days', 'Previous 7 days'), items: [] },
+      { key: keyPrefix + 'previous_30_days', label: jt('sidebar.chats.groups.previous30Days', 'Previous 30 days'), items: [] },
+      { key: keyPrefix + 'older', label: jt('sidebar.chats.groups.older', 'Older'), items: [] },
     ];
     sessions.forEach(function (session) {
       if (session.pinned === true) {
@@ -97,7 +99,7 @@
     if (hours < 24) return hours + 'h';
     var options = { month: 'short', day: 'numeric' };
     if (parsed.getFullYear() !== now.getFullYear()) options.year = 'numeric';
-    return parsed.toLocaleDateString('en-US', options);
+    return parsed.toLocaleDateString(globalThis.jennyI18n?.tag?.(), options);
   }
 
   function buildChatsViewModel(options) {
@@ -120,6 +122,7 @@
       if ((scope === 'archived') !== archived) return;
       if (query) {
         var title = normalizeInlineText(session.title).toLowerCase();
+        if (!title || title === 'new chat') title += ' ' + jt('session.defaultTitle.chat', 'New Chat').toLowerCase();
         var preview = normalizeInlineText(session.last_message_preview).toLowerCase();
         if (!(title + ' ' + preview).includes(query)) return;
       }
@@ -211,7 +214,7 @@
     }
 
     function previewLabel(session) {
-      var preview = normalizeInlineText(session.last_message_preview || 'No messages yet.');
+      var preview = normalizeInlineText(session.last_message_preview || jt('sidebar.chats.noMessagesYet', 'No messages yet.'));
       return preview.length <= 180 ? preview : preview.slice(0, 177).trim() + '...';
     }
 
@@ -229,7 +232,7 @@
         ? state.sendOutboxBySession.get(session.id) || []
         : [];
       return JSON.stringify({
-        title: session.title || 'New Chat',
+        title: session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title),
         updatedAt: session.updated_at || session.created_at || '',
         preview: session.last_message_preview || '',
         model: session.last_model_used || session.preferred_model || '',
@@ -245,19 +248,19 @@
     }
 
     function buildRowContents(session, active, tabStop) {
-      var title = normalizeInlineText(session.title) || 'New Chat';
+      var title = normalizeInlineText(session.title); title = title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!title || title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : title);
       var accessibleTitle = title.length <= 120 ? title : title.slice(0, 117).trim() + '...';
       var isPlugin = session.session_type === 'plugin';
       var provider = normalizeInlineText(session.plugin_session && session.plugin_session.provider_name).slice(0, 40);
       var usesPhoto = isPlugin && session.plugin_session && session.plugin_session.icon_token === 'image';
       var lockdown = isOfflineLockdownVisible(session);
-      var sessionNoun = isPlugin ? (provider || 'plugin') + ' session' : 'session';
+      var sessionNoun = isPlugin ? jt('sidebar.chats.pluginSession', '{provider} session', { provider: provider || jt('sidebar.chats.pluginFallback', 'plugin') }) : jt('sidebar.chats.session', 'session');
       var timestamp = session.updated_at || session.created_at || '';
       var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       var failed = outbox.filter(function (item) { return item && (item.status === 'failed' || item.status === 'needs_review'); }).length;
       var outboxMarkup = outbox.length
         ? '<span class="send-outbox-badge' + (failed ? ' send-outbox-badge--failed' : '') + '" aria-label="'
-          + escapeHtml(failed ? failed + ' queued send failed' : outbox.length + ' queued sends') + '">'
+          + escapeHtml(failed ? jtn('sidebar.chats.queuedSendFailedCount', failed, { count: failed }, '{count} queued send failed', '{count} queued send failed') : jtn('sidebar.chats.queuedSendCount', outbox.length, { count: outbox.length }, '{count} queued send', '{count} queued sends')) + '">'
           + escapeHtml(failed ? failed + ' failed' : outbox.length + ' queued') + '</span>'
         : '';
       var pinMarkup = session.pinned === true
@@ -269,7 +272,7 @@
       var lockdownMarkup = lockdown
         ? '<span class="session-offline-lockdown-badge session-row__lockdown-badge'
           + (prefersReducedMotion() ? '' : ' session-offline-lockdown-badge--fade')
-          + '" title="Offline lockdown" aria-hidden="true">'
+          + '" title="' + escapeHtml(jt('sidebar.chats.offlineLockdown', 'Offline lockdown')) + '" aria-hidden="true">'
           + '<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg>'
           + '</span>'
         : '';
@@ -277,11 +280,11 @@
         id: 'open-session',
         plain: true,
         className: 'session-row__open',
-        ariaLabel: 'Open ' + sessionNoun + ' ' + accessibleTitle + (lockdown ? ', Offline lockdown' : ''),
-        title: previewLabel(session) + '\nModel: ' + modelLabel(session) + (lockdown ? '\nOffline lockdown' : ''),
+        ariaLabel: lockdown ? jt('sidebar.chats.openSessionLockdown', 'Open {session} {title}, Offline lockdown', { session: sessionNoun, title: accessibleTitle }) : jt('sidebar.chats.openSession', 'Open {session} {title}', { session: sessionNoun, title: accessibleTitle }),
+        title: lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) }),
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-open': session.id, 'session-id': session.id },
-        trustedHtml: '<span class="session-row__dot" aria-hidden="true"></span>'
+        trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span><span class="session-row__dot" aria-hidden="true"></span>'
           + '<span class="conversation-title session-row__title">' + pinMarkup + typeMarkup + lockdownMarkup
           + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + outboxMarkup + '</span>'
           + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatRelativeTime(timestamp)) + '</time>',
@@ -290,9 +293,9 @@
         id: 'session-menu',
         plain: true,
         className: 'conversation-action-button session-row__menu',
-        ariaLabel: 'Actions for ' + accessibleTitle,
+        ariaLabel: jt('sidebar.chats.actionsFor', 'Actions for {title}', { title: accessibleTitle }),
         ariaHaspopup: 'menu',
-        title: 'Chat actions',
+        title: jt('sidebar.chats.chatActions', 'Chat actions'),
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-action': 'menu', 'session-id': session.id },
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.25" cy="8" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="12.75" cy="8" r="1.25" /></svg>',
@@ -336,7 +339,7 @@
       var openButton = row.querySelector('[data-session-open]');
       var menuButton = row.querySelector('[data-session-action="menu"]');
       openButton && openButton.setAttribute('tabindex', tabStop ? '0' : '-1');
-      menuButton && menuButton.setAttribute('tabindex', tabStop ? '0' : '-1');
+      menuButton && menuButton.setAttribute('tabindex', tabStop && !row.classList.contains('sidebar-bulk-selecting') ? '0' : '-1');
       if (openButton) {
         if (active) openButton.setAttribute('aria-current', 'page');
         else openButton.removeAttribute('aria-current');
@@ -378,11 +381,11 @@
       dom.scopeSlot.innerHTML = segmentedControl({
         id: 'chats-scope',
         className: 'chats-scope-control',
-        ariaLabel: 'Chat history scope',
+        ariaLabel: jt('sidebar.chats.historyScope', 'Chat history scope'),
         value: model.scope,
         options: [
-          { value: 'recent', label: 'Recent' },
-          { value: 'archived', label: 'Archived ' + model.archivedTotal },
+          { value: 'recent', label: jt('sidebar.chats.recent', 'Recent') },
+          { value: 'archived', label: jt('sidebar.chats.archivedCount', 'Archived {count}', { count: model.archivedTotal }) },
         ],
       });
       if (focusedScope) {
@@ -395,12 +398,12 @@
 
     function emptyCopy(model) {
       if (model.emptyKind === 'search') {
-        return ['No chats match your search.', 'Try a different title or preview term.'];
+        return [jt('sidebar.chats.searchEmptyTitle', 'No chats match your search.'), jt('sidebar.chats.searchEmptyDescription', 'Try a different title or preview term.')];
       }
       if (model.emptyKind === 'archived') {
-        return ['No archived chats.', 'Archive a chat from its row menu and it will appear here.'];
+        return [jt('sidebar.chats.archivedEmptyTitle', 'No archived chats.'), jt('sidebar.chats.archivedEmptyDescription', 'Archive a chat from its row menu and it will appear here.')];
       }
-      return ['No chats yet.', 'Start a conversation and it will appear here.'];
+      return [jt('sidebar.chats.emptyTitle', 'No chats yet.'), jt('sidebar.chats.emptyDescription', 'Start a conversation and it will appear here.')];
     }
 
     function renderEmpty(model) {
@@ -424,7 +427,7 @@
       empty.querySelector('.sidebar-empty-action-slot').innerHTML = actionButton({
         id: 'chats-empty-action',
         label: model.emptyKind === 'search'
-          ? 'Clear search' : (model.emptyKind === 'archived' ? 'View recent chats' : 'New chat'),
+          ? jt('sidebar.chats.clearSearch', 'Clear search') : (model.emptyKind === 'archived' ? jt('sidebar.chats.viewRecentChats', 'View recent chats') : jt('sidebar.chats.newChat', 'New chat')),
         variant: 'ghost', size: 'sm', className: 'sidebar-empty-action',
         dataset: { 'chats-empty-action': model.emptyKind },
       });
@@ -467,7 +470,7 @@
         dom.conversationGroups.appendChild(pagination);
       }
       if (model.hasMore) {
-        var label = 'Load ' + Math.min(PAGE_SIZE, model.remaining) + ' more';
+        var label = jt('sidebar.chats.loadMore', 'Load {count} more', { count: Math.min(PAGE_SIZE, model.remaining) });
         var loadMoreButton = pagination.querySelector('[data-chats-load-more]');
         if (!loadMoreButton) {
           pagination.innerHTML = actionButton({
@@ -486,8 +489,8 @@
         pagination.removeAttribute('tabindex');
       } else {
         pagination.textContent = model.query
-          ? 'Showing the first 200 matches. Refine your search to narrow the list.'
-          : 'Showing the newest 500 chats. Search to find older chats.';
+          ? jt('sidebar.chats.searchLimitNotice', 'Showing the first 200 matches. Refine your search to narrow the list.')
+          : jt('sidebar.chats.historyLimitNotice', 'Showing the newest 500 chats. Search to find older chats.');
         pagination.tabIndex = -1;
         if (paginationHadFocus) focusTarget = pagination;
       }
@@ -680,7 +683,7 @@
       if (dom.conversationCount) {
         var totalChats = model.recentTotal + model.archivedTotal;
         dom.conversationCount.textContent = String(totalChats);
-        dom.conversationCount.setAttribute('aria-label', totalChats + ' total chats');
+        dom.conversationCount.setAttribute('aria-label', jt('sidebar.chats.totalChats', '{count} total chats', { count: totalChats }));
       }
       reconcileGroups(model, scrollAnchor);
       renderEmpty(model);
@@ -688,14 +691,15 @@
       restoreScrollAnchor(scrollAnchor, scrollPolicy);
       if (dom.status) {
         dom.status.textContent = model.query
-          ? 'Showing ' + model.visibleCount + ' of ' + model.matchedCount + ' matching chats.'
-          : 'Showing ' + model.visibleCount + ' of ' + model.scopeTotal + ' ' + model.scope + ' chats.';
+          ? jt('sidebar.chats.showingMatches', 'Showing {visible} of {total} matching chats.', { visible: model.visibleCount, total: model.matchedCount })
+          : (model.scope === 'archived' ? jt('sidebar.chats.showingArchived', 'Showing {visible} of {total} archived chats.', { visible: model.visibleCount, total: model.scopeTotal }) : jt('sidebar.chats.showingRecent', 'Showing {visible} of {total} recent chats.', { visible: model.visibleCount, total: model.scopeTotal }));
       }
       callbacks.afterRenderSessions && callbacks.afterRenderSessions(
         getVisibleSessionElements(),
         model.visibleSessions
       );
       restoreRemovedRowFocus(scrollAnchor);
+      if (typeof windowRef.Event === 'function') dom.conversationGroups.dispatchEvent(new windowRef.Event('sidebar-rendered'));
       var durationMs = nowMs() - startedAt;
       if (durationMs > SLOW_RENDER_MS && Date.now() - lastSlowLogAt >= SLOW_LOG_INTERVAL_MS) {
         lastSlowLogAt = Date.now();
@@ -759,7 +763,7 @@
       getVisibleSessionElements().forEach(function (row) {
         var selected = row.dataset.sessionId === rovingSessionId;
         row.querySelector('[data-session-open]')?.setAttribute('tabindex', selected ? '0' : '-1');
-        row.querySelector('[data-session-action="menu"]')?.setAttribute('tabindex', selected ? '0' : '-1');
+        row.querySelector('[data-session-action="menu"]')?.setAttribute('tabindex', selected && !row.classList.contains('sidebar-bulk-selecting') ? '0' : '-1');
       });
     }
 

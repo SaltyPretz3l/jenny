@@ -44,7 +44,7 @@ def test_process_message_models_unload_calls_engine_unload(monkeypatch) -> None:
             state["tags"].append(name)  # type: ignore[union-attr]
             self.model_name = None
 
-    fake_container = SimpleNamespace(stack=SimpleNamespace(engine=FakeEngine()))
+    fake_container = SimpleNamespace(host_policy_enforced=False, stack=SimpleNamespace(engine=FakeEngine()))
     monkeypatch.setattr(server, "_BRAIN_CONTAINER", fake_container)
 
     message = {
@@ -76,7 +76,7 @@ def test_process_message_models_unload_accepts_mock_engine_contract(monkeypatch)
     monkeypatch.setattr(
         server,
         "_BRAIN_CONTAINER",
-        SimpleNamespace(stack=SimpleNamespace(engine=engine)),
+        SimpleNamespace(host_policy_enforced=False, stack=SimpleNamespace(engine=engine)),
     )
 
     outcome = server.process_message(

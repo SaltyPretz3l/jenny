@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const GLOBAL_ERROR_DEDUPE_WINDOW_MS = 10_000;
   const GLOBAL_ERROR_DEDUPE_CACHE_MAX = 64;
   const ERROR_LOG_DEDUPE_WINDOW_MS = 60_000;
@@ -31,7 +32,7 @@
       }
       return Object.prototype.toString.call(reason);
     }
-    return String(reason || 'Unhandled promise rejection');
+    return String(reason || jt('errors.lifecycle.unhandledPromiseRejection', 'Unhandled promise rejection'));
   }
 
   function normalizeGlobalErrorPayload(kind, sourceEvent) {
@@ -59,7 +60,7 @@
     const errorMessage = String(error && error.message || '').trim();
     const normalizedMessage = eventMessage && eventMessage.toLowerCase() !== 'uncaught [object event]'
       ? eventMessage
-      : errorMessage || eventMessage || 'Unhandled renderer exception';
+      : errorMessage || eventMessage || jt('errors.lifecycle.unhandledRendererException', 'Unhandled renderer exception');
     return {
       category: 'uncaught_error',
       message: normalizedMessage,
@@ -255,12 +256,12 @@
        * reportError returns null when routing is off. */
       const routed = reportError
         ? reportError({
-          message: 'A runtime error occurred. The app recovered; you can continue.',
+          message: jt('toast.rendererError.message', 'A runtime error occurred. The app recovered; you can continue.'),
           error_code: errorPayload.error_code,
           category: errorPayload.category,
           retryable: errorPayload.retryable,
           options: {
-            title: 'Renderer Error',
+            title: jt('toast.rendererError.title', 'Renderer Error'),
             source: toastSource,
             dedupeKey: `renderer-global-error:${signature}`,
           },
@@ -268,9 +269,9 @@
         : null;
       if (!routed) {
         showToastMessage(
-          'A runtime error occurred. The app recovered; you can continue.',
+          jt('toast.rendererError.message', 'A runtime error occurred. The app recovered; you can continue.'),
           {
-            title: 'Renderer Error',
+            title: jt('toast.rendererError.title', 'Renderer Error'),
             tone: 'warning',
             source: toastSource,
             dedupeKey: `renderer-global-error:${signature}`,

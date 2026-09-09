@@ -17,6 +17,7 @@
   root.rendererArtifactPresentation = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const KIND_IMAGE = 'image';
   const KIND_FILE = 'file';
@@ -92,7 +93,7 @@
     const normalized = str(value);
     if (!normalized) return '';
     const lowered = normalized.toLowerCase();
-    if (lowered === 'plaintext' || lowered === 'text') return 'Plain text';
+    if (lowered === 'plaintext' || lowered === 'text') return jt('artifacts.presentation.plainText', 'Plain text');
     return titleCase(lowered);
   }
 
@@ -183,10 +184,10 @@
       const artifactKind = str(file.artifactKind);
       isMarkdownDocument = isProjectedMarkdownDocument(artifact);
       kicker = isMarkdownDocument
-        ? 'Markdown Document'
+        ? jt('artifacts.presentation.markdownDocument', 'Markdown Document')
         : (language
           ? formatLanguageLabel(language)
-          : (artifactKind ? formatLanguageLabel(artifactKind) : 'Scratch File'));
+          : (artifactKind ? formatLanguageLabel(artifactKind) : jt('artifacts.presentation.scratchFile', 'Scratch File')));
       metaLine = firstNonEmpty(file.displayPath, file.fileName, title);
     } else {
       const tool = artifact?.tool || {};
@@ -247,7 +248,7 @@
     } else if (kind === KIND_FILE) {
       const language = str(artifact?.language);
       isMarkdownDocument = isRawMarkdownDocument(artifact);
-      kicker = isMarkdownDocument ? 'Markdown Document' : language ? formatLanguageLabel(language) : 'File';
+      kicker = isMarkdownDocument ? jt('artifacts.presentation.markdownDocument', 'Markdown Document') : language ? formatLanguageLabel(language) : 'File';
       metaLine = firstNonEmpty(artifact?.display_path, artifact?.file_name);
     } else {
       kicker = firstNonEmpty(artifact?.artifact_kind, 'Tool');
@@ -303,28 +304,27 @@
       return [];
     }
     const enabled = Boolean(base.id);
-    const unavailableLabel = 'Artifact unavailable';
     return [
       // Primary in-app action: the review panel beside chat (studio retired).
       {
         name: ACTION_PANEL,
-        label: 'View',
-        ariaLabel: 'Open in panel',
-        title: enabled ? 'Open beside chat' : unavailableLabel,
+        label: jt('artifacts.actions.view', 'View'),
+        ariaLabel: jt('artifacts.actions.openInPanel', 'Open in panel'),
+        title: enabled ? jt('artifacts.actions.openBesideChat', 'Open beside chat') : jt('artifacts.actions.unavailable', 'Artifact unavailable'),
         enabled,
       },
       {
         name: ACTION_OPEN,
-        label: 'Open',
-        ariaLabel: 'Open',
-        title: enabled ? 'Open with default app' : unavailableLabel,
+        label: jt('common.open', 'Open'),
+        ariaLabel: jt('common.open', 'Open'),
+        title: enabled ? jt('artifacts.actions.openWithDefaultApp', 'Open with default app') : jt('artifacts.actions.unavailable', 'Artifact unavailable'),
         enabled,
       },
       {
         name: ACTION_REVEAL,
-        label: 'Reveal',
-        ariaLabel: 'Reveal in folder',
-        title: enabled ? 'Reveal in folder' : unavailableLabel,
+        label: jt('artifacts.actions.reveal', 'Reveal'),
+        ariaLabel: jt('artifacts.actions.revealInFolder', 'Reveal in folder'),
+        title: enabled ? jt('artifacts.actions.revealInFolder', 'Reveal in folder') : jt('artifacts.actions.unavailable', 'Artifact unavailable'),
         enabled,
       },
     ];

@@ -5,7 +5,8 @@
   }
   root.rendererToastUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var TOAST_ALERT_TONES = { warning: true, danger: true };
 
   // These titles restate the message ("Action Failed" above "Copy failed: …").
@@ -146,8 +147,8 @@
       dismiss.className = 'inv-toast__dismiss';
       dismiss.type = 'button';
       dismiss.dataset.toastDismiss = toastId;
-      dismiss.setAttribute('aria-label', 'Dismiss notification');
-      dismiss.title = 'Dismiss notification';
+      dismiss.setAttribute('aria-label', jt('toast.dismissNotification', 'Dismiss notification'));
+      dismiss.title = jt('toast.dismissNotification', 'Dismiss notification');
       dismiss.textContent = '×';
       return dismiss;
     }
@@ -283,7 +284,7 @@
         // announcing the count as well is noise.
         overflowNode.setAttribute('aria-hidden', 'true');
       }
-      const label = count === 1 ? '1 more notification' : `${count} more notifications`;
+      const label = jtn('toast.moreNotifications', count, { count }, '1 more notification', '{count} more notifications');
       if (overflowNode.textContent !== label) {
         overflowNode.textContent = label;
       }
@@ -389,7 +390,7 @@
       const source = String(options.source || TOAST_SOURCE.shellAction || TOAST_SOURCE.composerAction).trim();
       const nextMessage = String(message || '').trim();
       return showToastMessage(nextMessage, {
-        title: String(options.title || 'Action Failed').trim(),
+        title: String(options.title || jt('toast.errors.actionFailedTitle', 'Action Failed')).trim(),
         tone: 'danger',
         sticky: true,
         source,
@@ -401,22 +402,22 @@
 
     function toErrorMessage(error, fallback) {
       const direct = String(error && error.message || error || '').trim();
-      return direct || String(fallback || 'Something went wrong.').trim();
+      return direct || String(fallback || jt('toast.errors.somethingWentWrong', 'Something went wrong.')).trim();
     }
 
     function showSessionActionError(error, title) {
-      const message = toErrorMessage(error, 'Session action failed.');
+      const message = toErrorMessage(error, jt('toast.errors.sessionActionFailed', 'Session action failed.'));
       return showShellErrorToast(message, {
-        title: String(title || 'Session Action Failed').trim(),
+        title: String(title || jt('toast.errors.sessionActionFailedTitle', 'Session Action Failed')).trim(),
         source: TOAST_SOURCE.sessionAction,
         dedupeKey: `${TOAST_SOURCE.sessionAction}:${hashMessage(message)}`,
       });
     }
 
     function showComposerActionError(error, title) {
-      const message = toErrorMessage(error, 'Composer action failed.');
+      const message = toErrorMessage(error, jt('toast.errors.composerActionFailed', 'Composer action failed.'));
       return showShellErrorToast(message, {
-        title: String(title || 'Composer Action Failed').trim(),
+        title: String(title || jt('toast.errors.composerActionFailedTitle', 'Composer Action Failed')).trim(),
         source: TOAST_SOURCE.composerAction,
         dedupeKey: `${TOAST_SOURCE.composerAction}:${hashMessage(message)}`,
       });

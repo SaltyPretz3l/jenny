@@ -6,10 +6,11 @@
   root.dataLifecycleUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function dataLifecycleUtilsFactory() {
   'use strict';
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function formatCount(value, singular, plural) {
     var count = Math.max(0, Math.floor(Number(value) || 0));
-    return count.toLocaleString() + ' ' + (count === 1 ? singular : plural);
+    return count.toLocaleString(globalThis.jennyI18n?.tag?.()) + ' ' + (count === 1 ? singular : plural);
   }
 
   function formatBytes(value) {

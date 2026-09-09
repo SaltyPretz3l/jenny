@@ -199,14 +199,14 @@
   display: grid;
   gap: var(--space-4);
   margin-top: var(--space-5);
-  padding-left: var(--space-2);
+  padding-inline-start: var(--space-2);
 }
 
 .home-loop-history-item {
   display: grid;
   gap: var(--space-1);
-  padding-left: var(--space-5);
-  border-left: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
+  padding-inline-start: var(--space-5);
+  border-inline-start: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
 }
 
 /* Depth level 1 (form zone): solid one-step fill, 1px hairline, 8px corners. */

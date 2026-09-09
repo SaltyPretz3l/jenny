@@ -167,7 +167,6 @@ function buildAppShellPollerHarness() {
     queueStartupLazyHydration() {},
     refreshComposerToolToggles: async () => {},
     refreshSnapshots: async () => { calls.refreshSnapshots += 1; },
-    refreshSuggestions: async () => {},
     refreshWorkspaceRootState: async () => {},
     registerCleanup(cleanup) { cleanups.push(cleanup); },
     renderAll() {},

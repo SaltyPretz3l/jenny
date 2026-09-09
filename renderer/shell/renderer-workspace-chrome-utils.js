@@ -5,6 +5,7 @@
   }
   root.rendererWorkspaceChromeUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const motionPreferenceUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionPreferenceUtils)
     || (typeof require === 'function' ? require('../shared/renderer-motion-preference-utils') : null)
     || {};
@@ -33,6 +34,17 @@
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
   }
 
+  function sessionStatusLabel(state) {
+    switch (state) {
+      case 'plan_review': return jt('shell.workspaceChrome.planReview', 'Plan review');
+      case 'approval': return jt('shell.workspaceChrome.approvalNeeded', 'Approval needed');
+      case 'input_needed': return jt('shell.workspaceChrome.inputNeeded', 'Input needed');
+      case 'streaming': return jt('shell.workspaceChrome.streaming', 'Streaming');
+      case 'open': return jt('shell.workspaceChrome.open', 'Open');
+      default: return '';
+    }
+  }
+
   function resolveSessionPresentation(sessionId, source = {}) {
     const id = normalizeId(sessionId);
     const openSet = toIdSet(source.openIds || source.openSessionIds || source.openSet);
@@ -40,14 +52,16 @@
     const approvalSet = toIdSet(source.approvalIds || source.approvalSessionIds || source.approvalSet);
     const isOpen = openSet.has(id);
     const isStreaming = streamingSet.has(id);
-    const isApproval = approvalSet.has(id);
+    const attention = source.attentionStates?.get?.(id);
+    const isApproval = source.attentionStates
+      ? attention === 'approval' || attention === 'plan_review'
+      : approvalSet.has(id);
     const linkedCount = getLinkedCount(source.linkedCounts || source.linkedMap, id);
-    const dominantState = isApproval ? 'approval' : (isStreaming ? 'streaming' : (isOpen ? 'open' : 'idle'));
-    const badgeLabels = [];
-    if (isOpen) badgeLabels.push('Open');
-    if (isStreaming) badgeLabels.push('Streaming');
-    if (isApproval) badgeLabels.push('Approval');
-    if (linkedCount > 0) badgeLabels.push(`Linked ${linkedCount}`);
+    const waitingState = ['approval', 'plan_review', 'input_needed'].includes(attention) ? attention : '';
+    const dominantState = waitingState || (isApproval ? 'approval' : (isStreaming ? 'streaming' : (isOpen ? 'open' : 'idle')));
+    const statusLabel = sessionStatusLabel(dominantState);
+    const badgeLabels = statusLabel ? [statusLabel] : [];
+    if (linkedCount > 0) badgeLabels.push(jt('shell.workspaceChrome.linkedCount', 'Linked {count}', { count: linkedCount }));
     return {
       sessionId: id,
       isOpen,
@@ -55,7 +69,8 @@
       isApproval,
       linkedCount,
       dominantState,
-      railIndicatorLabel: isApproval ? 'Approval' : (isStreaming ? 'Streaming' : ''),
+      statusLabel,
+      railIndicatorLabel: dominantState === 'open' || dominantState === 'idle' ? '' : statusLabel,
       badgeLabels,
     };
   }
@@ -129,13 +144,13 @@
         return btn;
       }
       addItem('Close', () => deps?.onSessionClosed?.(sessionId), busy);
-      addItem('Close Others', () => deps?.onCloseOtherSessions?.(sessionId));
-      addItem('Close to the Right', () => deps?.onCloseSessionsToRight?.(sessionId));
+      addItem(jt('shell.workspaceChrome.closeOthers', 'Close Others'), () => deps?.onCloseOtherSessions?.(sessionId));
+      addItem(jt('shell.workspaceChrome.closeToRight', 'Close to the Right'), () => deps?.onCloseSessionsToRight?.(sessionId));
       const sep = doc.createElement('div');
       sep.className = 'workspace-tab-context-menu-separator';
       sep.setAttribute('role', 'separator');
       contextMenuEl.appendChild(sep);
-      addItem('Close All', () => deps?.onCloseAllSessions?.());
+      addItem(jt('shell.workspaceChrome.closeAll', 'Close All'), () => deps?.onCloseAllSessions?.());
 
       doc.body.appendChild(contextMenuEl);
       const menuRect = contextMenuEl.getBoundingClientRect();
@@ -241,14 +256,14 @@
       titleBtn.type = 'button';
       titleBtn.className = 'workspace-rail-tab-button';
       titleBtn.dataset.workspaceActivate = id;
-      titleBtn.title = String(summary?.title || 'New Chat');
+      titleBtn.title = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
       titleBtn.setAttribute('role', 'tab');
 
       indicatorSpan.className = 'workspace-rail-indicator';
       indicatorSpan.textContent = '';
 
       titleSpan.className = 'workspace-rail-title';
-      titleSpan.textContent = String(summary?.title || 'New Chat');
+      titleSpan.textContent = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
 
       titleBtn.append(indicatorSpan, titleSpan);
       tab.appendChild(titleBtn);
@@ -260,7 +275,7 @@
         linkBtn.className = 'workspace-rail-link-button';
         linkBtn.dataset.workspaceLinks = id;
         linkBtn.innerHTML = ICON_LINK;
-        linkBtn.title = 'Link sessions';
+        linkBtn.title = jt('shell.workspaceChrome.linkSessions', 'Link sessions');
         linkBtn.hidden = !isActive;
         tab.appendChild(linkBtn);
       }
@@ -270,28 +285,33 @@
       closeBtn.dataset.workspaceClose = id;
       closeBtn.innerHTML = ICON_CLOSE;
       closeBtn.disabled = busy;
-      closeBtn.title = busy ? 'Cannot close a busy session.' : 'Close session';
+      closeBtn.title = busy ? jt('shell.workspaceChrome.cannotCloseBusySession', 'Cannot close a busy session.') : jt('shell.workspaceChrome.closeSession', 'Close session');
       tab.appendChild(closeBtn);
 
       railEl.appendChild(tab);
       tabRefs.set(id, { el: tab, titleBtn, titleSpan, indicatorSpan, closeBtn, linkBtn });
     }
 
-    function patchTab(id, summary, busy, isActive, streamingIds, approvalIds) {
+    function patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates) {
       const refs = tabRefs.get(id);
       const presentation = resolveSessionPresentation(id, {
         openIds: [id],
         streamingIds,
         approvalIds,
+        attentionStates,
       });
       refs.el.classList.toggle('active', isActive);
-      refs.titleBtn.title = String(summary?.title || 'New Chat');
+      refs.titleBtn.title = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
       refs.titleBtn.setAttribute('aria-selected', isActive ? 'true' : 'false');
       refs.titleBtn.tabIndex = isActive ? 0 : -1;
-      refs.titleSpan.textContent = String(summary?.title || 'New Chat');
+      refs.titleSpan.textContent = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
       refs.indicatorSpan.textContent = presentation.railIndicatorLabel;
+      refs.el.dataset.sessionDominantState = presentation.dominantState;
+      refs.titleBtn.setAttribute('aria-label', presentation.railIndicatorLabel
+        ? refs.titleSpan.textContent + jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: presentation.railIndicatorLabel })
+        : refs.titleSpan.textContent);
       refs.closeBtn.disabled = busy;
-      refs.closeBtn.title = busy ? 'Cannot close a busy session.' : 'Close session';
+      refs.closeBtn.title = busy ? jt('shell.workspaceChrome.cannotCloseBusySession', 'Cannot close a busy session.') : jt('shell.workspaceChrome.closeSession', 'Close session');
       if (refs.linkBtn) refs.linkBtn.hidden = !isActive;
     }
 
@@ -306,7 +326,7 @@
       containerEl.dataset.tabCount = String(tabRefs.size);
     }
 
-    function renderRail(openSessionIds, activeSessionId, sessionSummaries, streamingSessionIds, approvalSessionIds) {
+    function renderRail(openSessionIds, activeSessionId, sessionSummaries, streamingSessionIds, approvalSessionIds, attentionStates) {
       if (!containerEl) return;
       const doc = containerEl.ownerDocument;
       const summaryMap = new Map((Array.isArray(sessionSummaries) ? sessionSummaries : []).map((entry) => [normalizeId(entry?.id), entry]));
@@ -324,8 +344,8 @@
         scrollLeftArrow.type = 'button';
         scrollLeftArrow.className = 'workspace-rail-scroll-arrow';
         scrollLeftArrow.innerHTML = ICON_CHEVRON_LEFT;
-        scrollLeftArrow.title = 'Scroll tabs left';
-        scrollLeftArrow.setAttribute('aria-label', 'Scroll tabs left');
+        scrollLeftArrow.title = jt('shell.workspaceChrome.scrollTabsLeft', 'Scroll tabs left');
+        scrollLeftArrow.setAttribute('aria-label', jt('shell.workspaceChrome.scrollTabsLeft', 'Scroll tabs left'));
         scrollLeftArrow.hidden = true;
         scrollLeftArrow.addEventListener('click', () => railEl.scrollBy({ left: -200, behavior: resolveScrollBehavior(null, win) }), listenerOpts);
         containerEl.appendChild(scrollLeftArrow);
@@ -333,7 +353,7 @@
         railEl = doc.createElement('div');
         railEl.className = 'workspace-rail';
         railEl.setAttribute('role', 'tablist');
-        railEl.setAttribute('aria-label', 'Open sessions');
+        railEl.setAttribute('aria-label', jt('shell.workspaceChrome.openSessions', 'Open sessions'));
         containerEl.appendChild(railEl);
         railEl.addEventListener('click', delegatedClickHandler, listenerOpts);
         railEl.addEventListener('keydown', delegatedKeydownHandler, listenerOpts);
@@ -365,8 +385,8 @@
         scrollRightArrow.type = 'button';
         scrollRightArrow.className = 'workspace-rail-scroll-arrow';
         scrollRightArrow.innerHTML = ICON_CHEVRON_RIGHT;
-        scrollRightArrow.title = 'Scroll tabs right';
-        scrollRightArrow.setAttribute('aria-label', 'Scroll tabs right');
+        scrollRightArrow.title = jt('shell.workspaceChrome.scrollTabsRight', 'Scroll tabs right');
+        scrollRightArrow.setAttribute('aria-label', jt('shell.workspaceChrome.scrollTabsRight', 'Scroll tabs right'));
         scrollRightArrow.hidden = true;
         scrollRightArrow.addEventListener('click', () => railEl.scrollBy({ left: 200, behavior: resolveScrollBehavior(null, win) }), listenerOpts);
         containerEl.appendChild(scrollRightArrow);
@@ -377,8 +397,8 @@
           newTabBtn.className = 'workspace-rail-new-button';
           newTabBtn.dataset.workspaceNew = '';
           newTabBtn.innerHTML = ICON_PLUS;
-          newTabBtn.title = 'New chat (Ctrl+N)';
-          newTabBtn.setAttribute('aria-label', 'New chat');
+          newTabBtn.title = jt('shell.workspaceChrome.newChatShortcut', 'New chat (Ctrl+N)');
+          newTabBtn.setAttribute('aria-label', jt('shell.workspaceChrome.newChat', 'New chat'));
           containerEl.appendChild(newTabBtn);
           newTabBtn.addEventListener('click', () => deps.onNewSessionRequested(), listenerOpts);
         }
@@ -411,10 +431,10 @@
         const busy = isSessionBusy(id);
         const isActive = id === activeId;
         if (tabRefs.has(id)) {
-          patchTab(id, summary, busy, isActive, streamingIds, approvalIds);
+          patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates);
         } else {
           createTab(doc, id, summary, busy, isActive);
-          patchTab(id, summary, busy, isActive, streamingIds, approvalIds);
+          patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates);
         }
       }
 
@@ -435,24 +455,25 @@
       updateOverflowArrows();
     }
 
-    function patchRailRuntime(activeSessionId, streamingSessionIds, approvalSessionIds) {
+    function patchRailRuntime(activeSessionId, streamingSessionIds, approvalSessionIds, attentionStates) {
       const activeId = normalizeId(activeSessionId);
       const streamingIds = toIdSet(streamingSessionIds);
       const approvalIds = toIdSet(approvalSessionIds);
       for (const [id, refs] of tabRefs) {
         patchTab(
           id,
-          { title: refs.titleSpan?.textContent || 'New Chat' },
+          { title: refs.titleSpan?.textContent || jt('session.defaultTitle.chat', 'New Chat') },
           isSessionBusy(id),
           id === activeId,
           streamingIds,
-          approvalIds
+          approvalIds,
+          attentionStates
         );
       }
       scheduleOverflowArrowUpdate();
     }
 
-    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts) {
+    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts, attentionStates) {
       const openSet = toIdSet(openIds);
       const streamingSet = toIdSet(streamingIds);
       const approvalSet = toIdSet(approvalIds);
@@ -466,24 +487,25 @@
           streamingIds: streamingSet,
           approvalIds: approvalSet,
           linkedCounts: linkedMap,
+          attentionStates,
         });
         const openTarget = element.querySelector('[data-session-open]') || element;
         const titleText = element.querySelector('.session-row__title-text')?.textContent
           || element.getAttribute('title')
           || titleRow.textContent;
-        const rawTitle = String(titleText || 'New Chat').replace(/\s+/g, ' ').trim() || 'New Chat';
+        const rawTitle = String(titleText || jt('session.defaultTitle.chat', 'New Chat')).replace(/\s+/g, ' ').trim() || jt('session.defaultTitle.chat', 'New Chat');
         const title = rawTitle.length <= 120 ? rawTitle : `${rawTitle.slice(0, 117).trim()}...`;
         const statusLabels = presentation.badgeLabels.slice();
-        if (element.dataset.sessionPinned === 'true') statusLabels.push('Pinned');
+        if (element.dataset.sessionPinned === 'true') statusLabels.push(jt('shell.workspaceChrome.pinned', 'Pinned'));
         const outboxLabel = element.querySelector('.send-outbox-badge')?.getAttribute('aria-label');
         if (outboxLabel) statusLabels.push(String(outboxLabel).slice(0, 80));
         const uniqueStatusLabels = [...new Set(statusLabels)];
         const statusSuffix = uniqueStatusLabels.length
-          ? `. Status: ${uniqueStatusLabels.join(', ')}`
+          ? jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: uniqueStatusLabels.join(', ') })
           : '';
         const providerName = String(element.dataset.sessionProviderName || '').replace(/\s+/g, ' ').trim().slice(0, 40);
         const sessionNoun = element.dataset.sessionType === 'plugin'
-          ? `${providerName || 'plugin'} session` : 'session';
+          ? jt('shell.workspaceChrome.pluginSessionType', '{provider} session', { provider: providerName || jt('shell.workspaceChrome.pluginFallback', 'plugin') }) : jt('shell.workspaceChrome.sessionType', 'session');
         const signature = JSON.stringify({
           dominantState: presentation.dominantState,
           linkedCount: presentation.linkedCount,
@@ -499,7 +521,9 @@
         if (previous?.signature === signature && previous?.titleRow === titleRow && !visibleBadges.length) return;
         element.dataset.sessionDominantState = presentation.dominantState;
         element.dataset.sessionLinkedCount = String(presentation.linkedCount);
-        openTarget.setAttribute('aria-label', `Open ${sessionNoun} ${title}${statusSuffix}`);
+        const dot = element.querySelector('.session-row__dot');
+        if (dot) dot.setAttribute('title', presentation.statusLabel);
+        openTarget.setAttribute('aria-label', jt('shell.workspaceChrome.openSessionLabel', 'Open {sessionNoun} {title}{statusSuffix}', { sessionNoun, title, statusSuffix }));
         sidebarBadgeState.set(element, { signature, titleRow });
       });
     }
@@ -522,7 +546,7 @@
       countLabel.className = 'composer-popover-copy';
       searchInput.className = 'approved-memory-input';
       searchInput.type = 'search';
-      searchInput.placeholder = 'Search sessions by title';
+      searchInput.placeholder = jt('shell.workspaceChrome.searchSessionsPlaceholder', 'Search sessions by title');
       list.style.maxHeight = POPOVER_LIST_MAX_HEIGHT;
       list.style.overflow = 'auto';
       popoverEl.append(countLabel, searchInput, list);
@@ -537,9 +561,9 @@
       // focus once the rebuild lands (WIDE-056a).
       const renderList = (focusId) => {
         const query = normalizeId(searchInput.value).toLowerCase();
-        countLabel.textContent = `Linked sessions: ${selected.size}`;
+        countLabel.textContent = jt('shell.workspaceChrome.linkedSessionsCount', 'Linked sessions: {count}', { count: selected.size });
         list.textContent = '';
-        sessions.filter((entry) => String(entry?.title || 'New Chat').toLowerCase().includes(query)).forEach((entry) => {
+        sessions.filter((entry) => (String(entry?.title || jt('session.defaultTitle.chat', 'New Chat')) + (!entry?.title || entry?.title === 'New Chat' ? ' ' + jt('session.defaultTitle.chat', 'New Chat') : '')).toLowerCase().includes(query)).forEach((entry) => {
           const id = normalizeId(entry.id);
           const row = doc.createElement('label');
           const checkbox = doc.createElement('input');
@@ -559,7 +583,7 @@
               renderList(id);
             });
           });
-          copy.textContent = String(entry?.title || 'New Chat');
+          copy.textContent = String(entry?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!entry?.title || entry.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : entry.title));
           row.append(checkbox, copy);
           list.appendChild(row);
         });
@@ -616,5 +640,5 @@
     };
   }
 
-  return { createWorkspaceChromeController, resolveSessionPresentation };
+  return { createWorkspaceChromeController, resolveSessionPresentation, sessionStatusLabel };
 });

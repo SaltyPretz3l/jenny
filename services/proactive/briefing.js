@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 
 const { clipText, normalizeString } = require('../backend/path-utils');
+const { t } = require('../i18n-main');
 const {
   formatDateKey,
   getSystemTimeZone,
@@ -21,7 +22,7 @@ function normalizeWorkspaceRootStatus(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
       state: 'missing',
-      message: 'No workspace root is configured. Workspace-dependent companion details are blocked.',
+      message: t('main.briefing.workspaceNotConfigured', 'No workspace root is configured. Workspace-dependent companion details are blocked.'),
     };
   }
   return {
@@ -92,7 +93,9 @@ async function readGitSnapshot(workspaceRoot, execFileImpl = execFile) {
       available: true,
       branch,
       recentCommits,
-      summary: `Git: branch ${branch}; ${statusLines.length} changed, ${stagedCount} staged, ${untrackedCount} untracked.`,
+      summary: t('main.briefing.gitSummary', 'Git: branch {branch}; {changed} changed, {staged} staged, {untracked} untracked.', {
+        branch, changed: statusLines.length, staged: stagedCount, untracked: untrackedCount,
+      }),
     };
   } catch (error) {
     const message = String(error && error.message || error).toLowerCase();
@@ -101,14 +104,14 @@ async function readGitSnapshot(workspaceRoot, execFileImpl = execFile) {
         available: false,
         branch: '',
         recentCommits: [],
-        summary: 'Workspace root is available, but it is not a git repository.',
+        summary: t('main.briefing.notGitRepository', 'Workspace root is available, but it is not a git repository.'),
       };
     }
     return {
       available: false,
       branch: '',
       recentCommits: [],
-      summary: 'Git activity could not be read for this workspace.',
+      summary: t('main.briefing.gitActivityUnavailable', 'Git activity could not be read for this workspace.'),
     };
   }
 }

@@ -19,12 +19,13 @@
   root.rendererIdeWelcome = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const RECENT_LIMIT = 8;
   const COPY_HAS_ROOT =
-    'Open a file from the explorer to start editing, search across the workspace, or review Jenny’s changes.';
-  const COPY_NO_ROOT = 'Choose a workspace folder to start editing files.';
-  const COPY_NO_BRIDGE = 'Workspace file access is unavailable in this shell mode.';
+    jt('ide.welcome.openFilePrompt', 'Open a file from the explorer to start editing, search across the workspace, or review Jenny’s changes.');
+  const COPY_NO_ROOT = jt('ide.welcome.chooseFolderPrompt', 'Choose a workspace folder to start editing files.');
+  const COPY_NO_BRIDGE = jt('ide.welcome.fileAccessUnavailable', 'Workspace file access is unavailable in this shell mode.');
 
   function defaultEscape(value) {
     return String(value == null ? '' : value)
@@ -110,7 +111,7 @@
       }
       const markup = showChoose && actionButton
         ? actionButton({
-          label: 'Choose Folder',
+          label: jt('ide.welcome.chooseFolder', 'Choose Folder'),
           variant: 'primary',
           dataset: { 'ide-choose-root': '1' },
         })
@@ -140,7 +141,7 @@
         })
         .join('');
       return '<section class="ide-welcome-section">'
-        + '<h3 class="ide-welcome-heading">Recent files</h3>'
+        + '<h3 class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.recentFiles', 'Recent files')) + '</h3>'
         + '<div class="ide-welcome-recent-list">' + rows + '</div>'
         + '</section>';
     }
@@ -155,7 +156,7 @@
         return '';
       }
       return '<details class="ide-welcome-section ide-welcome-shortcuts">'
-        + '<summary class="ide-welcome-heading">Keyboard shortcuts</summary>'
+        + '<summary class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.keyboardShortcuts', 'Keyboard shortcuts')) + '</summary>'
         + '<div class="ide-welcome-shortcuts-body">' + body + '</div>'
         + '</details>';
     }
@@ -169,7 +170,7 @@
       }
       return '<div class="ide-welcome-actions">'
         + actionButton({
-          label: 'Open a different folder…',
+          label: jt('ide.welcome.openDifferentFolder', 'Open a different folder…'),
           variant: 'ghost',
           size: 'sm',
           dataset: { 'ide-welcome-choose-root': '1' },
@@ -314,8 +315,8 @@
     return async function chooseWorkspaceRoot() {
       const api = getWorkspaceRootApi();
       if (typeof api?.choose !== 'function') {
-        showShellErrorToast('Workspace folder selection is unavailable in this shell mode.', {
-          title: 'Workspace',
+        showShellErrorToast(jt('ide.welcome.selectionUnavailable', 'Workspace folder selection is unavailable in this shell mode.'), {
+          title: jt('ide.welcome.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:root:no-bridge',
         });
         return false;
@@ -324,8 +325,8 @@
       try {
         result = await api.choose();
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, 'Could not choose a workspace folder.'), {
-          title: 'Workspace',
+        showShellErrorToast(toErrorMessage(error, jt('ide.welcome.chooseFolderFailed', 'Could not choose a workspace folder.')), {
+          title: jt('ide.welcome.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:root:choose',
         });
         appendClientLog('WARN', 'ide.choose_root_failed', {

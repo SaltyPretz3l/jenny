@@ -21,6 +21,7 @@ from sidecar.ai.engines.ollama_model_info import (
     MAX_OLLAMA_MODEL_ID_CHARS,
     inspect_ollama_model,
 )
+from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
 from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
 from sidecar.runtime.local_engine.snapshot import (
@@ -47,7 +48,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _OLLAMA_CATALOG_METADATA_FIELDS = (
@@ -238,7 +239,7 @@ def initialize_response(
         active_model_capabilities=active_model_capabilities,
     )
 
-    return {
+    result: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": message_id,
         "api_version": api_version,
@@ -277,6 +278,7 @@ def initialize_response(
             "assistant_identity": runtime_config.assistant_identity
             or {"agent_name": runtime_config.assistant_name},
             "feature_flags": runtime_config.feature_flags or {},
+            "desktop_execution_policy_version": runtime_config.desktop_execution_policy_version,
             "workspace_status": _workspace_status_payload(workspace_status),
             "skills_loaded": workspace_status.skills_loaded,
             "memory": {
@@ -292,6 +294,17 @@ def initialize_response(
             "hardware_summary": _cached_hardware_summary(),
         },
     }
+    if host_policy_is_enforced(runtime_config):
+        # Echo the validated declaration so desktop/host lifecycle code can
+        # reject a stale or downgraded sidecar instead of accepting the latest
+        # implementation version unconditionally.
+        result["result"]["host_execution_policy_version"] = (
+            runtime_config.host_execution_policy_version
+        )
+        result["result"]["host_execution_worker_enabled"] = bool(
+            getattr(runtime_config, "host_execution_worker_enabled", False)
+        )
+    return result
 
 
 def models_list_result(

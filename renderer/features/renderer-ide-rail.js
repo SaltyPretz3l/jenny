@@ -13,15 +13,16 @@
   }
   root.rendererIdeRail = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
   // The rail hosts four side panels; Terminal and Problems live in the bottom panel.
   const RAIL_PANELS = [
-    { id: 'explorer', label: 'Explorer', title: 'Explorer — browse workspace files' },
-    { id: 'search', label: 'Search', title: 'Search — find text across the workspace' },
-    { id: 'changes', label: "Jenny's Changes", title: "Jenny's Changes — review edits Jenny made" },
-    { id: 'source-control', label: 'Source Control', title: 'Source Control — stage, commit, and switch branches' },
+    { id: 'explorer', label: jt('ide.rail.explorer', 'Explorer'), title: jt('ide.rail.explorerTitle', 'Explorer — browse workspace files') },
+    { id: 'search', label: jt('ide.rail.search', 'Search'), title: jt('ide.rail.searchTitle', 'Search — find text across the workspace') },
+    { id: 'changes', label: jt('ide.rail.changes', "Jenny's Changes"), title: jt('ide.rail.changesTitle', "Jenny's Changes — review edits Jenny made") },
+    { id: 'source-control', label: jt('ide.rail.sourceControl', 'Source Control'), title: jt('ide.rail.sourceControlTitle', 'Source Control — stage, commit, and switch branches') },
   ];
   // Stage-surface entries (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): the
   // activity strip renders TWO entry kinds — rail-panel entries (click → set
@@ -32,8 +33,8 @@
   // added to RAIL_PANELS — the rail-panel host is destructively rebuilt via
   // innerHTML on activation, which would destroy map/preview keep-alive state.
   const STAGE_SURFACE_ENTRIES = [
-    { id: 'preview', surface: 'preview', label: 'Preview' },
-    { id: 'file-map', surface: 'file_map', label: 'File Map' },
+    { id: 'preview', surface: 'preview', label: jt('ide.rail.preview', 'Preview') },
+    { id: 'file-map', surface: 'file_map', label: jt('ide.rail.fileMap', 'File Map') },
   ];
   const MIN_RAIL_WIDTH = 200;
   const MAX_RAIL_WIDTH = 600;
@@ -131,7 +132,7 @@
     const contextMenu = resolveContextMenu();
     const windowRef = globalRef.window || globalRef;
     // Split-panel glyph for the secondary-sidebar toggle (inline, CSP-safe).
-    const SECONDARY_GLYPH = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1"></rect><line x1="10.5" y1="3.5" x2="10.5" y2="12.5"></line></svg>';
+    const SECONDARY_GLYPH = '<svg class="icon-mirror-rtl" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1"></rect><line x1="10.5" y1="3.5" x2="10.5" y2="12.5"></line></svg>';
     // Chat-bubble glyph for the chat-dock toggle (inline, CSP-safe).
     const CHAT_DOCK_GLYPH = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.5L5.5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"></path></svg>';
 
@@ -191,15 +192,15 @@
               className: `ide-activity-button ide-stage-button${active ? ' ide-activity-button--active' : ''}`,
               ariaPressed: active,
               label: entry.label,
-              title: active ? `${entry.label} — click to return to the editor` : `Show ${entry.label}`,
+              title: active ? jt('ide.rail.returnToEditor', '{label} — click to return to the editor', { label: entry.label }) : jt('ide.rail.showView', 'Show {label}', { label: entry.label }),
               dataset: { 'ide-stage-surface': entry.surface },
             });
           })
         : [];
       const stageGroup = stageButtons.length
-        ? `<div class="ide-stage-group" role="group" aria-label="Workspace views">${stageButtons.join('')}</div>`
+        ? `<div class="ide-stage-group" role="group" aria-label="${(actionButton.escapeHtml || String)(jt('ide.rail.workspaceViews', 'Workspace views'))}">${stageButtons.join('')}</div>`
         : '';
-      const tabStrip = `<div class="ide-activitybar-scroll"><div class="ide-tablist-group" role="tablist" aria-label="Workspace panels">${tabs.join('')}</div>${stageGroup}</div>`;
+      const tabStrip = `<div class="ide-activitybar-scroll"><div class="ide-tablist-group" role="tablist" aria-label="${(actionButton.escapeHtml || String)(jt('ide.workspacePanelsLabel', 'Workspace panels'))}">${tabs.join('')}</div>${stageGroup}</div>`;
       const extras = [];
       // The visibility toggle only makes sense once the secondary side hosts a
       // panel (moving one there forces it open); hide it while the side is empty.
@@ -209,8 +210,8 @@
           plain: true,
           className: `ide-rail-secondary-toggle${open ? ' ide-rail-secondary-toggle--active' : ''}`,
           ariaPressed: open,
-          ariaLabel: open ? 'Hide secondary sidebar' : 'Show secondary sidebar',
-          title: open ? 'Hide secondary sidebar' : 'Show secondary sidebar',
+          ariaLabel: open ? jt('ide.rail.hideSecondarySidebar', 'Hide secondary sidebar') : jt('ide.rail.showSecondarySidebar', 'Show secondary sidebar'),
+          title: open ? jt('ide.rail.hideSecondarySidebar', 'Hide secondary sidebar') : jt('ide.rail.showSecondarySidebar', 'Show secondary sidebar'),
           dataset: { 'ide-rail-secondary': '1' },
           trustedHtml: SECONDARY_GLYPH,
         }));
@@ -223,15 +224,15 @@
           plain: true,
           className: `ide-rail-chatdock-toggle${dockOpen ? ' ide-rail-chatdock-toggle--active' : ''}`,
           ariaPressed: dockOpen,
-          ariaLabel: dockOpen ? 'Collapse chat dock' : 'Show chat dock',
-          title: dockOpen ? 'Collapse chat dock' : 'Show chat dock',
+          ariaLabel: dockOpen ? jt('ide.rail.collapseChatDock', 'Collapse chat dock') : jt('ide.rail.showChatDock', 'Show chat dock'),
+          title: dockOpen ? jt('ide.rail.collapseChatDock', 'Collapse chat dock') : jt('ide.rail.showChatDock', 'Show chat dock'),
           dataset: { 'ide-rail-chatdock': '1' },
           trustedHtml: CHAT_DOCK_GLYPH,
         }));
       }
       const flipLabel = ide.railSide === 'right'
-        ? 'Move panel to the left side'
-        : 'Move panel to the right side';
+        ? jt('ide.rail.movePanelLeft', 'Move panel to the left side')
+        : jt('ide.rail.movePanelRight', 'Move panel to the right side');
       extras.push(actionButton({
         plain: true,
         className: 'ide-rail-flip',
@@ -323,7 +324,7 @@
         anchorX: event.clientX,
         anchorY: event.clientY,
         items: [{
-          label: 'Move to Secondary Sidebar',
+          label: jt('ide.rail.moveToSecondarySidebar', 'Move to Secondary Sidebar'),
           disabled: primaryCount <= 1,
           action: () => onMovePanel(id, 'secondary'),
         }],
@@ -374,9 +375,11 @@
       }
       const delta = event.clientX - dragState.startX;
       const ide = getIde();
-      // Right-pinned rail grows when the pointer moves left, and vice versa.
+      // Right-pinned rail grows when the pointer moves left, and vice versa;
+      // under dir=rtl the layout mirrors, so the persisted side flips physically.
+      const rtl = (event.target?.ownerDocument || event.target?.document || (typeof document !== 'undefined' ? document : null))?.documentElement?.dir === 'rtl';
       ide.railWidth = clampRailWidthForViewport(
-        dragState.side === 'left' ? dragState.startWidth + delta : dragState.startWidth - delta
+        (dragState.side === 'left') !== rtl ? dragState.startWidth + delta : dragState.startWidth - delta
       );
       applyRailWidth();
     }

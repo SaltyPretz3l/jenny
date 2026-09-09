@@ -4,6 +4,7 @@
 // See docs/architecture/BACKEND_SEAM_LANE.md.
 
 const path = require('path');
+const { t } = require('../i18n-main');
 const {
   DEFAULT_CODEX_CLI,
   normalizeCodexCliModelId: normalizeConfiguredCodexCliModelId,
@@ -15,8 +16,11 @@ const {
 
 const CODEX_CLI_PROVIDER = 'codex-cli';
 const CODEX_CLI_DEFAULT_MODEL = 'codex-cli/default';
-const CODEX_CLI_DISABLED_REASON = 'Codex CLI integration is disabled.';
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = DEFAULT_CODEX_CLI.requestTimeoutSeconds;
+
+function codexCliDisabledReason() {
+  return t('main.codexCli.disabled', 'Codex CLI integration is disabled.');
+}
 
 function normalizeCodexCliModelId(value, { allowDefault = true } = {}) {
   const token = normalizeConfiguredCodexCliModelId(value, { allowDefault });
@@ -106,18 +110,18 @@ function createCodexCliRuntimeService({
 
   function availabilityForSettings(settings = getSettings()) {
     if (settings.enabled !== true) {
-      return { available: false, reason: CODEX_CLI_DISABLED_REASON };
+      return { available: false, reason: codexCliDisabledReason() };
     }
     if (!getRuntimeRoot()) {
       return {
         available: false,
-        reason: 'Codex CLI runtime root is not configured.',
+        reason: t('main.codexCli.runtimeRootNotConfigured', 'Codex CLI runtime root is not configured.'),
       };
     }
     if (!lastState) {
       return {
         available: false,
-        reason: 'Codex CLI auth status has not been checked yet.',
+        reason: t('main.codexCli.authNotChecked', 'Codex CLI auth status has not been checked yet.'),
       };
     }
     if (lastState && lastState.status !== 'ready') {
@@ -132,7 +136,7 @@ function createCodexCliRuntimeService({
   function getState() {
     const settings = getSettings();
     if (settings.enabled !== true) {
-      lastState = createUnavailableState(settings, CODEX_CLI_DISABLED_REASON, 'disabled');
+      lastState = createUnavailableState(settings, codexCliDisabledReason(), 'disabled');
       return lastState;
     }
     if (!getRuntimeRoot()) {
@@ -164,7 +168,7 @@ function createCodexCliRuntimeService({
   async function refresh() {
     const settings = getSettings();
     if (settings.enabled !== true) {
-      lastState = createUnavailableState(settings, CODEX_CLI_DISABLED_REASON, 'disabled');
+      lastState = createUnavailableState(settings, codexCliDisabledReason(), 'disabled');
       return lastState;
     }
     if (!getRuntimeRoot()) {
@@ -232,7 +236,7 @@ function createCodexCliRuntimeService({
         ok: false,
         code: 'login_terminal_unavailable',
         provider: CODEX_CLI_PROVIDER,
-        message: 'Codex CLI auth service is unavailable.',
+        message: t('main.codexCli.authServiceUnavailable', 'Codex CLI auth service is unavailable.'),
       };
     }
     return authService.openLoginTerminal({
@@ -263,7 +267,7 @@ function createCodexCliRuntimeService({
     }
     const { modelSet } = getConfiguredModelState();
     if (!modelSet.has(id.toLowerCase())) {
-      return { available: false, reason: `Codex CLI model "${id}" is not configured.` };
+      return { available: false, reason: t('main.codexCli.modelNotConfigured', 'Codex CLI model "{id}" is not configured.', { id }) };
     }
     return availabilityForSettings();
   }
@@ -309,7 +313,7 @@ function createCodexCliRuntimeService({
 
 module.exports = {
   CODEX_CLI_DEFAULT_MODEL,
-  CODEX_CLI_DISABLED_REASON,
+  get CODEX_CLI_DISABLED_REASON() { return codexCliDisabledReason(); },
   CODEX_CLI_PROVIDER,
   createCodexCliRuntimeService,
   normalizeCodexCliModelId,

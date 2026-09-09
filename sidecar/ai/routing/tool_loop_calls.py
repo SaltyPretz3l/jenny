@@ -21,6 +21,7 @@ from sidecar.ai.routing import (
     plan_mode_transition,
     tool_loop_cycle_recovery,
 )
+from sidecar.runtime.turn_state import current_live_run_mode_state
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 
@@ -717,7 +718,6 @@ class _ToolCallPhasesMixin:
                 )
                 return None
             result = replace(result, tool_calls=policy_filter.allowed)
-
         _recovery = _tl_hub.tool_loop_recovery
         result, budget_exhausted = _recovery.admit_tool_calls_for_turn(
             self,
@@ -726,6 +726,11 @@ class _ToolCallPhasesMixin:
         )
         if budget_exhausted:
             return None
+        live_run_mode = current_live_run_mode_state()
+        scan_approval_mode = (
+            live_run_mode.snapshot()[0] if live_run_mode is not None
+            else str(getattr(self.request_context, "approval_mode", "prompt"))
+        )
         calls_before_approval = result.tool_calls
         approval, result = _recovery.approval_with_recovery(
             self,
@@ -825,9 +830,7 @@ class _ToolCallPhasesMixin:
                 usage_totals=self.usage_totals,
                 streamed_event_types=self.streamed_event_types,
             )
-
         tool_calls_to_execute = result.tool_calls
-
         iteration_calls: list[Any] = []
         if tool_calls_to_execute:
             _tl_hub.loop_event_emit.pre_dispatch_emit_executing(
@@ -837,7 +840,6 @@ class _ToolCallPhasesMixin:
             )
             if runtime.streaming:
                 self.streamed_event_types.add("tool.executing")
-
         # -- Pre-filter deferred / coerced calls (shared) -----------
         from sidecar.ai.routing.tool_call_execution import (
             execute_tool_calls_sequentially,
@@ -862,7 +864,6 @@ class _ToolCallPhasesMixin:
             streamed_event_types=self.streamed_event_types,
             outcome_index=self.outcome_index,
         )
-
         # Auto-checkpoint immediately before the canonical in-order dispatcher.
         _tl_hub.maybe_create_auto_checkpoint(self, _remaining)
 
@@ -886,11 +887,12 @@ class _ToolCallPhasesMixin:
                     tool_preferences=self.tool_preferences,
                     request_context=self.request_context,
                     audit_metadata_by_call=audit_metadata_by_call,
+                    approvals_pre_granted=self.approvals_pre_granted,
+                    scan_approval_mode=scan_approval_mode,
                 )
             except Exception:  # noqa: BLE001 - pair any pre-dispatch event before re-raising
                 self._settle_unfinished_tool_results("sequential_execution_interrupted")
                 raise
-
         self._refund_failed_web_outcomes(
             outcomes_len_before_tool_phase,
             tool_contract=self.tool_contract,

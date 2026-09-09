@@ -11,7 +11,7 @@
   root.inventoryTextField = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -71,7 +71,7 @@
     var maxLength = Number.isFinite(Number(o.maxLength)) && Number(o.maxLength) > 0
       ? Math.floor(Number(o.maxLength))
       : null;
-    var ariaLabel = String(o.ariaLabel || label || 'Text input');
+    var ariaLabel = String(o.ariaLabel || label || jt('inventory.textField.inputLabel', 'Text input'));
     var rows = Number.isFinite(Number(o.rows)) && Number(o.rows) >= 1
       ? Math.floor(Number(o.rows))
       : 3;
@@ -96,6 +96,7 @@
     if (o.multiline) {
       control = '<textarea'
         + (id ? ' id="' + id + '"' : '')
+        + ' dir="auto"'
         + ' class="inv-text-field-control"'
         + ' aria-label="' + escapeHtml(ariaLabel) + '"'
         + (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : '')
@@ -112,6 +113,7 @@
       control = '<input'
         + (id ? ' id="' + id + '"' : '')
         + ' type="' + inputType + '"'
+        + (inputType === 'text' ? ' dir="auto"' : '')
         + ' class="inv-text-field-control"'
         + ' value="' + escapeHtml(value) + '"'
         + ' aria-label="' + escapeHtml(ariaLabel) + '"'

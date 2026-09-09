@@ -10,6 +10,7 @@
   root.rendererObservabilityUtils = factory(root.stringUtils, root.logContractUtils, root.rendererMotionPreferenceUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, logContractUtils, motionPreferenceUtils) {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   // UIUX-030: sole smooth-scroll gate — 'auto' (instant) under prefers-reduced-motion.
   const resolveScrollBehavior = motionPreferenceUtils && typeof motionPreferenceUtils.resolveScrollBehavior === 'function'
@@ -250,7 +251,7 @@
       }
       const fetchFn = getDiagnosticsApi();
       if (!fetchFn) {
-        state.error = 'jennyShell.diagnostics unavailable';
+        state.error = jt('diagnostics.unavailable', 'jennyShell.diagnostics unavailable');
         renderAll();
         return null;
       }
@@ -283,7 +284,7 @@
           return state.snapshot;
         } catch (error) {
           if (state.disposed || requestEpoch !== state.refreshEpoch || !isRefreshCurrent(options)) return null;
-          state.error = (error && error.message) || String(error || 'failed to fetch jenny_status');
+          state.error = (error && error.message) || String(error || jt('diagnostics.observability.statusFetchFailed', 'failed to fetch jenny_status'));
           if (!silent || invalidateSnapshot) renderAll();
           return null;
         }
@@ -329,7 +330,7 @@
       if (traceIndex < 0) {
         state.pendingTraceMissCount += 1;
         if (state.pendingTraceMissCount >= 3) {
-          state.pendingTraceMissMessage = `Trace ${formatTraceIdForNotice(streamId)} has not appeared in recent Runtime Health rows yet.`;
+          state.pendingTraceMissMessage = jt('diagnostics.traceNotYetVisible', 'Trace {traceId} has not appeared in recent Runtime Health rows yet.', { traceId: formatTraceIdForNotice(streamId) });
           if (typeof callbacks.clearPendingTraceFocus === 'function') {
             callbacks.clearPendingTraceFocus(streamId);
           }

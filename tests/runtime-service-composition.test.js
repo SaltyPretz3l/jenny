@@ -14,8 +14,20 @@ const {
 // callback records its invocations so the test can assert on real delegation
 // (not just "it didn't throw"). The caller is responsible for cleaning up the
 // temp userData dir and stopping any timers via the returned `cleanup`.
-function buildDeps({ systemArch = '', platform = process.platform } = {}) {
+function buildDeps({
+  systemArch = '',
+  platform = process.platform,
+  appLocale,
+  initialShellConfig,
+} = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-rsc-test-'));
+  if (initialShellConfig) {
+    fs.writeFileSync(
+      path.join(tmpDir, 'shell-config.json'),
+      JSON.stringify(initialShellConfig),
+      'utf8'
+    );
+  }
   const calls = {
     coreLoggingReady: [],
     gpuMemoryReset: [],
@@ -32,7 +44,10 @@ function buildDeps({ systemArch = '', platform = process.platform } = {}) {
     }),
   };
   const deps = {
-    app: { getPath: () => tmpDir },
+    app: {
+      getPath: () => tmpDir,
+      ...(appLocale === undefined ? {} : { getLocale: () => appLocale }),
+    },
     BrowserWindow: class {
       constructor() {}
     },
@@ -132,6 +147,7 @@ test('returned bundle exposes the documented service keys with object values', (
   const representative = [
     'toolExecutor',
     'shellConfigService',
+    'i18nMain',
     'updateService',
     'setupService',
     'skillsService',
@@ -155,6 +171,30 @@ test('returned bundle exposes the documented service keys with object values', (
   // Function members of the public surface must be wired too.
   assert.equal(typeof services.buildEffectiveFeatureFlags, 'function');
   assert.equal(typeof services.refreshElectronToolRegistry, 'function');
+});
+
+test('fresh install maps a non-English app locale into shell config', (t) => {
+  const { services } = makeContext(t, { appLocale: 'ja-JP' });
+
+  assert.equal(services.shellConfigService.getUiLanguage(), 'ja');
+  assert.equal(services.i18nMain.locale(), 'ja');
+});
+
+test('existing install does not replace the configured UI language from the app locale', (t) => {
+  const { services } = makeContext(t, {
+    appLocale: 'ja-JP',
+    initialShellConfig: { version: 52 },
+  });
+
+  assert.equal(services.shellConfigService.getUiLanguage(), 'en');
+  assert.equal(services.i18nMain.locale(), 'en');
+});
+
+test('fresh install leaves English as the UI language for an English app locale', (t) => {
+  const { services } = makeContext(t, { appLocale: 'en-US' });
+
+  assert.equal(services.shellConfigService.getUiLanguage(), 'en');
+  assert.equal(services.i18nMain.locale(), 'en');
 });
 
 test('updateService "changed" event delegates to sendBridgeEvent("updates.onChanged")', (t) => {

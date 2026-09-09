@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const nodePath = require('node:path');
 
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
+const { t } = require('../i18n-main');
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 
@@ -50,8 +51,8 @@ function createPluginLocalPackageSource({
     let selection;
     try {
       selection = await dialog.showOpenDialog({
-        title: 'Install Jenny plugin',
-        filters: [{ name: 'Jenny plugin package', extensions: ['jenny-plugin'] }],
+        title: t('main.dialog.plugins.installPackage', 'Install Jenny plugin'),
+        filters: [{ name: t('main.dialog.plugins.packageFiles', 'Jenny plugin package'), extensions: ['jenny-plugin'] }],
         properties: ['openFile', 'dontAddToRecent'],
       });
     } catch (_error) {

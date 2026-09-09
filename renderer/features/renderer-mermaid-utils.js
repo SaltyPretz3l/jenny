@@ -15,6 +15,7 @@
     root.rendererAsyncFence
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (sanitizeUtils, themeUtils, asyncFence) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // The ~3.2 MB Mermaid runtime is lazy-loaded on first direct render via
   // renderer-mermaid-runtime-loader.js (ensureMermaidRuntime), not eagerly.
   const runtimeLoader = (typeof globalThis !== 'undefined' && globalThis.rendererMermaidRuntimeLoader)
@@ -187,7 +188,7 @@
     const iframe = ownerDocument.createElement('iframe');
     iframe.src = frameSrc;
     iframe.setAttribute('sandbox', iframeSandbox);
-    iframe.setAttribute('aria-label', 'Mermaid diagram preview');
+    iframe.setAttribute('aria-label', jt('mermaid.preview.frameLabel', 'Mermaid diagram preview'));
     iframe.setAttribute('scrolling', 'no');
     iframe.style.width = '100%';
     iframe.style.border = '0';
@@ -232,7 +233,7 @@
       renderSettled = true;
       teardown(true);
       if (onFailure) {
-        onFailure(payload || { ok: false, error: 'Mermaid preview failed.' });
+        onFailure(payload || { ok: false, error: jt('artifacts.mermaid.previewFailed', 'Mermaid preview failed.') });
       }
     }
 
@@ -299,7 +300,7 @@
           type: 'rendered',
           requestId,
           ok: false,
-          error: String(error && error.message || error || 'Unable to contact Mermaid preview frame.'),
+          error: String(error && error.message || error || jt('artifacts.mermaid.contactFrameFailed', 'Unable to contact Mermaid preview frame.')),
         });
       }
     }
@@ -316,7 +317,7 @@
         type: 'rendered',
         requestId,
         ok: false,
-        error: 'Mermaid preview frame failed to load.',
+        error: jt('artifacts.mermaid.frameLoadFailed', 'Mermaid preview frame failed to load.'),
       });
     }
 
@@ -329,7 +330,7 @@
         type: 'rendered',
         requestId,
         ok: false,
-        error: 'Mermaid preview timed out.',
+        error: jt('artifacts.mermaid.previewTimedOut', 'Mermaid preview timed out.'),
       });
     }, timeoutMs);
 
@@ -376,14 +377,14 @@
       } catch (loadErr) { // fail gracefully; never escape as an unhandled rejection
         if (!renderGate.isCurrent(renderToken)) return;
         console.warn('[mermaid-direct] mermaid runtime failed to load:', loadErr);
-        if (onFailure) onFailure({ ok: false, error: String(loadErr && loadErr.message || loadErr || 'Mermaid runtime failed to load.') });
+        if (onFailure) onFailure({ ok: false, error: String(loadErr && loadErr.message || loadErr || jt('artifacts.mermaid.runtimeLoadFailed', 'Mermaid runtime failed to load.')) });
         return;
       }
       if (!renderGate.isCurrent(renderToken)) return;
     }
     if (!windowRef || !windowRef.mermaid || typeof windowRef.mermaid.render !== 'function') {
       console.warn('[mermaid-direct] mermaid runtime not available on window');
-      if (onFailure) onFailure({ ok: false, error: 'Mermaid runtime not available.' });
+      if (onFailure) onFailure({ ok: false, error: jt('artifacts.mermaid.runtimeUnavailable', 'Mermaid runtime not available.') });
       return;
     }
 
@@ -431,7 +432,7 @@
       if (!renderGate.isCurrent(renderToken)) return;
       console.warn('[mermaid-direct] render error:', err);
       host.innerHTML = '';
-      if (onFailure) onFailure({ ok: false, error: String(err && err.message || err || 'Mermaid render failed.') });
+      if (onFailure) onFailure({ ok: false, error: String(err && err.message || err || jt('artifacts.mermaid.renderFailed', 'Mermaid render failed.')) });
     }
   }
 
@@ -523,8 +524,8 @@
       if (!fullscreenBtn) return;
       fullscreenBtn.classList.toggle('is-active', isFullscreen);
       fullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
-      fullscreenBtn.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
-      fullscreenBtn.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+      fullscreenBtn.setAttribute('title', isFullscreen ? jt('mermaid.controls.exitFullscreen', 'Exit fullscreen') : jt('mermaid.controls.enterFullscreen', 'Enter fullscreen'));
+      fullscreenBtn.setAttribute('aria-label', isFullscreen ? jt('mermaid.controls.exitFullscreen', 'Exit fullscreen') : jt('mermaid.controls.enterFullscreen', 'Enter fullscreen'));
     }
 
     function teardownFullscreenOverlay() {
@@ -611,7 +612,7 @@
       fullscreenOverlay.className = 'mermaid-fullscreen-overlay';
       fullscreenOverlay.setAttribute('role', 'dialog');
       fullscreenOverlay.setAttribute('aria-modal', 'true');
-      fullscreenOverlay.setAttribute('aria-label', 'Mermaid diagram fullscreen preview');
+      fullscreenOverlay.setAttribute('aria-label', jt('mermaid.preview.fullscreenLabel', 'Mermaid diagram fullscreen preview'));
       fullscreenOverlay.tabIndex = -1;
 
       fullscreenShell = doc.createElement('div');
@@ -665,7 +666,7 @@
     zoomOutBtn.className = 'mermaid-control-btn';
     zoomOutBtn.type = 'button';
     zoomOutBtn.textContent = '\u2212'; // minus
-    zoomOutBtn.title = 'Zoom out';
+    zoomOutBtn.title = jt('mermaid.controls.zoomOut', 'Zoom out');
     zoomOutBtn.addEventListener('click', function () { setZoom(zoom - ZOOM_STEP); });
 
     var zoomLabel = doc.createElement('span');
@@ -679,14 +680,14 @@
     zoomInBtn.className = 'mermaid-control-btn';
     zoomInBtn.type = 'button';
     zoomInBtn.textContent = '+';
-    zoomInBtn.title = 'Zoom in';
+    zoomInBtn.title = jt('mermaid.controls.zoomIn', 'Zoom in');
     zoomInBtn.addEventListener('click', function () { setZoom(zoom + ZOOM_STEP); });
 
     var resetBtn = doc.createElement('button');
     resetBtn.className = 'mermaid-control-btn';
     resetBtn.type = 'button';
     resetBtn.textContent = '\u21BA'; // reset arrow
-    resetBtn.title = 'Reset view';
+    resetBtn.title = jt('mermaid.controls.resetView', 'Reset view');
     resetBtn.addEventListener('click', resetView);
 
     var fullscreenBtn = doc.createElement('button');
@@ -826,7 +827,7 @@
     }
     if (host.isConnected === false || (Number(host.clientWidth) === 0 && isHostDisplayNone(host))) {
       if (typeof options.onFailure === 'function') {
-        options.onFailure({ ok: false, error: 'Mermaid host is not laid out.' });
+        options.onFailure({ ok: false, error: jt('artifacts.mermaid.hostNotLaidOut', 'Mermaid host is not laid out.') });
       }
       return;
     }

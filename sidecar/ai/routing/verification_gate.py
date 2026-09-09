@@ -30,6 +30,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.routing.auto_checkpoint import REPO_MUTATING_TOOL_NAMES
 from sidecar.ai.routing.iteration_limits import (
     effective_tools_execution_timeout_seconds,
@@ -157,6 +158,8 @@ def _run_gate_tool(loop_run: Any) -> Any | None:
     one: the Electron handler correlates the response by the turn's request id.
     """
     runtime = loop_run.runtime
+    if host_policy_is_enforced(getattr(loop_run.kernel, "_config", None)):
+        return None
     runtime.raise_if_interrupted()
     write_message = getattr(runtime, "electron_tool_writer", None)
     if write_message is None:
@@ -308,6 +311,8 @@ def run_gate(loop_run: Any, *, retry_allowed: bool) -> GateDecision:
     be granted?". False forces the note path even on a genuine failure, which is
     how the retry cap stays a cap.
     """
+    if host_policy_is_enforced(getattr(loop_run.kernel, "_config", None)):
+        return NO_GATE_ACTION
     try:
         result = _run_gate_tool(loop_run)
     except Exception as error:  # noqa: BLE001 - a gate hiccup must never break a turn

@@ -49,7 +49,7 @@
   align-content: start;
   gap: var(--space-16);
   min-width: 0;
-  padding-left: var(--space-8);
+  padding-inline-start: var(--space-8);
 }
 
 /* The grip replaces the textarea's native resize handle — one control, both
@@ -346,7 +346,7 @@
 }
 
 .dashboard-scratchpad__tab-wrap .dashboard-scratchpad__tab {
-  padding-right: var(--space-9);
+  padding-inline-end: var(--space-9);
 }
 
 /* The active tab reserves the wider trailing slot for pencil + × — but ONLY when
@@ -354,13 +354,13 @@
    so it keeps the base slot and the pencil slides into the rightmost position
    below, avoiding a long tab with empty trailing space. */
 .dashboard-scratchpad__tab-wrap:has(.dashboard-scratchpad__tab[aria-selected="true"]):has(.dashboard-scratchpad__tab-close) .dashboard-scratchpad__tab {
-  padding-right: var(--space-16);
+  padding-inline-end: var(--space-16);
 }
 
 /* No × (single-note floor): the rename pencil takes the rightmost control slot,
    so the base --space-9 padding is enough and the tab hugs its label. */
 .dashboard-scratchpad__tab-wrap:not(:has(.dashboard-scratchpad__tab-close)) .dashboard-scratchpad__tab-edit {
-  right: var(--space-1);
+  inset-inline-end: var(--space-1);
 }
 
 .dashboard-scratchpad__tab-close,
@@ -387,11 +387,11 @@
 }
 
 .dashboard-scratchpad__tab-close {
-  right: var(--space-1);
+  inset-inline-end: var(--space-1);
 }
 
 .dashboard-scratchpad__tab-edit {
-  right: var(--space-8);
+  inset-inline-end: var(--space-8);
 }
 
 .dashboard-scratchpad__tab-wrap:hover .dashboard-scratchpad__tab-close,
@@ -599,7 +599,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
@@ -709,5 +709,5 @@
   color: var(--text-secondary);
   font-size: var(--font-size-base);
   line-height: 1.5;
-  text-align: left;
+  text-align: start;
 }

@@ -17,7 +17,21 @@ from dataclasses import dataclass
 from dataclasses import replace as _replace
 from typing import Any, TypeAlias
 
-from sidecar.ai.error_codes import CMP_ROUTE_FAIL_CLOSED, CMP_ROUTE_TOOL_DISABLED
+from sidecar.ai.error_codes import (
+    CMP_ROUTE_FAIL_CLOSED,
+    CMP_ROUTE_TOOL_DISABLED,
+    CMP_TOOL_POLICY_DENIED,
+)
+from sidecar.ai.execution_policy import (
+    DESKTOP_POLICY_INVALID_REASON,
+    desktop_tool_decision,
+)
+from sidecar.ai.host_policy import (
+    HOST_POLICY_INVALID_REASON,
+    host_policy_is_enforced,
+    host_tool_decision,
+    host_tool_requires_one_off_approval,
+)
 from sidecar.ai.routing import loop_runtime as _loop_runtime
 from sidecar.ai.routing import route_policy as _route_policy
 from sidecar.ai.tools import contracts as _tools_contracts
@@ -459,4 +473,59 @@ __all__ = [
     "known_tool_names_for_kernel",
     "record_route_outcome",
     "resolve_capability_profile",
+    "desktop_tool_dispatch_decision",
 ]
+
+
+def hosted_approval_request(  # noqa: PLR0913, PLR0917 - explicit approval boundary.
+    config: Any, pre_granted: bool, request_type: Any, call: Any, descriptor: Any, mode: str
+) -> Any:
+    """Hosted file mutations cannot inherit desktop auto-run/persisted grants."""
+    if not host_policy_is_enforced(config):
+        return None
+    if not host_tool_requires_one_off_approval(descriptor.name):
+        return None
+    # Worker commands always require a fresh approval. A desktop persisted
+    # grant or one-send auto grant cannot authorize a new disposable worker.
+    if descriptor.name == "run_command":
+        return build_approval_request(
+            request_type, call, descriptor, mode=mode,
+            reason="Hosted execution commands require one-off approval.", policy_decision=None,
+        )
+    if pre_granted:
+        return None
+    return build_approval_request(
+        request_type, call, descriptor, mode=mode,
+        reason="Hosted filesystem mutations require one-off approval.", policy_decision=None,
+    )
+
+
+def hosted_tool_search_denied(config: Any) -> bool:
+    """Hosted requests cannot expand the operator-selected closed tool set."""
+    return host_policy_is_enforced(config)
+
+
+def hosted_tool_dispatch_decision(tool: Any, config: Any) -> tuple[bool, str | None]:
+    """Apply the canonical hosted allowlist at the final dispatch seam."""
+
+    if config is None:
+        return False, HOST_POLICY_INVALID_REASON
+    return host_tool_decision(tool, config)
+
+
+def desktop_tool_dispatch_decision(tool: Any, config: Any) -> tuple[bool, str | None]:
+    """Apply the desktop command-sandbox allowlist at final dispatch."""
+
+    if config is None:
+        return False, DESKTOP_POLICY_INVALID_REASON
+    return desktop_tool_decision(tool, config)
+
+
+def require_desktop_tool_dispatch(tool: Any, config: Any) -> None:
+    allowed, reason = desktop_tool_dispatch_decision(tool, config)
+    if not allowed:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_POLICY_DENIED,
+            message=reason or "tool denied by desktop execution policy",
+            retryable=False,
+        )

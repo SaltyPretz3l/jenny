@@ -97,7 +97,7 @@ test('update dialog view model maps updater states to compact actions', () => {
   assert.deepEqual(
     deriveUpdateDialogViewModel({ status: 'available', latestVersion: '0.2.0' }).actions
       .map((action) => action.id),
-    ['close', 'skip', 'download']
+    ['close', 'download']
   );
   assert.deepEqual(
     deriveUpdateDialogViewModel({ status: 'downloading', latestVersion: '0.2.0' }).actions

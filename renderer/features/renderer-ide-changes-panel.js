@@ -16,6 +16,8 @@
   }
   root.rendererIdeChangesPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -36,8 +38,8 @@
   const RECOVERY_OUTCOMES = Object.freeze(['skip', 'alternate_name', 'protect_then_replace']);
   const RECOVERY_OUTCOME_LABELS = {
     skip: 'Skip',
-    alternate_name: 'Restore as copy',
-    protect_then_replace: 'Replace (keep old)',
+    alternate_name: jt('ide.changes.restoreAsCopy', 'Restore as copy'),
+    protect_then_replace: jt('ide.changes.replaceKeepOld', 'Replace (keep old)'),
   };
 
   function fileNameOf(path) {
@@ -97,15 +99,14 @@
     const status = String(change?.status || 'modified');
     const additions = Number(change?.additions) || 0;
     const deletions = Number(change?.deletions) || 0;
-    const header = 'The original version of this file is no longer available, '
-      + 'so a side-by-side diff cannot be shown.\n'
-      + 'Recorded change summary:\n\n'
-      + `${path} - ${status} (+${additions} -${deletions})`;
+    const header = jt('ide.changes.recordedChangeSummary', 'The original version of this file is no longer available, '
+      + 'so a side-by-side diff cannot be shown.\nRecorded change summary:\n\n'
+      + '{path} - {status} (+{additions} -{deletions})', { path, status, additions, deletions });
     const hunks = Array.isArray(change?.hunks) ? change.hunks : [];
     if (!hunks.length) {
       const reason = change?.truncated
-        ? `\n\nThe diff was too large to record line by line (${change.truncationReason || 'truncated'}).`
-        : '\n\nNo line-level details were recorded for this change.';
+        ? jt('ide.changes.diffTooLargeForLineDetails', '\n\nThe diff was too large to record line by line ({reason}).', { reason: change.truncationReason || jt('ide.changes.truncatedReason', 'truncated') })
+        : jt('ide.changes.noLineDetails', '\n\nNo line-level details were recorded for this change.');
       return header + reason;
     }
     const parts = hunks.map((hunk) => {
@@ -239,11 +240,11 @@
             + `<div class="ide-recovery-conflict-choices">${choices}</div></div>`;
         }).join('');
         const submit = actionButton({
-          label: confirmLabel || 'Undo', variant: 'danger', disabled: true,
+          label: confirmLabel || jt('ide.changes.undo', 'Undo'), variant: 'danger', disabled: true,
           dataset: { 'recovery-submit': 'true' },
         });
         const cancel = actionButton({
-          label: 'Cancel', variant: 'ghost', dataset: { 'recovery-cancel': 'true' },
+          label: jt('common.cancel', 'Cancel'), variant: 'ghost', dataset: { 'recovery-cancel': 'true' },
         });
         return new Promise((resolve) => {
           const decisions = {};
@@ -280,10 +281,10 @@
           finishActive = finish;
           documentRef.addEventListener('click', onClick, true);
           overlay.open({
-            title: title || 'Resolve conflicts',
+            title: title || jt('ide.changes.resolveConflicts', 'Resolve conflicts'),
             titleId: 'ideRecoveryConflictTitle',
-            closeLabel: 'Cancel',
-            bodyHtml: '<p class="ide-confirm-message">Choose one outcome for every conflict.</p>'
+            closeLabel: jt('common.cancel', 'Cancel'),
+            bodyHtml: '<p class="ide-confirm-message">' + escapeHtml(jt('ide.changes.chooseConflictOutcome', 'Choose one outcome for every conflict.')) + '</p>'
               + rows + `<div class="ide-confirm-actions">${submit}${cancel}</div>`,
             onClose: () => finish(null, false),
           });
@@ -304,7 +305,7 @@
     }
 
     function describeRecoveryError(result) {
-      return String(result?.message || 'Workspace recovery request failed.');
+      return String(result?.message || jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.'));
     }
 
     function resetRecoveryStateForWorkspace() {
@@ -341,7 +342,7 @@
       changeSetsState = { status: 'loading', changeSets: changeSetsState.changeSets, error: '' };
       const api = getWorkspaceRecoveryApi();
       if (typeof api?.listChangeSets !== 'function') {
-        changeSetsState = { status: 'error', changeSets: [], error: 'Workspace recovery is unavailable.' };
+        changeSetsState = { status: 'error', changeSets: [], error: jt('ide.changes.recoveryUnavailable', 'Workspace recovery is unavailable.') };
         return;
       }
       const requestEpoch = recoveryEpoch;
@@ -353,7 +354,7 @@
         renderChangesPanel(true);
       }).catch((error) => {
         if (disposed || requestEpoch !== recoveryEpoch) return;
-        changeSetsState = { status: 'error', changeSets: [], error: 'Workspace recovery request failed.' };
+        changeSetsState = { status: 'error', changeSets: [], error: jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.') };
         appendClientLog('WARN', 'ide.changesets_list_failed', { message: String(error?.message || error || '') });
         renderChangesPanel(true);
       });
@@ -364,7 +365,7 @@
       renderChangesPanel();
       const api = getWorkspaceRecoveryApi();
       if (typeof api?.preflightUndo !== 'function') {
-        reviewByChangeSetId.set(changeSetId, { status: 'error', error: 'Workspace recovery is unavailable.' });
+        reviewByChangeSetId.set(changeSetId, { status: 'error', error: jt('ide.changes.recoveryUnavailable', 'Workspace recovery is unavailable.') });
         renderChangesPanel();
         return null;
       }
@@ -382,7 +383,7 @@
         return result;
       } catch (error) {
         if (disposed || requestEpoch !== recoveryEpoch) return null;
-        reviewByChangeSetId.set(changeSetId, { status: 'error', error: 'Workspace recovery request failed.' });
+        reviewByChangeSetId.set(changeSetId, { status: 'error', error: jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.') });
         appendClientLog('WARN', 'ide.changeset_preflight_failed', { message: String(error?.message || error || '') });
         renderChangesPanel();
         return null;
@@ -405,11 +406,10 @@
       const plan = Array.isArray(preflight?.inverse_plan) ? preflight.inverse_plan : [];
       const count = plan.filter((step) => step?.kind !== 'remove_empty_parent').length;
       return dialog.confirm({
-        title: 'Undo this batch?',
-        message: `Undo this batch of ${count} file${count === 1 ? '' : 's'}? `
-          + 'This restores the version(s) and location(s) from before Jenny’s change.',
-        confirmLabel: 'Undo',
-        cancelLabel: 'Cancel',
+        title: jt('ide.changes.undoBatchTitle', 'Undo this batch?'),
+        message: jtn('ide.changes.undoBatchMessage', count, { count }, 'Undo this batch of {count} file? This restores the version(s) and location(s) from before Jenny’s change.', 'Undo this batch of {count} files? This restores the version(s) and location(s) from before Jenny’s change.'),
+        confirmLabel: jt('ide.changes.undo', 'Undo'),
+        cancelLabel: jt('common.cancel', 'Cancel'),
         variant: 'danger',
       });
     }
@@ -430,7 +430,7 @@
         receiptByChangeSetId.set(changeSetId, receipt);
       } catch (error) {
         if (disposed || requestEpoch !== recoveryEpoch) return;
-        receiptByChangeSetId.set(changeSetId, { status: 'error', message: 'Workspace recovery request failed.' });
+        receiptByChangeSetId.set(changeSetId, { status: 'error', message: jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.') });
         appendClientLog('WARN', 'ide.changeset_undo_failed', { message: String(error?.message || error || '') });
       } finally {
         if (!disposed && requestEpoch === recoveryEpoch) {
@@ -463,13 +463,13 @@
         if (!dialog || typeof dialog.choose !== 'function') {
           busyChangeSetId = '';
           receiptByChangeSetId.set(changeSetId, {
-            status: 'error', message: 'The conflict review is unavailable; nothing was changed.',
+            status: 'error', message: jt('ide.changes.conflictReviewUnavailable', 'The conflict review is unavailable; nothing was changed.'),
           });
           renderChangesPanel();
           return;
         }
         const decisions = await dialog.choose({
-          title: 'Resolve undo conflicts', conflicts, confirmLabel: 'Undo',
+          title: jt('ide.changes.resolveUndoConflicts', 'Resolve undo conflicts'), conflicts, confirmLabel: jt('ide.changes.undo', 'Undo'),
         });
         if (decisions) await executeUndo(changeSetId, decisions);
         else {
@@ -508,7 +508,7 @@
       if (!name || busyTrashStepKey || busyChangeSetId) return;
       const api = getWorkspaceRecoveryApi();
       if (typeof api?.restoreTrashEntry !== 'function') {
-        trashReceiptByStepId.set(key, { status: 'error', message: 'Workspace recovery is unavailable.' });
+        trashReceiptByStepId.set(key, { status: 'error', message: jt('ide.changes.recoveryUnavailable', 'Workspace recovery is unavailable.') });
         renderChangesPanel();
         return;
       }
@@ -527,12 +527,12 @@
           const dialog = getConflictDialog();
           if (!dialog || typeof dialog.choose !== 'function') {
             trashReceiptByStepId.set(key, {
-              status: 'error', message: 'The conflict review is unavailable; nothing was changed.',
+              status: 'error', message: jt('ide.changes.conflictReviewUnavailable', 'The conflict review is unavailable; nothing was changed.'),
             });
             return;
           }
           const choices = await dialog.choose({
-            title: 'Restore deleted item', conflicts: [preflightConflict], confirmLabel: 'Restore',
+            title: jt('ide.changes.restoreDeletedItem', 'Restore deleted item'), conflicts: [preflightConflict], confirmLabel: jt('ide.changes.restore', 'Restore'),
           });
           if (!choices || disposed || requestEpoch !== recoveryEpoch) return;
           decision = choices[stepId];
@@ -543,12 +543,12 @@
           const dialog = getConflictDialog();
           if (!dialog || typeof dialog.choose !== 'function') {
             trashReceiptByStepId.set(key, {
-              status: 'error', message: 'The conflict review is unavailable; nothing was changed.',
+              status: 'error', message: jt('ide.changes.conflictReviewUnavailable', 'The conflict review is unavailable; nothing was changed.'),
             });
             return;
           }
           const choices = await dialog.choose({
-            title: 'Restore deleted item', conflicts: [fallbackConflict], confirmLabel: 'Restore',
+            title: jt('ide.changes.restoreDeletedItem', 'Restore deleted item'), conflicts: [fallbackConflict], confirmLabel: jt('ide.changes.restore', 'Restore'),
           });
           if (!choices || disposed || requestEpoch !== recoveryEpoch) return;
           decision = choices[stepId];
@@ -560,7 +560,7 @@
           : { status: 'error', message: describeRecoveryError(result || {}) });
       } catch (error) {
         if (disposed || requestEpoch !== recoveryEpoch) return;
-        trashReceiptByStepId.set(key, { status: 'error', message: 'Workspace recovery request failed.' });
+        trashReceiptByStepId.set(key, { status: 'error', message: jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.') });
         appendClientLog('WARN', 'ide.trash_restore_failed', { message: String(error?.message || error || '') });
       } finally {
         if (!disposed && requestEpoch === recoveryEpoch) {
@@ -572,7 +572,7 @@
 
     function outsideUndoEntries(outside) {
       return (Array.isArray(outside?.known_unjournaled_events) ? outside.known_unjournaled_events : [])
-        .map((event) => `Unjournaled event: ${String(event)}`);
+        .map((event) => jt('ide.changes.unjournaledEvent', 'Unjournaled event: {event}', { event: String(event) }));
     }
 
     function buildOutsideUndoSetMarkup(outside) {
@@ -580,14 +580,14 @@
       const warning = String(outside?.warning || '');
       const notes = [
         outside?.shell_mutations && (outside.shell_mutations === 'not_journaled_approval_gated'
-          ? 'Approved shell commands are not recorded in this undo set.' : String(outside.shell_mutations)),
+          ? jt('ide.changes.shellCommandsNotRecorded', 'Approved shell commands are not recorded in this undo set.') : String(outside.shell_mutations)),
         outside?.explorer_rename && (outside.explorer_rename === 'not_journaled_until_wo_27_item_2'
-          ? 'Explorer renames are not recorded in this undo set.' : String(outside.explorer_rename)),
+          ? jt('ide.changes.explorerRenamesNotRecorded', 'Explorer renames are not recorded in this undo set.') : String(outside.explorer_rename)),
       ].filter(Boolean);
       if (!entries.length && !warning && !notes.length) return '';
       const list = entries.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('');
       const noteMarkup = notes.map((note) => `<div>${escapeHtml(note)}</div>`).join('');
-      return `<details class="ide-changes-outside-undo"><summary>outside undo set${entries.length ? ` ${entries.length}` : ''}</summary>`
+      return `<details class="ide-changes-outside-undo"><summary>${escapeHtml(jt('ide.changes.outsideUndoSet', 'outside undo set{count}', { count: entries.length ? ` ${entries.length}` : '' }))}</summary>`
         + (warning ? `<div class="ide-changes-danger-text">${escapeHtml(warning)}</div>` : '')
         + noteMarkup
         + (list ? `<ul class="ide-changes-outside-undo-list">${list}</ul>` : '')
@@ -602,14 +602,14 @@
 
     function buildReceiptMarkup(receipt, label = 'Undo') {
       if (receipt?.status === 'error') {
-        return `<div class="ide-changes-batch-detail">${buildNotice('danger', label, receipt.message || 'The recovery failed.')}</div>`;
+        return `<div class="ide-changes-batch-detail">${buildNotice('danger', label, receipt.message || jt('ide.changes.recoveryFailed', 'The recovery failed.'))}</div>`;
       }
       const outsideCount = outsideUndoEntries(receipt?.outside_undo_set).length;
-      const counts = `restored ${Array.isArray(receipt?.restored) ? receipt.restored.length : 0}`
-        + ` · skipped ${Array.isArray(receipt?.skipped) ? receipt.skipped.length : 0}`
-        + ` · renamed ${Array.isArray(receipt?.renamed_to) ? receipt.renamed_to.length : 0}`
-        + ` · protected ${Array.isArray(receipt?.protected) ? receipt.protected.length : 0}`
-        + (outsideCount ? ` · outside undo set ${outsideCount}` : '');
+      const counts = jt('ide.changes.receiptRestored', 'restored {count}', { count: Array.isArray(receipt?.restored) ? receipt.restored.length : 0 })
+        + jt('ide.changes.receiptSkipped', ' · skipped {count}', { count: Array.isArray(receipt?.skipped) ? receipt.skipped.length : 0 })
+        + jt('ide.changes.receiptRenamed', ' · renamed {count}', { count: Array.isArray(receipt?.renamed_to) ? receipt.renamed_to.length : 0 })
+        + jt('ide.changes.receiptProtected', ' · protected {count}', { count: Array.isArray(receipt?.protected) ? receipt.protected.length : 0 })
+        + (outsideCount ? jt('ide.changes.receiptOutsideUndoSet', ' · outside undo set {count}', { count: outsideCount }) : '');
       const needsReview = receipt?.status === 'needs_review';
       const message = needsReview ? describeRecoveryError(receipt) : counts;
       return `<div class="ide-changes-batch-detail">${buildNotice(needsReview ? 'danger' : 'success', label, message)}`
@@ -624,7 +624,7 @@
       const trashName = trashNameFromStep(step);
       const receipt = trashReceiptByStepId.get(key);
       const restore = trashName && actionButton ? actionButton({
-        label: receipt?.ok ? 'Restored' : (busyTrashStepKey === key ? 'Restoring…' : 'Restore'),
+        label: receipt?.ok ? jt('ide.changes.restored', 'Restored') : (busyTrashStepKey === key ? jt('ide.changes.restoring', 'Restoring…') : jt('ide.changes.restore', 'Restore')),
         size: 'sm', variant: 'ghost', disabled: receipt?.ok || busyTrashStepKey === key,
         dataset: { 'ide-trash-restore': trashName, 'ide-trash-step': stepId, 'ide-trash-change-set': changeSetId },
       }) : '';
@@ -647,7 +647,7 @@
         return receiptMarkup + '<div class="ide-changes-batch-detail">Loading…</div>';
       }
       if (review.status === 'error') {
-        return receiptMarkup + `<div class="ide-changes-batch-detail ide-changes-danger-text">${escapeHtml(review.error || 'Could not load this change set.')}</div>`;
+        return receiptMarkup + `<div class="ide-changes-batch-detail ide-changes-danger-text">${escapeHtml(review.error || jt('ide.changes.changeSetLoadFailed', 'Could not load this change set.'))}</div>`;
       }
       if (review.status !== 'ready' || !review.preflight) {
         return receiptMarkup;
@@ -672,16 +672,16 @@
       const busy = busyChangeSetId === changeSetId;
       const alreadyUndone = String(changeSet?.state || '') === 'rolled_back';
       const reviewButton = actionButton ? actionButton({
-        label: 'Review', size: 'sm', variant: 'ghost',
+        label: jt('ide.changes.review', 'Review'), size: 'sm', variant: 'ghost',
         dataset: { 'ide-changeset-review': changeSetId },
       }) : '';
       const undoButton = actionButton ? actionButton({
-        label: busy ? 'Working…' : (alreadyUndone ? 'Undone' : 'Undo'),
+        label: busy ? jt('ide.changes.working', 'Working…') : (alreadyUndone ? jt('ide.changes.undone', 'Undone') : jt('ide.changes.undo', 'Undo')),
         size: 'sm', variant: alreadyUndone ? 'ghost' : 'danger', disabled: busy || alreadyUndone,
         dataset: { 'ide-changeset-undo': changeSetId },
       }) : '';
       const header = '<div class="ide-changes-file ide-changes-batch-header">'
-        + `<span class="ide-changes-file-name">Jenny changed ${count} file${count === 1 ? '' : 's'}</span>`
+        + `<span class="ide-changes-file-name">${escapeHtml(jtn('ide.changes.changedFileCount', count, { count }, 'Jenny changed {count} file', 'Jenny changed {count} files'))}</span>`
         + `<span class="ide-changes-batch-actions">${reviewButton}${undoButton}</span>`
         + '</div>';
       return `<div data-ide-changeset-id="${escapeHtml(changeSetId)}">${header}${buildChangeSetExpansionMarkup(changeSetId)}</div>`;
@@ -690,10 +690,10 @@
     function buildChangeSetsSectionMarkup() {
       if (changeSetsState.status === 'error') {
         const retryButton = actionButton ? actionButton({
-          label: 'Retry', size: 'sm', variant: 'ghost', dataset: { 'ide-changeset-retry': '1' },
+          label: jt('common.retry', 'Retry'), size: 'sm', variant: 'ghost', dataset: { 'ide-changeset-retry': '1' },
         }) : '';
         return '<div class="ide-changes-section">'
-          + buildNotice('danger', 'Recovery', changeSetsState.error || 'Workspace recovery is unavailable.')
+          + buildNotice('danger', 'Recovery', changeSetsState.error || jt('ide.changes.recoveryUnavailable', 'Workspace recovery is unavailable.'))
           + `<div class="ide-changes-batch-actions">${retryButton}</div>`
           + '</div>';
       }
@@ -702,7 +702,7 @@
         return '';
       }
       return '<div class="ide-changes-section">'
-        + '<div class="ide-changes-section-title">Recent batches'
+        + '<div class="ide-changes-section-title">' + escapeHtml(jt('ide.changes.recentBatches', 'Recent batches'))
         + `<span class="ide-changes-count">${changeSets.length}</span></div>`
         + changeSets.map(buildChangeSetRowMarkup).join('')
         + '</div>';
@@ -717,14 +717,14 @@
         const dirHint = parentDirOf(path);
         rows += `<div class="ide-changes-row ide-changes-row--unsaved" role="button" tabindex="0"`
           + ` data-ide-changes-unsaved="${escapeHtml(path)}"`
-          + ` title="Compare ${escapeHtml(path)} with the saved copy on disk">`
+          + ` title="${escapeHtml(jt('ide.changes.compareWithSavedCopy', 'Compare {path} with the saved copy on disk', { path }))}">`
           + `<span class="ide-changes-row-name">${escapeHtml(fileNameOf(path))}</span>`
           + (dirHint ? `<span class="ide-changes-row-dir">${escapeHtml(dirHint)}</span>` : '')
           + '<span class="ide-changes-row-hint">compare</span>'
           + '</div>';
       }
       return '<div class="ide-changes-section">'
-        + `<div class="ide-changes-section-title">Unsaved files`
+        + `<div class="ide-changes-section-title">${escapeHtml(jt('ide.changes.unsavedFiles', 'Unsaved files'))}`
         + `<span class="ide-changes-count">${dirtyPaths.length}</span></div>`
         + rows
         + '</div>';
@@ -735,26 +735,26 @@
       const workspaceAvailable = !legacyOrigin
         && String(change.workspaceId || '') === String(getWorkspaceId() || '');
       if (workspaceAvailable && isChangeDiffable(change)) {
-        return { kind: 'diffable', workspaceAvailable, title: `Review this change to ${change.path}` };
+        return { kind: 'diffable', workspaceAvailable, title: jt('ide.changes.reviewChange', 'Review this change to {path}', { path: change.path }) };
       }
       if (legacyOrigin && isLegacyChangeReviewable(change)) {
         return {
           kind: 'legacy',
           workspaceAvailable: false,
-          title: 'Recorded before this app tracked workspace identity — opens the recorded diff.',
+          title: jt('ide.changes.legacyWorkspaceDiff', 'Recorded before this app tracked workspace identity — opens the recorded diff.'),
         };
       }
       if (workspaceAvailable || legacyOrigin) {
         return {
           kind: 'no_body',
           workspaceAvailable,
-          title: 'No diff can be reconstructed for this change.',
+          title: jt('ide.changes.diffUnavailable', 'No diff can be reconstructed for this change.'),
         };
       }
       return {
         kind: 'other_workspace',
         workspaceAvailable: false,
-        title: 'The originating workspace is not currently available.',
+        title: jt('ide.changes.originatingWorkspaceUnavailable', 'The originating workspace is not currently available.'),
       };
     }
 
@@ -770,10 +770,10 @@
       // Explicit affordance so a reviewable row is discoverable without hovering
       // for the tooltip; disabled rows carry a short inline reason instead.
       const hint = clickable
-        ? '<span class="ide-changes-row-hint ide-changes-row-hint--open">view diff</span>'
+        ? '<span class="ide-changes-row-hint ide-changes-row-hint--open">' + escapeHtml(jt('ide.changes.viewDiff', 'view diff')) + '</span>'
         : rowClass.kind === 'other_workspace'
-          ? '<span class="ide-changes-row-hint">other workspace</span>'
-          : '<span class="ide-changes-row-hint">no diff</span>';
+          ? '<span class="ide-changes-row-hint">' + escapeHtml(jt('ide.changes.otherWorkspace', 'other workspace')) + '</span>'
+          : '<span class="ide-changes-row-hint">' + escapeHtml(jt('ide.changes.noDiff', 'no diff')) + '</span>';
       // Diffable rows carry a one-click revert affordance (a role="button" span,
       // never a raw button element, to stay within the inventory-only primitive
       // policy). Restores the pre-change snapshot; the diff-controller surfaces a
@@ -783,7 +783,7 @@
       const revert = rowClass.kind === 'diffable'
         ? `<span class="ide-changes-revert" role="button" tabindex="0"`
           + ` data-ide-changes-revert="${escapeHtml(changeRowKey(change))}"`
-          + ` title="Revert this change to ${escapeHtml(change.path)}">Revert</span>`
+          + ` title="${escapeHtml(jt('ide.changes.revertChangeTo', 'Revert this change to {path}', { path: change.path }))}">${escapeHtml(jt('common.revert', 'Revert'))}</span>`
         : '';
       return `<div class="ide-changes-row${clickable ? '' : ' ide-changes-row--disabled'}"${interactive}`
         + ` title="${escapeHtml(rowClass.title)}">`
@@ -797,8 +797,8 @@
 
     function buildLedgerSectionMarkup(changes) {
       if (!changes.length) {
-        return '<div class="ide-changes-empty">When Jenny edits workspace files in chat, '
-          + 'her changes line up here for review.</div>';
+        return '<div class="ide-changes-empty">' + escapeHtml(jt('ide.changes.empty', 'When Jenny edits workspace files in chat, '
+          + 'her changes line up here for review.')) + '</div>';
       }
       // Group by path; the most recently touched file surfaces first while
       // changes inside a group stay chronological.
@@ -825,7 +825,7 @@
         }
       }
       return '<div class="ide-changes-section">'
-        + `<div class="ide-changes-section-title">This session`
+        + `<div class="ide-changes-section-title">${escapeHtml(jt('ide.changes.thisSession', 'This session'))}`
         + `<span class="ide-changes-count">${changes.length}</span></div>`
         + markup
         + '</div>';
@@ -839,7 +839,7 @@
         const ledger = getChangeLedger() || {};
         changes = Array.isArray(ledger.changes) ? ledger.changes.filter((change) => change && change.path) : [];
       } catch (error) {
-        errorCopy = 'Could not read the change ledger for this session.';
+        errorCopy = jt('ide.changes.ledgerReadFailed', 'Could not read the change ledger for this session.');
         appendClientLog('WARN', 'ide.changes_ledger_failed', {
           message: String(error?.message || error || ''),
         });

@@ -15,6 +15,8 @@
   }
   root.rendererIdeSourceControlPanel = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function noop() {}
 
   const STATE_BADGE = {
@@ -147,13 +149,13 @@
       const badge = STATE_BADGE[file.state] || 'M';
       const stateAttr = file.staged ? 'staged' : (file.state || 'modified');
       const origHint = file.origPath
-        ? `<span class="ide-scm-row-orig" title="renamed from ${escapeHtml(file.origPath)}">← ${escapeHtml(fileNameOf(file.origPath))}</span>`
+        ? `<span class="ide-scm-row-orig" title="${escapeHtml(jt('ide.sourceControl.renamedFrom', 'renamed from {path}', { path: file.origPath }))}">← ${escapeHtml(fileNameOf(file.origPath))}</span>`
         : '';
       const fileButton = actionButton
         ? actionButton({
           plain: true,
           className: 'ide-scm-file',
-          title: `Compare ${path} with the last commit`,
+          title: jt('ide.sourceControl.compareWithLastCommit', 'Compare {path} with the last commit', { path }),
           dataset: { 'ide-scm-action': 'diff' },
           trustedHtml: `<span class="ide-scm-badge" data-git-state="${escapeHtml(stateAttr)}" aria-hidden="true">${badge}</span>`
             + `<span class="ide-scm-row-name">${escapeHtml(fileNameOf(path))}</span>`
@@ -162,10 +164,10 @@
         })
         : '';
       const actions = file.staged
-        ? actionBtn('Unstage', 'unstage', 'Remove this file from the next commit')
-        : actionBtn('Stage', 'stage', 'Stage this file for commit') + (file.state === 'untracked'
-          ? actionBtn('Delete', 'delete', 'Move this untracked file to the recycle bin', 'ide-scm-danger')
-          : actionBtn('Discard', 'discard', 'Discard changes to this file (cannot be undone)', 'ide-scm-danger'));
+        ? actionBtn('Unstage', 'unstage', jt('ide.sourceControl.unstageFileTitle', 'Remove this file from the next commit'))
+        : actionBtn('Stage', 'stage', jt('ide.sourceControl.stageFileTitle', 'Stage this file for commit')) + (file.state === 'untracked'
+          ? actionBtn('Delete', 'delete', jt('ide.sourceControl.deleteUntrackedTitle', 'Move this untracked file to the recycle bin'), 'ide-scm-danger')
+          : actionBtn('Discard', 'discard', jt('ide.sourceControl.discardFileTitle', 'Discard changes to this file (cannot be undone)'), 'ide-scm-danger'));
       return `<div class="ide-scm-row" data-ide-scm-path="${escapeHtml(path)}" title="${escapeHtml(path)}">`
         + fileButton
         + `<span class="ide-scm-row-actions">${actions}</span>`
@@ -177,7 +179,7 @@
         return '';
       }
       const headExtra = options2 && options2.stageAll
-        ? actionBtn('Stage All', 'stage-all')
+        ? actionBtn(jt('ide.sourceControl.stageAll', 'Stage All'), 'stage-all')
         : '';
       return '<div class="ide-scm-group">'
         + '<div class="ide-scm-group-head">'
@@ -195,16 +197,16 @@
       }
       const field = textField({
         id: 'ideScmCommitMessage',
-        label: 'Commit message',
+        label: jt('ide.sourceControl.commitMessageLabel', 'Commit message'),
         value: commitMessage,
-        placeholder: 'Message (what changed and why)',
+        placeholder: jt('ide.sourceControl.commitMessagePlaceholder', 'Message (what changed and why)'),
         multiline: true,
         spellcheck: true,
         className: 'ide-scm-commit-field',
         dataset: { 'ide-scm-input': 'commit' },
       });
       const commitButton = actionButton({
-        label: 'Commit',
+        label: jt('ide.sourceControl.commit', 'Commit'),
         variant: 'primary',
         className: 'ide-scm-commit-button',
         disabled: stagedCount === 0 || committing,
@@ -216,12 +218,12 @@
           size: 'sm',
           className: 'ide-scm-write-message',
           domId: 'ideScmWriteMessage',
-          title: 'Write a commit message from the staged changes — a one-shot request to your configured model, kept out of the chat transcript',
-          ariaLabel: 'Write commit message with AI',
+          title: jt('ide.sourceControl.writeMessageTitle', 'Write a commit message from the staged changes — a one-shot request to your configured model, kept out of the chat transcript'),
+          ariaLabel: jt('ide.sourceControl.writeMessageLabel', 'Write commit message with AI'),
           disabled: stagedCount === 0 || writingMessage,
           dataset: { 'ide-scm-action': 'write-message' },
           trustedHtml: SPARKLE_ICON
-            + `<span class="ide-scm-write-label">${escapeHtml(writingMessage ? 'Writing…' : 'Write message')}</span>`,
+            + `<span class="ide-scm-write-label">${escapeHtml(writingMessage ? 'Writing…' : jt('ide.sourceControl.writeMessage', 'Write message'))}</span>`,
         })
         : '';
       const hint = commitHint
@@ -237,16 +239,15 @@
     function buildBranchLine(snapshot) {
       if (snapshot.detached === true) {
         return '<div class="ide-scm-branch ide-scm-branch--detached" data-git-head="detached"'
-          + ' title="Detached HEAD — new commits aren’t on any branch and can be lost. Create a branch to keep your work.">'
-          + '⚠ Detached HEAD</div>';
+          + ' title="' + escapeHtml(jt('ide.sourceControl.detachedHeadTitle', 'Detached HEAD — new commits aren’t on any branch and can be lost. Create a branch to keep your work.')) + '">'
+          + escapeHtml(jt('ide.sourceControl.detachedHead', '⚠ Detached HEAD')) + '</div>';
       }
       if (snapshot.unborn === true) {
-        const onBranch = snapshot.branch ? escapeHtml(snapshot.branch) : 'this branch';
         return '<div class="ide-scm-branch ide-scm-branch--unborn" data-git-head="unborn"'
-          + ' title="No commits yet — your first commit will start the history.">'
-          + `No commits yet on ${onBranch}</div>`;
+          + ' title="' + escapeHtml(jt('ide.sourceControl.noCommitsTitle', 'No commits yet — your first commit will start the history.')) + '">'
+          + escapeHtml(jt('ide.sourceControl.noCommitsOnBranch', 'No commits yet on {branch}', { branch: snapshot.branch || jt('ide.sourceControl.thisBranch', 'this branch') })) + '</div>';
       }
-      return `<div class="ide-scm-branch" title="Current branch">${escapeHtml(snapshot.branch || '(no branch)')}</div>`;
+      return `<div class="ide-scm-branch" title="${escapeHtml(jt('ide.sourceControl.currentBranch', 'Current branch'))}">${escapeHtml(snapshot.branch || jt('ide.sourceControl.noBranch', '(no branch)'))}</div>`;
     }
 
     // Backend truncation and panel-list capping must show persistent notices so
@@ -256,7 +257,7 @@
         return '';
       }
       return '<div class="ide-scm-partial-notice" role="status">'
-        + 'Status was truncated for a very large working tree — some files may be missing until it’s resolved.'
+        + escapeHtml(jt('ide.sourceControl.statusTruncated', 'Status was truncated for a very large working tree — some files may be missing until it’s resolved.'))
         + '</div>';
     }
 
@@ -265,7 +266,7 @@
         return '';
       }
       return '<div class="ide-scm-partial-notice" role="status">'
-        + `${omitted} more changed file${omitted === 1 ? '' : 's'} not shown — stage or commit some changes to see the rest.`
+        + escapeHtml(jtn('ide.sourceControl.omittedChangedFiles', omitted, { count: omitted }, '{count} more changed file not shown — stage or commit some changes to see the rest.', '{count} more changed files not shown — stage or commit some changes to see the rest.'))
         + '</div>';
     }
 
@@ -278,10 +279,10 @@
         snapshot = null;
       }
       if (!snapshot || !snapshot.available) {
-        return '<div class="ide-scm"><div class="ide-scm-empty">Source control isn’t available for this workspace.</div></div>';
+        return '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.unavailable', 'Source control isn’t available for this workspace.')) + '</div></div>';
       }
       if (!snapshot.isRepo) {
-        return '<div class="ide-scm"><div class="ide-scm-empty">This folder isn’t a Git repository yet.</div></div>';
+        return '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.notRepository', 'This folder isn’t a Git repository yet.')) + '</div></div>';
       }
       const files = Array.isArray(snapshot.files) ? snapshot.files : [];
       // The store's capped, render-facing view when present (real getStatus
@@ -295,9 +296,9 @@
       const notices = buildTruncationNotice(snapshot) + buildOmittedNotice(omitted);
       let body;
       if (!files.length) {
-        body = '<div class="ide-scm-empty">Nothing to commit — your working tree is clean.</div>';
+        body = '<div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.workingTreeClean', 'Nothing to commit — your working tree is clean.')) + '</div>';
       } else {
-        body = buildGroupMarkup('Ready to commit', staged)
+        body = buildGroupMarkup(jt('ide.sourceControl.readyToCommit', 'Ready to commit'), staged)
           + buildGroupMarkup('Changed', changed, { stageAll: changed.length > 0 });
       }
       // The History section's container; the commit-history module paints into
@@ -346,7 +347,7 @@
       const input = panel ? panel.querySelector('[data-ide-scm-input="commit"]') : null;
       const message = String((input && input.value) || commitMessage || '').trim();
       if (!message) {
-        commitHint = 'Enter a commit message first.';
+        commitHint = jt('ide.sourceControl.enterCommitMessage', 'Enter a commit message first.');
         renderSourceControlPanel();
         return;
       }
@@ -378,8 +379,8 @@
       // message and surfaces a hint rather than silently clearing it.
       if (!result || result.committed !== true) {
         commitHint = result && result.reason === 'nothing_to_commit'
-          ? 'Nothing staged to commit yet.'
-          : 'Could not commit — check your staged changes and git identity.';
+          ? jt('ide.sourceControl.nothingStaged', 'Nothing staged to commit yet.')
+          : jt('ide.sourceControl.commitFailed', 'Could not commit — check your staged changes and git identity.');
         renderSourceControlPanel();
         return;
       }
@@ -415,9 +416,9 @@
       }
       const omitted = Number(result.omittedFiles) || 0;
       if (omitted > 0) {
-        return `Heads up: the staged diff was large — ${omitted} file${omitted === 1 ? '' : 's'} not shown to the model. Review the generated message.`;
+        return jtn('ide.sourceControl.stagedDiffOmittedFiles', omitted, { count: omitted }, 'Heads up: the staged diff was large — {count} file not shown to the model. Review the generated message.', 'Heads up: the staged diff was large — {count} files not shown to the model. Review the generated message.');
       }
-      return 'Heads up: the staged diff was large and was truncated before the model saw it. Review the generated message.';
+      return jt('ide.sourceControl.stagedDiffTruncated', 'Heads up: the staged diff was large and was truncated before the model saw it. Review the generated message.');
     }
 
     // Map a no-message outcome to a hint the user can act on. The backend
@@ -426,12 +427,12 @@
     function hintForFailure(result) {
       const reason = result && typeof result.reason === 'string' ? result.reason : '';
       if (reason === 'empty_message') {
-        return 'The model returned an empty message — try again.';
+        return jt('ide.sourceControl.emptyGeneratedMessage', 'The model returned an empty message — try again.');
       }
       if (reason === 'model_not_loaded' || reason === 'sidecar_not_ready' || reason === 'sidecar_unavailable') {
-        return 'Could not write a message — is the local model loaded?';
+        return jt('ide.sourceControl.modelUnavailable', 'Could not write a message — is the local model loaded?');
       }
-      return 'Could not write a message — please try again.';
+      return jt('ide.sourceControl.writeMessageFailed', 'Could not write a message — please try again.');
     }
 
     async function runWriteMessage() {
@@ -457,7 +458,7 @@
       }
       if (!diffText.trim()) {
         writingMessage = false;
-        commitHint = 'No staged changes to summarize — stage some files first.';
+        commitHint = jt('ide.sourceControl.noStagedChangesToSummarize', 'No staged changes to summarize — stage some files first.');
         renderSourceControlPanel();
         return;
       }

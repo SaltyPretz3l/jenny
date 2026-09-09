@@ -1,30 +1,23 @@
 name: Release
 
-# Builds and publishes the Windows, macOS, and Linux installers for a tagged release.
-# Each runner builds its OWN sidecar (PyInstaller is platform-specific) and runs
-# electron-builder for its OS, publishing to the GitHub Release for the tag.
-#
-# Signing is OPTIONAL: with no signing secrets set, both installers build and
-# publish UNSIGNED (shippable today; users click through SmartScreen / Gatekeeper
-# "open anyway"). Adding the secrets below flips the same workflow to signed.
-#
-# The macOS leg uses build/icon.png (electron-builder generates the .icns); fail-fast
-# is disabled so the Windows installer still ships even if the mac leg has trouble,
-# and the leg is marked experimental (continue-on-error) so it cannot mark the run
-# failed while Windows shipped.
-# The unsigned Linux leg is also experimental and smokes its unpacked app before
-# electron-builder creates and publishes packages from that verified directory.
-#
-# The `prepare` job creates the draft release for the tag exactly once BEFORE the
-# build matrix. electron-builder's GitHub publisher creates a draft when it finds
-# none for the tag, and two legs starting together both created one on the 1.0.0
-# dry run, splitting the blockmap from the installer + latest.yml.
+# Builds Windows candidates and experimental macOS/Linux candidates. Builders
+# never publish directly: verified bytes upload only into the prepared draft.
+# The owner waits for every upload job, qualifies the complete candidate, then
+# publishes it. Signing remains optional; unsigned assets do not attest identity.
+# Each OS builds its own sidecar and native hosts. Linux additionally smokes its
+# unpacked app before packaging. Failed experimental legs do not block Windows.
+# One preparation job avoids the duplicate-draft race from the 1.0.0 dry run;
+# per-tag serialization and draft-aware checks prevent published-release reruns.
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -35,9 +28,8 @@ jobs:
     # The private source repository carries this same file (the public tree is an
     # export of it) and the release tag is mirrored back onto it, so a tag push
     # there would build again and try to publish into the public repository.
-    # Run only in the public repository; `build` needs this job, so it is skipped
-    # along with it.
-    if: github.repository == 'SaltyPretz3l/jenny'
+    # Manual runs are build-only. Mirrored private tags never publish.
+    if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -45,9 +37,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # On a tag push the tag is the ref; on workflow_dispatch (dry run) it is the
-      # same v-prefixed package.json version electron-builder derives, so both
-      # paths converge on one release name.
+      # This job runs only for tagged public-repository pushes.
       - name: Resolve the release tag
         id: tag
         shell: bash
@@ -59,36 +49,32 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # A draft never creates the git tag, so a dry run still tags nothing. gh
-      # resolves drafts by tag name, which is what stops a second draft.
-      - name: Ensure exactly one draft release exists for the tag
+      - name: Require or create an unpublished draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release $TAG already exists; the build legs upload into it"
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" \
-              --notes "Assets are uploaded by the release workflow's build legs."
-          fi
+        run: python scripts/packaging/release_assets.py prepare --tag "$TAG"
 
   build:
     needs: prepare
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'workflow_dispatch' || needs.prepare.result == 'success')
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             eb_flag: "--win"
+            release_platform: windows
             experimental: false
-          - os: macos-latest
+          - os: macos-15
             eb_flag: "--mac"
+            release_platform: mac
             experimental: true
     runs-on: ${{ matrix.os }}
-    # Unsigned and never run on real hardware: the experimental mac leg must not
-    # fail the Release run the Windows leg passed.
+    # Mac remains experimental; its failure must be visible without blocking Windows.
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Checkout
@@ -109,6 +95,10 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Assert Apple Silicon build host
+        if: runner.os == 'macOS'
+        run: python -c "import platform, sys; assert sys.platform == 'darwin' and platform.machine() == 'arm64'"
+
       # preload.bundle.js is gitignored and untracked, and electron-builder.yml
       # has no beforeBuild/beforePack hook -- without this step the asar ships
       # with no preload and the sandboxed window boots with window.jennyShell
@@ -120,7 +110,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build-lock.txt
-          python -m pip install --require-hashes -r requirements-lock.txt
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-lock.txt
           python -m pip install --no-build-isolation --no-deps -e .
           python -m pip check
 
@@ -135,13 +125,25 @@ jobs:
       - name: Build sidecar artifact (this OS)
         run: python scripts/packaging/build_sidecar_artifact.py
 
+      - name: Setup native Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build restricted plugin host (this OS)
+        run: npm run build:restricted-host:release
+
+      - name: Build full plugin host supervisor (this OS)
+        run: npm run build:full-host-supervisor:release
+
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
 
-      - name: Build & publish installer
-        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish always
+      - name: Build installer without publishing
+        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # --- Windows Authenticode (optional; unsigned build when unset) ---
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
@@ -151,6 +153,33 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify Apple Silicon release artifacts
+        if: runner.os == 'macOS'
+        run: python scripts/packaging/verify_macos_release.py
+
+      - name: Verify tag, updater metadata and artifact hashes
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          tag="${TAG:-v$(node -p "require('./package.json').version")}"
+          python scripts/packaging/release_assets.py verify --tag "$tag" --platform ${{ matrix.release_platform }}
+
+      - name: Upload verified artifacts to draft only
+        if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: python scripts/packaging/release_assets.py upload --tag "$TAG" --platform ${{ matrix.release_platform }}
+
+      - name: Report experimental macOS failure
+        if: failure() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          echo "::warning::Experimental macOS build failed; no verified Mac release is available from this run."
+          echo "### macOS: build or verification failed; inspect this job before advertising availability." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload installer artifacts
         if: always()
@@ -163,6 +192,7 @@ jobs:
   # Mirrored step for step by the private .github/workflows/ci-linux-package.yml
   # (publish disabled); keep the two in lockstep.
   build-linux:
+    if: always() && !cancelled() && (github.event_name == 'workflow_dispatch' || needs.prepare.result == 'success')
     name: Build & publish Linux packages (experimental)
     needs: prepare
     runs-on: ubuntu-latest
@@ -184,7 +214,7 @@ jobs:
         run: |
           apt-get update
           apt-get install --yes --no-install-recommends \
-            ca-certificates curl git build-essential xz-utils zstd binutils file sudo \
+            ca-certificates curl git gh build-essential xz-utils zstd binutils file sudo \
             libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils \
             libatspi2.0-0 libuuid1 libsecret-1-0 libasound2 libgbm1 libdrm2 \
             libxkbcommon0 libatk-bridge2.0-0 libcups2 libsqlite3-0 xvfb dbus dbus-x11
@@ -320,10 +350,24 @@ jobs:
             --existing-artifacts --composition release
 
       # Publish only from the unpacked directory that passed the glibc and packaged-app smokes.
-      - name: Build & publish Linux packages
-        run: npm exec -- electron-builder --linux --prepackaged dist/linux-unpacked --config electron-builder.yml --publish always
+      - name: Build Linux packages without publishing
+        run: npm exec -- electron-builder --linux --prepackaged dist/linux-unpacked --config electron-builder.yml --publish never
+
+      - name: Verify Linux tag, updater metadata and artifact hashes
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          tag="${TAG:-v$(node -p "require('./package.json').version")}"
+          python scripts/packaging/release_assets.py verify --tag "$tag" --platform linux
+
+      - name: Upload verified Linux artifacts to draft only
+        if: github.event_name == 'push' && github.repository == 'SaltyPretz3l/jenny'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: python scripts/packaging/release_assets.py upload --tag "$TAG" --platform linux
 
       - name: Upload Linux installer artifacts and smoke log
         if: always()
@@ -335,5 +379,6 @@ jobs:
             dist/*.deb
             dist/*.blockmap
             dist/latest-linux.yml
+            dist/SHA256SUMS-linux.txt
             artifacts/logs/packaging-smoke-phase4.log
           if-no-files-found: ignore

@@ -10,8 +10,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var SEMANTIC_PREVIEW_CAP = 512;
-  var FALLBACK_TEXT = 'Message content is temporarily unavailable. Jenny is refreshing the transcript.';
+  var FALLBACK_TEXT = jt('chat.timeline.contentTemporarilyUnavailable', 'Message content is temporarily unavailable. Jenny is refreshing the transcript.');
   var LIVE_STATE_SELECTOR = 'textarea, input, select, audio, video, '
     + '[contenteditable="true"], [contenteditable=""], [data-virtualizer-pin-live]';
   var HISTORICAL_LIVE_SELECTOR = '[role="alert"], [role="status"], [aria-live]:not([aria-live="off"])';

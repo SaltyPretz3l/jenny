@@ -113,8 +113,7 @@
 
 .turn-status-pill__progress {
   position: absolute;
-  left: 0;
-  right: 0;
+  inset-inline: 0;
   bottom: 0;
   height: 2px;
   background: linear-gradient(

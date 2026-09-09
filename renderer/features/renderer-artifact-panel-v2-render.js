@@ -27,9 +27,10 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryActionButton, inventoryPopover, versionHistoryUtils, chromeRender, viewCapabilities, switcherModule, actionsModule, projection) {
   'use strict';
 
-  const CHEVRON_LEFT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
-  const CHEVRON_RIGHT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
-  const COLLAPSE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const CHEVRON_LEFT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
+  const CHEVRON_RIGHT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
+  const COLLAPSE_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
   const EDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1"></path><path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415z"></path><path d="M16 5l3 3"></path></svg>';
   const COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8v-2a2 2 0 0 0 -2 -2h-8a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
   const FOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"></path></svg>';
@@ -57,8 +58,8 @@
     const parsed = new Date(raw);
     if (Number.isNaN(parsed.getTime())) return '';
     try {
-      return parsed.toLocaleString(undefined, {
-        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      return parsed.toLocaleString(globalThis.jennyI18n?.tag?.(), {
+        month: 'short', day: 'numeric', hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit',
       });
     } catch (_error) {
       return raw;
@@ -71,9 +72,9 @@
     const kind = artifact.artifactType === 'generated_file'
       ? formatArtifactKindLabel(artifact.generatedFile?.artifactKind || 'document')
       : artifact.artifactType === 'image'
-        ? 'image'
+        ? jt('artifacts.types.imageLowercase', 'image')
         : artifact.artifactType === 'tool_output'
-          ? 'tool output'
+          ? jt('artifacts.types.toolOutputLowercase', 'tool output')
           : '';
     if (kind) segments.push(kind);
     const time = formatFooterTimestamp(artifact.timestamp);
@@ -97,8 +98,8 @@
         plain: true,
         domId: 'artifactReviewCollapseButton',
         className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: 'Collapse panel',
-        title: 'Collapse panel',
+        ariaLabel: jt('artifacts.review.collapseTitle', 'Collapse panel'),
+        title: jt('artifacts.review.collapseTitle', 'Collapse panel'),
         trustedHtml: COLLAPSE_SVG,
       })
       + '</div>'
@@ -114,24 +115,24 @@
         plain: true,
         domId: 'artifactReviewSaveButton',
         className: 'artifact-panel-v2-text-btn artifact-panel-v2-save-btn hidden',
-        ariaLabel: 'Save artifact',
-        title: 'Save',
-        label: 'Save',
+        ariaLabel: jt('artifacts.actions.saveLabel', 'Save artifact'),
+        title: jt('common.save', 'Save'),
+        label: jt('common.save', 'Save'),
       })
       + inventoryActionButton({
         plain: true,
         domId: 'artifactReviewRevertButton',
         className: 'artifact-panel-v2-text-btn hidden',
-        ariaLabel: 'Revert artifact',
-        title: 'Revert',
-        label: 'Revert',
+        ariaLabel: jt('artifacts.actions.revertLabel', 'Revert artifact'),
+        title: jt('common.revert', 'Revert'),
+        label: jt('common.revert', 'Revert'),
       })
       + '</span>'
       + inventoryActionButton({
         plain: true,
         className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: 'Edit source',
-        title: 'Edit source',
+        ariaLabel: jt('artifacts.actions.editSource', 'Edit source'),
+        title: jt('artifacts.actions.editSource', 'Edit source'),
         ariaPressed: false,
         dataset: { 'artifact-panel-v2-edit': '' },
         trustedHtml: EDIT_SVG,
@@ -139,8 +140,8 @@
       + inventoryActionButton({
         plain: true,
         className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: 'Copy',
-        title: 'Copy',
+        ariaLabel: jt('common.copy', 'Copy'),
+        title: jt('common.copy', 'Copy'),
         dataset: { 'artifact-panel-v2-copy': '' },
         trustedHtml: COPY_SVG,
       })
@@ -148,16 +149,16 @@
         plain: true,
         domId: 'artifactReviewRevealButton',
         className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: 'Reveal in folder',
-        title: 'Reveal in folder',
+        ariaLabel: jt('artifacts.actions.revealInFolder', 'Reveal in folder'),
+        title: jt('artifacts.actions.revealInFolder', 'Reveal in folder'),
         trustedHtml: FOLDER_SVG,
       })
       + inventoryActionButton({
         plain: true,
         domId: 'artifactReviewJumpButton',
         className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: 'Jump to chat',
-        title: 'Jump to chat',
+        ariaLabel: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'),
+        title: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'),
         trustedHtml: MESSAGE_CIRCLE_SVG,
       })
       + '<span class="artifact-panel-v2-toolbar-spacer" data-artifact-panel-v2-stepper-slot></span>'
@@ -165,25 +166,25 @@
         plain: true,
         domId: 'artifactReviewDeleteButton',
         className: 'artifact-panel-v2-icon-btn artifact-panel-v2-delete-btn',
-        ariaLabel: 'Delete artifact',
-        title: 'Delete artifact',
+        ariaLabel: jt('artifacts.actions.deleteLabel', 'Delete artifact'),
+        title: jt('artifacts.actions.deleteLabel', 'Delete artifact'),
         trustedHtml: TRASH_SVG,
       })
       + inventoryActionButton({
         plain: true,
         domId: 'artifactReviewOpenExternalButton',
         className: 'artifact-panel-v2-icon-btn hidden',
-        ariaLabel: 'Open artifact externally',
-        title: 'Open artifact externally',
+        ariaLabel: jt('artifacts.actions.openExternalLabel', 'Open artifact externally'),
+        title: jt('artifacts.actions.openExternalLabel', 'Open artifact externally'),
       })
       + '</div>'
     );
   }
 
-  function contentHtml() {
+  function contentHtml(escapeHtml) {
     return (
       '<div class="artifact-review-scroll artifact-panel-v2-scroll">'
-      + '<div class="artifact-panel-v2-empty" id="artifactReviewDetailEmpty">Select an artifact</div>'
+      + '<div class="artifact-panel-v2-empty" id="artifactReviewDetailEmpty">' + escapeHtml(jt('artifacts.review.emptyHeading', 'Select an artifact')) + '</div>'
       + '<div class="artifact-review-detail-panel hidden" id="artifactReviewDetailPanel">'
       // Hidden nodes the controller still writes to (kicker/path/status/meta/note/dirtyBadge).
       + '<div class="hidden" id="artifactReviewDetailKicker"></div>'
@@ -194,8 +195,8 @@
       + '<span class="hidden" id="artifactReviewDirtyBadge"></span>'
       + '<div class="artifact-panel-v2-content-host" id="artifactReviewPreviewShell">'
       + '<div class="artifact-editor-shell hidden" id="artifactReviewEditorShell">'
-      + '<div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="Artifact editor"></div>'
-      + '<textarea class="artifact-editor-fallback hidden" id="artifactReviewEditorFallback" spellcheck="false" aria-label="Artifact editor fallback"></textarea>'
+      + '<div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="' + escapeHtml(jt('artifacts.review.editorLabel', 'Artifact editor')) + '"></div>'
+      + '<textarea class="artifact-editor-fallback hidden" id="artifactReviewEditorFallback" spellcheck="false" aria-label="' + escapeHtml(jt('artifacts.review.editorFallbackLabel', 'Artifact editor fallback')) + '"></textarea>'
       + '</div>'
       + '<div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div>'
       + '</div>'
@@ -209,7 +210,7 @@
       id: 'artifact-panel-v2-provenance',
       domId: 'artifactPanelV2ProvenancePopover',
       className: 'artifact-panel-v2-provenance-popover',
-      ariaLabel: 'Provenance',
+      ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'),
       trustedHtml: '<div class="artifacts-provenance-timeline" id="artifactReviewProvenanceTimeline"></div>',
     });
     return (
@@ -220,8 +221,8 @@
         plain: true,
         domId: 'artifactPanelV2ProvenanceTrigger',
         className: 'artifact-panel-v2-icon-btn artifact-panel-v2-footer-action',
-        ariaLabel: 'Provenance',
-        title: 'Provenance',
+        ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'),
+        title: jt('artifacts.detail.provenanceHeading', 'Provenance'),
         ariaHaspopup: 'dialog',
         ariaControls: 'artifactPanelV2ProvenancePopover',
         trustedHtml: HISTORY_SVG,
@@ -244,9 +245,9 @@
     });
     return (
       '<span class="artifact-panel-v2-stepper">'
-      + step('Previous version', CHEVRON_LEFT_SVG, info.prevId, info.index <= 1)
+      + step(jt('artifacts.review.previousVersion', 'Previous version'), CHEVRON_LEFT_SVG, info.prevId, info.index <= 1)
       + `<span class="artifact-panel-v2-stepper-count">v${info.index}/${info.count}</span>`
-      + step('Next version', CHEVRON_RIGHT_SVG, info.nextId, info.index >= info.count)
+      + step(jt('artifacts.review.nextVersion', 'Next version'), CHEVRON_RIGHT_SVG, info.nextId, info.index >= info.count)
       + '</span>'
     );
   }
@@ -296,7 +297,8 @@
       if (!actionsController) {
         actionsController = actionsModule?.createArtifactPanelActions?.({
           panelEl, windowRef, formatLanguageLabel: projection?.formatLanguageLabel, appendClientLog, showToastMessage,
-          getArtifactSource: () => managerHooks.getSelectedArtifactSource?.() || '',
+          getArtifactSource: () => managerHooks.getSelectedArtifactSource?.(),
+          isCurrentArtifact: (artifact) => currentArtifact?.id === artifact?.id && currentArtifact?.sessionId === artifact?.sessionId,
           toggleMaximize: () => managerHooks.toggleMaximize?.(),
         }) || null;
       }
@@ -308,7 +310,7 @@
       try {
         panelEl.innerHTML = isV3Enabled(state) && chromeRender?.buildPanelHtml
           ? chromeRender.buildPanelHtml()
-          : headerHtml() + toolbarHtml() + contentHtml() + footerHtml();
+          : headerHtml() + toolbarHtml() + contentHtml(escapeHtml) + footerHtml();
         panelEl.classList.add('artifact-panel-v2');
         panelEl.classList.toggle('artifact-panel-v3', isV3Enabled(state));
         didInstall = true;
@@ -333,10 +335,24 @@
 
     function afterRender(artifact) {
       if (!didInstall) return;
+      const mode = state.ui?.artifactReview?.mode || 'artifact';
+      if (mode !== 'artifact') artifact = null;
+      if (currentArtifact?.id !== artifact?.id || currentArtifact?.sessionId !== artifact?.sessionId) {
+        actionsController?.closeOverflow?.();
+        switcherController?.close?.();
+      }
       currentArtifact = artifact || null;
       if (isV3Enabled(state)) {
         afterRenderV3(artifact);
+        if (mode !== 'artifact') {
+          const title = panelEl.querySelector('.artifact-panel-title-text');
+          if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
+        }
         return;
+      }
+      if (!artifact) {
+        const title = panelEl.querySelector('#artifactReviewDetailTitle');
+        if (title) title.textContent = mode === 'artifact' ? jt("artifacts.notifications.title", "Artifacts") : mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
       }
       const footerMeta = panelEl.querySelector('#artifactPanelV2FooterMeta');
       if (footerMeta) footerMeta.textContent = buildFooterMetaText(artifact);
@@ -345,14 +361,14 @@
       const saveBtn = panelEl.querySelector('#artifactReviewSaveButton');
       const revertBtn = panelEl.querySelector('#artifactReviewRevertButton');
       if (saveBtn) saveBtn.classList.toggle('hidden', !dirty);
-      if (revertBtn) revertBtn.classList.toggle('hidden', !dirty);
+      if (revertBtn) revertBtn.classList.toggle('hidden', !dirty && !(artifact && state.artifacts.loadState === 'error'));
 
       const isImage = Boolean(artifact) && artifact.artifactType === 'image';
       // Edit only does something for markdown generated artifacts (the
       // read<->source toggle is a no-op everywhere else -- code kinds render
       // unconditionally in-editor); an affordance that cannot act must not
       // render enabled, so hide it rather than show a dead-looking control.
-      const isMarkdownToggleable = typeof managerHooks.isSelectedArtifactMarkdownGenerated === 'function'
+      const isMarkdownToggleable = Boolean(artifact) && typeof managerHooks.isSelectedArtifactMarkdownGenerated === 'function'
         && managerHooks.isSelectedArtifactMarkdownGenerated() === true;
       const editBtn = panelEl.querySelector('[data-artifact-panel-v2-edit]');
       const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
@@ -365,8 +381,8 @@
         editBtn.setAttribute('aria-pressed', mode === 'source' ? 'true' : 'false');
       }
       if (copyBtn) {
-        copyBtn.disabled = isImage;
-        copyBtn.setAttribute('aria-disabled', isImage ? 'true' : 'false');
+        copyBtn.disabled = !artifact || isImage || managerHooks.getSelectedArtifactSource?.() == null;
+        copyBtn.setAttribute('aria-disabled', copyBtn.disabled ? 'true' : 'false');
       }
 
       const slot = panelEl.querySelector('[data-artifact-panel-v2-stepper-slot]');
@@ -376,6 +392,14 @@
           : null;
         slot.innerHTML = buildStepperHtml(info);
       }
+    }
+
+    function patchDirtyState(artifact) {
+      if (!didInstall || (state.ui?.artifactReview?.mode || 'artifact') !== 'artifact') return;
+      const dirty = isArtifactDirty(state, artifact);
+      panelEl.querySelector('#artifactReviewSaveButton')?.classList.toggle('hidden', !dirty);
+      panelEl.querySelector('#artifactReviewRevertButton')?.classList.toggle('hidden', !dirty);
+      if (isV3Enabled(state)) syncSaveState(artifact, dirty);
     }
 
     function currentV3View(capabilities) {
@@ -415,10 +439,10 @@
       if (saveStateTimer) windowRef?.clearTimeout?.(saveStateTimer);
       saveStateTimer = null;
       target.classList.remove('is-settled');
-      if (savePending) target.textContent = 'Saving…';
-      else if (dirty) target.textContent = 'Unsaved';
+      if (savePending) target.textContent = jt('artifacts.status.saving', 'Saving…');
+      else if (dirty) target.textContent = jt('artifacts.status.unsaved', 'Unsaved');
       else if (previousSavePending && !state?.artifacts?.lastError) {
-        target.textContent = 'Saved';
+        target.textContent = jt('artifacts.status.saved', 'Saved');
         saveStateTimer = windowRef?.setTimeout?.(() => target.classList.add('is-settled'), 0) || null;
       } else target.textContent = '';
       previousSavePending = savePending;
@@ -426,7 +450,7 @@
 
     function afterRenderV3(artifact) {
       setupV3Controllers();
-      const artifacts = managerHooks.getArtifacts?.() || [];
+      const artifacts = artifact ? managerHooks.getArtifacts?.() || [] : [];
       const dirty = isArtifactDirty(state, artifact);
       const capabilities = resolveCapabilities(artifact);
       const titleSlot = panelEl.querySelector('[data-artifact-panel-title-slot]');
@@ -437,15 +461,16 @@
       const saveBtn = panelEl.querySelector('#artifactReviewSaveButton');
       const revertBtn = panelEl.querySelector('#artifactReviewRevertButton');
       saveBtn?.classList.toggle('hidden', !dirty);
-      revertBtn?.classList.toggle('hidden', !dirty);
+      revertBtn?.classList.toggle('hidden', !dirty && !(artifact && state.artifacts.loadState === 'error'));
       const hasArtifact = Boolean(artifact);
+      const sourceReady = hasArtifact && managerHooks.getSelectedArtifactSource?.() != null;
       const isImage = hasArtifact && capabilities.kind === 'image';
       const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
       const downloadBtn = panelEl.querySelector('[data-artifact-panel-download]');
       const overflowBtn = panelEl.querySelector('[data-artifact-panel-overflow]');
       const provenanceBtn = panelEl.querySelector('#artifactPanelV2ProvenanceTrigger');
-      if (copyBtn) { copyBtn.disabled = !hasArtifact || isImage; copyBtn.setAttribute('aria-disabled', copyBtn.disabled ? 'true' : 'false'); }
-      if (downloadBtn) { downloadBtn.disabled = !hasArtifact || isImage || !actionsController; downloadBtn.setAttribute('aria-disabled', downloadBtn.disabled ? 'true' : 'false'); downloadBtn.classList.toggle('hidden', isImage); }
+      if (copyBtn) { copyBtn.disabled = !sourceReady || isImage; copyBtn.setAttribute('aria-disabled', copyBtn.disabled ? 'true' : 'false'); }
+      if (downloadBtn) { downloadBtn.disabled = !sourceReady || isImage || !actionsController; downloadBtn.setAttribute('aria-disabled', downloadBtn.disabled ? 'true' : 'false'); downloadBtn.classList.toggle('hidden', isImage); }
       if (overflowBtn) { overflowBtn.disabled = !hasArtifact || !actionsController; overflowBtn.setAttribute('aria-disabled', overflowBtn.disabled ? 'true' : 'false'); }
       if (provenanceBtn) { provenanceBtn.disabled = !hasArtifact; provenanceBtn.setAttribute('aria-disabled', provenanceBtn.disabled ? 'true' : 'false'); }
 
@@ -454,7 +479,7 @@
       syncSlotHtml(slot, buildStepperHtml(info));
       panelEl.querySelector('[data-artifact-panel-stepper-divider]')?.classList.toggle('hidden', !info || info.count < 2);
 
-      const source = managerHooks.getSelectedArtifactSource?.();
+      const source = artifact ? managerHooks.getSelectedArtifactSource?.() : null;
       const meta = panelEl.querySelector('#artifactPanelV2FooterMeta');
       if (meta) meta.textContent = chromeRender.buildStatusMetaText(artifact, source, projection?.formatLanguageLabel);
       syncSaveState(artifact, dirty);
@@ -462,7 +487,7 @@
       const maximized = managerHooks.isMaximized?.() === true;
       const maximizeBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
       if (maximizeBtn) {
-        const label = maximized ? 'Restore panel size' : 'Maximize panel';
+        const label = maximized ? jt('artifacts.actions.restorePanelSize', 'Restore panel size') : jt('artifacts.actions.maximizePanel', 'Maximize panel');
         maximizeBtn.disabled = !actionsController;
         maximizeBtn.setAttribute('aria-disabled', maximizeBtn.disabled ? 'true' : 'false');
         maximizeBtn.setAttribute('aria-label', label);
@@ -613,7 +638,7 @@
       saveStateTimer = null;
     }
 
-    return { installed, connect, afterRender, bind, dispose };
+    return { installed, connect, afterRender, patchDirtyState, bind, dispose };
   }
 
   return { createArtifactPanelV2 };

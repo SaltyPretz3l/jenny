@@ -6,6 +6,7 @@
   }
   root.rendererSettingsLazyRenderers = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Render inventory switches into a stable .settings-toggle-list container.
   // Dependencies resolve at call time so this UMD module remains lightweight.
   function renderToggleListInto(target, fields, escapeHtml) {
@@ -38,15 +39,15 @@
           : String(offlineState.unavailableReason || '').trim()
             ? 'warning'
             : 'default',
-      label: 'Force local inference',
+      label: jt('settings.shell.forceLocalInference', 'Force local inference'),
       message: String(offlineState.summary || '').trim()
         || (offlineState.mode === 'local_only'
           ? (offlineState.localChatReady
-            ? `Force local inference is on with ${String(offlineState.preferredLocalModel || 'a local model')}.`
-            : String(offlineState.unavailableReason || 'Force local inference is enabled but not ready.'))
+            ? jt('settings.offline.forcedWithModel', 'Force local inference is on with {model}.', { model: String(offlineState.preferredLocalModel || 'a local model') })
+            : String(offlineState.unavailableReason || jt('settings.offline.forcedNotReady', 'Force local inference is enabled but not ready.')))
           : offlineState.localChatReady
-            ? `Local runtime is ready with ${String(offlineState.preferredLocalModel || 'a local model')}.`
-            : 'Force local inference is off.'),
+            ? jt('settings.offline.localRuntimeReady', 'Local runtime is ready with {model}.', { model: String(offlineState.preferredLocalModel || 'a local model') })
+            : jt('settings.offline.forcedOff', 'Force local inference is off.')),
       badgeText: offlineState.mode === 'local_only'
         ? 'Forced'
         : offlineState.localChatReady
@@ -57,9 +58,9 @@
 
   // Maps registry cost classes to user-facing GPU-use text.
   const COST_CLASS_COPY = Object.freeze({
-    low: 'light on your GPU',
-    medium: 'moderate GPU use',
-    high: 'heavier GPU use',
+    low: jt('settings.appearance.gpuUseLight', 'light on your GPU'),
+    medium: jt('settings.appearance.gpuUseModerate', 'moderate GPU use'),
+    high: jt('settings.appearance.gpuUseHeavy', 'heavier GPU use'),
   });
 
   function buildSurfaceEffectMetaText(preset) {
@@ -69,7 +70,7 @@
     if (cost) { parts.push(cost); }
     const recommended = Array.isArray(preset.recommendedPalettes) ? preset.recommendedPalettes : [];
     if (recommended.length) {
-      parts.push(`looks best with the ${recommended.join(' or ')} palette`);
+      parts.push(jt('settings.appearance.surfaceEffectRecommendedPalettes', 'looks best with the {palettes} palette', { palettes: recommended.join(' or ') }));
     }
     return parts.join(' · ');
   }
@@ -79,7 +80,7 @@
     const { descriptionEl, metaEl, preset } = options;
     if (descriptionEl) {
       descriptionEl.textContent = String((preset && preset.description) || '').trim()
-        || 'An ambient layer behind Home and Chat.';
+        || jt('settings.appearance.surfaceEffectFallback', 'An ambient layer behind Home and Chat.');
     }
     if (metaEl) {
       const meta = buildSurfaceEffectMetaText(preset);

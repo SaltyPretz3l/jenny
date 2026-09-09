@@ -12,9 +12,7 @@ const {
   isImageAttachment,
   isTextAttachment,
 } = require('../attachment-service');
-const {
-  validateImageAttachmentsForManagedSend,
-} = require('./managed-sidecar-attachments');
+const { validateImageAttachmentsForManagedSend } = require('./managed-sidecar-attachments');
 const {
   buildAutomaticSessionTitleCandidate,
   shouldApplyAutomaticSessionTitle,
@@ -66,10 +64,9 @@ const {
   scheduleManagedSidecarReconnectAfterFailure,
 } = require('./managed-sidecar-chat-reconnect');
 const { CanonicalTurnEventCollector } = require('./canonical-turn-event-collector');
-const {
-  dumpFailedTurnDiagnostic,
-} = require('./managed-sidecar-chat-turn-seams');
+const { dumpFailedTurnDiagnostic } = require('./managed-sidecar-chat-turn-seams');
 const { finalizeManagedTerminalCleanup } = require('./managed-sidecar-terminal-cleanup');
+const { settleHostedExecution } = require('./hosted-execution-settlement');
 const {
   noteToolObservationPromotions,
 } = require('./tool-observation-promotion');
@@ -85,6 +82,7 @@ const {
   projectCanonicalSessionMessagesForSend,
 } = require('./chat-send-frame-budget');
 const {
+  prepareResumedHistory,
   buildImageAttachmentSendParams,
   buildAutomaticCompactionSendContext,
   buildLeanContextPreferences,
@@ -180,6 +178,7 @@ async function startManagedSidecarChatStream(service, {
       );
     }
   }
+  if (service.commandSandbox?.transition) throw new Error('Command sandbox configuration is changing; retry the message.');
   const actorRegistry = ensureSessionTurnActorRegistry(service);
   const activeTurnLease = turnLease || actorRegistry.reserveStart({
     sessionId: resolvedSessionId,
@@ -445,6 +444,7 @@ async function startManagedSidecarChatStream(service, {
       ensureNotAborted();
       // A local GGUF tag is indistinguishable from an Ollama tag by name alone, so ask the running engine.
       const engineType = requestedEngine || String(service?.currentEngineType || '').trim().toLowerCase() || inferEngineTypeFromModel(model);
+      require('../execution/execution-settlement').assertExecutionPolicy(service, engineType);
       turnDiagnosticState.engineType = engineType;
       // Cloud engines get wider stream ceilings (mirrors the sidecar's cloud loop profile); re-arm both timers now that the engine is known.
       streamWatchdog.applyEngineType(engineType);
@@ -461,9 +461,7 @@ async function startManagedSidecarChatStream(service, {
         // The actor already terminalized any orphan; never resume that generation.
         active_turn: null,
       });
-      const preparedHistoryMessages = resumePayload.resumeMessage
-        ? resumePayload.messages.concat(resumePayload.resumeMessage)
-        : resumePayload.messages;
+      const preparedHistoryMessages = prepareResumedHistory(service, resumePayload);
       const {
         normalized: storedContextPreferences,
         warnings: contextPreferenceWarnings,
@@ -771,7 +769,8 @@ async function startManagedSidecarChatStream(service, {
         throw streamTimeoutError || new Error('Stream cancelled.');
       }
       noteToolObservationPayload(result?.tool_observations);
-      const settledTerminal = await runtime.settleTerminalResult(result);
+      await settleHostedExecution(service, streamId);
+      const settledTerminal = await require('../execution/execution-settlement').settleManagedTerminal(service, streamId, runtime, result);
       deferredQuestionBatchEvent = settledTerminal?.coordinated
         ? null : (settledTerminal?.questionBatch || null);
       if (deferredQuestionBatchEvent && runtime.isTerminalCoordinatorHandled()) {
@@ -871,6 +870,7 @@ async function startManagedSidecarChatStream(service, {
           ? 'timeout'
           : (controller.signal.aborted ? 'cancelled' : sidecarErrorCategory)
       );
+      await settleHostedExecution(service, streamId, normalizedErrorPayload);
       if (sidecarErrorCode && !normalizedErrorPayload.error_code) {
         normalizedErrorPayload.error_code = sidecarErrorCode;
       }
@@ -902,6 +902,7 @@ async function startManagedSidecarChatStream(service, {
       if (reconnectReason) {
         managedSidecarRestartReason = reconnectReason;
       }
+      await require('../execution/execution-settlement').settleExecution(service, streamId, normalizedErrorPayload);
       const terminal = resolveTerminalRouting({
         status: normalizedErrorPayload.status,
         terminalSubcode: normalizedErrorPayload.terminal_subcode,

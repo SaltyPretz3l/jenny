@@ -2,15 +2,18 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('./renderer-turn-normalization-utils'),
-      require('./renderer-stream-text-cursor')
+      require('./renderer-stream-text-cursor'),
+      require('./renderer-stream-handler-reducer-wiring')
     );
     return;
   }
   root.rendererStreamHandlerTools = factory(
     root.rendererTurnNormalizationUtils || {},
-    root.rendererStreamTextCursor || {}
+    root.rendererStreamTextCursor || {},
+    root.rendererStreamHandlerReducerWiring || {}
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (turnNormalizationUtils, streamTextCursor) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (turnNormalizationUtils, streamTextCursor, segmentIdentityUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const {
     extractToolCallId,
     normalizeGeneratedArtifact,
@@ -61,6 +64,7 @@
   function createStreamToolHandlers(options = {}) {
     const {
       state,
+      appendClientLog = () => {},
       syncThinkingIndicatorMode = () => {},
       streamSegmentState,
       getSessionMessages = () => [],
@@ -195,6 +199,39 @@
       return livePatchAccepted;
     }
 
+    function finishAssistantSegment(payload) {
+      const segState = streamSegmentState.get(payload.streamId);
+      if (!segState) return;
+      const pendingId = state.pendingStreams.get(payload.streamId);
+      const pendingMessages = [...getSessionMessages(payload.sessionId)];
+      const pendingIndex = pendingId ? pendingMessages.findIndex((message) => message.id === pendingId) : -1;
+      const pendingMessage = pendingMessages[pendingIndex];
+      const hasContent = Boolean(String(pendingMessage?.content || '').trim());
+      const entries = Array.isArray(pendingMessage?.reasoning?.entries) ? pendingMessage.reasoning.entries : [];
+      const hasReasoning = entries.some((entry) => String(entry?.text || '').trim());
+      const consumesSegment = hasContent || hasReasoning;
+      if (pendingIndex !== -1) {
+        if (hasContent || (isRowModelEnabled(payload.sessionId) && hasReasoning)) {
+          pendingMessages[pendingIndex] = { ...pendingMessage, status: MESSAGE_STATUS.COMPLETE, finalizedAt: new Date().toISOString() };
+        } else {
+          pendingMessages.splice(pendingIndex, 1);
+        }
+        setSessionMessages(payload.sessionId, pendingMessages, `session_${payload.sessionId}`);
+      }
+      state.pendingStreams.delete(payload.streamId);
+      const rawNextId = payload.next_assistant_message_id ?? payload.nextAssistantMessageId;
+      const identity = segmentIdentityUtils.resolveAssistantSegmentIdentity?.(payload.streamId, rawNextId);
+      if (rawNextId != null && !identity && !segState.invalidAssistantIdentityReported) {
+        segState.invalidAssistantIdentityReported = true;
+        appendClientLog('WARN', 'stream.assistant_segment_identity_invalid', { boundary: 'tool' });
+      }
+      segState.segmentIndex = identity ? identity.segmentIndex : (Number(segState.segmentIndex) || 0) + (consumesSegment ? 1 : 0);
+      segState.authoritativeAssistantMessageId = identity?.messageId || '';
+      segState.authoritativeAssistantSegmentIndex = identity ? identity.segmentIndex : null;
+      // Keep the aggregate cursor boundary even when no persisted segment was consumed.
+      beginSegment(segState);
+    }
+
     async function handleToolUse(payload) {
       syncThinkingIndicatorMode(payload.sessionId, 'tool-use');
       const callId = extractToolCallId(payload);
@@ -206,54 +243,25 @@
       applyLiveTurnPayload(payload, {
         primaryToolMessageId: toolUseMessageId,
       });
-      const segState = streamSegmentState.get(payload.streamId);
-      const pendingId = state.pendingStreams.get(payload.streamId);
-      if (pendingId && segState) {
-        const pendingMessages = [...getSessionMessages(payload.sessionId)];
-        const pendingIndex = pendingMessages.findIndex((message) => message.id === pendingId);
-        if (pendingIndex !== -1) {
-          const pendingMessage = pendingMessages[pendingIndex];
-          const hasContent = String(pendingMessage?.content || '').trim();
-          const hasReasoning = Array.isArray(pendingMessage?.reasoning?.entries) && pendingMessage.reasoning.entries.length > 0;
-          const hasReasoningPhases = Array.isArray(pendingMessage?.reasoning_phases) && pendingMessage.reasoning_phases.length > 0;
-          if (hasContent || (isRowModelEnabled(payload.sessionId) && (hasReasoning || hasReasoningPhases))) {
-            pendingMessages[pendingIndex] = {
-              ...pendingMessages[pendingIndex],
-              status: MESSAGE_STATUS.COMPLETE,
-              finalizedAt: new Date().toISOString(),
-            };
-          } else {
-            pendingMessages.splice(pendingIndex, 1);
-          }
-          setSessionMessages(payload.sessionId, pendingMessages, `session_${payload.sessionId}`);
-        }
-        state.pendingStreams.delete(payload.streamId);
-        segState.segmentIndex += 1;
-        // The tool boundary opens a segment main has NOT named, so a reset's
-        // authoritative-id latch (renderer-stream-handler-live-events.js) no
-        // longer describes the current segment. Left set, the post-tool text
-        // resolved to the PRE-tool id and merged into the row above it.
-        segState.authoritativeAssistantMessageId = '';
-        segState.authoritativeAssistantSegmentIndex = null;
-        // New segment starts at the current cumulative aggregate length so a
-        // mixed-iteration preamble isn't repeated in the post-tool segment (W3.6).
-        beginSegment(segState);
-      }
+      const streamTools = state.toolCallsByStream.get(payload.streamId) || [];
+      const existingToolEntry = streamTools.find((tool) => tool.callId === callId);
+      const boundaryAccepted = existingToolEntry?.segmentBoundaryApplied !== true
+        && String(payload.status || 'running') !== 'pending_approval';
+      if (boundaryAccepted) finishAssistantSegment(payload);
       const summary = String(payload.summary || '');
       const status = String(payload.status || 'running');
       if (status === 'running') {
         publishToolStartImpulse({ sessionId: payload.sessionId, streamId: payload.streamId, timeStamp: payload.timeStamp });
       }
       const input = payload.input && typeof payload.input === 'object' ? payload.input : {};
-      const streamTools = state.toolCallsByStream.get(payload.streamId) || [];
-      const existingToolEntry = streamTools.find((tool) => tool.callId === callId);
       if (existingToolEntry) {
         existingToolEntry.toolName = String(payload.toolName || existingToolEntry.toolName || '');
         existingToolEntry.status = status;
         existingToolEntry.input = Object.keys(input).length > 0 ? input : existingToolEntry.input;
         existingToolEntry.summary = summary || existingToolEntry.summary;
+        if (boundaryAccepted) existingToolEntry.segmentBoundaryApplied = true;
       } else {
-        streamTools.push({ callId, toolName: String(payload.toolName || ''), status, input, summary });
+        streamTools.push({ callId, toolName: String(payload.toolName || ''), status, input, summary, segmentBoundaryApplied: boundaryAccepted });
       }
       state.toolCallsByStream.set(payload.streamId, streamTools);
       const activeMessages = [...getSessionMessages(payload.sessionId)];
@@ -341,7 +349,7 @@
         : null;
       const pillMessage = composerCopy && composerCopy.message
         ? composerCopy.message
-        : (status === 'pending_approval' ? 'Approval needed' : 'Running tool\u2026');
+        : (status === 'pending_approval' ? jt('chat.toolStatus.approvalNeeded', 'Approval needed') : jt('chat.toolStatus.runningTool', 'Running tool\u2026'));
       const pillSource = status === 'pending_approval' ? PILL_SOURCES.TURN_NEEDS_APPROVAL : PILL_SOURCES.TURN_RUNNING_TOOL;
       const otherPillSource = status === 'pending_approval' ? PILL_SOURCES.TURN_RUNNING_TOOL : PILL_SOURCES.TURN_NEEDS_APPROVAL;
       setSessionTurnStatusPill(payload.sessionId, pillSource, {
@@ -444,7 +452,7 @@
         };
         const planMessageId = `plan_document_${String(planDocument.plan_id || callId)}`;
         const existingPlanIndex = activeMessages.findIndex((message) => message.id === planMessageId);
-        const planMessage = createNormalizedMessage('assistant', String(planDocument.title || 'Implementation plan'), {
+        const planMessage = createNormalizedMessage('assistant', String(planDocument.title || jt('chat.planDocument.defaultTitle', 'Implementation plan')), {
           id: planMessageId,
           kind: 'plan_document',
           plan_document: planDocument,
@@ -465,7 +473,7 @@
         ? approvalTurnPhaseApi.phaseToComposerCopy('needs_approval', { approvalToolName })
         : null;
       setSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL, {
-        message: approvalCopy && approvalCopy.message ? approvalCopy.message : 'Approval needed',
+        message: approvalCopy && approvalCopy.message ? approvalCopy.message : jt('chat.toolStatus.approvalNeeded', 'Approval needed'),
         tone: approvalCopy ? approvalCopy.tone : 'warning',
         spinner: approvalCopy ? approvalCopy.spinner : false,
         badgeText: approvalCopy ? approvalCopy.badgeText : 'Approval',

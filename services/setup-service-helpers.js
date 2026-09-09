@@ -3,13 +3,19 @@
 // only — see setup-service.js for the SetupService class that consumes these.
 
 const { normalizeString } = require('./backend/path-utils');
-const { DEFAULT_SETUP_STEPS, normalizeSetupSteps } = require('./shell-config-setup-state');
+const { t } = require('./i18n-main');
+const {
+  DEFAULT_SETUP_STEPS,
+  normalizeSetupState,
+  normalizeSetupSteps,
+} = require('./shell-config-setup-state');
 
 const TERMINAL_STEP_STATUSES = Object.freeze(['done', 'skipped']);
 
 function toSnakeSetupSteps(steps = {}) {
   const normalized = normalizeSetupSteps(steps);
   return {
+    acknowledgement: normalized.acknowledgement || DEFAULT_SETUP_STEPS.acknowledgement,
     workspace_root: normalized.workspaceRoot || DEFAULT_SETUP_STEPS.workspaceRoot,
     local_model: normalized.localModel || DEFAULT_SETUP_STEPS.localModel,
     endpoint: normalized.endpoint || DEFAULT_SETUP_STEPS.endpoint,
@@ -20,6 +26,7 @@ function toSnakeSetupSteps(steps = {}) {
 }
 
 function toSnakeSetupState(setup = {}) {
+  const normalizedSetup = normalizeSetupState(setup);
   const steps = toSnakeSetupSteps(setup.steps || {});
   return {
     seen: setup.seen === true,
@@ -28,6 +35,8 @@ function toSnakeSetupState(setup = {}) {
     first_run_completed: setup.firstRunCompleted === true || setup.first_run_completed === true,
     completed_at: normalizeString(setup.completedAt || setup.completed_at),
     updated_at: normalizeString(setup.updatedAt || setup.updated_at),
+    acknowledged_version: normalizedSetup.acknowledgedVersion,
+    acknowledged_at: normalizedSetup.acknowledgedAt,
     steps,
   };
 }
@@ -59,14 +68,15 @@ function normalizeWorkspaceRootStatus(value, hasWorkspaceRoot) {
   return {
     state: hasWorkspaceRoot ? 'invalid' : 'missing',
     message: hasWorkspaceRoot
-      ? 'The configured workspace root could not be verified.'
-      : 'No workspace root is configured.',
+      ? t('main.setup.workspaceRootUnverified', 'The configured workspace root could not be verified.')
+      : t('main.setup.workspaceRootNotConfigured', 'No workspace root is configured.'),
   };
 }
 
 function toCamelSetupSteps(steps = {}) {
   const normalized = toSnakeSetupSteps(steps);
   return {
+    acknowledgement: normalized.acknowledgement,
     workspaceRoot: normalized.workspace_root,
     localModel: normalized.local_model,
     endpoint: normalized.endpoint,
@@ -115,7 +125,8 @@ function withTimeout(promise, timeoutMs) {
 function stepsEqual(left, right) {
   const a = toSnakeSetupSteps(left);
   const b = toSnakeSetupSteps(right);
-  return a.workspace_root === b.workspace_root
+  return a.acknowledgement === b.acknowledgement
+    && a.workspace_root === b.workspace_root
     && a.local_model === b.local_model
     && a.endpoint === b.endpoint
     && a.personality === b.personality

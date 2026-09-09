@@ -16,6 +16,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SPECIALIZED_TOOL_KINDS = new Set([
     'Bash',
     'run_command',
@@ -126,7 +127,7 @@
         mermaidUtils.createMermaidFrame(hostNode, mermaidSource, {
           requestKey: previewId,
           onFailure: function () {
-            hostNode.innerHTML = '<div class="tool-call-empty">Preview unavailable. Showing Mermaid source.</div>';
+            hostNode.innerHTML = '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.previewUnavailableSource', 'Preview unavailable. Showing Mermaid source.')) + '</div>';
           },
         });
       }, 0);
@@ -391,39 +392,39 @@
         parts.push(section('Args', extraArgs));
       }
       if (command) {
-        parts.push(section('Command preview', CodeBlock.codeblockTruncated({
-          code: command, language: 'bash', label: 'Command preview', copyable: true,
+        parts.push(section(jt('chat.toolShell.commandPreview', 'Command preview'), CodeBlock.codeblockTruncated({
+          code: command, language: 'bash', label: jt('chat.toolShell.commandPreview', 'Command preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-command',
-          ariaLabel: 'Command preview', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.commandPreview', 'Command preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (stdout) {
         parts.push(section('Output', CodeBlock.codeblockTruncated({
-          code: stdoutDisplay, label: 'Output preview', copyable: true,
+          code: stdoutDisplay, label: jt('chat.toolShell.outputPreview', 'Output preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stdout',
-          ariaLabel: 'Command output', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.commandOutput', 'Command output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (stderr) {
         parts.push(section('Stderr', CodeBlock.codeblockTruncated({
-          code: stderr, label: 'Stderr preview', copyable: true,
+          code: stderr, label: jt('chat.toolShell.stderrPreview', 'Stderr preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stderr',
-          ariaLabel: 'Standard error', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.standardError', 'Standard error'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }), model.isError));
       }
       if (fallbackOutput) {
         parts.push(section('Output', CodeBlock.codeblockTruncated({
-          code: fallbackOutput, label: 'Output preview', copyable: true,
+          code: fallbackOutput, label: jt('chat.toolShell.outputPreview', 'Output preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-output',
-          ariaLabel: 'Command output', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.commandOutput', 'Command output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }), model.isError));
       }
 
       var exitLabel = '';
       if (exitCode != null) {
-        exitLabel = 'exit ' + exitCode + (timedOut ? ' (timed out)' : '');
+        exitLabel = timedOut ? jt('chat.toolShell.exitTimedOut', 'exit {code} (timed out)', { code: exitCode }) : jt('chat.toolShell.exitCode', 'exit {code}', { code: exitCode });
       } else if (timedOut) {
-        exitLabel = 'timed out';
+        exitLabel = jt('chat.toolShell.timedOut', 'timed out');
       }
       if (exitLabel && badge) {
         var exitTone = exitCode === 0 && !timedOut ? 'success' : 'danger';
@@ -458,13 +459,13 @@
       }
       if (output) {
         parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: 'File preview', copyable: true,
+          code: output, label: jt('chat.toolShell.filePreview', 'File preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-read',
-          ariaLabel: 'File contents' + (rangeLabel ? ' of ' + rangeLabel : ''),
+          ariaLabel: rangeLabel ? jt('chat.toolShell.fileContentsRange', 'File contents of {range}', { range: rangeLabel }).replace('{range}', function () { return String(rangeLabel); }) : jt('chat.toolShell.fileContents', 'File contents'),
           maxChars: MAX_SHELL_OUTPUT_CHARS,
         }));
       } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">No content</div>');
+        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noContent', 'No content')) + '</div>');
       }
 
       return shellHeader(model) + shellContent(model, parts.join(''));
@@ -522,7 +523,7 @@
       var output = String(model.outputText || '').trim();
       if (output) {
         parts.push(CodeBlock.codeblockTruncated({
-          code: output, ariaLabel: 'Write result', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          code: output, ariaLabel: jt('chat.toolShell.writeResult', 'Write result'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }));
       }
 
@@ -544,7 +545,7 @@
             + '</div>');
         }
       } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">No matches</div>');
+        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMatches', 'No matches')) + '</div>');
       }
 
       return shellHeader(model) + shellContent(model, parts.join(''));
@@ -557,12 +558,12 @@
       var parts = [];
       if (output) {
         parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: 'Search preview', copyable: true,
+          code: output, label: jt('chat.toolShell.searchPreview', 'Search preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-grep',
-          ariaLabel: 'Search results', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.searchResults', 'Search results'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }));
       } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">No matches</div>');
+        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMatches', 'No matches')) + '</div>');
       }
 
       return shellHeader(model) + shellContent(model, parts.join(''));
@@ -601,44 +602,44 @@
         parts.push(section('Args', extraArgs));
       }
       if (code) {
-        parts.push(section('Input preview', CodeBlock.codeblockTruncated({
-          code: code, language: 'python', label: 'Input preview', copyable: true,
+        parts.push(section(jt('chat.toolShell.inputPreview', 'Input preview'), CodeBlock.codeblockTruncated({
+          code: code, language: 'python', label: jt('chat.toolShell.inputPreview', 'Input preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-input',
-          ariaLabel: 'Python input preview', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.pythonInputPreview', 'Python input preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (stdout) {
         parts.push(section('Stdout', CodeBlock.codeblockTruncated({
-          code: stdout, label: 'Stdout preview', copyable: true,
+          code: stdout, label: jt('chat.toolShell.stdoutPreview', 'Stdout preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stdout',
-          ariaLabel: 'Standard output', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.standardOutput', 'Standard output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (stderr) {
-        parts.push(section('Stderr preview', CodeBlock.codeblockTruncated({
-          code: stderr, label: 'Stderr preview', copyable: true,
+        parts.push(section(jt('chat.toolShell.stderrPreview', 'Stderr preview'), CodeBlock.codeblockTruncated({
+          code: stderr, label: jt('chat.toolShell.stderrPreview', 'Stderr preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stderr',
-          ariaLabel: 'Standard error preview', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.standardErrorPreview', 'Standard error preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (lastExpr) {
-        parts.push(section('Result preview', CodeBlock.codeblockTruncated({
-          code: lastExpr, label: 'Result preview', copyable: true,
+        parts.push(section(jt('chat.toolShell.resultPreview', 'Result preview'), CodeBlock.codeblockTruncated({
+          code: lastExpr, label: jt('chat.toolShell.resultPreview', 'Result preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-result',
-          ariaLabel: 'Return value preview', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.returnValuePreview', 'Return value preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
       if (safeImages.length) {
         parts.push(section('Images', '<div>'
           + safeImages.map(function (src) {
             return '<img class="python-output-image" src="'
-              + escapeHtml(String(src || '')) + '" alt="Python output image">';
+              + escapeHtml(String(src || '')) + '" alt="' + escapeHtml(jt('chat.toolShell.pythonOutputImageAlt', 'Python output image')) + '">';
           }).join('')
           + '</div>'));
       }
       if (blockedImageCount > 0) {
         parts.push(section('Images', '<div class="tool-call-empty">'
-          + escapeHtml(String(blockedImageCount) + ' image output(s) are unavailable.')
+          + escapeHtml(jt('chat.toolShell.imagesUnavailable', '{count} image output(s) are unavailable.', { count: blockedImageCount }))
           + '</div>'));
       }
       if (tables.length && sanitizeHtmlFragment) {
@@ -649,11 +650,11 @@
         }).join('')));
       }
       if (error) {
-        parts.push(section('Error preview', CodeBlock.codeblockTruncated({
-          code: String(error.traceback || error.message || ''), label: 'Error preview',
+        parts.push(section(jt('chat.toolShell.errorPreview', 'Error preview'), CodeBlock.codeblockTruncated({
+          code: String(error.traceback || error.message || ''), label: jt('chat.toolShell.errorPreview', 'Error preview'),
           copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-error',
-          ariaLabel: 'Python error preview', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.pythonErrorPreview', 'Python error preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
           className: 'python-output-error',
         }), true));
       }
@@ -690,12 +691,12 @@
         }
       } else if (output) {
         parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: 'Search preview', copyable: true,
+          code: output, label: jt('chat.toolShell.searchPreview', 'Search preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-search',
-          ariaLabel: 'Search results', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.searchResults', 'Search results'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }));
       } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">No results</div>');
+        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noResults', 'No results')) + '</div>');
       }
 
       return shellHeader(model) + shellContent(model, parts.join(''));
@@ -708,12 +709,12 @@
       var parts = [];
       if (output) {
         parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: 'Content preview', copyable: true,
+          code: output, label: jt('chat.toolShell.contentPreview', 'Content preview'), copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-fetch',
-          ariaLabel: 'Fetched content', maxChars: MAX_SHELL_OUTPUT_CHARS,
+          ariaLabel: jt('chat.toolShell.fetchedContent', 'Fetched content'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         }));
       } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">No content</div>');
+        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noContent', 'No content')) + '</div>');
       }
       return shellHeader(model) + shellContent(model, parts.join(''));
     }
@@ -732,7 +733,7 @@
       if (!mermaidText) {
         return shellHeader(model) + shellContent(
           model,
-          '<div class="tool-call-empty">No Mermaid output available.</div>'
+          '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMermaidOutput', 'No Mermaid output available.')) + '</div>'
         );
       }
       var previewIdToken = sanitizeMermaidPreviewToken(model.domToken || model.callId || 'preview');
@@ -743,20 +744,20 @@
        * it is visible without expanding the card. The disclosure keeps the
        * Mermaid source + metadata. */
       var previewMarkup = previewStarted
-        ? '<div class="tool-mermaid-preview" id="' + escapeHtml(previewId) + '"><div class="tool-call-empty">Rendering preview...</div></div>'
+        ? '<div class="tool-mermaid-preview" id="' + escapeHtml(previewId) + '"><div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.renderingPreview', 'Rendering preview...')) + '</div></div>'
         : '';
       var parts = [
         section('Mermaid', CodeBlock.codeblockTruncated({
           code: mermaidText,
-          language: 'mermaid', label: 'Mermaid preview',
+          language: 'mermaid', label: jt('chat.toolShell.mermaidPreview', 'Mermaid preview'),
           copyable: true,
           copyId: 'tool-copy-' + (model.domToken || model.callId) + '-mermaid',
-          ariaLabel: 'Mermaid source',
+          ariaLabel: jt('chat.toolShell.mermaidSource', 'Mermaid source'),
           maxChars: MAX_SHELL_OUTPUT_CHARS,
         })),
       ];
       if (!previewStarted) {
-        parts.unshift(section('Preview', '<div class="tool-call-empty">Preview unavailable. Showing Mermaid source.</div>'));
+        parts.unshift(section('Preview', '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.previewUnavailableSource', 'Preview unavailable. Showing Mermaid source.')) + '</div>'));
       }
       if (parsed && typeof parsed === 'object' && parsed.diagram_type) {
         parts.unshift('<div class="tool-call-output-meta">Type: ' + escapeHtml(String(parsed.diagram_type)) + '</div>');
@@ -786,7 +787,7 @@
             + '<span class="tool-monitor-event-text">' + escapeHtml(event.text) + '</span>'
             + '</div>';
         }).join('')
-        : '<div class="tool-call-empty">No monitor events recorded yet.</div>';
+        : '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMonitorEvents', 'No monitor events recorded yet.')) + '</div>';
       var body = '<div class="tool-monitor-panel" data-monitor-state="' + escapeHtml(monitor.state) + '">'
         + '<div class="tool-monitor-heading">'
         + '<div class="tool-monitor-description">' + escapeHtml(description) + '</div>'

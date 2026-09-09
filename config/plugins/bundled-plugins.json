@@ -9,6 +9,15 @@
       "package_sha256": "2a1ee3c1644aee05473b80f6ebdb9dbb274e065e8136c3f4f57d2af3ac0ea94f",
       "signing_key_id": "7ed60652328f0fbbdb7417c97a9fbd4f2f54ef223af774e9d83ddf213a1291f5",
       "status": "pinned"
+    },
+    {
+      "publisher_id": "jenny-official",
+      "plugin_id": "remote-control",
+      "version": "1.0.0",
+      "package_resource": "plugins/remote-control.jenny-plugin",
+      "package_sha256": "7be2e187fdfe0681047a1e458b8497ac626faf2c5a74431967f60635ba1777c9",
+      "signing_key_id": "7ed60652328f0fbbdb7417c97a9fbd4f2f54ef223af774e9d83ddf213a1291f5",
+      "status": "pinned"
     }
   ]
 }

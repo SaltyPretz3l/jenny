@@ -6,6 +6,7 @@
   root.rendererSettingsHomeSection = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const asyncFence = globalThis.rendererAsyncFence
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
   const CAPTURE_MODES = ['append', 'overwrite'];
@@ -66,17 +67,17 @@
     if (typeof selectField !== 'function' || typeof toggleSwitch !== 'function') return;
     const settings = readSettings(state);
     container.innerHTML = [
-      selectField({ id: 'homeScratchpadCaptureSelect', label: 'Quick-capture mode', value: settings.captureMode,
-        options: [{ value: 'append', label: 'Append a timestamped line' }, { value: 'overwrite', label: 'Replace the note' }],
-        ariaLabel: 'Quick-capture mode', dataset: { 'home-pref': 'captureMode' } }),
+      selectField({ id: 'homeScratchpadCaptureSelect', label: jt('settings.home.quickCaptureMode', 'Quick-capture mode'), value: settings.captureMode,
+        options: [{ value: 'append', label: jt('settings.home.appendTimestampedLine', 'Append a timestamped line') }, { value: 'overwrite', label: jt('settings.home.replaceNote', 'Replace the note') }],
+        ariaLabel: jt('settings.home.quickCaptureMode', 'Quick-capture mode'), dataset: { 'home-pref': 'captureMode' } }),
       toggleSwitch({ id: 'homeScratchpadGlobalCaptureToggle',
-        label: 'Ctrl+Shift+Space quick capture (while Jenny is focused)', checked: settings.globalCapture }),
-      toggleSwitch({ id: 'homeContextualTipsToggle', label: 'Show contextual tips',
+        label: jt('settings.home.quickCaptureShortcut', 'Ctrl+Shift+Space quick capture (while Jenny is focused)'), checked: settings.globalCapture }),
+      toggleSwitch({ id: 'homeContextualTipsToggle', label: jt('settings.home.showContextualTips', 'Show contextual tips'),
         checked: settings.showContextualTips }),
     ].join('');
-    if (badge) badge.textContent = 'Home';
+    if (badge) badge.textContent = jt('settings.home.title', 'Home');
     if (status && status.dataset.state !== 'error') {
-      status.textContent = 'Home preferences are saved across restarts.';
+      status.textContent = jt('settings.home.preferencesSaved', 'Home preferences are saved across restarts.');
       status.dataset.state = '';
     }
   }
@@ -109,7 +110,7 @@
     }
     async function persistPref(pref, value, api) {
       if (typeof api?.updateConfig !== 'function') {
-        showStatus('Home preferences are unavailable.', true); rerender(); return;
+        showStatus(jt('settings.home.preferencesUnavailable', 'Home preferences are unavailable.'), true); rerender(); return;
       }
       try {
         await hydrate();
@@ -123,15 +124,15 @@
           patch = { showContextualTips: value === true };
         }
         if (!patch) { rerender(); return; }
-        showStatus('Saving Home preferences…', false);
+        showStatus(jt('settings.home.preferencesSaving', 'Saving Home preferences…'), false);
         const expected = expectedHomeConfig(state.homeConfig, patch);
         const config = await api.updateConfig(patch);
         if (!acknowledgedPreference(config, expected)) throw new Error('Mismatched acknowledgement');
         state.homeConfig = config;
-        showStatus('Home preferences saved.', false);
+        showStatus(jt('settings.home.preferencesSavedStatus', 'Home preferences saved.'), false);
         rerender();
       } catch (_error) {
-        showStatus('Could not save Home preferences. Your previous setting was restored.', true);
+        showStatus(jt('settings.home.preferencesSaveFailed', 'Could not save Home preferences. Your previous setting was restored.'), true);
         rerender();
       }
     }
@@ -157,7 +158,7 @@
         if (bindingFence.isDisposed()) return;
         if (!userTouched && isCompleteHomeConfig(config)) { state.homeConfig = config; rerender(); }
       }).catch(() => {
-        if (!bindingFence.isDisposed()) showStatus('Could not load Home preferences.', true);
+        if (!bindingFence.isDisposed()) showStatus(jt('settings.home.preferencesLoadFailed', 'Could not load Home preferences.'), true);
       });
     }
   }

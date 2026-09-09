@@ -39,6 +39,7 @@ function setWorkspaceWidths(window, doc, workspaceWidth = 1600) {
 
 test('queued images are not artifacts until send, then persisted image artifacts render in the review panel', async () => {
   const app = await loadRendererApp({
+    shell: { chat: { persistAcceptedUserTurn: true } },
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
   });
   const { window } = app;

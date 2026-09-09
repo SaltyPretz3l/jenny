@@ -13,6 +13,7 @@
   }
   root.rendererDashboardCalendar = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   const DEFAULT_SCROLL_TOP_PX = 7 * 60; // first build lands at 07:00
@@ -129,6 +130,20 @@
       return viewMode;
     }
 
+    // Chat focus is one-shot, including malformed day keys.
+    function consumeFocusIntent(ctx, now) {
+      const key = String(ctx?.state?.ui?.homeCalendarFocusDay || '').trim();
+      if (!key) return;
+      ctx.state.ui.homeCalendarFocusDay = '';
+      const day = gridModule.parseLocalDateTime(`${key}T00:00`);
+      if (!day || gridModule.formatLocalDate(day) !== key) return;
+      selectedDayKey = key;
+      weekOffset = gridModule.computeWeekOffsetForDate(now, day);
+      pendingFocusSelector = currentViewMode(ctx) === 'month'
+        ? `[data-cal-month-day="${key}"]` : `[data-cal-day-cell="${key}"]`;
+      pendingAnnounce = jt("dashboard.calendar.weekOf", "Week of {range}", { range: String(gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(day, 0))) });
+    }
+
     // Persist the full calendar config object (feeds + view mode) so a partial
     // write can never drop the sibling key. onHomeConfig folds the echo back
     // into the shared state slice (wired through the manager).
@@ -156,7 +171,7 @@
       }
       viewMode = next;
       selectedDayKey = '';
-      pendingAnnounce = { agenda: 'Agenda view', week: 'Week view', month: 'Month view' }[next] || '';
+      pendingAnnounce = { agenda: jt('dashboard.calendar.agendaView', 'Agenda view'), week: jt('dashboard.calendar.weekView', 'Week view'), month: jt('dashboard.calendar.monthView', 'Month view') }[next] || '';
       persistViewMode(next, ctx);
       requestRender();
     }
@@ -174,7 +189,7 @@
         }
         requestRender();
       } catch (error) {
-        feedsError = String(error?.message || error || 'Could not update feeds.');
+        feedsError = String(error?.message || error || jt('dashboard.calendar.updateFeedsFailed', 'Could not update feeds.'));
         requestRender();
       } finally {
         if (pendingFeeds === nextFeeds) pendingFeeds = null;
@@ -277,15 +292,15 @@
           snapshot = await shell.calendar.createEvent(payload);
         }
         pendingAnnounce = eventId
-          ? `${eventTitle} updated${splitOccurrence ? ' (this event)' : ''}`
-          : `${eventTitle} created`;
+          ? jt('dashboard.calendar.eventUpdated', '{title} updated{scope}', { title: eventTitle, scope: splitOccurrence ? jt('dashboard.calendar.thisEventSuffix', ' (this event)') : '' })
+          : jt('dashboard.calendar.eventCreated', '{title} created', { title: eventTitle });
         closeForm(true);
         if (snapshot && onSnapshot) {
           onSnapshot(snapshot);
         }
         requestRender();
       } catch (mutationError) {
-        form.error = String(mutationError?.message || mutationError || 'Could not save the event.');
+        form.error = String(mutationError?.message || mutationError || jt('dashboard.calendar.saveEventFailed', 'Could not save the event.'));
         requestRender();
       } finally {
         formSaveInFlight = false;
@@ -300,7 +315,7 @@
       const eventTitle = String(form?.values?.title || '').trim() || 'Event';
       try {
         const snapshot = await shell.calendar.deleteEvent(eventId);
-        pendingAnnounce = `${eventTitle} deleted`;
+        pendingAnnounce = jt('dashboard.calendar.eventDeleted', '{title} deleted', { title: eventTitle });
         closeForm(true);
         if (snapshot && onSnapshot) {
           onSnapshot(snapshot);
@@ -308,7 +323,7 @@
         requestRender();
       } catch (mutationError) {
         if (form) {
-          form.error = String(mutationError?.message || mutationError || 'Could not delete the event.');
+          form.error = String(mutationError?.message || mutationError || jt('dashboard.calendar.deleteEventFailed', 'Could not delete the event.'));
         }
         requestRender();
       }
@@ -409,13 +424,13 @@
         if (input) {
           input.value = '';
         }
-        pendingAnnounce = `${String(title || '').trim() || 'Event'} created`;
+        pendingAnnounce = jt('dashboard.calendar.eventCreated', '{title} created', { title: String(title || '').trim() || jt('dashboard.calendar.untitledEvent', 'Event') });
         if (snapshot && onSnapshot) {
           onSnapshot(snapshot);
         }
         requestRender();
       } catch (error) {
-        quickAddError = String(error?.message || error || 'Could not add the event.');
+        quickAddError = String(error?.message || error || jt('dashboard.calendar.addEventFailed', 'Could not add the event.'));
         quickAddPending = null;
         requestRender();
       }
@@ -440,7 +455,7 @@
         ? agendaModule.parseQuickAdd(text, nowProvider())
         : null;
       if (!parsed || parsed.ok !== true) {
-        quickAddError = 'Add an event title — try "Lunch tomorrow 12:30pm".';
+        quickAddError = jt('dashboard.calendar.addEventTitlePrompt', 'Add an event title — try "Lunch tomorrow 12:30pm".');
         requestRender();
         return;
       }
@@ -607,38 +622,19 @@
         if (selectedDay && typeof gridModule.computeWeekOffsetForDate === 'function') {
           weekOffset = gridModule.computeWeekOffsetForDate(nowProvider(), selectedDay);
           pendingFocusSelector = `[data-cal-day-cell="${selectedDayKey}"]`;
-          pendingAnnounce = `Week of ${gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(selectedDay, 0))}`;
+          pendingAnnounce = jt('dashboard.calendar.weekOf', 'Week of {range}', { range: gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(selectedDay, 0)) });
         }
         requestRender();
         return;
       }
-      const railNav = event.target?.closest?.('[data-cal-rail-nav]');
-      if (railNav) {
+      const navResult = runtimeModule.handleWeekNavClick(event, {
+        body, ctx, weekOffset, gridModule, monthModule, currentViewMode, nowProvider,
+      });
+      if (navResult) {
+        if (navResult.scrolled) return;
         preserveFormValues(body);
-        preserveQuickAdd(body);
-        const visibleWeek = gridModule.computeWeekStart(nowProvider(), weekOffset);
-        const anchor = gridModule.listWeekDays(visibleWeek)[3];
-        const delta = railNav.dataset.calRailNav === 'next' ? 1 : -1;
-        const targetMonth = new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
-        weekOffset = gridModule.computeWeekOffsetForDate(nowProvider(), targetMonth);
-        pendingFocusSelector = `[data-cal-rail-nav="${railNav.dataset.calRailNav}"]`;
-        pendingAnnounce = targetMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-        requestRender();
-        return;
-      }
-      const nav = event.target?.closest?.('[data-cal-nav]');
-      if (nav) {
-        const direction = nav.dataset.calNav;
-        // Month mode is a continuous scroll, not paginated weeks: the chevrons
-        // scroll the canvas and Today re-anchors — no data change, no rebuild.
-        if (currentViewMode(ctx) === 'month' && monthModule) {
-          monthModule.navScroll(body.querySelector('[data-cal-scroll]'), direction);
-          return;
-        }
-        preserveFormValues(body);
-        weekOffset = direction === 'today' ? 0 : weekOffset + (direction === 'next' ? 1 : -1);
-        const weekStart = gridModule.computeWeekStart(nowProvider(), weekOffset);
-        pendingAnnounce = `Week of ${gridModule.formatWeekRangeLabel(weekStart)}`;
+        if (navResult.preserveQuickAdd) preserveQuickAdd(body);
+        ({ weekOffset, pendingFocusSelector, pendingAnnounce } = navResult);
         requestRender();
         return;
       }
@@ -789,7 +785,7 @@
       const canRetry = Boolean(shell?.calendar?.getState);
       if (!statusRow) {
         body.innerHTML = '<div class="cal-status">'
-          + (canRetry ? 'Loading calendar…' : 'Calendar unavailable.')
+          + escapeHtml(canRetry ? jt('dashboard.calendar.loadingText', 'Loading calendar…') : jt('dashboard.calendar.unavailableText', 'Calendar unavailable.'))
           + '</div>';
         body.dataset.calRenderKey = canRetry ? '__loading__' : '__error__';
         return;
@@ -797,17 +793,17 @@
       if (canRetry) {
         body.innerHTML = '<div class="cal-status">'
           + statusRow({
-            tone: 'pending', spinner: true, label: 'Loading calendar',
-            message: 'Fetching your events…', ariaLive: 'polite',
+            tone: 'pending', spinner: true, label: jt('dashboard.calendar.loadingLabel', 'Loading calendar'),
+            message: jt('dashboard.calendar.fetchingEvents', 'Fetching your events…'), ariaLive: 'polite',
           })
-          + actionButton({ variant: 'ghost', size: 'sm', label: 'Retry', dataset: { 'cal-retry': '1' } })
+          + actionButton({ variant: 'ghost', size: 'sm', label: jt('common.retry', 'Retry'), dataset: { 'cal-retry': '1' } })
           + '</div>';
         body.dataset.calRenderKey = '__loading__';
       } else {
         body.innerHTML = '<div class="cal-status">'
           + statusRow({
-            tone: 'danger', label: 'Calendar unavailable',
-            message: 'Could not reach the calendar service.', ariaLive: 'assertive',
+            tone: 'danger', label: jt('dashboard.calendar.unavailableLabel', 'Calendar unavailable'),
+            message: jt('dashboard.calendar.serviceUnavailable', 'Could not reach the calendar service.'), ariaLive: 'assertive',
           })
           + '</div>';
         body.dataset.calRenderKey = '__error__';
@@ -840,6 +836,7 @@
       }
 
       const now = nowProvider();
+      consumeFocusIntent(ctx, now);
       const mode = currentViewMode(ctx);
       const { instances, categories, feeds } = readCalendarState(ctx);
       const configFeeds = readConfiguredFeeds(ctx);
@@ -1002,7 +999,7 @@
 
     return {
       id: 'calendar',
-      title: 'Calendar',
+      title: jt('dashboard.calendar.title', 'Calendar'),
       render,
     };
   }

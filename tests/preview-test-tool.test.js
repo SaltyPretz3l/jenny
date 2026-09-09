@@ -251,6 +251,7 @@ describe('preview_test / result honesty and bounds', () => {
     const service = stubService({
       screenshotResult: {
         buffer: Buffer.from('png-bytes'),
+        model_image: { buffer: Buffer.from('png-bytes'), width: 1280, height: 800 },
         width: 1280,
         height: 800,
         thumbnail: null,
@@ -269,13 +270,9 @@ describe('preview_test / result honesty and bounds', () => {
       'chat_session_1',
       {
         content: Buffer.from('png-bytes'),
-        mimeType: 'image/png',
-        artifactKind: 'image',
-        title: 'preview_test screenshot',
-        fileName: 'preview-test-screenshot.png',
         width: 1280,
         height: 800,
-        png_validated: true,
+        previewScreenshot: true,
       },
     ]]);
     assert.ok(!result.content.includes(absolutePath));

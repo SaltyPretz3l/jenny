@@ -328,7 +328,7 @@
   gap: 2px;
   position: absolute;
   top: 24px;
-  right: 24px;
+  inset-inline-end: 24px;
   z-index: 2;
   background: color-mix(in srgb, var(--bg-surface) 86%, rgba(12, 20, 31, 0.96));
   backdrop-filter: blur(10px);

@@ -43,7 +43,7 @@ const {
   normalizeCometOverlayPresencePayload,
 } = require('./services/main/comet-overlay-controller');
 const { createMainWindowWithDeps, resolveWindowIconPath } = require('./services/main/main-window-composition');
-const { createRuntimeServicesWithDeps } = require('./services/main/runtime-service-composition');
+const { createRuntimeServicesWithDeps, resolveUiLanguage } = require('./services/main/runtime-service-composition');
 const { createRuntimeShutdownController } = require('./services/main/runtime-shutdown');
 const { scheduleStartupRetentionTasks } = require('./services/main/startup-retention-tasks');
 const dataLifecycleStartup = require('./services/main/data-lifecycle-startup');
@@ -244,7 +244,7 @@ const createWindow = () => createMainWindowWithDeps({
       return 1;
     }
   },
-  getPortableAppearance: () => dataLifecycleStartup.readPortableAppearance(app),
+  getPortableAppearance: () => dataLifecycleStartup.readPortableAppearance(app), getUiLanguage: () => resolveUiLanguage({ shellConfigService }),
 });
 
 function sendToWindow(channel, payload) {
@@ -490,19 +490,16 @@ function getRuntimeShutdownController() {
 
 const emitLifecycleProgress = (...args) => getRuntimeShutdownController().emitLifecycleProgress(...args);
 const startLlamaServerBeforeBackend = () => getRuntimeShutdownController().startLlamaServerBeforeBackend();
-const stopRuntimeBeforeQuit = () => {
-  // Best-effort: tear down the display-media picker's pending IPC state
-  // (installed onto session.defaultSession in app.whenReady) before the rest
-  // of the awaited shutdown sequence runs. displayMediaSourceHandler is a
-  // main.js-owned module-level service, so its disposal is co-located here
-  // rather than threaded into runtime-shutdown.js's stopRuntimeBeforeQuit.
+const stopRuntimeBeforeQuit = (context) => {
+  // Dispose main-owned display-media IPC state before the runtime drain.
+  // Lifecycle cancellation is forwarded to fence late shutdown stages.
   try {
     displayMediaSourceHandler?.dispose();
     backendService?.modelFitObserver?.dispose();
   } catch (_error) {
     // best-effort only
   }
-  return getRuntimeShutdownController().stopRuntimeBeforeQuit();
+  return getRuntimeShutdownController().stopRuntimeBeforeQuit(context);
 };
 const runEmergencyRuntimeShutdownSync = () => getRuntimeShutdownController().runEmergencyRuntimeShutdownSync();
 function startDeferredServices() {
@@ -606,7 +603,9 @@ function startMainProcess() {
           mainLifecycle = new MainLifecycleController({
             appQuit: () => app.quit(),
             appExit: (exitCode = 0) => app.exit(exitCode),
-            stopRuntime: () => stopRuntimeBeforeQuit(),
+            stopRuntime: (context) => stopRuntimeBeforeQuit(context),
+            onEmergencyShutdown: runEmergencyRuntimeShutdownSync,
+            log,
           });
           registerMainProcessLifecycleHandlers(app, mainLifecycle);
           app.on('window-all-closed', () => {

@@ -427,8 +427,7 @@ class MutationChangeSetLifecycle:
         else:
             is_new = False
             requested_id = cast(str, record["change_set_id"])
-            if record["state"] not in {"prepared", "in_progress"}:
-                raise _journal_failure("The mutation change set is already terminal.")
+            _validate_preparation_owner(record, session_id, turn_id)
             if tool_call_id not in record["tool_call_ids"]:
                 cast(list[str], record["tool_call_ids"]).append(tool_call_id)
         pending = self._pending_uncovered.pop((session_id, turn_id), [])
@@ -922,6 +921,25 @@ def _utc_now() -> str:
 
 def _format_utc(value: datetime) -> str:
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _validate_preparation_owner(
+    record: Mapping[str, Any], session_id: str, turn_id: str,
+) -> None:
+    if record["session_id"] != session_id or record["turn_id"] != turn_id:
+        raise _journal_conflict("The mutation change set belongs to another session or turn.")
+    if record["state"] not in {"prepared", "in_progress"}:
+        raise _journal_conflict("The mutation change set is already terminal.")
+
+
+def _journal_conflict(message: str) -> ToolExecutionFailure:
+    """Reject invalid preparation before any workspace mutation or journal append."""
+    return ToolExecutionFailure(
+        code=CMP_TOOL_IO_FAILED,
+        message=message,
+        retryable=False,
+        error_details={"failure_class": "conflict", "effects": "none"},
+    )
 
 
 def _journal_failure(message: str) -> ToolExecutionFailure:

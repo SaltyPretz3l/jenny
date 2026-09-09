@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryChip) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSidebarController(deps) {
     const { state } = deps;
     const { chatView, attachmentTray, attachmentNotice } = deps.dom;
@@ -119,8 +120,8 @@
         domId: 'composerSkillChip',
         iconHtml: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5l1.1 3.4L12.5 6 9.1 7.1 8 10.5 6.9 7.1 3.5 6l3.4-1.1L8 1.5z"/><path d="M12.5 10l.6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6.6-1.9z"/></svg>',
         label: `${pendingSkill.name || pendingSkill.command} ×`,
-        ariaLabel: `Skill attached: ${pendingSkill.name || pendingSkill.command}. Remove`,
-        title: 'Attached skill — click to remove',
+        ariaLabel: jt('sidebar.skills.attachedRemoveLabel', 'Skill attached: {skill}. Remove', { skill: pendingSkill.name || pendingSkill.command }),
+        title: jt('sidebar.skills.attachedRemoveTitle', 'Attached skill — click to remove'),
         className: 'composer-skill-chip',
       }) : '';
       attachmentTray.innerHTML = skillChip + queuedAttachments.map((entry) => {
@@ -135,17 +136,15 @@
               <span class="attachment-chip-name" title="${escapeHtml(entry.displayName)}">${escapeHtml(entry.displayName)}</span>
               <span class="attachment-chip-meta">${escapeHtml(formatAttachmentMeta(entry))}</span>
             </span>
-            <button class="attachment-chip-remove" type="button" data-attachment-remove="${escapeHtml(entry.id)}" aria-label="Remove ${escapeHtml(entry.displayName)}" title="Remove attachment">x</button>
+            <button class="attachment-chip-remove" type="button" data-attachment-remove="${escapeHtml(entry.id)}" aria-label="${escapeHtml(jt('sidebar.attachments.removeLabel', 'Remove {name}', { name: entry.displayName }))}" title="${escapeHtml(jt('sidebar.attachments.removeTitle', 'Remove attachment'))}">x</button>
           </div>`;
       }).join('');
       attachmentTray.querySelector('#composerSkillChip')?.addEventListener('click', () => {
         if (skillState?.clearPendingSkillInvocation?.(state)) renderAttachmentTray();
       });
       if (queuedAttachments.length > 1) {
-        attachmentTray.insertAdjacentHTML(
-          'beforeend',
-          '<button class="attachment-chip attachment-chip-clear" type="button" data-attachment-clear="true" title="Remove all attachments" aria-label="Clear all attachments">Clear all</button>'
-        );
+        const clearAllButton = '<button class="attachment-chip attachment-chip-clear" type="button" data-attachment-clear="true" title="{title}" aria-label="{label}">{text}</button>'.replace('{title}', () => escapeHtml(jt('sidebar.attachments.removeAllTitle', 'Remove all attachments'))).replace('{label}', () => escapeHtml(jt('sidebar.attachments.clearAllLabel', 'Clear all attachments'))).replace('{text}', () => escapeHtml(jt('sidebar.attachments.clearAll', 'Clear all')));
+        attachmentTray.insertAdjacentHTML('beforeend', clearAllButton);
       }
     }
 

@@ -20,17 +20,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (actionButton, selectField, numberInput) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var PHASES = ['idle', 'preflight', 'streaming', 'awaiting-user', 'settling', 'failed'];
   var MOTION_OPTIONS = ['calm', 'standard', 'expressive', 'reduced'];
   var VIEWPORT_PRESETS = [
-    { id: 'gutter', label: 'Gutter (260×760)', width: 260, height: 760 },
-    { id: 'standard', label: 'Standard (900×640)', width: 900, height: 640 },
-    { id: 'ultrawide', label: 'Ultrawide (1600×700)', width: 1600, height: 700 },
+    { id: 'gutter', label: jt('shell.surfaceGallery.viewportGutter', 'Gutter (260×760)'), width: 260, height: 760 },
+    { id: 'standard', label: jt('shell.surfaceGallery.viewportStandard', 'Standard (900×640)'), width: 900, height: 640 },
+    { id: 'ultrawide', label: jt('shell.surfaceGallery.viewportUltrawide', 'Ultrawide (1600×700)'), width: 1600, height: 700 },
   ];
   var DPR_OPTIONS = [1, 1.5, 2];
   var TIER_OPTIONS = ['auto', '1', '0.75', '0.55'];
   var IMPULSE_KINDS = [
-    ['First token', 'first-token'], ['Tool start', 'tool-start'],
+    [jt('shell.surfaceGallery.firstToken', 'First token'), 'first-token'], [jt('shell.surfaceGallery.toolStart', 'Tool start'), 'tool-start'],
     ['Complete', 'complete'], ['Cancel', 'cancel'],
   ];
   // Foundation/Midnight + the 11 palette files; fallback if appearanceUtils isn't reachable.
@@ -212,7 +213,7 @@
 
     function buildSelect(doc, group, options, onChange, ariaLabel) {
       var wrapper = renderPrimitive(doc, selectField({
-        ariaLabel: ariaLabel || 'Gallery pin',
+        ariaLabel: ariaLabel || jt('shell.surfaceGallery.galleryPin', 'Gallery pin'),
         className: 'surface-gallery-select-field',
         options: options.map(function (opt) { return { value: String(opt.value), label: String(opt.label) }; }),
       }));
@@ -257,10 +258,10 @@
     }
 
     function buildPhaseGroup(doc, railEl) {
-      var group = buildGroup(doc, 'Phase + energy (native only)');
+      var group = buildGroup(doc, jt('shell.surfaceGallery.phaseEnergyNative', 'Phase + energy (native only)'));
       buildSelect(doc, group, PHASES.map(idOption), handlePhaseChange, 'Phase');
       buildNumberInput(doc, group, {
-        ariaLabel: 'Target energy', min: 0, max: 1, step: 0.05, value: currentEnergy,
+        ariaLabel: jt('shell.surfaceGallery.targetEnergy', 'Target energy'), min: 0, max: 1, step: 0.05, value: currentEnergy,
       }, handleEnergyChange);
       var impulseWrap = doc.createElement('div');
       impulseWrap.className = 'surface-gallery-impulse-row';
@@ -272,7 +273,7 @@
     }
 
     function buildPointerGroup(doc, railEl) {
-      var group = buildGroup(doc, 'Pointer (native only)');
+      var group = buildGroup(doc, jt('shell.surfaceGallery.pointerNative', 'Pointer (native only)'));
       buildButton(doc, group, 'Sweep', runPointerSweep);
       buildButton(doc, group, 'Click', runPointerClick);
       buildButton(doc, group, 'Press & hold', runPointerPressHold);
@@ -284,13 +285,13 @@
       overlayEl = doc.createElement('section');
       overlayEl.className = 'surface-gallery';
       overlayEl.setAttribute('role', 'dialog');
-      overlayEl.setAttribute('aria-label', 'Surface effect gallery');
+      overlayEl.setAttribute('aria-label', jt('shell.surfaceGallery.ariaLabel', 'Surface effect gallery'));
 
       var railEl = doc.createElement('div');
       railEl.className = 'surface-gallery-rail';
 
       var closeBtn = renderPrimitive(doc, actionButton({
-        label: 'Close gallery', plain: true, className: 'surface-gallery-close',
+        label: jt('shell.surfaceGallery.close', 'Close gallery'), plain: true, className: 'surface-gallery-close',
       }));
       addTrackedListener(closeBtn, 'click', close);
       railEl.appendChild(closeBtn);
@@ -304,16 +305,16 @@
       buildPointerGroup(doc, railEl);
       addSelectGroup(doc, railEl, 'viewportSelect', 'Viewport',
         VIEWPORT_PRESETS.map(function (p) { return { value: p.id, label: p.label }; }), handleViewportChange);
-      addSelectGroup(doc, railEl, 'dprSelect', 'DPR (native only)',
+      addSelectGroup(doc, railEl, 'dprSelect', jt('shell.surfaceGallery.dprNative', 'DPR (native only)'),
         DPR_OPTIONS.map(function (v) { return { value: v, label: String(v) + '×' }; }), handleDprChange);
 
-      var seedGroup = buildGroup(doc, 'Seed (native only)');
+      var seedGroup = buildGroup(doc, jt('shell.surfaceGallery.seedNative', 'Seed (native only)'));
       controls.seedInput = buildNumberInput(doc, seedGroup, {
-        ariaLabel: 'Launch seed', min: 0, max: 0xffffffff, step: 1, value: currentSeed,
+        ariaLabel: jt('shell.surfaceGallery.launchSeed', 'Launch seed'), min: 0, max: 0xffffffff, step: 1, value: currentSeed,
       }, handleSeedChange);
       railEl.appendChild(seedGroup);
 
-      addSelectGroup(doc, railEl, 'tierSelect', 'Quality tier (native only)', TIER_OPTIONS.map(idOption), handleTierChange);
+      addSelectGroup(doc, railEl, 'tierSelect', jt('shell.surfaceGallery.qualityTierNative', 'Quality tier (native only)'), TIER_OPTIONS.map(idOption), handleTierChange);
 
       var stageWrap = doc.createElement('div');
       stageWrap.className = 'surface-gallery-stage-wrap';

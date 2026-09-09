@@ -15,6 +15,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var resolveDependency = sceneUtils && sceneUtils.resolveDependency;
@@ -102,16 +103,15 @@
     function render() {
       if (!rootEl) return;
       var actions = [
-        { id: 'cancel', label: 'Cancel', variant: 'secondary' },
-        { id: 'save', label: 'Save', variant: 'primary' },
-        { id: 'skip', label: 'Skip for now', variant: 'ghost' },
+        { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
+        { id: 'save', label: jt('common.save', 'Save'), variant: 'primary' },
+        { id: 'skip', label: jt('setup.personality.skipForNow', 'Skip for now'), variant: 'ghost' },
       ];
       var html = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: modalId,
-        title: 'Personality and name',
+        title: jt('setup.personality.title', 'Personality and name'),
         eyebrow: sceneUtils.setupStepEyebrow('personality'),
-        summary: 'Give the assistant a name and say how it should sound. '
-          + 'You can change this any time in Settings.',
+        summary: jt('setup.personality.summary', 'Give the assistant a name and say how it should sound. You can change this any time in Settings.'),
         bodyHtml: buildBodyHtml(viewState),
         actions: actions,
       }) : '';
@@ -142,13 +142,13 @@
           await applyAssistantIdentity({ agentName: next.agentName });
         }
         await markStep('personality', 'done');
-        showToastMessage('Personality saved.');
+        showToastMessage(jt('setup.personality.saved', 'Personality saved.'));
         closeModal();
       } catch (error) {
         appendClientLog('WARN', 'setup.personality_save_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        showShellErrorToast('Could not save personality.', { title: 'Setup Step Failed' });
+        showShellErrorToast(jt('setup.personality.saveFailed', 'Could not save personality.'), { title: jt('setup.personality.failureTitle', 'Setup Step Failed') });
       }
     }
 

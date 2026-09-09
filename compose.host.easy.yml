@@ -1,0 +1,32 @@
+# Docker-only guided setup. Runtime restrictions are inherited from one owner.
+name: jenny-host
+services:
+  jenny:
+    extends:
+      file: compose.host.yml
+      service: jenny
+    volumes:
+      - jenny_config:/etc/jenny:ro
+      - jenny_secrets:/run/jenny-secrets:ro
+  sandbox:
+    extends:
+      file: compose.host.yml
+      service: sandbox
+  setup:
+    extends:
+      service: jenny
+    profiles: [setup]
+    entrypoint: [node, server/setup.js]
+    command: [init]
+    restart: "no"
+    healthcheck:
+      disable: true
+    volumes:
+      - jenny_config:/etc/jenny
+      - jenny_secrets:/run/jenny-secrets
+volumes:
+  jenny_control:
+  jenny_profile:
+  jenny_workspace:
+  jenny_config:
+  jenny_secrets:

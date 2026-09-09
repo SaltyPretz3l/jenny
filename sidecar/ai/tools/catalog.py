@@ -10,6 +10,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
+from sidecar.ai.execution_policy import (
+    desktop_command_descriptor_fields,
+    desktop_policy_from_config,
+    desktop_tool_decision,
+)
+from sidecar.ai.host_policy import host_execution_worker_enabled, host_run_command_schema
 from sidecar.ai.tools.config_utils import ConfigField, config_value, normalize_config_field
 from sidecar.ai.tools.manifest_validation import (  # noqa: F401
     BUILTIN_MCP_SURFACE,
@@ -184,9 +190,7 @@ def _validate_manifest_entry(entry: dict[str, Any], *, index: int) -> tuple[Conf
         raise ValueError(f"tool manifest entry {label} parameters must be an object")
     workflow_eligible = entry.get("workflow_eligible", False)
     if not isinstance(workflow_eligible, bool):
-        raise ValueError(
-            f"tool manifest entry {label} workflow_eligible must be a bool"
-        )
+        raise ValueError(f"tool manifest entry {label} workflow_eligible must be a bool")
     if workflow_eligible and (
         entry.get("read_only") is not True or entry.get("side_effecting") is not False
     ):
@@ -209,9 +213,7 @@ def _validate_manifest_entry(entry: dict[str, Any], *, index: int) -> tuple[Conf
         and availability.get("plan_mode_artifact_write") is True
         and name not in {"create_artifact", "mermaid_generate"}
     ):
-        raise ValueError(
-            f"tool manifest entry {label} cannot declare plan_mode_artifact_write"
-        )
+        raise ValueError(f"tool manifest entry {label} cannot declare plan_mode_artifact_write")
     validate_manifest_aliases(entry.get("aliases"), label=label)
     return _normalize_manifest_config_schema(
         entry.get("config_schema"),
@@ -256,8 +258,7 @@ def _validate_manifest_config_field_collisions(
             existing_field
         ) != _config_field_signature(config_field):
             raise ValueError(
-                "tool manifest config_schema field "
-                f"{config_field.key} has conflicting definitions"
+                f"tool manifest config_schema field {config_field.key} has conflicting definitions"
             )
         seen_config_fields.setdefault(config_field.key, config_field)
 
@@ -433,6 +434,8 @@ def _schema_with_runtime_overrides(
         properties = schema.get("properties")
         if isinstance(properties, dict):
             properties.pop("pages", None)
+    if tool_name == "run_command" and host_execution_worker_enabled(config):
+        return host_run_command_schema()
     return schema
 
 
@@ -446,9 +449,15 @@ def _manifest_descriptor(entry: dict[str, Any], *, config: Any | None) -> Canoni
     actions = parse_tool_actions(entry.get("actions"))
     side_effecting = coerce_scalar_side_effecting(bool(entry.get("side_effecting", False)), actions)
     read_only = bool(entry.get("read_only", not side_effecting)) and not side_effecting
+    description = str(entry.get("description") or "").strip()
+    if name == "run_command" and host_execution_worker_enabled(config):
+        description = (
+            "Run a foreground POSIX shell command in an offline disposable workspace copy. "
+            "The copy is discarded after the command; maximum timeout is 120 seconds."
+        )
     return CanonicalToolDescriptor(
         name=name,
-        description=str(entry.get("description") or "").strip(),
+        description=description,
         input_schema=_schema_with_runtime_overrides(name, input_schema, config=config),
         side_effecting=side_effecting,
         read_only=read_only,
@@ -555,6 +564,21 @@ def build_tool_catalog(
             search_hint=normalized.search_hint or current.search_hint,
         )
 
+    if config is not None:
+        try:
+            policy = desktop_policy_from_config(config)
+        except ValueError:
+            return ()
+        if policy.enforced:
+            catalog = {
+                name: descriptor
+                for name, descriptor in catalog.items()
+                if desktop_tool_decision(descriptor, config)[0]
+            }
+            if "run_command" in catalog:
+                catalog["run_command"] = replace(
+                    catalog["run_command"], **desktop_command_descriptor_fields()
+                )
     return tuple(sorted(catalog.values(), key=lambda descriptor: descriptor.name))
 
 

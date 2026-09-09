@@ -6,6 +6,7 @@
   }
   root.rendererSendMessageActions = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSendMessageActions(deps = {}) {
     const {
       appendClientLog = () => {},
@@ -36,7 +37,7 @@
         });
         showComposerActionError(
           new Error(String(followUpBlock.reason || 'Elaborate is unavailable.')),
-          'Elaborate Unavailable'
+          jt('chat.messageActions.elaborateUnavailableTitle', 'Elaborate Unavailable')
         );
         return null;
       }
@@ -65,7 +66,7 @@
         });
         showComposerActionError(
           new Error(String(followUpBlock.reason || 'Regenerate is unavailable.')),
-          'Regenerate Unavailable'
+          jt('chat.messageActions.regenerateUnavailableTitle', 'Regenerate Unavailable')
         );
         return null;
       }
@@ -90,7 +91,7 @@
         });
         showComposerActionError(
           new Error(String(request.reason || 'Regenerate is unavailable.')),
-          'Regenerate Unavailable'
+          jt('chat.messageActions.regenerateUnavailableTitle', 'Regenerate Unavailable')
         );
         return null;
       }

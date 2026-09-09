@@ -11,7 +11,8 @@
   root.rendererDashboardCalendarRail = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   // Sunday-first single letters, matching grid.js's computeWeekStart anchor —
   // the mini-month and the week strip both index straight off this array.
@@ -96,16 +97,16 @@
     if (!start || !end) {
       return '';
     }
-    const title = String(instance.title || '').trim() || '(no title)';
+    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
     const time = `${gridModule.formatTimeShort(start)} – ${gridModule.formatTimeShort(end)}`;
     if (compact) {
       return '<div class="cal-compact-up-next">'
-        + '<span class="cal-rail__eyebrow">Up next</span>'
+        + '<span class="cal-rail__eyebrow">' + escapeHtml(jt('dashboard.calendar.rail.upNext', 'Up next')) + '</span>'
         + `<span class="cal-compact-up-next__text">${escapeHtml(title)} · ${escapeHtml(time)} · <span data-cal-rel="1" data-cal-start="${escapeHtml(instance.start)}">${escapeHtml(formatRelative(now, start))}</span></span>`
         + '</div>';
     }
     return '<section class="cal-rail__section cal-rail__up-next">'
-      + '<div class="cal-rail__eyebrow">Up next</div>'
+      + '<div class="cal-rail__eyebrow">' + escapeHtml(jt('dashboard.calendar.rail.upNext', 'Up next')) + '</div>'
       + `<div class="cal-rail__up-next-title">${escapeHtml(title)}</div>`
       + `<div class="cal-rail__up-next-meta">${escapeHtml(time)} · <span data-cal-rel="1" data-cal-start="${escapeHtml(instance.start)}">${escapeHtml(formatRelative(now, start))}</span></div>`
       + '</section>';
@@ -154,7 +155,7 @@
         plain: true,
         className: `cal-rail-month__day${outside ? ' cal-rail-month__day--outside' : ''}`,
         ariaPressed: dayKey === selectedDayKey,
-        ariaLabel: `${dayKey === todayKey ? 'Today, ' : ''}${fullLabel}, ${dayInstances.length} event${dayInstances.length === 1 ? '' : 's'}`,
+        ariaLabel: dayKey === todayKey ? jtn('dashboard.calendar.rail.todayEventCount', dayInstances.length, { date: fullLabel, count: dayInstances.length }, 'Today, {date}, {count} event', 'Today, {date}, {count} events') : jtn('dashboard.calendar.rail.dateEventCount', dayInstances.length, { date: fullLabel, count: dayInstances.length }, '{date}, {count} event', '{date}, {count} events'),
         dataset: { 'cal-day-cell': dayKey },
         trustedHtml: `<span class="cal-rail-month__number${dayKey === todayKey ? ' cal-rail-month__number--today' : ''}">${day.getDate()}</span>`
           + `<span class="cal-rail-month__dot ${dotInstance ? categoryClass(dotInstance) : ''}" aria-hidden="true"></span>`,
@@ -163,13 +164,13 @@
     const weekdays = WEEKDAY_LABELS.map((label) => `<span>${label}</span>`).join('');
     return '<section class="cal-rail__section cal-rail-month">'
       + '<div class="cal-rail-month__heading">'
-      + `<span class="cal-rail__eyebrow">${escapeHtml(monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))}</span>`
+      + `<span class="cal-rail__eyebrow">${escapeHtml(monthDate.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'long', year: 'numeric' }))}</span>`
       + '<span class="cal-rail-month__nav">'
-      + button({ variant: 'ghost', size: 'sm', label: '‹', ariaLabel: 'Previous month', dataset: { 'cal-rail-nav': 'prev' } })
-      + button({ variant: 'ghost', size: 'sm', label: '›', ariaLabel: 'Next month', dataset: { 'cal-rail-nav': 'next' } })
+      + button({ variant: 'ghost', size: 'sm', label: '‹', ariaLabel: jt('dashboard.calendar.rail.previousMonth', 'Previous month'), dataset: { 'cal-rail-nav': 'prev' } })
+      + button({ variant: 'ghost', size: 'sm', label: '›', ariaLabel: jt('dashboard.calendar.rail.nextMonth', 'Next month'), dataset: { 'cal-rail-nav': 'next' } })
       + '</span></div>'
       + `<div class="cal-rail-month__weekdays" aria-hidden="true">${weekdays}</div>`
-      + `<div class="cal-rail-month__grid" role="group" aria-label="Jump to a date">${days.join('')}</div>`
+      + `<div class="cal-rail-month__grid" role="group" aria-label="${escapeHtml(jt('dashboard.calendar.rail.jumpToDate', 'Jump to a date'))}">${days.join('')}</div>`
       + '</section>';
   }
 
@@ -229,15 +230,14 @@
         className: `cal-week-strip__day${isToday ? ' cal-week-strip__day--today' : ''}`
           + `${entry.dayKey === selectedDayKey ? ' cal-week-strip__day--selected' : ''}`,
         ariaPressed: entry.dayKey === selectedDayKey,
-        ariaLabel: `${isToday ? 'Today, ' : ''}${gridModule.formatFullDateLabel(entry.day)}`
-          + `, ${entry.count} event${entry.count === 1 ? '' : 's'}`,
+        ariaLabel: isToday ? jtn('dashboard.calendar.rail.todayEventCount', entry.count, { date: gridModule.formatFullDateLabel(entry.day), count: entry.count }, 'Today, {date}, {count} event', 'Today, {date}, {count} events') : jtn('dashboard.calendar.rail.dateEventCount', entry.count, { date: gridModule.formatFullDateLabel(entry.day), count: entry.count }, '{date}, {count} event', '{date}, {count} events'),
         dataset: { 'cal-day-cell': entry.dayKey },
         trustedHtml: `<span class="cal-week-strip__letter" aria-hidden="true">${WEEKDAY_LABELS[entry.index]}</span>`
           + `<span class="cal-week-strip__num" aria-hidden="true">${entry.day.getDate()}</span>`
           + `<span class="cal-week-strip__dots" aria-hidden="true">${dots}</span>`,
       });
     });
-    return '<div class="cal-week-strip" role="group" aria-label="Jump to a day this week">'
+    return '<div class="cal-week-strip" role="group" aria-label="' + escapeHtml(jt('dashboard.calendar.rail.jumpToDayThisWeek', 'Jump to a day this week')) + '">'
       + cells.join('')
       + '</div>';
   }
@@ -284,7 +284,7 @@
       return button({
         plain: true,
         className: 'cal-rail__feed-row',
-        ariaLabel: `Manage feed ${feed.name || feed.id}, ${ok ? 'healthy' : 'needs attention'}`,
+        ariaLabel: ok ? jt('dashboard.calendar.rail.manageHealthyFeed', 'Manage feed {name}, healthy', { name: feed.name || feed.id }) : jt('dashboard.calendar.rail.manageFeedNeedsAttention', 'Manage feed {name}, needs attention', { name: feed.name || feed.id }),
         dataset: {
           'cal-feeds-toggle': '1',
           'cal-feed-id': String(feed.id || ''),
@@ -299,7 +299,7 @@
       return '';
     }
     return '<section class="cal-rail__section cal-rail__summary">'
-      + '<div class="cal-rail__eyebrow">This week</div>'
+      + '<div class="cal-rail__eyebrow">' + escapeHtml(jt('dashboard.calendar.rail.thisWeek', 'This week')) + '</div>'
       + categoryRows.join('')
       + feedRows.join('')
       + '</section>';
@@ -331,7 +331,7 @@
     });
     const allDay = safeInstances.filter((instance) => instance.allDay === true);
     const allDayRows = allDay.map((instance) => {
-      const title = String(instance.title || '').trim() || '(no title)';
+      const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
       const dataset = { 'cal-instance': '1' };
       if (instance.instanceId) dataset['cal-instance-id'] = String(instance.instanceId);
       if (instance.readonly === true) dataset['cal-readonly'] = '1';
@@ -339,17 +339,17 @@
       return button({
         plain: true,
         className: `cal-rail__allday-row ${categoryClass(instance)}`,
-        ariaLabel: `${title}, all day${instance.readonly === true ? ', read-only' : ''}`,
+        ariaLabel: instance.readonly === true ? jt('dashboard.calendar.rail.readOnlyAllDayEvent', '{title}, all day, read-only', { title }) : jt('dashboard.calendar.rail.allDayEvent', '{title}, all day', { title }),
         dataset,
         trustedHtml: '<span class="cal-rail__summary-dot" aria-hidden="true"></span>'
           + `<span>${escapeHtml(title)}</span>`,
       });
     });
     return '<section class="cal-rail__section cal-rail__week-summary">'
-      + '<div class="cal-rail__eyebrow">This week</div>'
-      + `<div class="cal-rail__booked">${safeInstances.length} event${safeInstances.length === 1 ? '' : 's'} · ${escapeHtml(formatBookedMinutes(bookedMinutes))} booked</div>`
+      + '<div class="cal-rail__eyebrow">' + escapeHtml(jt('dashboard.calendar.rail.thisWeek', 'This week')) + '</div>'
+      + `<div class="cal-rail__booked">${escapeHtml(jtn('dashboard.calendar.rail.weekBookedSummary', safeInstances.length, { count: safeInstances.length, duration: formatBookedMinutes(bookedMinutes) }, '{count} event · {duration} booked', '{count} events · {duration} booked'))}</div>`
       + (allDayRows.length
-        ? `<div class="cal-rail__allday"><div class="cal-rail__eyebrow">All day</div>${allDayRows.join('')}</div>`
+        ? `<div class="cal-rail__allday"><div class="cal-rail__eyebrow">${escapeHtml(jt('dashboard.calendar.agenda.allDay', 'All day'))}</div>${allDayRows.join('')}</div>`
         : '')
       + '</section>';
   }
@@ -361,12 +361,12 @@
     }
     const upNext = buildUpNextMarkup({ ...opts, gridModule });
     if (opts.mode === 'week') {
-      return '<aside class="cal-rail" aria-label="Calendar summary">'
+      return '<aside class="cal-rail" aria-label="' + escapeHtml(jt('dashboard.calendar.rail.summaryLabel', 'Calendar summary')) + '">'
         + upNext
         + buildWeekSummary({ ...opts, gridModule })
         + '</aside>';
     }
-    return '<aside class="cal-rail" aria-label="Calendar navigation and summary">'
+    return '<aside class="cal-rail" aria-label="' + escapeHtml(jt('dashboard.calendar.rail.navigationSummaryLabel', 'Calendar navigation and summary')) + '">'
       + buildMiniMonth({ ...opts, gridModule })
       + upNext
       + buildAgendaSummary(opts)

@@ -41,7 +41,7 @@
   border: 1px solid var(--border-default, #2a3140);
   border-radius: var(--radius-md, 12px);
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   color: var(--text-primary, #e9eef5);
   transition: border-color var(--transition-fast),
     background-color var(--transition-fast),

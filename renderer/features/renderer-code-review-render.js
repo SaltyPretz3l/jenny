@@ -19,6 +19,8 @@
   }
   root.rendererCodeReviewRender = factory(root.stringUtils || {}, root.inventoryActionButton);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, inventoryActionButton) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const defaultEscape = typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : function fallbackEscape(value) { return String(value == null ? '' : value); };
@@ -40,26 +42,26 @@
 
   const REVIEW_STATE_LABELS = {
     full: '',
-    partial: 'Partial diff',
-    summary_only: 'Summary only',
-    non_text: 'Non-text change',
-    failed: 'Diff unavailable',
+    partial: jt('codeReview.state.partial', 'Partial diff'),
+    summary_only: jt('codeReview.state.summaryOnly', 'Summary only'),
+    non_text: jt('codeReview.state.nonText', 'Non-text change'),
+    failed: jt('codeReview.state.unavailable', 'Diff unavailable'),
   };
 
   const TRUNCATION_REASON_COPY = {
-    line_limit: 'Diff truncated — too many lines for the inline preview.',
-    byte_limit: 'Diff truncated — exceeded the inline byte limit.',
-    hunk_limit: 'Diff truncated — too many hunks for the inline preview.',
-    binary: 'Diff omitted — binary content.',
-    decode_error: 'Diff omitted — file content could not be decoded as text.',
-    diff_generation_failed: 'Diff generation failed. Counts above reflect the bounded metadata only.',
-    unknown: 'Diff truncated.',
+    line_limit: jt('codeReview.truncation.lineLimit', 'Diff truncated — too many lines for the inline preview.'),
+    byte_limit: jt('codeReview.truncation.byteLimit', 'Diff truncated — exceeded the inline byte limit.'),
+    hunk_limit: jt('codeReview.truncation.hunkLimit', 'Diff truncated — too many hunks for the inline preview.'),
+    binary: jt('codeReview.truncation.binary', 'Diff omitted — binary content.'),
+    decode_error: jt('codeReview.truncation.decodeError', 'Diff omitted — file content could not be decoded as text.'),
+    diff_generation_failed: jt('codeReview.truncation.generationFailed', 'Diff generation failed. Counts above reflect the bounded metadata only.'),
+    unknown: jt('codeReview.truncation.unknown', 'Diff truncated.'),
   };
 
   const NO_INLINE_DIFF_COPY = {
-    failed: 'Diff generation failed. Counts above reflect the bounded metadata only.',
-    non_text: 'Non-text change — counts shown above describe the operation only.',
-    summary_only: 'Summary only — diff body was not retained for this change.',
+    failed: jt('codeReview.truncation.generationFailed', 'Diff generation failed. Counts above reflect the bounded metadata only.'),
+    non_text: jt('codeReview.noInline.nonText', 'Non-text change — counts shown above describe the operation only.'),
+    summary_only: jt('codeReview.noInline.summaryOnly', 'Summary only — diff body was not retained for this change.'),
   };
 
   function resolveNoInlineDiffCopy(truncationReason, bodyKind, reviewState) {
@@ -72,7 +74,7 @@
     if (bodyKind === 'summary_only') {
       return NO_INLINE_DIFF_COPY.summary_only;
     }
-    return 'Diff body unavailable.';
+    return jt('codeReview.noInline.unavailable', 'Diff body unavailable.');
   }
 
   function formatCountsLine(additions, deletions) {
@@ -108,7 +110,7 @@
   }
 
   function buildEmptyState(escape) {
-    return `<div class="jenny-code-review-empty">${escape('No Jenny-authored code changes in this session.')}</div>`;
+    return `<div class="jenny-code-review-empty">${escape(jt('codeReview.empty', 'No Jenny-authored code changes in this session.'))}</div>`;
   }
 
   function buildHeaderHtml(scopeResult, escape) {
@@ -119,26 +121,25 @@
     const scopeLabel = SCOPE_LABELS[scopeType] || SCOPE_LABELS.session;
     const filesCount = Number(totals.files) || 0;
     const truncatedFiles = Number(totals.truncatedFiles) || 0;
-    const fileWord = filesCount === 1 ? 'file' : 'files';
     const truncatedNote = truncatedFiles > 0
-      ? ` <span class="jenny-code-review-header-truncated">${escape(`(${truncatedFiles} truncated)`)}</span>`
+      ? ` <span class="jenny-code-review-header-truncated">${escape(jt('codeReview.header.truncatedCount', '({count} truncated)', { count: truncatedFiles }))}</span>`
       : '';
     return `
       <header class="jenny-code-review-header">
-        <span class="kicker kicker--accent jenny-code-review-kicker">Agent Change History</span>
+        <span class="kicker kicker--accent jenny-code-review-kicker">${escape(jt('codeReview.header.history', 'Agent Change History'))}</span>
         <div class="jenny-code-review-title-row">
-          <h2 class="jenny-code-review-title" id="jenny-code-review-title">Jenny Changes</h2>
+          <h2 class="jenny-code-review-title" id="jenny-code-review-title">${escape(jt('codeReview.header.title', 'Jenny Changes'))}</h2>
           ${renderActionButton({
             className: 'jenny-code-review-close',
-            ariaLabel: 'Close code review',
-            title: 'Close code review',
+            ariaLabel: jt('codeReview.close', 'Close code review'),
+            title: jt('codeReview.close', 'Close code review'),
             dataset: { 'jenny-code-review-close': '' },
             trustedHtml: '&times;',
           })}
         </div>
         <div class="jenny-code-review-scope-line">
-          <span class="jenny-code-review-scope-label">${escape(scopeLabel)} scope</span>
-          <span class="jenny-code-review-totals">Jenny operations: ${escape(formatCountsLine(totals.additions, totals.deletions))} across ${escape(String(filesCount))} ${escape(fileWord)}${truncatedNote}</span>
+          <span class="jenny-code-review-scope-label">${escape(jt('codeReview.header.scope', '{scope} scope', { scope: scopeLabel }))}</span>
+          <span class="jenny-code-review-totals">${escape(jtn('codeReview.header.operations', filesCount, { counts: formatCountsLine(totals.additions, totals.deletions), count: filesCount }, 'Jenny operations: {counts} across {count} file', 'Jenny operations: {counts} across {count} files'))}${truncatedNote}</span>
         </div>
       </header>`;
   }
@@ -165,12 +166,12 @@
       ? `<span class="jenny-code-review-file-count">${escape(`${changeCount}×`)}</span>`
       : '';
     const truncatedBadge = truncated
-      ? `<span class="jenny-code-review-file-truncated" title="${escape('Some changes were truncated')}">${escape('truncated')}</span>`
+      ? `<span class="jenny-code-review-file-truncated" title="${escape(jt('codeReview.truncation.someChanges', 'Some changes were truncated'))}">${escape('truncated')}</span>`
       : '';
     const changeRowsHtml = changesForFile.map(function buildChildChange(change) {
       return buildChangeRowHtml(change, selectedChangeId, escape);
     }).join('');
-    const changeListLabel = `Operations in ${path}`;
+    const changeListLabel = jt('codeReview.file.operationsLabel', 'Operations in {path}', { path });
     return `
       <li class="jenny-code-review-file-row${selected ? ' is-selected' : ''}"
           data-jenny-code-review-file-key="${escape(fileKey)}">
@@ -232,10 +233,10 @@
         ${sourceMessageId ? renderActionButton({
           className: 'jenny-code-review-jump',
           tabIndex: -1,
-          ariaLabel: 'Jump to chat',
-          title: 'Jump to chat',
+          ariaLabel: jt('codeReview.jumpToChat', 'Jump to chat'),
+          title: jt('codeReview.jumpToChat', 'Jump to chat'),
           dataset: { 'jenny-jump-to-chat': sourceMessageId },
-          label: 'Jump',
+          label: jt('codeReview.jump', 'Jump'),
         }) : ''}
       </li>`;
   }
@@ -243,7 +244,7 @@
   function buildSelectedChangePaneHtml(change, deps) {
     const { escape, renderDiffHunks } = deps;
     if (!change) {
-      return `<div class="jenny-code-review-selected-empty">${escape('Select a change to inspect its diff.')}</div>`;
+      return `<div class="jenny-code-review-selected-empty">${escape(jt('codeReview.selected.prompt', 'Select a change to inspect its diff.'))}</div>`;
     }
     const path = String(change.path || '');
     const additions = Number(change.additions) || 0;
@@ -272,7 +273,7 @@
           ${sourceMessageId ? renderActionButton({
             className: 'jenny-code-review-jump jenny-code-review-jump--primary',
             dataset: { 'jenny-jump-to-chat': sourceMessageId },
-            label: 'Jump to chat',
+            label: jt('codeReview.jumpToChat', 'Jump to chat'),
           }) : ''}
         </div>
       </div>`;
@@ -337,7 +338,7 @@
         <aside class="jenny-code-review-files">
           <ul class="jenny-code-review-file-list"
               role="listbox"
-              aria-label="${escape('Changed files')}"
+              aria-label="${escape(jt('codeReview.files.label', 'Changed files'))}"
               data-jenny-code-review-selected-change-id="${escape(selectedChangeId)}">
             ${filesHtml}
           </ul>

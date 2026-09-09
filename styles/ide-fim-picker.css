@@ -23,7 +23,7 @@
 
 /* Trailing loaded-state dot, pushed to the right edge of the row. */
 .ide-fim-dot {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: 10px;
   line-height: 1;
   color: var(--text-muted);

@@ -9,6 +9,7 @@
  */
 
 const { parsePngDimensions } = require('./png-metadata-utils');
+const { encodePreviewImage } = require('./preview-vision-image');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -295,6 +296,10 @@ class BrowserSessionService {
         throw new Error('Browser screenshot capture did not return a valid PNG image.');
       }
       let thumbnail = null;
+      let modelImage = null;
+      if (options.modelImage === true) {
+        try { modelImage = encodePreviewImage(captureResult, buffer); } catch (_error) { /* bounded failure */ }
+      }
       try {
         if (typeof captureResult?.resize === 'function' && typeof captureResult?.toBitmap === 'function') {
           const resized = captureResult.resize({ width: Math.min(160, dimensions.width) });
@@ -316,6 +321,7 @@ class BrowserSessionService {
         width: dimensions.width,
         height: dimensions.height,
         thumbnail,
+        model_image: modelImage,
         console_messages: session.consoleMessages.slice(-20),
         page_errors: session.pageErrors.slice(-20),
       };

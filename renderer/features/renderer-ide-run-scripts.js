@@ -30,6 +30,7 @@
   root.rendererIdeRunScripts = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -242,7 +243,7 @@
 
     function buildPanelMarkup() {
       if (typeof actionButton !== 'function') {
-        return '<div class="ide-rail-placeholder">Run output is unavailable in this shell mode.</div>';
+      return '<div class="ide-rail-placeholder">' + escapeHtml(jt('ide.runScripts.outputUnavailable', 'Run output is unavailable in this shell mode.')) + '</div>';
       }
       // Reuses the terminal panel's visual classes so the run view needs no new
       // CSS (consistent console chrome); a distinct data-attr namespace keeps the
@@ -255,7 +256,7 @@
         + actionButton({
           plain: true,
           className: 'ide-terminal-button',
-          title: 'Stop the running task (kills the process tree)',
+          title: jt('ide.runScripts.stopRunningTask', 'Stop the running task (kills the process tree)'),
           trustedHtml: 'Stop',
           disabled: !running,
           dataset: { 'ide-run-action': 'kill' },
@@ -263,7 +264,7 @@
         + actionButton({
           plain: true,
           className: 'ide-terminal-button',
-          title: 'Clear run output',
+          title: jt('ide.runScripts.clearOutput', 'Clear run output'),
           trustedHtml: 'Clear',
           dataset: { 'ide-run-action': 'clear' },
         })
@@ -319,7 +320,7 @@
         // the same word as a clean exit is exactly the dishonesty this surface
         // exists to remove.
         const unconfirmed = !running && killUnconfirmed;
-        status.textContent = running ? 'running' : (unconfirmed ? 'stop unconfirmed' : 'idle');
+        status.textContent = running ? jt('ide.runScripts.statusRunning', 'running') : (unconfirmed ? jt('ide.runScripts.statusStopUnconfirmed', 'stop unconfirmed') : jt('ide.runScripts.statusIdle', 'idle'));
         status.classList.toggle('ide-terminal-status--running', running);
         status.classList.toggle('ide-terminal-status--warn', unconfirmed);
       }
@@ -353,13 +354,13 @@
 
     function friendlyExitNote(payload) {
       if (payload && payload.errorCode) {
-        return '\n[run] ' + (payload.message || 'the task could not run');
+        return '\n[run] ' + (payload.message || jt('ide.runScripts.taskCouldNotRun', 'the task could not run'));
       }
       const code = payload && payload.code != null ? String(payload.code) : '';
       if (payload && payload.status === 'killed') {
         return '\n[run] stopped';
       }
-      return code && code !== '0' ? `\n[run] exited with code ${code}` : '\n[run] finished';
+      return code && code !== '0' ? jt('ide.runScripts.exitedWithCode', '\n[run] exited with code {code}', { code }) : '\n[run] finished';
     }
 
     function finishRun(payload) {
@@ -446,12 +447,12 @@
         return;
       }
       if (running) {
-        toast('A task is already running. Stop it first.');
+        toast(jt('ide.runScripts.taskAlreadyRunning', 'A task is already running. Stop it first.'));
         return;
       }
       const api = getWorkspaceRunTaskApi();
       if (!api || typeof api.start !== 'function' || typeof api.kill !== 'function') {
-        toast('The workspace terminal is unavailable in this shell mode.');
+        toast(jt('ide.runScripts.terminalUnavailable', 'The workspace terminal is unavailable in this shell mode.'));
         return;
       }
       ensureSubscribed();
@@ -477,9 +478,9 @@
         running = false;
         dispatching = false;
         discardPreReadyBuffer(); // a dead dispatch's events must never replay later
-        appendCleanText('\n[run] timed out waiting for the task to start');
+        appendCleanText(jt('ide.runScripts.startTimeoutOutput', '\n[run] timed out waiting for the task to start'));
         emitRunStateChange();
-        toast('The task did not start in time. Try again.');
+        toast(jt('ide.runScripts.startTimeout', 'The task did not start in time. Try again.'));
         appendClientLog('WARN', 'ide.run.start_timeout', {});
       }, startTimeoutMs);
       let result;
@@ -497,7 +498,7 @@
         running = false;
         appendCleanText('\n[run] ' + messageOf(error));
         emitRunStateChange();
-        toast('Could not start the task. ' + messageOf(error));
+        toast(jt('ide.runScripts.startFailedWithMessage', 'Could not start the task. {message}', { message: messageOf(error) }));
         appendClientLog('WARN', 'ide.run.dispatch_failed', { message: messageOf(error) });
         return;
       }
@@ -519,7 +520,7 @@
       if (!result || result.ok === false) {
         running = false;
         discardPreReadyBuffer();
-        const message = (result && result.message) || 'Could not start the task.';
+      const message = (result && result.message) || jt('ide.runScripts.startFailed', 'Could not start the task.');
         appendCleanText('\n[run] ' + message);
         emitRunStateChange();
         toast(message);
@@ -530,9 +531,9 @@
       if (!activeTaskId) {
         running = false;
         discardPreReadyBuffer();
-        appendCleanText('\n[run] could not start the task (no task id)');
+        appendCleanText(jt('ide.runScripts.missingTaskIdOutput', '\n[run] could not start the task (no task id)'));
         emitRunStateChange();
-        toast('Could not start the task (no task id).');
+        toast(jt('ide.runScripts.missingTaskId', 'Could not start the task (no task id).'));
         appendClientLog('WARN', 'ide.run.no_session', {});
         return;
       }
@@ -571,7 +572,7 @@
               return; // confirmed dead, gone, or a newer run already owns the row
             }
             killUnconfirmed = true;
-            appendCleanText('\n[run] stop unconfirmed \u2014 the process tree may still be running');
+            appendCleanText(jt('ide.runScripts.stopUnconfirmedOutput', '\n[run] stop unconfirmed \u2014 the process tree may still be running'));
             emitRunStateChange();
             appendClientLog('WARN', 'ide.run.kill_unconfirmed', {});
           });
@@ -601,13 +602,13 @@
         return;
       }
       if (isDiffTabId(path)) {
-        toast('Open the file itself (not a diff or preview tab) to run it.');
+        toast(jt('ide.runScripts.openFileToRun', 'Open the file itself (not a diff or preview tab) to run it.'));
         return;
       }
       const runner = runnerFor(path);
       if (!runner) {
         const ext = extensionOf(path);
-        toast(`Running ${ext ? `.${ext}` : 'this kind of'} files isn't supported yet.`);
+        toast(ext ? jt('ide.runScripts.unsupportedExtension', "Running .{extension} files isn't supported yet.", { extension: ext }) : jt('ide.runScripts.unsupportedFileType', "Running this kind of files isn't supported yet."));
         return undefined;
       }
       return dispatch(`${runner} ${quoteArg(path, isPosixShell)}`, `${runner} ${baseNameOf(path)}`);
@@ -656,13 +657,13 @@
     function scriptUnavailableMessage(error) {
       switch (error) {
         case 'not-found':
-          return 'No package.json found in this workspace.';
+      return jt('ide.runScripts.noPackageJson', 'No package.json found in this workspace.');
         case 'parse':
-          return 'package.json could not be parsed.';
+      return jt('ide.runScripts.packageJsonInvalid', 'package.json could not be parsed.');
         case 'unavailable':
-          return 'Workspace file access is unavailable in this shell mode.';
+      return jt('ide.runScripts.fileAccessUnavailable', 'Workspace file access is unavailable in this shell mode.');
         default:
-          return 'package.json has no "scripts" to run.';
+      return jt('ide.runScripts.noPackageScripts', 'package.json has no "scripts" to run.');
       }
     }
 
@@ -707,7 +708,7 @@
       pickerSelected = Math.max(0, Math.min(pickerSelected, pickerRows.length - 1));
       pickerResults.innerHTML = pickerRows.length
         ? pickerRows.map((script, index) => buildPickerRow(script, index)).join('')
-        : '<div class="ide-picker-status ide-quick-open-status">No matching scripts.</div>';
+        : '<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.runScripts.noMatchingScripts', 'No matching scripts.')) + '</div>';
       const selected = pickerResults.querySelector('.ide-quick-open-row--selected');
       selected?.scrollIntoView?.({ block: 'nearest' });
     }
@@ -784,11 +785,11 @@
       pickerEl.innerHTML = '<div class="ide-picker-panel ide-quick-open-panel">'
         + textField({
           className: 'ide-picker-field ide-quick-open-field',
-          placeholder: 'Run npm script…',
-          ariaLabel: 'Run npm script',
+          placeholder: jt('ide.runScripts.runNpmScriptEllipsis', 'Run npm script…'),
+          ariaLabel: jt('ide.runScripts.runNpmScript', 'Run npm script'),
           dataset: { 'ide-run-picker-input': '1' },
         })
-        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="npm scripts"></div>'
+        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="' + escapeHtml(jt('ide.runScripts.npmScriptsLabel', 'npm scripts')) + '"></div>'
         + '</div>';
       stage.appendChild(pickerEl);
       pickerInput = pickerEl.querySelector('[data-ide-run-picker-input]')
@@ -804,7 +805,7 @@
     function openScriptPicker(scripts) {
       pickerScripts = Array.isArray(scripts) ? scripts.slice() : [];
       if (!ensurePicker()) {
-        toast('The script picker is unavailable in this view.');
+        toast(jt('ide.runScripts.pickerUnavailable', 'The script picker is unavailable in this view.'));
         return;
       }
       pickerEl.classList.remove('hidden');
@@ -830,14 +831,14 @@
       // selection intents take 1-7, word-wrap 3, debug 8; run follows at 9/10.
       editorHost.addEditorAction({
         id: 'jenny.run-file',
-        label: 'Run this file',
+        label: jt('ide.runScripts.runThisFile', 'Run this file'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 9,
         run: () => runActiveFile(),
       });
       editorHost.addEditorAction({
         id: 'jenny.run-script',
-        label: 'Run npm script…',
+        label: jt('ide.runScripts.runNpmScriptEllipsis', 'Run npm script…'),
         contextMenuGroupId: 'jenny',
         contextMenuOrder: 10,
         run: () => pickAndRunScript(),

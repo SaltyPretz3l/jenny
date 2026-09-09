@@ -11,7 +11,7 @@
   root.inventoryDateField = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -65,7 +65,7 @@
     var min = sanitizeDateValue(o.min);
     var max = sanitizeDateValue(o.max);
     var hint = String(o.hint || '').trim();
-    var ariaLabel = String(o.ariaLabel || label || 'Date input');
+    var ariaLabel = String(o.ariaLabel || label || jt('inventory.dateField.inputLabel', 'Date input'));
     var cls = 'inv-date-field';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;

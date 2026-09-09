@@ -13,6 +13,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var sceneUtils = (root && root.rendererSetupSceneUtils)
     || (typeof require === 'function' ? require('./scene-utils') : null);
   var asyncFence = (root && root.rendererAsyncFence)
@@ -92,11 +93,11 @@
       if (!view.trayStatus || view.trayStatus.detected !== true) return '';
       return ''
         + '<div class="setup-hw-ollama setup-hw-ollama--missing" role="status">'
-        + '<p>The Ollama tray app or Startup shortcut can interrupt Jenny’s managed engine.</p>'
+        + '<p>' + escapeHtml(jt('setup.ollamaGate.trayWarning', 'The Ollama tray app or Startup shortcut can interrupt Jenny’s managed engine.')) + '</p>'
         + '<div class="setup-scene-actions">'
-        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="quitTrayApp">Quit tray app</a>'
-        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="disableTrayStartup">Disable Startup shortcut</a>'
-        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="restartManagedEngine">Restart Jenny engine</a>'
+        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="quitTrayApp">' + escapeHtml(jt('setup.ollamaGate.quitTrayApp', 'Quit tray app')) + '</a>'
+        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="disableTrayStartup">' + escapeHtml(jt('setup.ollamaGate.disableStartupShortcut', 'Disable Startup shortcut')) + '</a>'
+        + '<a href="#" class="inv-action-button inv-action-button--secondary" data-action="restartManagedEngine">' + escapeHtml(jt('setup.ollamaGate.restartJennyEngine', 'Restart Jenny engine')) + '</a>'
         + '</div></div>';
     }
 
@@ -104,21 +105,20 @@
       if (view.phase === 'upgradeRequired') {
         var upgradeSize = view.installPlan.sizeBytes ? ' (' + escapeHtml(formatBytesGb(view.installPlan.sizeBytes)) + ')' : '';
         return '<div class="setup-hw-ollama setup-hw-ollama--missing">'
-          + '<p>Ollama ' + escapeHtml(view.ollama.version || '') + ' is too old. Version '
-          + escapeHtml(view.ollama.minimumVersion || view.installPlan.minimumVersion || '0.30.10') + '+ is required.</p>'
-          + (view.installPlan.available ? installOptInLabel('Download &amp; upgrade Ollama', upgradeSize) : '')
+          + '<p>' + escapeHtml(jt('setup.ollamaGate.versionTooOld', 'Ollama {version} is too old. Version {minimumVersion}+ is required.', { version: view.ollama.version || '', minimumVersion: view.ollama.minimumVersion || view.installPlan.minimumVersion || '0.30.10' })) + '</p>'
+          + (view.installPlan.available ? installOptInLabel(jt('setup.ollamaGate.downloadUpgrade', 'Download &amp; upgrade Ollama'), upgradeSize) : '')
           + '</div>';
       }
       if (view.phase === 'stopped') {
         return '<div class="setup-hw-ollama setup-hw-ollama--missing setup-hw-ollama--stopped">'
-          + '<p>Ollama is installed but not running. Start Ollama, then re-check.</p></div>';
+          + '<p>' + escapeHtml(jt('setup.ollamaGate.notRunning', 'Ollama is installed but not running. Start Ollama, then re-check.')) + '</p></div>';
       }
       if (view.phase === 'unverified') {
         return '<div class="setup-hw-ollama setup-hw-ollama--missing">'
-          + '<p>Jenny could not verify the running Ollama version. Restart or upgrade Ollama, then re-check.</p></div>';
+          + '<p>' + escapeHtml(jt('setup.ollamaGate.versionUnverified', 'Jenny could not verify the running Ollama version. Restart or upgrade Ollama, then re-check.')) + '</p></div>';
       }
       if (view.phase === 'running') {
-        return '<p class="setup-hw-ollama setup-hw-ollama--ok">Ollama detected'
+        return '<p class="setup-hw-ollama setup-hw-ollama--ok">' + escapeHtml(jt('setup.ollamaGate.detected', 'Ollama detected'))
           + (view.ollama.version ? ' (v' + escapeHtml(view.ollama.version) + ')' : '') + '.</p>';
       }
       if (view.phase === 'missingInstallable') {
@@ -126,41 +126,45 @@
         // Linux ships a tar.zst release archive unpacked into the user's data dir; Windows runs a signed installer.
         var archive = view.installPlan.format === 'tar.zst';
         return '<div class="setup-hw-ollama setup-hw-ollama--missing">'
-          + '<p>Ollama isn’t installed yet — it runs the model on your machine.</p>'
-          + installOptInLabel('Download &amp; install Ollama', size)
-          + '<p class="setup-hw-provenance">' + (archive ? 'Official release archive from ' : 'Official installer from ')
+          + '<p>' + escapeHtml(jt('setup.ollamaGate.notInstalledYet', 'Ollama isn’t installed yet — it runs the model on your machine.')) + '</p>'
+          + installOptInLabel(jt('setup.ollamaGate.downloadInstall', 'Download &amp; install Ollama'), size)
+          + '<p class="setup-hw-provenance">' + escapeHtml(archive
+            ? jt('setup.ollamaGate.officialArchiveFrom', 'Official release archive from')
+            : jt('setup.ollamaGate.officialInstallerFrom', 'Official installer from')) + ' '
           + '<code>' + escapeHtml(view.installPlan.url) + '</code>'
           + (archive && view.installPlan.installDir
-            ? '<br/>Unpacked into <code>' + escapeHtml(view.installPlan.installDir) + '</code> — no root access needed.'
+            ? '<br/>' + escapeHtml(jt('setup.ollamaGate.unpackedInto', 'Unpacked into')) + ' <code>' + escapeHtml(view.installPlan.installDir) + '</code> ' + escapeHtml(jt('setup.ollamaGate.noRootNeeded', '— no root access needed.'))
             : '')
-          + (view.installPlan.sha256 ? '<br/>SHA-256 verified before ' + (archive ? 'unpacking.' : 'running.') : '')
+          + (view.installPlan.sha256 ? '<br/>' + escapeHtml(archive
+            ? jt('setup.ollamaGate.shaVerifiedUnpacking', 'SHA-256 verified before unpacking.')
+            : jt('setup.ollamaGate.shaVerified', 'SHA-256 verified before running.')) : '')
           + '</p></div>';
       }
       var manualUrl = view.installPlan.manualFallbackUrl || 'https://ollama.com/download';
       return '<div class="setup-hw-ollama setup-hw-ollama--manual">'
-        + '<p>Ollama isn’t installed. Install it from '
+        + '<p>' + escapeHtml(jt('setup.ollamaGate.installManuallyFrom', 'Ollama isn’t installed. Install it from')) + ' '
         + '<a href="#" class="setup-hw-ollama-link" data-action="openManualUrl">' + escapeHtml(manualUrl) + '</a>'
-        + ', then re-check.</p></div>';
+        + escapeHtml(jt('setup.ollamaGate.thenRecheck', ', then re-check.')) + '</p></div>';
     }
 
     function buildBody() {
       var body;
       if (view.phase === 'checking') {
-        body = '<div class="setup-scene-body setup-hw-scanning"><p>Checking the local engine…</p></div>';
+        body = '<div class="setup-scene-body setup-hw-scanning"><p>' + escapeHtml(jt('setup.ollamaGate.checkingLocalEngine', 'Checking the local engine…')) + '</p></div>';
       } else if (view.phase === 'installing') {
         body = '<div class="setup-scene-body setup-hw-progress">'
-          + '<p class="setup-hw-progress-label">' + escapeHtml(view.progressLabel || 'Installing Ollama…') + '</p>'
+          + '<p class="setup-hw-progress-label">' + escapeHtml(view.progressLabel || jt('setup.ollamaGate.installing', 'Installing Ollama…')) + '</p>'
           + '<div class="setup-hw-progress-bar"><div class="setup-hw-progress-fill" style="width:'
           + Number(view.progressPercent || 0) + '%"></div></div>'
           + '<p class="setup-hw-progress-pct">' + Number(view.progressPercent || 0) + '%</p>'
           + (view.cancelFailed
             ? '<p class="setup-hw-cancel-failed" role="status">'
-              + escapeHtml(view.cancelFailureText || 'Cancel failed. Try again, or wait for the operation to finish.') + '</p>'
+              + escapeHtml(view.cancelFailureText || jt('setup.ollamaGate.cancelFailed', 'Cancel failed. Try again, or wait for the operation to finish.')) + '</p>'
             : '')
           + '</div>';
       } else if (view.phase === 'error') {
         body = '<div class="setup-scene-body setup-hw-error"><p>'
-          + escapeHtml(view.errorText || 'Jenny could not check the local engine.') + '</p></div>';
+          + escapeHtml(view.errorText || jt('setup.ollamaGate.checkFailed', 'Jenny could not check the local engine.')) + '</p></div>';
       } else {
         body = '<div class="setup-scene-body setup-hw-scanned">' + engineStatusBody() + '</div>'
           + trayWarning();
@@ -169,21 +173,21 @@
     }
 
     function buildActions() {
-      var close = { id: 'close', label: 'Close', variant: 'secondary' };
+      var close = { id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' };
       if (view.phase === 'installing') {
-        return [{ id: 'cancel', label: view.cancelFailed ? 'Retry cancel' : 'Cancel', variant: 'primary' }];
+        return [{ id: 'cancel', label: view.cancelFailed ? jt('setup.ollamaGate.retryCancel', 'Retry cancel') : jt('common.cancel', 'Cancel'), variant: 'primary' }];
       }
       if ((view.phase === 'missingInstallable' || view.phase === 'upgradeRequired') && view.installPlan.available) {
         return [close, {
           id: 'install',
-          label: view.phase === 'upgradeRequired' ? 'Upgrade Ollama' : 'Install Ollama',
+          label: view.phase === 'upgradeRequired' ? jt('setup.ollamaGate.upgradeOllama', 'Upgrade Ollama') : jt('setup.ollamaGate.installOllama', 'Install Ollama'),
           variant: 'primary',
           disabled: !view.optInInstall,
         }];
       }
       return [close, {
         id: 'recheck',
-        label: 'Re-check',
+        label: jt('setup.ollamaGate.recheck', 'Re-check'),
         variant: 'primary',
       }];
     }
@@ -192,9 +196,9 @@
       if (!rootEl || disposed) return;
       rootEl.innerHTML = sceneUtils.renderStepModalHtml({
         id: 'ollama-engine',
-        eyebrow: 'Local setup',
-        title: 'Local engine',
-        summary: 'Jenny uses Ollama to run local models on your machine.',
+        eyebrow: jt('setup.ollamaGate.eyebrow', 'Local setup'),
+        title: jt('setup.ollamaGate.title', 'Local engine'),
+        summary: jt('setup.ollamaGate.summary', 'Jenny uses Ollama to run local models on your machine.'),
         bodyHtml: buildBody(),
         actions: buildActions(),
       });
@@ -265,7 +269,7 @@
       view.trayStatus = results[2].value;
       if (!results[0].ok) {
         view.phase = 'error';
-        view.errorText = 'Jenny could not check Ollama. Try again.';
+        view.errorText = jt('setup.ollamaGate.detectFailed', 'Jenny could not check Ollama. Try again.');
         render();
         return;
       }
@@ -289,8 +293,9 @@
 
     function applyInstallFailure(payload) {
       view.phase = 'error';
-      view.errorText = (payload.summary || 'Ollama install did not complete.')
-        + (payload.manualFallbackUrl ? ' Install manually from ' + payload.manualFallbackUrl + '.' : '');
+      view.errorText = payload.manualFallbackUrl
+        ? jt('setup.ollamaGate.installFailedWithManualFallback', '{summary} Install manually from {url}.', { summary: payload.summary || jt('setup.ollamaGate.installDidNotComplete', 'Ollama install did not complete.'), url: payload.manualFallbackUrl })
+        : (payload.summary || jt('setup.ollamaGate.installDidNotComplete', 'Ollama install did not complete.'));
       view.installRequestId = '';
       teardownProgress();
       render();
@@ -301,7 +306,7 @@
       var myGeneration = lifecycleGate.capture();
       view.phase = 'installing';
       view.progressPercent = 0;
-      view.progressLabel = 'Preparing download…';
+      view.progressLabel = jt('setup.ollamaGate.preparingDownload', 'Preparing download…');
       view.cancelFailed = false;
       view.cancelFailureText = '';
       view.installRequestId = generateRequestId('install');
@@ -351,7 +356,7 @@
           message: error && error.message ? error.message : String(error),
         });
         view.phase = 'error';
-        view.errorText = 'Could not install Ollama.';
+        view.errorText = jt('setup.ollamaGate.couldNotInstall', 'Could not install Ollama.');
         view.installRequestId = '';
         teardownProgress();
         render();
@@ -373,12 +378,12 @@
       if (!result || result.cancelled !== true) {
         view.cancelFailed = true;
         view.cancelFailureText = result && result.code === 'termination_failed'
-          ? 'Cancel failed — Jenny could not confirm that the owned process stopped. Retry cancellation or wait for it to finish.'
+          ? jt('setup.ollamaGate.cancelTerminationFailed', 'Cancel failed — Jenny could not confirm that the owned process stopped. Retry cancellation or wait for it to finish.')
           : result && result.code === 'already_published'
-            ? 'Too late to cancel — Ollama is already unpacked. Jenny is restarting it and verifying the version.'
+            ? jt('setup.ollamaGate.cancelTooLate', 'Too late to cancel — Ollama is already unpacked. Jenny is restarting it and verifying the version.')
           : result && result.code === 'bridge_unavailable'
-            ? 'Cancel failed — the setup bridge is unavailable.'
-            : 'Cancel failed — the request did not complete. Try again, or wait for the operation to finish.';
+            ? jt('setup.ollamaGate.cancelBridgeUnavailable', 'Cancel failed — the setup bridge is unavailable.')
+            : jt('setup.ollamaGate.cancelRequestFailed', 'Cancel failed — the request did not complete. Try again, or wait for the operation to finish.');
         render();
         return;
       }

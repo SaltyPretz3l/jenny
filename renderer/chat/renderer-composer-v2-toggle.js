@@ -11,6 +11,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerV2State, composerV2Model) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const { ensureComposerV2State } = composerV2State || {};
   const {
     TOOL_CATEGORY_CONFIG_KEYS = {},
@@ -20,7 +21,7 @@
     getToolCategoryId = () => '',
     normalizeToolEntry = (entry) => ({ name: String(entry || '').trim(), available: true, reason: '' }),
   } = composerV2Model || {};
-  const LOCKDOWN_TOOLTIP = 'Offline lockdown is on for this session';
+  const LOCKDOWN_TOOLTIP = jt('composer.toggle.offlineLockdown', 'Offline lockdown is on for this session');
 
   function sessionToolOverrideEchoMatches(persisted, sessionId, requestedOverrides) {
     const overrides = persisted?.tool_category_overrides;
@@ -226,8 +227,8 @@
         const available = composer.availableToolCategories.get(category.id) === true;
         const enabled = composer.toolToggleState.get(category.id) !== false;
         const source = composer.sessionOverrideCategories.has(category.id)
-          ? 'Current chat override'
-          : 'Settings default';
+          ? jt('composer.toggle.currentChatOverride', 'Current chat override')
+          : jt('composer.toggle.settingsDefault', 'Settings default');
         const blocker = String(meta.reason || '').trim();
         const reason = lockdown ? LOCKDOWN_TOOLTIP : (blocker ? `${source}. ${blocker}` : source);
         const reasonId = reason ? `tool-toggle-${category.id}-reason` : '';
@@ -257,7 +258,7 @@
         return '';
       }
 
-      const switchGroup = '<div class="inv-composer-toggles" role="group" aria-label="Tool toggles">'
+      const switchGroup = '<div class="inv-composer-toggles" role="group" aria-label="' + escapeHtml(jt('composer.toggle.toolToggles', 'Tool toggles')) + '">'
         + toggles.join('')
         + '</div>';
 
@@ -268,23 +269,23 @@
       return inv.chip({
         id: 'composer-tools',
         domId: 'composerToolsChip',
-        label: 'Tools',
+        label: jt('composer.toggle.tools', 'Tools'),
         count: count.text,
         hasPopup: true,
         ariaControls: 'composerToolsPopover',
-        ariaLabel: 'Session tools: ' + count.text + ' enabled',
-        title: 'Session tools: ' + count.text + ' enabled',
+        ariaLabel: jt('composer.toggle.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }),
+        title: jt('composer.toggle.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }),
         className: 'composer-tools-chip',
       })
       + inv.popover({
         id: 'composer-tools',
         domId: 'composerToolsPopover',
-        ariaLabel: 'Session tools',
-        title: 'Session tools',
+        ariaLabel: jt('composer.toggle.sessionTools', 'Session tools'),
+        title: jt('composer.toggle.sessionTools', 'Session tools'),
         className: 'composer-tools-popover',
-        trustedHtml: '<div class="composer-tools-popover-header">Workspace tools</div>'
+        trustedHtml: '<div class="composer-tools-popover-header">' + escapeHtml(jt('composer.toggle.workspaceTools', 'Workspace tools')) + '</div>'
           + switchGroup
-          + '<div class="inv-popover-footer">Overrides apply to this chat; Settings owns defaults.</div>',
+          + '<div class="inv-popover-footer">' + escapeHtml(jt('composer.toggle.overrideExplanation', 'Overrides apply to this chat; Settings owns defaults.')) + '</div>',
       });
     }
 

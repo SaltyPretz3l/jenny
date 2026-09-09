@@ -18,6 +18,16 @@ function blockFor(css, selector) {
   return css.slice(start, end);
 }
 
+test('sprite geometry has one transform owner and never chases layout', () => {
+  for (const name of ['chat-thread.css', 'chat-sprite-v2.css']) {
+    const block = blockFor(readStyle(name), '.chat-assistant-sprite');
+    assert.doesNotMatch(block, /transition:[^;]*\btransform\b/s, name);
+  }
+  const css = readStyle('chat-sprite-v2.css');
+  assert.doesNotMatch(css, /^\s*transform\s*:/m, 'status and reduced motion cannot overwrite placement');
+  assert.match(blockFor(css, '.chat-sprite-layer:not(.visible)'), /transition:\s*none/);
+});
+
 test('pending approval liveness belongs to the kicker dot', () => {
   const css = readStyle('chat-tool-markers.css');
   const sectionStart = css.indexOf('Approval-gap row visual distinction');

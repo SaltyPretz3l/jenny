@@ -75,8 +75,21 @@ test('command popover exposes menu action and unavailable metadata', () => {
   assert.equal(item.getAttribute('role'), 'menuitem');
   assert.equal(item.getAttribute('aria-disabled'), 'true');
   assert.equal(item.dataset.commandAction, 'run');
-  assert.match(item.textContent, /Run/);
+  assert.match(item.textContent, /Complete/);
   assert.match(item.getAttribute('aria-label'), /Start a conversation first/);
+  harness.renderer.dispose();
+  harness.dom.window.close();
+});
+
+test('legacy renderer does not clobber the shared searchable menu ownership', () => {
+  const harness = createHarness([]);
+  harness.trigger.setAttribute('data-slash-menu-owned', 'true');
+  harness.trigger.setAttribute('aria-expanded', 'true');
+  harness.state.ui.commandPopoverOpen = false;
+  harness.renderer.renderCommandPopover();
+  assert.equal(harness.writes(), 0);
+  assert.equal(harness.trigger.getAttribute('aria-expanded'), 'true');
+  assert.equal(harness.popover.classList.contains('hidden'), true);
   harness.renderer.dispose();
   harness.dom.window.close();
 });

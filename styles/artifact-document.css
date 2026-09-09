@@ -148,8 +148,10 @@
   top: var(--space-3);
   max-height: min(58vh, 620px);
   overflow-y: auto;
-  border-right: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
-  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border-inline-end: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+  padding-block: var(--space-2);
+  padding-inline-end: var(--space-3);
+  padding-inline-start: 0;
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
 }
@@ -158,7 +160,7 @@
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  border-right-color: transparent;
+  border-inline-end-color: transparent;
 }
 
 .artifact-document-outline-compact {
@@ -206,15 +208,15 @@
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.35;
-  text-align: left;
+  text-align: start;
 }
 
 .artifact-document-outline-button-level-2 {
-  padding-left: var(--space-3);
+  padding-inline-start: var(--space-3);
 }
 
 .artifact-document-outline-button-level-3 {
-  padding-left: var(--space-5);
+  padding-inline-start: var(--space-5);
   font-weight: 650;
 }
 
@@ -324,7 +326,7 @@
   border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   padding: 12px 14px;
-  text-align: left;
+  text-align: start;
   vertical-align: top;
 }
 
@@ -340,14 +342,14 @@
 
 .artifact-document-page blockquote {
   margin: var(--space-5) 0;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  border-inline-start: 3px solid color-mix(in srgb, var(--accent) 62%, transparent);
   padding: var(--space-3) var(--space-4);
   background: color-mix(in srgb, var(--surface-toolbar-background) 72%, transparent);
   color: var(--text-primary);
 }
 
 .artifact-document-callout {
-  border-left-width: 4px;
+  border-inline-start-width: 4px;
   border-radius: 0 8px 8px 0;
 }
 
@@ -359,20 +361,20 @@
 }
 
 .artifact-document-callout-important {
-  border-left-color: color-mix(in srgb, var(--accent-purple, var(--accent)) 76%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--accent-purple, var(--accent)) 76%, transparent);
 }
 
 .artifact-document-callout-caution,
 .artifact-document-callout-warning {
-  border-left-color: color-mix(in srgb, var(--state-danger, #ff5a5f) 82%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--state-danger, #ff5a5f) 82%, transparent);
 }
 
 .artifact-document-callout-note {
-  border-left-color: color-mix(in srgb, var(--state-warning, #ffd166) 82%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--state-warning, #ffd166) 82%, transparent);
 }
 
 .artifact-document-callout-tip {
-  border-left-color: color-mix(in srgb, var(--state-success, #56d364) 82%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--state-success, #56d364) 82%, transparent);
 }
 
 .artifact-document-callout-important .artifact-document-callout-label {
@@ -468,7 +470,7 @@
   .artifact-document-outline-rail {
     position: static;
     max-height: 220px;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
     padding: 0 0 var(--space-3);
   }

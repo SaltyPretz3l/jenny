@@ -28,15 +28,21 @@ const { resolveDateTokens, localDateStamp } = require('./demo-dates');
 
 const CALENDAR_STORE_FILE = 'home-calendar.json';
 const CALENDAR_STORE_VERSION = 1;
+const ownedDemoDirectories = new Map();
+
+function ownDirectory(directory) {
+  const stat = fs.statSync(directory);
+  ownedDemoDirectories.set(directory, { realPath: fs.realpathSync(directory), dev: stat.dev, ino: stat.ino });
+  return directory;
+}
 
 // The sample project lives at a neutral, readable path rather than under the
 // temp profile: the IDE terminal's prompt prints the workspace path, and a
 // %TEMP% path would put the recording machine's user name into every clip.
-function demoWorkspaceDir() {
-  if (process.platform === 'win32') {
-    return path.join(process.env.PUBLIC || 'C:\\Users\\Public', 'ledger-cli');
-  }
-  return path.join(os.tmpdir(), 'ledger-cli');
+function demoWorkspaceDir({ parentDir = process.platform === 'win32'
+  ? process.env.PUBLIC || 'C:\\Users\\Public' : os.tmpdir() } = {}) {
+  // Atomic allocation never reuses another recording's or a user's directory.
+  return ownDirectory(fs.mkdtempSync(path.join(parentDir, 'ledger-cli-')));
 }
 
 function runGit(workspace, args) {
@@ -136,9 +142,18 @@ function materializeReplayScript(scene, base, now) {
 
 function seedDemoProfile(scene, { recording = RECORDING, now = Date.now() } = {}) {
   const { base, profile } = require('../../capture-ui').seedProfile();
-  const workspace = demoWorkspaceDir();
-  fs.rmSync(workspace, { recursive: true, force: true });
-  fs.mkdirSync(workspace, { recursive: true });
+  ownDirectory(base);
+  let workspace;
+  try {
+    workspace = demoWorkspaceDir();
+    return populateDemoProfile(scene, { base, profile, workspace, recording, now });
+  } catch (error) {
+    cleanupDemoProfile({ base, workspace });
+    throw error;
+  }
+}
+
+function populateDemoProfile(scene, { base, profile, workspace, recording, now }) {
   // Maximized window (the app's full-screen look) at the recording zoom.
   writeJson(path.join(profile, 'window-state.json'), {
     version: 1,
@@ -197,11 +212,18 @@ function seedDemoProfile(scene, { recording = RECORDING, now = Date.now() } = {}
 
 function cleanupDemoProfile({ base, workspace }) {
   for (const dir of [base, workspace]) {
-    if (!dir) continue;
+    const owned = ownedDemoDirectories.get(dir);
+    if (!owned) continue;
     try {
-      fs.rmSync(dir, { recursive: true, force: true });
+      // Do not follow a replaced root or an ancestor redirected by a junction.
+      const stat = fs.lstatSync(dir);
+      if (stat.isSymbolicLink() || fs.realpathSync(dir) !== owned.realPath
+        || stat.dev !== owned.dev || stat.ino !== owned.ino) continue;
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     } catch (_error) {
-      // Windows can briefly retain Electron log handles; the leftover directory is harmless.
+      // Leave the directory intact if Windows retains handles beyond the bounded retries.
+    } finally {
+      ownedDemoDirectories.delete(dir);
     }
   }
 }

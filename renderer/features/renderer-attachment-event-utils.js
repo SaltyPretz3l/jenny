@@ -9,6 +9,7 @@
   }
   root.rendererAttachmentEventUtils = factory(root.rendererComposerFlowUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerFlowUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createAttachmentEventBindings(deps) {
     const { state } = deps;
     const {
@@ -89,7 +90,7 @@
       const token = beginTrackedAttachmentToken();
       const displayName =
         String(file.name || '').trim()
-        || `Pasted Image ${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+        || jt('attachments.pastedImageFileName', 'Pasted Image {timestamp}.png', { timestamp: new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') });
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         safeLog('INFO', 'composer.paste.image_decoded', { mimeType: file.type || 'image/png', sizeBytes: bytes.byteLength, displayName });
@@ -184,7 +185,7 @@
         await queueInlineImageAttachment({
           bytes,
           mimeType: 'image/png',
-          displayName: `Screen Capture ${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`,
+          displayName: jt('attachments.screenCaptureFileName', 'Screen Capture {timestamp}.png', { timestamp: new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') }),
           sourceKind: 'capture',
         }, token);
         const bindingActive = !disposed && attachmentTokens.has(token);
@@ -409,8 +410,8 @@
         (error) => {
           settleAttachmentToken(token, true);
           if (disposed) { return; }
-          showToastMessage(toErrorMessage(error, 'Could not attach dropped files.'), {
-            title: 'Attachment Error',
+          showToastMessage(toErrorMessage(error, jt('attachments.errors.attachDroppedFiles', 'Could not attach dropped files.')), {
+            title: jt('attachments.errors.attachmentTitle', 'Attachment Error'),
             tone: 'danger',
             sticky: true,
             source: TOAST_SOURCE.attachments,
@@ -425,8 +426,8 @@
       if (event.defaultPrevented) {
         imagePaste.catch((error) => {
           if (disposed) { return; }
-          showToastMessage(toErrorMessage(error, 'Could not paste image attachment.'), {
-            title: 'Attachment Error',
+          showToastMessage(toErrorMessage(error, jt('attachments.errors.pasteImage', 'Could not paste image attachment.')), {
+            title: jt('attachments.errors.attachmentTitle', 'Attachment Error'),
             tone: 'danger',
             sticky: true,
             source: TOAST_SOURCE.attachments,
@@ -440,8 +441,8 @@
       }
       imagePaste.catch((error) => {
         if (disposed) { return; }
-        showToastMessage(toErrorMessage(error, 'Could not paste image attachment.'), {
-          title: 'Attachment Error',
+        showToastMessage(toErrorMessage(error, jt('attachments.errors.pasteImage', 'Could not paste image attachment.')), {
+          title: jt('attachments.errors.attachmentTitle', 'Attachment Error'),
           tone: 'danger',
           sticky: true,
           source: TOAST_SOURCE.attachments,
@@ -484,8 +485,8 @@
         (error) => {
           settleAttachmentToken(token, true);
           if (disposed) { return; }
-          showToastMessage(toErrorMessage(error, 'Could not attach files.'), {
-            title: 'Attachment Error',
+          showToastMessage(toErrorMessage(error, jt('attachments.errors.attachFiles', 'Could not attach files.')), {
+            title: jt('attachments.errors.attachmentTitle', 'Attachment Error'),
             tone: 'danger',
             sticky: true,
             source: TOAST_SOURCE.attachments,
@@ -516,8 +517,8 @@
           if (cancelled) {
             return;
           }
-          showToastMessage(toErrorMessage(error, 'Could not capture the screen.'), {
-            title: 'Capture Error',
+          showToastMessage(toErrorMessage(error, jt('attachments.errors.captureScreen', 'Could not capture the screen.')), {
+            title: jt('attachments.errors.captureTitle', 'Capture Error'),
             tone: 'danger',
             sticky: true,
             source: TOAST_SOURCE.attachments,

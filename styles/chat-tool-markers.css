@@ -10,7 +10,7 @@
   padding: var(--space-3) var(--space-4);
   margin: var(--space-3) 0 0 0;
   border-radius: var(--tl-radius-panel);
-  border-left: 3px solid var(--marker-accent);
+  border-inline-start: 3px solid var(--marker-accent);
   background: color-mix(in srgb, var(--marker-accent) 10%, var(--bg-surface));
   color: var(--text-primary);
   font-size: var(--tl-font-ui);
@@ -82,7 +82,7 @@
   margin: var(--space-2) 0;
   border-radius: var(--tl-radius-control);
   background: color-mix(in srgb, var(--tl-status-active) 9%, var(--bg-surface));
-  border-left: 2px solid color-mix(in srgb, var(--tl-status-active) 50%, transparent);
+  border-inline-start: 2px solid color-mix(in srgb, var(--tl-status-active) 50%, transparent);
   color: var(--text-secondary);
   font-size: var(--tl-font-meta);
   font-style: italic;
@@ -260,21 +260,63 @@
 .resume-turn-affordance {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--tl-radius-panel);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-size: var(--tl-font-ui);
+  gap: var(--space-4);
+  margin-block-start: var(--tl-cluster-gap);
 }
 
 .resume-turn-action {
-  flex: 0 0 auto;
+  --btn-radius: var(--tl-radius-control);
+  --btn-min-height: max(32px, var(--tl-row-h));
+  --btn-padding-block: var(--space-3);
+  --btn-padding-inline: var(--space-5);
+  --btn-font-size: var(--tl-font-ui);
+  --btn-bg: var(--tl-panel-bg);
+  --btn-border: var(--tl-panel-border);
+  --btn-color: var(--text-secondary);
+  --btn-hover-bg: var(--tl-row-hover);
+  --btn-hover-border: color-mix(in srgb, var(--text-secondary) 40%, var(--tl-panel-border));
+  --btn-hover-color: var(--text-primary);
+  --btn-active-bg: var(--tl-row-hover);
+  --btn-active-border: var(--text-secondary);
+  min-width: 0;
+  font-weight: var(--tl-weight-label);
+  line-height: 1.4;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.resume-turn-action:hover {
+  transform: none;
+}
+
+.resume-turn-action:disabled {
+  --btn-hover-bg: var(--btn-bg);
+  --btn-hover-border: var(--btn-border);
+  --btn-hover-color: var(--btn-color);
 }
 
 .resume-turn-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 1.8em;
+  height: 1.8em;
+  border: 1px solid var(--tl-panel-border);
+  border-radius: var(--tl-radius-control);
   color: var(--text-secondary);
-  font-size: var(--tl-font-ui);
+  font-size: var(--tl-font-meta);
+  line-height: 1;
+}
+
+.resume-turn-action:disabled + .resume-turn-hint {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resume-turn-action {
+    transition: none;
+  }
 }

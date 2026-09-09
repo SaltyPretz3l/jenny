@@ -3,6 +3,25 @@ const assert = require('node:assert/strict');
 
 const { createMultiStreamController } = require('../renderer/chat/renderer-multi-stream-utils');
 
+test('attention reads only the requested live turn, prioritizes approval, and ignores terminal streams', () => {
+  const tool = (status, name = 'ask_user', streamId = 'live') => ({ role: 'assistant', kind: 'tool_use',
+    tool_call: { status, tool_name: name, parent_stream_id: streamId } });
+  const messages = [null, { role: 'user' }, tool('pending_approval', 'exit_plan_mode'), tool('pending_user_input')];
+  Object.defineProperty(messages, 0, { get() { throw new Error('scanned historical messages'); } });
+  const state = { pendingToolApprovals: new Map(), messagesBySession: new Map([['session', messages]]) };
+  Object.defineProperty(state, 'sessions', { get() { throw new Error('scanned session list'); } });
+  state.messagesBySession.set('unrelated', new Proxy([], { get() { throw new Error('read unrelated session'); } }));
+  const controller = createMultiStreamController({ getState: () => state });
+  controller.registerStream('session', 'live');
+  assert.equal(controller.getSessionAttentionStates(['session']).get('session'), 'plan_review');
+  state.pendingToolApprovals.set('permission', { sessionId: 'session', streamId: 'live', toolName: 'write_file' });
+  assert.equal(controller.getSessionAttentionStates(['session']).get('session'), 'approval');
+  controller.clearStream('live');
+  assert.equal(controller.getSessionAttentionStates(['session']).size, 0);
+  controller.registerStream('session', 'next');
+  assert.equal(controller.getSessionAttentionStates(['session']).size, 0);
+});
+
 test('multi-stream controller tracks concurrent streams by session', () => {
   const state = { pendingToolApprovals: new Map() };
   const controller = createMultiStreamController({ getState: () => state, appendClientLog() {} });

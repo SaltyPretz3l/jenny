@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
+const { t } = require('../i18n-main');
 const { splitGgufFiles } = require('../llama-server-lifecycle');
 const { isManagedModelPath, managedModelKey } = require('../shell-config-engines');
 const { normalizeSpec } = require('./llama-server-manager');
@@ -302,10 +303,10 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
           } catch (_error) { /* invalid default path is omitted */ }
         }
         const picked = await dialogImpl.showOpenDialog(getMainWindow(), {
-          title: 'Select a GGUF model',
+          title: t('main.dialog.llamaServer.selectModel', 'Select a GGUF model'),
           ...(validDefaultPath ? { defaultPath } : {}),
           properties: ['openFile'],
-          filters: [{ name: 'GGUF models', extensions: ['gguf'] }],
+          filters: [{ name: t('main.dialog.llamaServer.ggufModels', 'GGUF models'), extensions: ['gguf'] }],
         });
         if (picked.canceled) {
           return finish('choose_gguf', { ok: true, picked: false, path: '' });
@@ -329,7 +330,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     'llamaServer.chooseLibraryFolder': async () => {
       try {
         const picked = await dialogImpl.showOpenDialog(getMainWindow(), {
-          title: 'Select a GGUF folder',
+          title: t('main.dialog.llamaServer.selectFolder', 'Select a GGUF folder'),
           properties: ['openDirectory'],
         });
         if (picked.canceled) {

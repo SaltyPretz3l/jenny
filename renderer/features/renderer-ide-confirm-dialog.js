@@ -16,6 +16,8 @@
   root.rendererIdeConfirmDialog = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   function defaultEscape(value) {
     return String(value == null ? '' : value)
@@ -56,18 +58,17 @@
 
     function buildBodyHtml(dirtyPaths) {
       const count = dirtyPaths.length;
-      const message = count === 1
-        ? `<p class="ide-confirm-message">“${escapeHtml(basename(dirtyPaths[0]))}” has unsaved changes. Save before closing?</p>`
-        : `<p class="ide-confirm-message">${count} files have unsaved changes. Save them before closing?</p>`;
+      const message = '<p class="ide-confirm-message">'
+        + escapeHtml(jtn('ide.confirm.unsavedFilesPrompt', count, { name: basename(dirtyPaths[0]), count }, '“{name}” has unsaved changes. Save before closing?', '{count} files have unsaved changes. Save them before closing?')) + '</p>';
       const list = count > 1
         ? `<ul class="ide-confirm-list">${dirtyPaths
           .map((path) => `<li title="${escapeHtml(path)}">${escapeHtml(basename(path))}</li>`)
           .join('')}</ul>`
         : '';
       const buttons = actionButton
-        ? actionButton({ label: count > 1 ? 'Save All' : 'Save', variant: 'primary', dataset: { 'ide-confirm-action': 'save' } })
-          + actionButton({ label: 'Don’t Save', variant: 'danger', dataset: { 'ide-confirm-action': 'discard' } })
-          + actionButton({ label: 'Cancel', variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } })
+        ? actionButton({ label: count > 1 ? jt('ide.confirm.saveAll', 'Save All') : jt('common.save', 'Save'), variant: 'primary', dataset: { 'ide-confirm-action': 'save' } })
+          + actionButton({ label: jt('ide.confirm.dontSave', 'Don’t Save'), variant: 'danger', dataset: { 'ide-confirm-action': 'discard' } })
+          + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } })
         : '';
       return `${message}${list}<div class="ide-confirm-actions">${buttons}</div>`;
     }
@@ -128,10 +129,10 @@
         .map((path) => String(path || ''))
         .filter(Boolean);
       return runActionDialog({
-        title: 'Unsaved changes',
+        title: jt('ide.confirm.unsavedChanges', 'Unsaved changes'),
         titleId: 'ideConfirmCloseTitle',
         bodyHtml: buildBodyHtml(dirtyPaths),
-        closeLabel: 'Cancel and keep editing',
+        closeLabel: jt('ide.confirm.cancelKeepEditing', 'Cancel and keep editing'),
         actions: ['save', 'discard', 'cancel'],
         onDismiss: 'cancel',
       });
@@ -143,14 +144,14 @@
     function confirm(payload) {
       const config = payload || {};
       const variant = config.variant === 'danger' ? 'danger' : 'primary';
-      const cancelLabel = String(config.cancelLabel || 'Cancel');
+      const cancelLabel = String(config.cancelLabel || jt('common.cancel', 'Cancel'));
       if (!actionButton) {
         return Promise.resolve(false);
       }
       const buttons = actionButton({ label: String(config.confirmLabel || 'Confirm'), variant, dataset: { 'ide-confirm-action': 'confirm' } })
         + actionButton({ label: cancelLabel, variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } });
       return runActionDialog({
-        title: String(config.title || 'Are you sure?'),
+        title: String(config.title || jt('ide.confirm.areYouSure', 'Are you sure?')),
         titleId: 'ideConfirmGenericTitle',
         bodyHtml: `<p class="ide-confirm-message">${escapeHtml(String(config.message || ''))}</p>`
           + `<div class="ide-confirm-actions">${buttons}</div>`,
@@ -173,18 +174,17 @@
       }
       const headline = typeof config.message === 'string' && config.message
         ? config.message
-        : `You have ${count} uncommitted change${count === 1 ? '' : 's'}.`;
-      const buttons = actionButton({ label: 'Shelve & switch', variant: 'primary', dataset: { 'ide-confirm-action': 'shelve' } })
-        + actionButton({ label: 'Switch anyway', variant: 'danger', dataset: { 'ide-confirm-action': 'switch' } })
-        + actionButton({ label: 'Cancel', variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } });
+        : jtn('ide.branches.uncommittedChanges', count, { count }, 'You have {count} uncommitted change.', 'You have {count} uncommitted changes.');
+      const buttons = actionButton({ label: jt('ide.confirm.shelveAndSwitch', 'Shelve & switch'), variant: 'primary', dataset: { 'ide-confirm-action': 'shelve' } })
+        + actionButton({ label: jt('ide.confirm.switchAnyway', 'Switch anyway'), variant: 'danger', dataset: { 'ide-confirm-action': 'switch' } })
+        + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } });
       return runActionDialog({
-        title: 'Switch branch?',
+        title: jt('ide.confirm.switchBranchTitle', 'Switch branch?'),
         titleId: 'ideConfirmBranchSwitchTitle',
         bodyHtml: `<p class="ide-confirm-message">${escapeHtml(headline)}</p>`
-          + '<p class="ide-confirm-message">Shelving sets them aside so you can restore them '
-          + 'later. Switching anyway carries them to the new branch.</p>'
+          + '<p class="ide-confirm-message">' + escapeHtml(jt('ide.confirm.branchSwitchDetail', 'Shelving sets them aside so you can restore them later. Switching anyway carries them to the new branch.')) + '</p>'
           + `<div class="ide-confirm-actions">${buttons}</div>`,
-        closeLabel: 'Cancel',
+        closeLabel: jt('common.cancel', 'Cancel'),
         actions: ['shelve', 'switch', 'cancel'],
         onDismiss: 'cancel',
       });

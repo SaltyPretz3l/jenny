@@ -61,6 +61,7 @@ def build_dynamic_system_messages(
                 "content": personality.build_personality_system_message(
                     getattr(config, "assistant_name", None),
                     "",
+                    ui_language=getattr(config, "ui_language", "en"),
                 ),
             }
         )
@@ -387,7 +388,21 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
     orientation signal can never break a turn. Built for every request so the
     workspace and post-budget tool surface cannot go stale between turns.
     """
+    time_preference = ""
+    if getattr(config, "use_24_hour_time", False) is True:
+        from datetime import datetime
+
+        now = datetime.now().astimezone()
+        time_preference = (
+            "Time display preference: use 24-hour time (00:00–23:59) in replies. "
+            f"Current runtime local time: {now:%Y-%m-%d %H:%M %Z} "
+            f"(UTC offset {now:%z})."
+        )
     if not getattr(config, "session_environment_overlay_enabled", True):
+        if time_preference:
+            runtime_system_messages.append(
+                f"{runtime_message_markers.SESSION_ENVIRONMENT_HEADING}\n{time_preference}"
+            )
         return
     try:
         block = _render_session_environment_block(
@@ -409,6 +424,8 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
             data={"error_type": error.__class__.__name__},
         )
         return
+    if time_preference:
+        block += f"\n{time_preference}"
     runtime_system_messages.append(block)
 
 

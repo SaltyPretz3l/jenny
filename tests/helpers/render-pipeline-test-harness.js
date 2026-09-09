@@ -50,6 +50,7 @@ function createPipelineHarness(options = {}) {
       staticModel: '',
     },
     dom: {
+      ...settings.composerDom,
       homeView: documentRef?.getElementById('homeView') || documentRef?.createElement('div') || null,
       chatView: documentRef?.getElementById('chatView') || documentRef?.createElement('div') || null,
       ideView: documentRef?.getElementById('ideView') || documentRef?.createElement('div') || null,
@@ -61,6 +62,7 @@ function createPipelineHarness(options = {}) {
       chatThreadColumn: documentRef?.getElementById('threadColumn') || documentRef?.getElementById('timeline') || null,
     },
     controllers: {
+      ...settings.controllers,
       thinkingController: settings.thinkingController || {
         prune() {},
         resumeAutoScroll() {},
@@ -158,8 +160,6 @@ function createPipelineHarness(options = {}) {
         logs.push({ level, event, data });
       },
       renderHeader() {},
-      renderPrompts() {},
-      stopFallbackRotation() {},
     },
   });
   return { pipeline, uiRuntime, rolloutSignals, logs, state, dom };

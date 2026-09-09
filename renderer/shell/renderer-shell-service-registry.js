@@ -92,7 +92,6 @@
         return String(error && error.message || error || '');
       },
       renderAll = noop,
-      renderPrompts = noop,
       renderSettings = noop,
       renderComposerState = noop,
       syncComposerInputHeight = noop,
@@ -101,7 +100,6 @@
       getCurrentMessageById = noopNull,
       setActiveView = noop,
       openSettingsSection = noop,
-      refreshSuggestions = noopAsync,
       getSettingsShellController = noopNull,
       applyWorkspaceSnapshot = noop,
       renderWorkspaceChrome = noop,
@@ -329,9 +327,6 @@
       }
       tipsController = tipsUtils.createTipsManager?.({
         state,
-        callbacks: {
-          renderPrompts: (...args) => renderPrompts(...args),
-        },
       }) || null;
       ({
         applyTipsPayload = noopObj,
@@ -521,7 +516,6 @@
             openSettingsSection: (...args) => openSettingsSection(...args),
             activateWorkspaceSession: (...args) => activateWorkspaceSession(...args),
             handleCreateSession: (...args) => handleCreateSessionWithWorkspace(...args),
-            refreshSuggestions: (...args) => refreshSuggestions(...args),
             setSessionOrigin: (...args) => setSessionOrigin(...args),
             setPendingOrigin: (...args) => setPendingOrigin(...args),
             clearPendingOrigin: (...args) => clearPendingOrigin(...args),
@@ -624,6 +618,7 @@
         const featuresBridge = windowRef?.jennyShell?.features || null;
         const persistPreferredModel = (tag) => (offlineBridge && typeof offlineBridge.updateSettings === 'function' ? offlineBridge.updateSettings({ preferredLocalModel: tag }) : Promise.resolve(null));
         const persistFeatureSettings = (patch) => (featuresBridge && typeof featuresBridge.updateSettings === 'function' ? featuresBridge.updateSettings(patch) : Promise.resolve(null));
+        const getFeatureSettings = () => featuresBridge?.getState?.() ?? Promise.resolve(null);
         setupController = factory({
           state,
           documentRef,
@@ -632,12 +627,14 @@
           chooseWorkspaceRoot: handleWorkspaceRootChoose,
           persistPreferredModel,
           persistFeatureSettings,
+          getFeatureSettings,
           dom: {
             homeSetupModalRoot: documentRef?.getElementById?.('homeSetupModalRoot') || null,
           },
           modules: {
             setupHub: setupHubEnabled ? setupHubUtils : {},
             scenes: {
+              acknowledgement: setupSceneFactories.acknowledgement,
               workspaceRoot: setupSceneFactories.workspaceRoot,
               localModel: setupSceneFactories.localModel,
               endpoint: setupSceneFactories.endpoint,

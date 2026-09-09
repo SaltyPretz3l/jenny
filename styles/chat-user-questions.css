@@ -70,7 +70,7 @@
   align-items: flex-start;
   gap: var(--space-5);
   min-height: 36px;
-  margin-left: calc(-1 * var(--space-4));
+  margin-inline-start: calc(-1 * var(--space-4));
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
@@ -132,7 +132,7 @@
 .user-questions-question[data-multi-select="true"] .user-questions-option:has(input:checked) .user-questions-glyph::after {
   content: '';
   position: absolute;
-  left: 4px;
+  inset-inline-start: 4px;
   top: 1px;
   width: 4px;
   height: 8px;
@@ -247,7 +247,7 @@
 }
 
 .user-questions-enter-hint {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: color-mix(in srgb, var(--text-muted) 68%, transparent);
   font-size: calc(12px * var(--chat-zoom-factor, 1));
 }

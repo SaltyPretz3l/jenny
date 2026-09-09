@@ -10,6 +10,7 @@
   }
   root.rendererIdeTestRunnerHistoryStrip = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const MAX_RUNS = 30;
   const BAR_CAP_MS = 5 * 60 * 1000;
@@ -72,8 +73,8 @@
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.setAttribute('role', 'img');
     const jennyCount = runs.filter(isJennyRun).length;
-    svg.setAttribute('aria-label', `Durations for the last ${runs.length} test runs, oldest to newest`
-      + (jennyCount ? `; ticks mark ${jennyCount} started by Jenny` : ''));
+    svg.setAttribute('aria-label', jennyCount
+      ? jt('ide.testRunnerHistory.durationsWithJenny', 'Durations for the last {count} test runs, oldest to newest; ticks mark {jennyCount} started by Jenny', { count: runs.length, jennyCount }) : jt('ide.testRunnerHistory.durations', 'Durations for the last {count} test runs, oldest to newest', { count: runs.length }));
     const slotWidth = 300 / runs.length;
     runs.forEach((run, index) => {
       const status = statusOf(run);
@@ -91,9 +92,9 @@
       bar.setAttribute('height', String(height));
       const title = doc.createElementNS(SVG_NS, 'title');
       const durationText = formatDuration(run && run.durationMs);
-      const who = isJennyRun(run) ? ' · by Jenny' : '';
+    const who = isJennyRun(run) ? jt('ide.testRunnerHistory.byJennySuffix', ' · by Jenny') : '';
       title.textContent = HANG_STATUSES.has(status)
-        ? `hang: ${status} after ${durationText}${who}`
+        ? jt('ide.testRunnerHistory.hang', 'hang: {status} after {duration}{who}', { status, duration: durationText, who })
         : `${formatStartedAt(run && run.startedAt, locale)} · ${status} · ${durationText}${who}`;
       bar.appendChild(title);
       svg.appendChild(bar);
@@ -116,12 +117,12 @@
     const summary = doc.createElement('div');
     summary.className = 'ide-test-runner-history-strip__summary';
     if (durations.length) {
-      appendTextElement(doc, summary, 'span', '', `min ${formatDuration(Math.min(...durations))} / median ${formatDuration(median(durations))} / max ${formatDuration(Math.max(...durations))}`);
+      appendTextElement(doc, summary, 'span', '', jt('ide.testRunnerHistory.durationSummary', 'min {min} / median {median} / max {max}', { min: formatDuration(Math.min(...durations)), median: formatDuration(median(durations)), max: formatDuration(Math.max(...durations)) }));
     } else {
       appendTextElement(doc, summary, 'span', '', 'min — / median — / max —');
     }
     if (runs.some(isJennyRun)) {
-      const legend = appendTextElement(doc, summary, 'span', 'ide-test-runner-history-strip__legend', '▔ by Jenny');
+    const legend = appendTextElement(doc, summary, 'span', 'ide-test-runner-history-strip__legend', jt('ide.testRunnerHistory.byJennyLegend', '▔ by Jenny'));
       legend.dataset.initiator = INITIATOR_JENNY;
     }
     if (durations.length >= 4) {

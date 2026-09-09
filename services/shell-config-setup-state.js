@@ -2,6 +2,7 @@ const { clipText, normalizeString } = require('./backend/path-utils');
 
 const SETUP_STEP_STATUSES = Object.freeze(['pending', 'done', 'skipped', 'error']);
 const DEFAULT_SETUP_STEPS = Object.freeze({
+  acknowledgement: 'pending',
   workspaceRoot: 'pending',
   localModel: 'pending',
   endpoint: 'pending',
@@ -16,6 +17,8 @@ const DEFAULT_SETUP = Object.freeze({
   firstRunCompleted: false,
   completedAt: '',
   updatedAt: '',
+  acknowledgedVersion: '',
+  acknowledgedAt: '',
   steps: DEFAULT_SETUP_STEPS,
 });
 // Personality v3 (schema 47): the assistant identity is the NAME only. The
@@ -45,6 +48,9 @@ function normalizeSetupStepStatus(value) {
 function normalizeSetupSteps(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
+    acknowledgement: normalizeSetupStepStatus(
+      source.acknowledgement ?? DEFAULT_SETUP_STEPS.acknowledgement
+    ),
     workspaceRoot: normalizeSetupStepStatus(
       source.workspaceRoot ?? source.workspace_root ?? DEFAULT_SETUP_STEPS.workspaceRoot
     ),
@@ -71,6 +77,11 @@ function normalizeSetupState(value = {}) {
     firstRunCompleted: source.firstRunCompleted === true || source.first_run_completed === true,
     completedAt: normalizeIsoString(source.completedAt ?? source.completed_at),
     updatedAt: normalizeIsoString(source.updatedAt ?? source.updated_at),
+    acknowledgedVersion: clipText(
+      normalizeString(source.acknowledgedVersion ?? source.acknowledged_version),
+      40
+    ),
+    acknowledgedAt: normalizeIsoString(source.acknowledgedAt ?? source.acknowledged_at),
     steps: normalizeSetupSteps(source.steps),
   };
 }

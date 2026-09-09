@@ -1,3 +1,4 @@
+var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 (async () => {
   if (typeof window.__disposeRenderer === 'function') {
     await Promise.resolve(window.__disposeRenderer()).catch(() => {});
@@ -85,7 +86,7 @@
     || settingsShellController?.openSettingsSection?.(...args);
   const {
     workspace, workspaceRailShell, homeNavButton, metricList, conversationGroups, conversationCount,
-    promptGrid, homeView,
+    homeView,
     homeOpenLoopCount, homeOpenLoopStatus, homeOpenLoopList,
     chatView, ideView, logsView, settingsView, heroStack,
     chatSurfaceEffects, chatSurfaceEffectLeft,
@@ -352,7 +353,6 @@
   let rehydrateSessionFromPersistedTurnEvents = () => null;
   let applySurfaceEffect = noop;
   let formatLogTimestamp = () => '--';
-  let refreshSuggestions = noopAsync;
   let handleCreateSessionWithWorkspace = noopAsync;
   let syncBackendActivityFromStatus = noop;
   const lifecycleComposition = await window.rendererAppLifecycleComposition.createLifecycleComposition({
@@ -381,7 +381,7 @@
     syncComposerModelSelectWidth,
     thinkingController, reducedMotionQuery, toastStore, toastActionHandlers, renderAll: (...a) => renderAll(...a),
     renderLayout: (...a) => renderLayout(...a), renderHeader: (...a) => renderHeader(...a),
-    renderLogs: (...a) => renderLogs(...a), renderPrompts: (...a) => renderPrompts(...a),
+    renderLogs: (...a) => renderLogs(...a),
     renderComposerState: (...a) => renderComposerState(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
     renderMessages: (...a) => renderMessages(...a), renderIdeSafe: (...a) => renderIdeSafe(...a),
     activateIdeSafe: (...a) => activateIdeSafe(...a), layoutIdeEditorSafe: (...a) => layoutIdeEditorSafe(...a),
@@ -422,7 +422,7 @@
     beginActivity, resolveActivity, failActivity, clearActivity, getActivitySnapshot, getMostRecentActivity, isActivityBusy,
     applyActivityAttributes, renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a), syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
     activateWorkspaceSession: (...a) => activateWorkspaceSession(...a), openSession: (...a) => openSession(...a),
-    loadSessions: (...a) => loadSessions(...a), refreshSuggestions: (...a) => refreshSuggestions(...a),
+    loadSessions: (...a) => loadSessions(...a),
     applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a), openSettingsSection: (...a) => openSettingsSection(...a),
     getCurrentMessageById: (...a) => getCurrentMessageById(...a), setActiveView: (...a) => setActiveView(...a),
   });
@@ -551,7 +551,7 @@
     retryBackendStart,
     composerContextUsageSlot, composerPlanUsageSlot, composerToolToggleSlot,
     homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton,
-    metricList, sessionActionButton, newChatButton, promptGrid,
+    metricList, sessionActionButton, newChatButton,
     chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite,
     heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack,
     logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList,
@@ -620,7 +620,7 @@
     setTurnStatusPill, clearTurnStatusPill, clearTurnStatusPillSources, setFaceReaction,
     handlePresenceStreamEvent, handleWorkspaceActivityStreamEvent, buildInteractiveQuestionBatchVisibleText, toastStore, maybeSuggestMemoryCaptureSafe,
     mergeMessageReasoning, setActivityChangeListener, handleActivityChange,
-    pushIncomingLog, syncBackendActivityFromStatus, getRendererElapsedMs, refreshSuggestions,
+    pushIncomingLog, syncBackendActivityFromStatus, getRendererElapsedMs,
     resetArtifactsState, resetMemorySuggestionStateSafe, openSetupTileSafe, syncThreadScrollState, renderWorkspaceChrome,
     toggleInteractiveRoundRecap, syncThinkingBlockNode, dismissToast, resolveActivity,
     handleFollowUpMessage,
@@ -661,7 +661,6 @@
     updateAssistantSpritePosition = noop,
     renderLayout = noop,
     renderHeader = noop,
-    renderPrompts = noop,
     renderMessages = noop,
     renderHero = noop,
     renderLogs = noop,
@@ -696,7 +695,6 @@
     refreshSessionSummaries = noopAsync,
     refreshSnapshots = noopAsync,
     bootstrap = noopAsync,
-    refreshSuggestions: controllerRefreshSuggestions = noopAsync,
     handleCreateSession = noopAsync,
     handleRenameSession = noopAsync,
     handleDeleteSession = noopAsync,
@@ -727,7 +725,6 @@
     handleElaborateMessage = noopAsync,
   } = controllerComposition;
   applySurfaceEffect = controllerApplySurfaceEffect;
-  refreshSuggestions = controllerRefreshSuggestions;
   handleCreateSessionWithWorkspace = controllerHandleCreateSessionWithWorkspace;
   syncBackendActivityFromStatus = controllerSyncBackendActivityFromStatus;
   state.harness.agentActions = { loadSessions, openSession, setActiveView };
@@ -850,7 +847,6 @@
       refreshPhasePercentiles: (...a) => refreshPhasePercentiles(...a),
       resetPhasePercentiles: (...a) => resetPhasePercentiles(...a),
       refreshSnapshots: (...a) => refreshSnapshots(...a),
-      refreshSuggestions: (...a) => refreshSuggestions(...a),
       refreshWorkspaceRootState: (...a) => refreshWorkspaceRootState(...a),
       registerCleanup: registerRendererCleanup,
       removeQueuedAttachment: (...a) => removeQueuedAttachment(...a),
@@ -893,7 +889,7 @@
   // behind the startup overlay -- the window still reveals on the reveal-timeout
   // fallback, but the overlay sits frozen with no recovery. Surface the failure
   // visibly, force the window to reveal, report it, and offer a reload.
-  const message = String((error && error.message) || error || 'Renderer startup failed.');
+  const message = String((error && error.message) || error || jt('app.startup.rendererFailed', 'Renderer startup failed.'));
   const detail = String((error && (error.stack || error.message)) || error || message);
   try { window.jennyShell?.lifecycle?.signalReady?.(); } catch (_e) { /* best-effort reveal */ }
   try {
@@ -910,11 +906,11 @@
       overlay.setAttribute('data-state', 'error');
       const sublabel = document.getElementById('startupOverlaySublabel');
       if (sublabel) {
-        sublabel.textContent = 'Startup failed';
+        sublabel.textContent = jt('app.startup.failed', 'Startup failed');
       }
       const secondary = document.getElementById('startupOverlaySecondary');
       if (secondary) {
-        secondary.textContent = 'Something went wrong while loading. Press Retry to reload.';
+        secondary.textContent = jt('app.startup.retryInstructions', 'Something went wrong while loading. Press Retry to reload.');
       }
       // UIUX-021: real keyboard-activatable Retry + alertdialog semantics +
       // focus transfer + inert background, shared with the backend-failure

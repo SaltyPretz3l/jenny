@@ -21,6 +21,8 @@
   }
   root.rendererIdeBranchSwitcher = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
@@ -54,7 +56,7 @@
   // Static guard headline with a computed, pluralized count.
   function formatDirtyGuardMessage(count) {
     const n = Math.max(0, Number(count) || 0);
-    return `You have ${n} uncommitted change${n === 1 ? '' : 's'}.`;
+    return jtn('ide.branches.uncommittedChanges', n, { count: n }, 'You have {count} uncommitted change.', 'You have {count} uncommitted changes.');
   }
 
   // Calm ahead/behind hint, or '' when level with the remote / unknown. Only
@@ -63,13 +65,13 @@
     const a = Math.max(0, Number(ahead) || 0);
     const b = Math.max(0, Number(behind) || 0);
     if (a && b) {
-      return `${a} ahead, ${b} behind the remote.`;
+      return jt('ide.branches.aheadBehindRemote', '{ahead} ahead, {behind} behind the remote.', { ahead: a, behind: b });
     }
     if (a) {
-      return `${a} commit${a === 1 ? '' : 's'} ahead of the remote.`;
+      return jtn('ide.branches.commitsAheadRemote', a, { count: a }, '{count} commit ahead of the remote.', '{count} commits ahead of the remote.');
     }
     if (b) {
-      return `${b} commit${b === 1 ? '' : 's'} behind the remote.`;
+      return jtn('ide.branches.commitsBehindRemote', b, { count: b }, '{count} commit behind the remote.', '{count} commits behind the remote.');
     }
     return '';
   }
@@ -80,16 +82,16 @@
     const value = String(rawName == null ? '' : rawName).trim();
     const existing = Array.isArray(existingBranches) ? existingBranches : [];
     if (!value) {
-      return { ok: false, value, error: 'Type a name for the new branch.' };
+      return { ok: false, value, error: jt('ide.branches.typeNewBranchName', 'Type a name for the new branch.') };
     }
     if (/\s/.test(value)) {
-      return { ok: false, value, error: 'Branch names can’t contain spaces — try dashes instead.' };
+      return { ok: false, value, error: jt('ide.branches.nameNoSpaces', 'Branch names can’t contain spaces — try dashes instead.') };
     }
     if (value.length > MAX_BRANCH_NAME_CHARS) {
-      return { ok: false, value, error: 'That name is too long.' };
+      return { ok: false, value, error: jt('ide.branches.nameTooLong', 'That name is too long.') };
     }
     if (existing.indexOf(value) !== -1) {
-      return { ok: false, value, error: `A branch named “${value}” already exists.` };
+      return { ok: false, value, error: jt('ide.branches.nameAlreadyExists', 'A branch named “{name}” already exists.', { name: value }) };
     }
     const shapeOk = !value.includes('\0')
       && !value.startsWith('-')
@@ -104,7 +106,7 @@
       && SAFE_BRANCH_PATTERN.test(value)
       && value.split('/').every((part) => part && part !== '.' && part !== '..' && !part.endsWith('.lock'));
     if (!shapeOk) {
-      return { ok: false, value, error: 'Use letters, numbers, and - _ . / only (no spaces).' };
+      return { ok: false, value, error: jt('ide.branches.nameCharacters', 'Use letters, numbers, and - _ . / only (no spaces).') };
     }
     return { ok: true, value, error: null };
   }
@@ -137,11 +139,11 @@
   // Map a never-throws git client result into a plain-English failure line.
   function describeGitError(result, fallback) {
     if (!result || result.available === false) {
-      return 'Git isn’t available in this workspace.';
+      return jt('ide.branches.gitUnavailable', 'Git isn’t available in this workspace.');
     }
     const message = String(result.message || '').trim();
     if (/would be overwritten|conflict|local changes|overwritten by checkout/i.test(message)) {
-      return 'You have changes that conflict with that branch — shelve or commit them first.';
+      return jt('ide.branches.conflictingChanges', 'You have changes that conflict with that branch — shelve or commit them first.');
     }
     return message || fallback;
   }
@@ -204,7 +206,7 @@
     // the click (this feature's audience is beginners). Deduped so it can't spam.
     function rejectIfBusy() {
       if (busy) {
-        showToast('Hang on — finishing the last git action…');
+        showToast(jt('ide.branches.actionBusy', 'Hang on — finishing the last git action…'));
         return true;
       }
       return false;
@@ -238,8 +240,8 @@
     function buildCreateRowMarkup(index) {
       return rowShell(
         index,
-        ' data-ide-branch-create="1" title="Create a new branch"',
-        '<span class="ide-picker-name ide-quick-open-name">+ Create new branch…</span>'
+        ' data-ide-branch-create="1" title="' + escapeHtml(jt('ide.branches.createNewTitle', 'Create a new branch')) + '"',
+        '<span class="ide-picker-name ide-quick-open-name">' + escapeHtml(jt('ide.branches.createNew', '+ Create new branch…')) + '</span>'
       );
     }
 
@@ -253,11 +255,11 @@
         const validation = validateNewBranchName(typed, branches);
         let status;
         if (!typed) {
-          status = 'Type a name for the new branch.';
+          status = jt('ide.branches.typeNewBranchName', 'Type a name for the new branch.');
         } else if (!validation.ok) {
           status = validation.error;
         } else {
-          status = `Press Enter to create “${validation.value}”.`;
+          status = jt('ide.branches.pressEnterCreate', 'Press Enter to create “{name}”.', { name: validation.value });
         }
         resultsEl.innerHTML = `<div class="ide-picker-status ide-quick-open-status">${escapeHtml(status)}</div>`;
         return;
@@ -277,9 +279,9 @@
         parts.push(`<div class="ide-picker-status ide-quick-open-status">${escapeHtml(hint)}</div>`);
       }
       if (loading) {
-        parts.push('<div class="ide-picker-status ide-quick-open-status">Loading branches…</div>');
+        parts.push('<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.branches.loading', 'Loading branches…')) + '</div>');
       } else if (!rows.length && query) {
-        parts.push('<div class="ide-picker-status ide-quick-open-status">No branches match.</div>');
+        parts.push('<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.branches.noMatches', 'No branches match.')) + '</div>');
       }
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
@@ -304,7 +306,7 @@
       mode = 'create';
       if (inputEl) {
         inputEl.value = String(seed || '');
-        inputEl.placeholder = 'New branch name…';
+        inputEl.placeholder = jt('ide.branches.newBranchPlaceholder', 'New branch name…');
       }
       refreshResults();
       inputEl?.focus?.();
@@ -314,7 +316,7 @@
       mode = 'list';
       if (inputEl) {
         inputEl.value = '';
-        inputEl.placeholder = 'Switch branch…';
+        inputEl.placeholder = jt('ide.branches.switchPlaceholder', 'Switch branch…');
       }
       selectedIndex = 0;
       refreshResults();
@@ -339,8 +341,8 @@
       // (which would let a dup name through to a raw backend error).
       if (loading) {
         if (resultsEl) {
-          resultsEl.innerHTML = '<div class="ide-picker-status ide-quick-open-status">Still loading branches — '
-            + 'try again in a moment.</div>';
+          resultsEl.innerHTML = '<div class="ide-picker-status ide-quick-open-status">'
+            + jt('ide.branches.stillLoading', 'Still loading branches — try again in a moment.') + '</div>';
         }
         return;
       }
@@ -425,11 +427,11 @@
       overlayEl.innerHTML = '<div class="ide-picker-panel ide-quick-open-panel">'
         + textField({
           className: 'ide-picker-field ide-quick-open-field',
-          placeholder: 'Switch branch…',
-          ariaLabel: 'Switch branch',
+          placeholder: jt('ide.branches.switchPlaceholder', 'Switch branch…'),
+          ariaLabel: jt('ide.branches.switchLabel', 'Switch branch'),
           dataset: { 'ide-branch-input': '1' },
         })
-        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="Branches"></div>'
+        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="' + escapeHtml(jt('ide.branches.resultsLabel', 'Branches')) + '"></div>'
         + '</div>';
       stage.appendChild(overlayEl);
       inputEl = overlayEl.querySelector('[data-ide-branch-input]')
@@ -521,27 +523,27 @@
         const result = await gitClient.checkout({ ref: name });
         if (result && result.ok) {
           await refreshGit();
-          showToast(`Switched to “${name}”.`);
+          showToast(jt('ide.branches.switched', 'Switched to “{branch}”.', { branch: name }));
         } else {
-          showError(describeGitError(result, `Couldn’t switch to “${name}”.`));
+          showError(describeGitError(result, jt('ide.branches.switchFailed', 'Couldn’t switch to “{branch}”.', { branch: name })));
         }
       });
     }
 
     function doShelveAndSwitch(name) {
       return withBusy(async () => {
-        const stashed = await gitClient.stash({ op: 'push', message: `Shelved before switching to ${name}` });
+        const stashed = await gitClient.stash({ op: 'push', message: jt('ide.branches.shelvedBeforeSwitch', 'Shelved before switching to {branch}', { branch: name }) });
         if (!stashed || !stashed.ok) {
-          showError(describeGitError(stashed, 'Couldn’t shelve your changes.'));
+          showError(describeGitError(stashed, jt('ide.branches.shelveFailed', 'Couldn’t shelve your changes.')));
           return;
         }
         const result = await gitClient.checkout({ ref: name });
         await refreshGit();
         if (result && result.ok) {
-          showToast(`Switched to “${name}”. Your changes are shelved — restore them anytime.`);
+          showToast(jt('ide.branches.switchedWithShelvedChanges', 'Switched to “{branch}”. Your changes are shelved — restore them anytime.', { branch: name }));
         } else {
-          showError(`${describeGitError(result, `Couldn’t switch to “${name}”.`)} `
-            + 'Your changes are safely shelved — restore them with “Restore shelved changes”.');
+          showError(`${describeGitError(result, jt('ide.branches.switchFailed', 'Couldn’t switch to “{branch}”.', { branch: name }))} `
+            + jt('ide.branches.switchFailedShelvedHint', 'Your changes are safely shelved — restore them with “Restore shelved changes”.'));
         }
       });
     }
@@ -575,9 +577,9 @@
         const result = await gitClient.checkout({ ref: name, createBranch: true });
         if (result && result.ok) {
           await refreshGit();
-          showToast(`Created and switched to “${name}”.`);
+          showToast(jt('ide.branches.createdAndSwitched', 'Created and switched to “{branch}”.', { branch: name }));
         } else {
-          showError(describeGitError(result, `Couldn’t create “${name}”.`));
+          showError(describeGitError(result, jt('ide.branches.createFailed', 'Couldn’t create “{branch}”.', { branch: name })));
         }
       });
     }
@@ -585,53 +587,51 @@
     function undoLastCommit() {
       return confirmThenRun({
         confirm: {
-          title: 'Undo your last commit?',
-          message: 'Your most recent commit will be undone. The changes from it stay in your working '
-            + 'files, ready to commit again — nothing is lost.',
-          confirmLabel: 'Undo commit',
-          cancelLabel: 'Keep it',
+          title: jt('ide.branches.undoLastCommitTitle', 'Undo your last commit?'),
+          message: jt('ide.branches.undoLastCommitMessage', 'Your most recent commit will be undone. The changes from it stay in your working files, ready to commit again — nothing is lost.'),
+          confirmLabel: jt('ide.branches.undoCommit', 'Undo commit'),
+          cancelLabel: jt('ide.branches.keepIt', 'Keep it'),
           variant: 'danger',
         },
         run: (client) => client.undoLastCommit({}),
         successField: 'undone',
-        successMsg: 'Last commit undone — its changes are back in your working files.',
-        emptyMsg: 'There’s no commit to undo yet.',
-        errorFallback: 'Couldn’t undo the last commit.',
+        successMsg: jt('ide.branches.lastCommitUndone', 'Last commit undone — its changes are back in your working files.'),
+        emptyMsg: jt('ide.branches.noCommitToUndo', 'There’s no commit to undo yet.'),
+        errorFallback: jt('ide.branches.undoCommitFailed', 'Couldn’t undo the last commit.'),
       });
     }
 
     function shelveChanges() {
       return confirmThenRun({
         confirm: {
-          title: 'Shelve your changes?',
-          message: 'Your uncommitted changes will be set aside so your files go back to the last '
-            + 'commit. You can bring them back anytime with “Restore shelved changes”.',
-          confirmLabel: 'Shelve changes',
-          cancelLabel: 'Cancel',
+          title: jt('ide.branches.shelveChangesTitle', 'Shelve your changes?'),
+          message: jt('ide.branches.shelveChangesMessage', 'Your uncommitted changes will be set aside so your files go back to the last commit. You can bring them back anytime with “Restore shelved changes”.'),
+          confirmLabel: jt('ide.branches.shelveChanges', 'Shelve changes'),
+          cancelLabel: jt('common.cancel', 'Cancel'),
           variant: 'primary',
         },
         run: (client) => client.stash({ op: 'push' }),
         successField: 'stashed',
-        successMsg: 'Changes shelved.',
-        emptyMsg: 'You have no changes to shelve.',
-        errorFallback: 'Couldn’t shelve your changes.',
+        successMsg: jt('ide.branches.changesShelved', 'Changes shelved.'),
+        emptyMsg: jt('ide.branches.noChangesToShelve', 'You have no changes to shelve.'),
+        errorFallback: jt('ide.branches.shelveFailed', 'Couldn’t shelve your changes.'),
       });
     }
 
     function restoreShelved() {
       return confirmThenRun({
         confirm: {
-          title: 'Restore shelved changes?',
-          message: 'The changes you most recently shelved will be brought back into your working files.',
-          confirmLabel: 'Restore changes',
-          cancelLabel: 'Cancel',
+          title: jt('ide.branches.restoreShelvedTitle', 'Restore shelved changes?'),
+          message: jt('ide.branches.restoreShelvedMessage', 'The changes you most recently shelved will be brought back into your working files.'),
+          confirmLabel: jt('ide.branches.restoreChanges', 'Restore changes'),
+          cancelLabel: jt('common.cancel', 'Cancel'),
           variant: 'primary',
         },
         run: (client) => client.stash({ op: 'pop' }),
         successField: 'stashed',
-        successMsg: 'Shelved changes restored.',
-        emptyMsg: 'There are no shelved changes to restore.',
-        errorFallback: 'Couldn’t restore your shelved changes.',
+        successMsg: jt('ide.branches.shelvedChangesRestored', 'Shelved changes restored.'),
+        emptyMsg: jt('ide.branches.noShelvedChanges', 'There are no shelved changes to restore.'),
+        errorFallback: jt('ide.branches.restoreShelvedFailed', 'Couldn’t restore your shelved changes.'),
       });
     }
 
@@ -646,7 +646,7 @@
       overlayEl.classList.remove('hidden');
       if (inputEl) {
         inputEl.value = '';
-        inputEl.placeholder = 'Switch branch…';
+        inputEl.placeholder = jt('ide.branches.switchPlaceholder', 'Switch branch…');
       }
       selectedIndex = 0;
       branches = [];
@@ -707,16 +707,16 @@
         return [];
       }
       return [
-        paletteItem('ide:git-switch-branch', 'Git: Switch Branch',
-          'Check out another branch — with a gentle guard if you have unsaved work', open),
-        paletteItem('ide:git-create-branch', 'Git: Create Branch',
-          'Start a new branch from where you are', openForCreate),
-        paletteItem('ide:git-undo-last-commit', 'Git: Undo Last Commit (keeps your changes)',
-          'Move your branch back one commit; your changes stay ready to edit', undoLastCommit),
-        paletteItem('ide:git-shelve-changes', 'Git: Shelve Changes',
-          'Set your uncommitted changes aside to restore later', shelveChanges),
-        paletteItem('ide:git-restore-shelved', 'Git: Restore Shelved Changes',
-          'Bring back the changes you last shelved', restoreShelved),
+        paletteItem('ide:git-switch-branch', jt('ide.branches.switchCommand', 'Git: Switch Branch'),
+          jt('ide.branches.switchDescription', 'Check out another branch — with a gentle guard if you have unsaved work'), open),
+        paletteItem('ide:git-create-branch', jt('ide.branches.createCommand', 'Git: Create Branch'),
+          jt('ide.branches.createDescription', 'Start a new branch from where you are'), openForCreate),
+        paletteItem('ide:git-undo-last-commit', jt('ide.branches.undoLastCommitCommand', 'Git: Undo Last Commit (keeps your changes)'),
+          jt('ide.branches.undoLastCommitDescription', 'Move your branch back one commit; your changes stay ready to edit'), undoLastCommit),
+        paletteItem('ide:git-shelve-changes', jt('ide.branches.shelveChangesCommand', 'Git: Shelve Changes'),
+          jt('ide.branches.shelveDescription', 'Set your uncommitted changes aside to restore later'), shelveChanges),
+        paletteItem('ide:git-restore-shelved', jt('ide.branches.restoreShelvedCommand', 'Git: Restore Shelved Changes'),
+          jt('ide.branches.restoreDescription', 'Bring back the changes you last shelved'), restoreShelved),
       ];
     }
 

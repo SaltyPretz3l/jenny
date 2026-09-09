@@ -811,6 +811,7 @@ def build_chat_decision(
         context_blocks,
         include_personality=include_personality_block,
         agent_name=getattr(kernel._config, "assistant_name", None),
+        ui_language=getattr(kernel._config, "ui_language", "en"),
     )
     runtime_system_messages = _build_runtime_overlay_messages(
         kernel,

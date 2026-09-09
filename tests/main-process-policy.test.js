@@ -11,6 +11,7 @@ const {
 test('managed config refresh policy recognizes only canonical refresh reasons', () => {
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('workspace_root_updated'), true);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('feature_settings_updated'), true);
+  assert.equal(shouldRefreshManagedConfigForShellConfigReason('time_format_updated'), true);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason(' model_tuning_updated '), false);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('model_tuning_legacy_claimed'), false);
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('chunk_inactivity_seconds_updated'), false);

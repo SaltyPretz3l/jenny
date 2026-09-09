@@ -11,7 +11,7 @@
   root.inventoryUrlField = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -57,7 +57,7 @@
     var value = String(o.value == null ? '' : o.value);
     var placeholder = String(o.placeholder || '');
     var hint = String(o.hint || '').trim();
-    var ariaLabel = String(o.ariaLabel || label || 'URL input');
+    var ariaLabel = String(o.ariaLabel || label || jt('inventory.urlField.inputLabel', 'URL input'));
     var cls = 'inv-url-field';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;

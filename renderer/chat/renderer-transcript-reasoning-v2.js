@@ -15,6 +15,7 @@
     root.chatThinkingUtils || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (v2Utils, sharedUtils) {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const {
     reasoningStatusTone,
     shouldAutoExpandReasoningV2,
@@ -36,7 +37,7 @@
   } = sharedUtils || {};
 
   // generation_runtime.py's hardcoded transition_phase summary.
-  const GENERIC_PHASE_SUMMARY = 'reasoning through the turn';
+  const GENERIC_PHASE_SUMMARY = jt('chat.reasoning.genericPhaseSummary', 'reasoning through the turn');
   const REASONING_STREAM_STATE_CACHE_LIMIT = 8;
   const streamStateCache = new Map();
 
@@ -167,7 +168,7 @@
         )
         : '';
       const secondaryMeta = durationLabel
-        ? `Thought for ${durationLabel}`
+        ? jt('chat.reasoning.thoughtFor', 'Thought for {duration}', { duration: durationLabel })
         : formatReasoningSecondaryMeta({ tokensPerSecond: metadata?.tokensPerSecond });
 
       const bodyMarkdown = joinReasoningEntriesMarkdown(entries);
@@ -257,10 +258,10 @@
       let nameText;
       let clusterMeta;
       if (groupCount > 1) {
-        nameText = `Step ${iteration}`;
+        nameText = jt('chat.reasoning.step', 'Step {step}', { step: iteration });
         clusterMeta = secondaryMeta;
       } else if (durationLabel) {
-        nameText = `Thought for ${durationLabel}`;
+        nameText = jt('chat.reasoning.thoughtFor', 'Thought for {duration}', { duration: durationLabel });
         clusterMeta = '';
       } else {
         nameText = isPhaseStreaming ? 'Thinking' : 'Thought';
@@ -276,8 +277,8 @@
       /* Skip trivially short or punctuation-only labels so the header stays clean. */
       const headerLabel = /\p{L}|\p{N}/u.test(String(rawHeaderLabel || '')) ? rawHeaderLabel : '';
       const ariaLabel = groupCount > 1
-        ? `Toggle reasoning step ${iteration}`
-        : 'Toggle reasoning';
+        ? jt('chat.reasoning.toggleStep', 'Toggle reasoning step {step}', { step: iteration })
+        : jt('chat.reasoning.toggle', 'Toggle reasoning');
 
       return `
         <div
@@ -331,7 +332,7 @@
       if (groupCount <= 1) return '';
       return `
         <div class="reasoning-row-group-header">
-          <span class="reasoning-row-group-label">${escapeHtml(`Reasoning · ${groupCount} steps`)}</span>
+          <span class="reasoning-row-group-label">${escapeHtml(jt('chat.reasoning.stepCount', 'Reasoning · {count} steps', { count: groupCount }))}</span>
         </div>
       `;
     }
@@ -371,7 +372,7 @@
 
       const widgetStatus = escapeHtml(String(deriveReasoningStatus(message, { isStreamingTail: isStreaming })));
       return `
-        <div class="reasoning-row-stack" role="group" aria-label="Reasoning" data-reasoning-row-version="2" data-thinking-status="${widgetStatus}">
+        <div class="reasoning-row-stack" role="group" aria-label="${escapeHtml(jt('chat.reasoning.label', 'Reasoning'))}" data-reasoning-row-version="2" data-thinking-status="${widgetStatus}">
           ${renderGroupHeader(phaseGroups.length)}
           ${phasesHtml}
         </div>

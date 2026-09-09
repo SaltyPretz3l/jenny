@@ -9,6 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var ROW_WIDTH = 40;
   var BAR_WIDTH = 26;
 
@@ -21,7 +22,7 @@
 
   function formatTokenCount(value, estimated) {
     var normalized = Math.max(Number(value) || 0, 0);
-    return (estimated ? '~' : '') + Math.floor(normalized).toLocaleString() + ' tokens';
+    return estimated ? jt('composer.slash.context.approxTokens', '~{count} tokens', { count: Math.floor(normalized).toLocaleString(globalThis.jennyI18n?.tag?.()) }) : jt('composer.slash.context.tokens', '{count} tokens', { count: Math.floor(normalized).toLocaleString(globalThis.jennyI18n?.tag?.()) });
   }
 
   function usageBar(fraction) {
@@ -101,7 +102,7 @@
         appendClientLog('WARN', 'slash.context_usage_unavailable', { sessionId: sessionId });
       }
 
-      var lines = ['Context Usage', ''];
+      var lines = [jt('composer.slash.context.title', 'Context Usage'), ''];
       if (meter) {
         var estimated = meter.source !== 'provider';
         lines.push('  ' + dotRow('Used', formatTokenCount(meter.used, estimated)));
@@ -112,19 +113,19 @@
         lines.push('  ' + usageBar(meter.ratio) + '  ' + meter.percentLabel);
         lines.push('  ' + dotRow('Freshness', meter.sourceLabel));
         lines.push('  ' + dotRow(
-          'Target', meter.targetType === 'auto_compact' ? 'auto-compact threshold' : 'context window'
+          'Target', meter.targetType === 'auto_compact' ? jt('composer.slash.context.autoCompactThreshold', 'auto-compact threshold') : jt('composer.slash.context.contextWindow', 'context window')
         ));
       } else {
-        lines.push('  Usage unavailable');
+        lines.push('  ' + jt('composer.slash.context.usageUnavailable', 'Usage unavailable'));
       }
 
       lines.push('', 'Session', '');
       lines.push('  ' + dotRow('Messages', messages.length));
-      lines.push('  ' + dotRow('Cached overhead', formatTokenCount(overheadTokens, true)));
+      lines.push('  ' + dotRow(jt('composer.slash.context.cachedOverhead', 'Cached overhead'), formatTokenCount(overheadTokens, true)));
       lines.push('  ' + dotRow('Model', model));
       lines.push('  ' + dotRow('Effort', reasoningEffort));
       lines.push('  ' + dotRow('History', historyScope));
-      lines.push('  ' + dotRow('Personality and notes', preferences.includePersonality === false ? 'off' : 'on'));
+      lines.push('  ' + dotRow(jt('composer.slash.context.personalityAndNotes', 'Personality and notes'), preferences.includePersonality === false ? 'off' : 'on'));
       lines.push('  ' + dotRow('Memory', preferences.includeMemory === false ? 'off' : 'on'));
 
       var added = injectOutput(lines.join('\n'), '/context', invocation);

@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 
+from sidecar.ai.execution_policy import filter_desktop_tool_bindings
+from sidecar.ai.host_policy import filter_host_tool_bindings
 from sidecar.ai.tools.assembly import ToolAssemblyContext, assemble_tool_contract
 from sidecar.ai.tools.builtins.filesystem_settings import configure_filesystem_tools
 from sidecar.ai.tools.builtins.git_ops_settings import configure_git_tools
@@ -175,7 +177,10 @@ def build_tool_bindings(
         config=config,
         enabled=_extract_flag_enabled(config, "tools_knowledge_enabled", default=False),
     )
-    return bindings
+    return filter_desktop_tool_bindings(
+        filter_host_tool_bindings(bindings, config),
+        config,
+    )
 
 
 def _add_file_operation_bindings(

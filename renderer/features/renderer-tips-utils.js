@@ -9,9 +9,6 @@
 
   function createTipsManager(deps) {
     const { state } = deps;
-    const {
-      renderPrompts,
-    } = deps.callbacks;
 
     function normalizeTip(tip) {
       if (!tip || typeof tip !== 'object' || Array.isArray(tip)) {
@@ -65,7 +62,6 @@
       }
       return windowRef.jennyShell.tips.onChanged((payload) => {
         applyTipsPayload(payload);
-        renderPrompts();
       });
     }
 

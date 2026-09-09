@@ -12,6 +12,7 @@
 param(
   [switch]$Yes,
   [switch]$SkipModel,
+  [switch]$ExistingServer,
   [switch]$NoLaunch,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$Rest
@@ -93,6 +94,7 @@ if (-not $npmVersionValid -or $npmMajor -lt 10) {
 $userForward = @()
 if ($Yes) { $userForward += '--yes' }
 if ($SkipModel) { $userForward += '--skip-model' }
+if ($ExistingServer) { $userForward += '--existing-server' }
 if ($NoLaunch) { $userForward += '--no-launch' }
 if ($Rest) { $userForward += $Rest }
 $argCheck = 'const { parseArgs } = require("./scripts/setup/setup"); const parsed = parseArgs(process.argv.slice(1)); if (parsed.errors.length) { console.error(parsed.errors.join(" ")); process.exit(10); }'

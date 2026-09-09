@@ -123,8 +123,22 @@
     return cumulativeTokens;
   }
 
-  function buildMessageTokenMeta(messages) {
+  function buildMessageTokenMeta(messages, turnMessageIds) {
     var metaById = new Map();
+    if (Array.isArray(turnMessageIds)) {
+      var ids = new Set(turnMessageIds);
+      var seen = new Set();
+      var total = 0;
+      for (var message of (messages || [])) {
+        if (!message || !ids.has(message.id) || seen.has(message.id)) continue;
+        seen.add(message.id);
+        if (message.role === 'assistant' && isMetaTokenCountedMessage(message)) {
+          total += estimateTextTokens(getMessageTokenText(message));
+        }
+      }
+      ids.forEach(function (id) { metaById.set(id, { messageTokens: total, estimated: true, wholeTurn: true }); });
+      return metaById;
+    }
     walkMessageTokenEstimates(messages, function recordMessageTokenMeta(estimate) {
       metaById.set(estimate.messageId, {
         messageTokens: estimate.messageTokens,

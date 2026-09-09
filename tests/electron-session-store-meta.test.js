@@ -34,6 +34,19 @@ function appendUserMessage(store, sessionId, content) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+test('message provenance stays explicit or unknown through model switches and disk reload', () => {
+  const { store, storePath } = createStore();
+  const session = store.createSession({ title: 'Provenance' });
+  store.appendMessage(session.id, { id: 'a', role: 'assistant', content: 'one', model_used: 'first' });
+  store.appendMessage(session.id, { id: 'legacy', role: 'assistant', content: 'unknown' });
+  store.appendMessage(session.id, { id: 'b', role: 'assistant', content: 'two', model_used: 'second' });
+  const expected = ['first', '', 'second'];
+  assert.deepEqual(store.getSession(session.id).messages.map(m => m.model_used), expected);
+  store.flush();
+  const reloaded = new ElectronSessionStore(storePath);
+  assert.deepEqual(reloaded.getSession(session.id).messages.map(m => m.model_used), expected);
+});
+
 test('sessions default to unpinned/unarchived and surface both fields in summaries', () => {
   const { store } = createStore();
   const created = store.createSession({ title: 'Defaults' });

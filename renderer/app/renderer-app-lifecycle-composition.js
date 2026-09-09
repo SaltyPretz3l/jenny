@@ -35,19 +35,15 @@
       renderDashboard: (...a) => renderDashboardSafe(...a),
       notifyBootViewReady: (...a) => (notifyStartupBootViewReadyRef ? notifyStartupBootViewReadyRef(...a) : undefined),
       syncStartupBackendStatus: (...a) => (syncStartupBackendStatusRef ? syncStartupBackendStatusRef(...a) : undefined),
-      invalidateSessionArtifacts: (...a) => invalidateSessionArtifacts(...a),
-      pruneSessionArtifacts: (...a) => pruneSessionArtifacts(...a),
+      invalidateSessionArtifacts: (...a) => invalidateSessionArtifacts(...a), pruneSessionArtifacts: (...a) => pruneSessionArtifacts(...a),
       resetArtifactsState: (...a) => resetArtifactsState(...a),
-      renderPrompts: (...a) => renderPrompts(...a), renderComposerState: (...a) => renderComposerState(...a),
+      renderComposerState: (...a) => renderComposerState(...a),
       renderPersonalityEditor: (...a) => renderPersonalityEditorSafe(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
       renderSessions: (...a) => renderSessions(...a), refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
-      refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a),
-      clearDismissedMemorySession: (...a) => clearDismissedMemorySessionSafe(...a),
+      refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a), clearDismissedMemorySession: (...a) => clearDismissedMemorySessionSafe(...a),
       resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
-      refreshCompanionState: (...a) => refreshCompanionStateSafe(...a),
-      refreshProactiveState: (...a) => refreshProactiveStateSafe(...a),
-      refreshSkillsState: (...a) => refreshSkillsStateSafe(...a),
-      refreshTipsState: (...a) => refreshTipsStateSafe(...a),
+      refreshCompanionState: (...a) => refreshCompanionStateSafe(...a), refreshProactiveState: (...a) => refreshProactiveStateSafe(...a),
+      refreshSkillsState: (...a) => refreshSkillsStateSafe(...a), refreshTipsState: (...a) => refreshTipsStateSafe(...a),
       refreshOfflineState: (...a) => refreshOfflineStateSafe(...a),
       refreshPhasePercentiles: (...a) => refreshPhasePercentiles(...a),
       refreshPersonalityWorkspace: (...a) => refreshPersonalityWorkspaceSafe(...a), toErrorMessage: (...a) => toErrorMessage(...a),
@@ -164,6 +160,12 @@
   state.ui.chatZoomPercent = normalizeChatZoomPercent(
     persistedChatZoomState?.zoomPercent ?? state.ui.chatZoomPercent ?? DEFAULT_CHAT_ZOOM_PERCENT
   );
+  const chatUiNormalizers = window.rendererSettingsSupport || {};
+  state.use24HourTime = persistedChatZoomState?.use24HourTime === true;
+  globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
+  state.uiLanguage = chatUiNormalizers.normalizeUiLanguageTag?.(persistedChatZoomState?.uiLanguage) || state.uiLanguage || 'en';
+  state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
+  state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 10;
   state.ui.appZoomPercent = Number(
     persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 100
   ) || 100;
@@ -196,6 +198,7 @@
       setupServiceUtils: window.rendererSetupService || {},
       setupControllerUtils: window.rendererSetupController || {},
       setupSceneFactories: {
+        acknowledgement: (window.rendererSetupSceneAcknowledgement || {}).createScene,
         workspaceRoot: (window.rendererSetupSceneWorkspaceRoot || {}).createScene,
         localModel: (window.rendererSetupSceneLocalModel || {}).createScene,
         endpoint: (window.rendererSetupSceneEndpoint || {}).createScene,
@@ -219,7 +222,6 @@
       showShellErrorToast: (...a) => showShellErrorToast(...a),
       toErrorMessage: (...a) => toErrorMessage(...a),
       renderAll: (...a) => renderAll(...a),
-      renderPrompts: (...a) => renderPrompts(...a),
       renderSettings: (...a) => renderSettings(...a),
       renderComposerState: (...a) => renderComposerState(...a),
       syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
@@ -228,7 +230,6 @@
       getCurrentMessageById: (...a) => getCurrentMessageById(...a),
       setActiveView: (...a) => setActiveView(...a),
       openSettingsSection: (...a) => openSettingsSection(...a),
-      refreshSuggestions: (...a) => refreshSuggestions(...a),
       getSettingsShellController: () => settingsShellController,
       applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a),
       renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
@@ -617,7 +618,6 @@
     disposeViewportController = noop,
   } = viewportController || {}; chatScrollCoordinator?.setViewportController?.(viewportController);
   if (lifecycleController) lifecycleController.viewportReveal = viewportReveal;
-
   /* pinToTopController */
   const pinToTopUtils = window.rendererPinToTopUtils || {};
   let chatWayfinderController = null;
@@ -636,7 +636,6 @@
         },
       })
     : null); chatScrollCoordinator?.setPinController?.(pinToTopController);
-
   /* sessionManager */
   const buildArtifactsFromMessages = typeof artifactsUtils.buildArtifactsFromMessages === 'function'
     ? artifactsUtils.buildArtifactsFromMessages
@@ -758,8 +757,15 @@
         fileDiffBindings.clearFileDiffSession?.(sessionId);
         saveReasoningPhaseExpansionPreferences();
       },
-      onRekeySessionState: () => {
+      onRekeySessionState: (sourceSessionId, targetSessionId) => {
         saveReasoningPhaseExpansionPreferences();
+        // Enqueue before acceptance can refresh summaries/restore the workspace.
+        // The workspace owns focus: promotion must not activate a background tab.
+        workspaceStateController?.rekeySession(sourceSessionId, targetSessionId)
+          .then(() => renderWorkspaceChrome())
+          .catch((error) => appendClientLog('WARN', 'workspace.session_rekey_failed', {
+            message: String(error?.message || error),
+          }));
       },
       notifySessionMessagesReplaced: (sessionId, messages) => {
         invalidateSessionArtifacts(sessionId, messages);
@@ -785,6 +791,20 @@
     getTokenCountedMessages = noopArr, estimateTokens = () => 0,
     upsertSessionSummary = noopNull, removeSessionState = noop, rekeySessionState = noopStr,
   } = sessionManager || {};
+  const remoteBannerDom = surfaceDom.chat || {};
+  const remoteControlBanner = window.rendererRemoteControlBanner?.createRemoteControlBannerController?.({
+    state, shell: window.jennyShell,
+    dom: { banner: remoteBannerDom.composerRemoteBanner, label: remoteBannerDom.composerRemoteBannerLabel,
+      takeControlButton: remoteBannerDom.composerRemoteTakeControl, stopButton: remoteBannerDom.composerRemoteStop },
+    callbacks: { stopActiveStream: () => remoteBannerDom.stopStreamButton?.click?.(),
+      getCurrentSessionId: () => state.currentSessionId, isSessionStreaming, appendClientLog },
+  }) || null;
+  const syncRemoteControlBanner = () => remoteControlBanner?.syncNow?.();
+  window.rendererRemoteControlBannerSync = syncRemoteControlBanner;
+  registerRendererCleanup(() => {
+    remoteControlBanner?.dispose?.();
+    if (window.rendererRemoteControlBannerSync === syncRemoteControlBanner) window.rendererRemoteControlBannerSync = null;
+  });
   /* sidebarController */
   const sidebarController = sidebarControllerUtils.createSidebarController?.({
     state,
@@ -912,8 +932,8 @@
     getSessionSummary = () => null,
     applyWorkspaceSnapshot = (s) => s,
     syncWorkspaceFromStore = async () => state.workspace,
-    activateWorkspaceSession = async (sid, opts) => { await openSession(sid, opts); return state.workspace; },
-    closeWorkspaceSession = async () => false,
+    activateWorkspaceSession: activateWorkspaceSessionBase = async (sid, opts) => { await openSession(sid, opts); return state.workspace; },
+    closeWorkspaceSession: closeWorkspaceSessionBase = async () => false,
     reorderWorkspaceSession = async () => {},
     closeOtherWorkspaceSessions = async () => {},
     closeWorkspaceSessionsToRight = async () => {},
@@ -923,6 +943,9 @@
     renderWorkspaceChrome = noop,
     handleWorkspaceShortcut = noop,
   } = workspaceSessionCoordinator;
+  const withBannerRefresh = (fn) => async (...args) => { const next = await fn(...args); remoteControlBanner?.refresh?.(); return next; };
+  const activateWorkspaceSession = withBannerRefresh(activateWorkspaceSessionBase);
+  const closeWorkspaceSession = withBannerRefresh(closeWorkspaceSessionBase);
   workspaceStateController = workspaceStateUtils.createWorkspaceStateController?.({ jennyShell: window.jennyShell, isSessionBusy: isWorkspaceSessionBusy, onStateChanged: applyWorkspaceSnapshot, onPersistenceError: (failure) => appendClientLog('WARN', 'workspace.state_persist_failed', failure) }) || null;
   workspaceChromeController = workspaceChromeUtils.createWorkspaceChromeController?.({
     containerEl: workspaceRailShell,

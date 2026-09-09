@@ -19,6 +19,7 @@
 ) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const STALLED_DELAY_MS = 30000;
 
   function createUserQuestionsActions(deps = {}) {
@@ -156,7 +157,7 @@
       }
       block.dataset.userQuestionsStale = 'true';
       block.dataset.userQuestionsLivenessChecked = 'true';
-      block.setAttribute('aria-label', 'Questions no longer active');
+      block.setAttribute('aria-label', jt('chat.questions.inactiveLabel', 'Questions no longer active'));
       block.removeAttribute('aria-busy');
       block.innerHTML = markup;
     }
@@ -193,7 +194,7 @@
             markUserQuestionsStale(block);
             showComposerActionError(
               new Error('These questions were already resolved or are no longer active.'),
-              decline ? 'Decline Failed' : 'Submit Failed'
+              decline ? jt('chat.questions.declineFailedTitle', 'Decline Failed') : jt('chat.questions.submitFailedTitle', 'Submit Failed')
             );
             return;
           }
@@ -215,7 +216,7 @@
               message: String(error?.message || error).slice(0, 200),
             }
           );
-          showComposerActionError(error, decline ? 'Decline Failed' : 'Submit Failed');
+          showComposerActionError(error, decline ? jt('chat.questions.declineFailedTitle', 'Decline Failed') : jt('chat.questions.submitFailedTitle', 'Submit Failed'));
         });
     }
 

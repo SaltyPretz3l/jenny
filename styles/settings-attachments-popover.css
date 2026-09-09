@@ -5,7 +5,9 @@
   align-items: center;
   gap: var(--space-4);
   min-height: 30px;
-  padding: 0 var(--space-4) 0 var(--space-6);
+  padding-block: 0;
+  padding-inline-start: var(--space-6);
+  padding-inline-end: var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--widget-attachment-bg);
   border: 1px solid var(--widget-attachment-border);
@@ -15,12 +17,14 @@
 
 .attachment-chip-image {
   min-height: 48px;
-  padding: 4px var(--space-4) 4px 4px;
+  padding-block: 4px;
+  padding-inline-start: 4px;
+  padding-inline-end: var(--space-4);
   border-radius: var(--radius-md);
 }
 
 .attachment-chip-audio {
-  padding-left: var(--space-4);
+  padding-inline-start: var(--space-4);
 }
 
 .attachment-chip-preview {
@@ -313,7 +317,7 @@
   background: var(--surface-popover-row);
   border: 1px solid color-mix(in srgb, var(--mat-ephemeral-border) 28%, transparent);
   color: var(--text-primary);
-  text-align: left;
+  text-align: start;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent),
     0 8px 16px color-mix(in srgb, var(--bg-base) 5%, transparent);

@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
 
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const noop = () => {};
 
   function bindShellEventControllers(ctx) {
@@ -90,8 +91,8 @@
           plain: true,
           className: 'icon-button chats-tool-button',
           domId: 'chatsOverflowButton',
-          ariaLabel: 'Chats panel actions',
-          title: 'Chats panel actions',
+          ariaLabel: jt('app.shell.chatsPanelActions', 'Chats panel actions'),
+          title: jt('app.shell.chatsPanelActions', 'Chats panel actions'),
           trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true" class="chats-tool-icon chats-tool-icon--dots"><circle cx="3.25" cy="8" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="12.75" cy="8" r="1.25" /></svg>',
         }));
     }
@@ -110,6 +111,7 @@
         localProfileSettingsMount: dom.localProfileSettingsMount,
         checkUpdatesButton: ctx.documentRef.getElementById('checkUpdatesButton'),
         updateSettingsSummary: ctx.documentRef.getElementById('updateSettingsSummary'),
+        aboutVersionLine: ctx.documentRef.getElementById('aboutVersionLine'),
         copyLogsReportButton: dom.copyLogsReportButton,
         logList: dom.logList,
         chatInput: dom.chatInput,

@@ -13,6 +13,8 @@
   }
   root.rendererDashboardWidgetsCore = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   // The ask line's keyboard hint. It is built ONCE and never removed: CSS alone
@@ -21,7 +23,7 @@
   const ASK_HINT_DOM_ID = 'homeAskPillHint';
   const ASK_SEND_DOM_ID = 'homeAskSend';
   // Enter sends, Shift+Enter inserts a newline, and Ctrl/Cmd+Enter drafts without sending, matching the chat composer.
-  const ASK_HINT_TEXT = 'Enter to send · Shift+Enter for a new line';
+  const ASK_HINT_TEXT = jt('dashboard.widgets.ask.hint', 'Enter to send · Shift+Enter for a new line');
 
   function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -37,6 +39,7 @@
   }
 
   function formatClockTime(now) {
+    if (globalThis.jennyI18n?.timeOptions?.().hourCycle) return `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
     let hours = now.getHours();
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const meridiem = hours >= 12 ? 'PM' : 'AM';
@@ -46,7 +49,7 @@
 
   function formatClockDate(now) {
     try {
-      return now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+      return now.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long', month: 'long', day: 'numeric' });
     } catch (_error) {
       return now.toDateString();
     }
@@ -55,15 +58,15 @@
   function pickGreeting(now) {
     const hour = now.getHours();
     if (hour >= 5 && hour < 12) {
-      return 'Good morning';
+      return jt('dashboard.widgets.info.goodMorning', 'Good morning');
     }
     if (hour >= 12 && hour < 17) {
-      return 'Good afternoon';
+      return jt('dashboard.widgets.info.goodAfternoon', 'Good afternoon');
     }
     if (hour >= 17 && hour < 22) {
-      return 'Good evening';
+      return jt('dashboard.widgets.info.goodEvening', 'Good evening');
     }
-    return 'Up late';
+    return jt('dashboard.widgets.info.upLate', 'Up late');
   }
 
   function formatWeatherSummary(weather) {
@@ -107,6 +110,7 @@
   }
 
   function formatTimeShort(date) {
+    if (globalThis.jennyI18n?.timeOptions?.().hourCycle) return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
     const hours24 = date.getHours();
     const minutes = date.getMinutes();
     const meridiem = hours24 < 12 ? 'AM' : 'PM';
@@ -119,6 +123,7 @@
     if (!match) {
       return '';
     }
+    if (globalThis.jennyI18n?.timeOptions?.().hourCycle) return `${match[1]}:${match[2]}`;
     const hours24 = Number(match[1]);
     const minutes = match[2];
     const meridiem = hours24 < 12 ? 'AM' : 'PM';
@@ -147,13 +152,13 @@
         if (dateMatch) {
           try {
             dayLabel = new Date(+dateMatch[1], +dateMatch[2] - 1, +dateMatch[3])
-              .toLocaleDateString(undefined, { weekday: 'short' });
+              .toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'short' });
           } catch (_error) {
             dayLabel = '';
           }
         }
       }
-      segments.push(`Next: ${title}${dayLabel ? ` ${dayLabel}` : ''}${timeLabel ? ` ${sameDay ? 'at ' : ''}${timeLabel}` : ''}`);
+      segments.push(jt('dashboard.widgets.info.nextEvent', 'Next: {title}{day}{time}', { title, day: dayLabel ? ` ${dayLabel}` : '', time: timeLabel ? ` ${sameDay ? 'at ' : ''}${timeLabel}` : '' }));
       // Tier up with the rest of today so the always-visible strip owns the
       // one-line glance (and the widget owns browse/edit). Only today's timed
       // events after the next one count toward "then" / "+N more today".
@@ -166,20 +171,20 @@
       if (restToday.length) {
         const thenTitle = String(restToday[0].title || '').trim() || 'event';
         const thenTime = formatDigestTime(restToday[0].start);
-        segments.push(`then ${thenTitle}${thenTime ? ` ${thenTime}` : ''}`);
+        segments.push(jt('dashboard.widgets.info.thenEvent', 'then {title}{time}', { title: thenTitle, time: thenTime ? ` ${thenTime}` : '' }));
         if (restToday.length > 1) {
-          segments.push(`+${restToday.length - 1} more today`);
+          segments.push(jt('dashboard.widgets.info.moreToday', '+{count} more today', { count: restToday.length - 1 }));
         }
       }
     }
     const activeLoops = Number(state?.companion?.openLoopsBoard?.counts?.active);
     if (Number.isFinite(activeLoops) && activeLoops > 0) {
-      segments.push(`${activeLoops} open loop${activeLoops === 1 ? '' : 's'}`);
+      segments.push(jtn('dashboard.widgets.info.openLoops', activeLoops, { count: activeLoops }, '{count} open loop', '{count} open loops'));
     }
     const nextRun = asObject(state?.scheduler?.upcoming?.[0]);
     if (nextRun && String(nextRun.label || '').trim()) {
       const eta = String(nextRun.eta || '').trim();
-      segments.push(`Next run: ${String(nextRun.label).trim()}${eta ? ` ${eta}` : ''}`);
+      segments.push(jt('dashboard.widgets.info.nextRun', 'Next run: {label}{eta}', { label: String(nextRun.label).trim(), eta: eta ? ` ${eta}` : '' }));
     }
     return segments.join(' · ');
   }
@@ -221,9 +226,8 @@
           // The field FIRES A MESSAGE, so the accessible name has to state the
           // whole keyboard contract - a control that sends must not read as a
           // plain text box.
-          ariaLabel: 'Ask Jenny. Enter starts a new chat and sends; '
-            + 'Shift plus Enter adds a new line; Control or Command plus Enter drafts without sending.',
-          placeholder: 'Ask Jenny…',
+          ariaLabel: jt('dashboard.widgets.ask.accessibleLabel', 'Ask Jenny. Enter starts a new chat and sends; Shift plus Enter adds a new line; Control or Command plus Enter drafts without sending.'),
+          placeholder: jt('dashboard.widgets.ask.placeholder', 'Ask Jenny…'),
           hint: ASK_HINT_TEXT,
           multiline: true,
           // The autosize FLOOR. No maxLength: the composer this feeds has no
@@ -263,8 +267,8 @@
           domId: ASK_SEND_DOM_ID,
           className: 'home-ask__send',
           trustedHtml: '&#8593;',
-          ariaLabel: 'Send',
-          title: 'Start a new chat with this question',
+          ariaLabel: jt('common.send', 'Send'),
+          title: jt('dashboard.widgets.ask.startNewChat', 'Start a new chat with this question'),
           dataset: { 'home-ask-send': '1' },
         }));
       }

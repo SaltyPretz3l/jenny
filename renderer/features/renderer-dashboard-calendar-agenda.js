@@ -14,6 +14,8 @@
   }
   root.rendererDashboardCalendarAgenda = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const {
     addLocalDays, formatLocalDate, formatTimeShort, pad2, parseLocalDateTime, startOfLocalDay,
@@ -30,7 +32,6 @@
   }
 
   const MS_PER_MINUTE = 60000;
-
   // Weekday word -> JS getDay() index. Common abbreviations included so the
   // quick-add parser is forgiving ("tues", "weds", "thurs").
   const WEEKDAY_WORDS = {
@@ -73,7 +74,7 @@
    */
   function attributionChip(instance) {
     return String(instance?.sourceKind || '') === 'assistant'
-      ? '<span class="cal-agenda__jenny" title="Added by jenny">jenny</span>'
+      ? '<span class="cal-agenda__jenny" title="' + escapeHtml(jt('dashboard.calendar.agenda.addedByJenny', 'Added by jenny')) + '">jenny</span>'
       : '';
   }
 
@@ -95,10 +96,10 @@
       ? actionButton({
         variant: 'ghost',
         size: 'sm',
-        label: 'Undo',
+        label: jt('dashboard.calendar.agenda.undo', 'Undo'),
         className: 'cal-agenda__undo',
-        ariaLabel: `Undo jenny's change to ${title}`,
-        title: `Undo jenny's change to ${title}`,
+        ariaLabel: jt('dashboard.calendar.agenda.undoChange', "Undo jenny's change to {title}", { title }),
+        title: jt('dashboard.calendar.agenda.undoChange', "Undo jenny's change to {title}", { title }),
         dataset: { 'cal-undo-journal': String(entry.id || '') },
       })
       : '';
@@ -151,14 +152,14 @@
   function formatAgendaDayLabel(day, now) {
     const todayKey = formatLocalDate(now);
     const dayKey = formatLocalDate(day);
-    const datePart = day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const datePart = day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric' });
     if (dayKey === todayKey) {
-      return `Today · ${datePart}`;
+      return jt('dashboard.calendar.agenda.todayDate', 'Today · {date}', { date: datePart });
     }
     if (dayKey === formatLocalDate(addLocalDays(now, 1))) {
-      return `Tomorrow · ${datePart}`;
+      return jt('dashboard.calendar.agenda.tomorrowDate', 'Tomorrow · {date}', { date: datePart });
     }
-    return `${day.toLocaleDateString(undefined, { weekday: 'long' })} · ${datePart}`;
+    return `${day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long' })} · ${datePart}`;
   }
 
   function formatDuration(instance) {
@@ -190,7 +191,7 @@
     const title = String(instance.title || '').trim() || 'Reminder';
     const start = parseLocalDateTime(instance.start);
     const timeLabel = start ? formatTimeShort(start) : '';
-    const label = [`Reminder: ${title}`, timeLabel].filter(Boolean).join(', ');
+    const label = [jt('dashboard.calendar.agenda.reminderLabel', 'Reminder: {title}', { title }), timeLabel].filter(Boolean).join(', ');
     return '<li class="cal-agenda__item-wrap">'
       + `<div class="cal-agenda__item cal-agenda__item--reminder ${categoryClass(instance)}"`
       + ` role="group" aria-label="${escapeHtml(label)}"`
@@ -201,19 +202,19 @@
       + `<span class="cal-agenda__title">${escapeHtml(title)}</span>`
       + '<span class="cal-agenda__meta">'
       + attributionChip(instance)
-      + '<span class="cal-agenda__badge" title="Reminder — nudges are manual">reminder</span>'
+      + '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.reminderManualNudges', 'Reminder — nudges are manual')) + '">reminder</span>'
       + '<span class="cal-agenda__reminder-actions">'
       + undoAffordance(actionButton, journalEntry, title)
       + actionButton({
-        variant: 'ghost', size: 'sm', label: 'Done',
-        ariaLabel: `Mark reminder done: ${title}`,
-        title: `Mark reminder done: ${title}`,
+        variant: 'ghost', size: 'sm', label: jt('common.done', 'Done'),
+        ariaLabel: jt('dashboard.calendar.agenda.markReminderDone', 'Mark reminder done: {title}', { title }),
+        title: jt('dashboard.calendar.agenda.markReminderDone', 'Mark reminder done: {title}', { title }),
         dataset: { 'cal-reminder-dismiss': reminderId },
       })
       + actionButton({
-        variant: 'ghost', size: 'sm', label: 'Open loop',
-        ariaLabel: `Promote reminder to an open loop: ${title}`,
-        title: `Promote reminder to an open loop: ${title}`,
+        variant: 'ghost', size: 'sm', label: jt('dashboard.calendar.agenda.openLoop', 'Open loop'),
+        ariaLabel: jt('dashboard.calendar.agenda.promoteReminder', 'Promote reminder to an open loop: {title}', { title }),
+        title: jt('dashboard.calendar.agenda.promoteReminder', 'Promote reminder to an open loop: {title}', { title }),
         dataset: { 'companion-action-id': `promote_reminder:${reminderId}` },
       })
       + '</span></span></div></li>';
@@ -228,11 +229,11 @@
       });
     }
     const readonly = instance.readonly === true;
-    const title = String(instance.title || '').trim() || '(no title)';
+    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
     const undoEntry = journalEntryFor(journalByEntity, 'calendar_event', instance.eventId);
     const start = parseLocalDateTime(instance.start);
     const timeLabel = instance.allDay
-      ? 'All day'
+      ? jt('dashboard.calendar.agenda.allDay', 'All day')
       : (start ? formatTimeShort(start) : '');
     const dataset = { 'cal-instance': '1' };
     if (instance.instanceId) {
@@ -258,15 +259,15 @@
     const tzApprox = instance.tzApprox === true;
     const badges = ''
       + (instance.recurrenceUnsupported === true
-        ? '<span class="cal-agenda__badge" title="Recurrence only partially supported">↻</span>' : '')
+        ? '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.partialRecurrence', 'Recurrence only partially supported')) + '">↻</span>' : '')
       + (tzApprox
-        ? '<span class="cal-agenda__badge" title="Approximate time (unrecognized feed time zone)">~tz</span>' : '')
+        ? '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.approximateFeedTime', 'Approximate time (unrecognized feed time zone)')) + '">~tz</span>' : '')
       + (readonly && instance.recurrenceUnsupported !== true && !tzApprox
-        ? '<span class="cal-agenda__badge" title="Subscribed feed event">feed</span>' : '');
+        ? '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.subscribedFeedEvent', 'Subscribed feed event')) + '">feed</span>' : '');
     const labelBits = [title, timeLabel].filter(Boolean).join(', ')
-      + (isNext ? ', up next' : '')
-      + (tzApprox ? ', approximate time' : '')
-      + (readonly ? ', read-only' : '');
+      + (isNext ? jt('dashboard.calendar.agenda.upNextSuffix', ', up next') : '')
+      + (tzApprox ? jt('dashboard.calendar.agenda.approximateTimeSuffix', ', approximate time') : '')
+      + (readonly ? jt('dashboard.calendar.agenda.readOnlySuffix', ', read-only') : '');
     return '<li class="cal-agenda__item-wrap">'
       + actionButton({
         plain: true,
@@ -305,14 +306,14 @@
       + actionButton({
         plain: true,
         className: 'cal-agenda__item cal-agenda__item--open',
-        ariaLabel: `Open — add an event on ${dayLabel}`,
-        title: 'Add an event on this day',
+        ariaLabel: jt('dashboard.calendar.agenda.openAddEventOnDay', 'Open — add an event on {day}', { day: dayLabel }),
+        title: jt('dashboard.calendar.agenda.addEventOnDay', 'Add an event on this day'),
         dataset: { 'cal-month-day': dayKey },
         trustedHtml: ''
           + '<span class="cal-agenda__time"></span>'
           + '<span class="cal-agenda__dot" aria-hidden="true"></span>'
           + '<span class="cal-agenda__title">Open</span>'
-          + '<span class="cal-agenda__meta cal-agenda__open-hint">add an event</span>',
+          + '<span class="cal-agenda__meta cal-agenda__open-hint">' + escapeHtml(jt('dashboard.calendar.agenda.addEventHint', 'add an event')) + '</span>',
       })
       + '</li>';
   }
@@ -405,8 +406,8 @@
       const eventCount = dayInstances.filter((instance) => instance.kind !== 'reminder').length;
       const reminderCount = dayInstances.length - eventCount;
       const countLabel = rows.length
-        ? `${eventCount} event${eventCount === 1 ? '' : 's'}`
-          + (reminderCount ? ` · ${reminderCount} reminder${reminderCount === 1 ? '' : 's'}` : '')
+        ? jtn('dashboard.calendar.agenda.eventCount', eventCount, { count: eventCount }, '{count} event', '{count} events')
+          + (reminderCount ? jtn('dashboard.calendar.agenda.reminderCountSuffix', reminderCount, { count: reminderCount }, ' · {count} reminder', ' · {count} reminders') : '')
         : '—';
       groups.push('<div class="cal-agenda__group" data-cal-agenda-day="' + escapeHtml(dayKey) + '">'
         + `<div class="${headClasses}" role="heading" aria-level="3">`
@@ -429,20 +430,20 @@
     // visible (and removable) instead of silently vanishing.
     const standingMarkup = standing.length
       ? '<div class="cal-agenda__standing">'
-        + '<span class="cal-agenda__standing-label">Standing reminders</span>'
+        + '<span class="cal-agenda__standing-label">' + escapeHtml(jt('dashboard.calendar.agenda.standingReminders', 'Standing reminders')) + '</span>'
         + standing.map((reminder) => '<span class="cal-agenda__standing-row">'
           + `<span class="cal-agenda__standing-title">${escapeHtml(reminder.label)}</span>`
-          + `<span class="cal-agenda__standing-cadence">every ${escapeHtml(String(reminder.intervalMinutes))} min</span>`
+          + `<span class="cal-agenda__standing-cadence">${escapeHtml(jt('dashboard.calendar.agenda.everyMinutes', 'every {count} min', { count: reminder.intervalMinutes }))}</span>`
           + button({
-            variant: 'ghost', size: 'sm', label: 'Done',
-            ariaLabel: `Mark reminder done: ${reminder.label}`,
+            variant: 'ghost', size: 'sm', label: jt('common.done', 'Done'),
+            ariaLabel: jt('dashboard.calendar.agenda.markReminderDone', 'Mark reminder done: {title}', { title: reminder.label }),
             dataset: { 'cal-reminder-dismiss': reminder.id },
           })
           + '</span>').join('')
         + '</div>'
       : '';
 
-    return '<div class="cal-agenda" aria-label="Agenda for the week">'
+    return '<div class="cal-agenda" aria-label="' + escapeHtml(jt('dashboard.calendar.agenda.weekLabel', 'Agenda for the week')) + '">'
       + groups.join('')
       + standingMarkup
       + '</div>';
@@ -642,7 +643,7 @@
       }
       if (iEnd.getTime() > startMs && iStart.getTime() < endMs) {
         conflicts.push({
-          title: String(instance.title || '').trim() || '(no title)',
+          title: String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)'),
           timeLabel: formatTimeShort(iStart),
         });
       }
@@ -655,8 +656,8 @@
       return '';
     }
     const first = `${conflicts[0].title} (${conflicts[0].timeLabel})`;
-    const more = conflicts.length > 1 ? ` +${conflicts.length - 1} more` : '';
-    return `Overlaps ${first}${more}`;
+    const more = conflicts.length > 1 ? jt('dashboard.calendar.agenda.moreConflicts', ' +{count} more', { count: conflicts.length - 1 }) : '';
+    return jt('dashboard.calendar.agenda.overlapSummary', 'Overlaps {first}{more}', { first, more });
   }
 
   /**
@@ -675,9 +676,9 @@
       return '<div class="cal-quickadd" data-cal-quickadd="1">' + button({
         plain: true,
         className: 'cal-quickadd__affordance',
-        ariaLabel: 'Expand quick add event',
+        ariaLabel: jt('dashboard.calendar.agenda.expandQuickAdd', 'Expand quick add event'),
         dataset: { 'cal-quickadd-expand': '1' },
-        trustedHtml: '<span aria-hidden="true">＋</span><span>Add event — try &quot;standup Mon 9am&quot;</span>',
+        trustedHtml: '<span aria-hidden="true">＋</span><span>' + escapeHtml(jt('dashboard.calendar.agenda.quickAddPrompt', 'Add event — try "standup Mon 9am"')) + '</span>',
       }) + '</div>';
     }
     let suggest = '';
@@ -685,7 +686,7 @@
       const p = pending.parsed;
       const day = parseLocalDateTime(`${p.date}T00:00`);
       const dayLabel = day ? formatAgendaDayLabel(day, now instanceof Date ? now : new Date()) : p.date;
-      const timeLabel = p.allDay ? 'All day' : `${p.start}${p.end ? `–${p.end}` : ''}`;
+      const timeLabel = p.allDay ? jt('dashboard.calendar.agenda.allDay', 'All day') : `${p.start}${p.end ? `–${p.end}` : ''}`;
       const conflictNote = buildConflictNote(Array.isArray(pending.conflicts) ? pending.conflicts : []);
       suggest = '<div class="cal-quickadd__suggest" role="status">'
         + '<div class="cal-quickadd__preview">'
@@ -694,9 +695,9 @@
         + '</div>'
         + (conflictNote ? `<div class="cal-quickadd__conflict">${escapeHtml(conflictNote)}</div>` : '')
         + '<div class="cal-quickadd__suggest-actions">'
-        + button({ variant: 'primary', label: 'Add anyway', dataset: { 'cal-quickadd-confirm': '1' } })
-        + button({ variant: 'ghost', label: 'Edit', dataset: { 'cal-quickadd-edit': '1' } })
-        + button({ variant: 'ghost', label: 'Dismiss', dataset: { 'cal-quickadd-dismiss': '1' } })
+        + button({ variant: 'primary', label: jt('dashboard.calendar.agenda.addAnyway', 'Add anyway'), dataset: { 'cal-quickadd-confirm': '1' } })
+        + button({ variant: 'ghost', label: jt('common.edit', 'Edit'), dataset: { 'cal-quickadd-edit': '1' } })
+        + button({ variant: 'ghost', label: jt('common.dismiss', 'Dismiss'), dataset: { 'cal-quickadd-dismiss': '1' } })
         + '</div>'
         + '</div>';
     }
@@ -704,8 +705,8 @@
       + '<div class="cal-quickadd__bar">'
       + textField({
         id: 'calQuickAdd',
-        ariaLabel: 'Quick add an event',
-        placeholder: 'Add event — try "standup Mon 9am"',
+        ariaLabel: jt('dashboard.calendar.agenda.quickAddLabel', 'Quick add an event'),
+        placeholder: jt('dashboard.calendar.agenda.quickAddPrompt', 'Add event — try "standup Mon 9am"'),
         value: String(value || ''),
         maxLength: 200,
         spellcheck: true,
@@ -713,8 +714,8 @@
         dataset: { 'cal-quickadd-input': '1' },
       })
       + button({
-        variant: 'secondary', label: 'Add',
-        ariaLabel: 'Add event from text',
+        variant: 'secondary', label: jt('dashboard.calendar.agenda.add', 'Add'),
+        ariaLabel: jt('dashboard.calendar.agenda.addFromText', 'Add event from text'),
         dataset: { 'cal-quickadd-add': '1' },
       })
       + '</div>'

@@ -24,6 +24,7 @@
 @import url("./styles/sidebar.css");
 @import url("./styles/view-panel.css");
 @import url("./styles/chats-panel.css");
+@import url("./styles/chats-panel-selection.css");
 @import url("./styles/chats-panel-collapsed.css");
 @import url("./styles/toast.css");
 @import url("./styles/workspace-rail.css");
@@ -43,6 +44,7 @@
 @import url("./styles/chat-hero-v2.css");
 @import url("./styles/comet-personality.css");
 @import url("./styles/chat-tools.css");
+@import url("./styles/chat-calendar-block.css");
 @import url("./styles/chat-tool-diff.css");
 @import url("./styles/chat-task-chip.css");
 @import url("./styles/chat-tool-markers.css");
@@ -66,6 +68,7 @@
 @import url("./styles/chat-composer-v2-affordances.css");
 @import url("./styles/chat-composer-v2.css");
 @import url("./styles/chat-composer-shell-v2.css");
+@import url("./styles/chat-remote-banner.css");
 @import url("./styles/chat-attachments-v2.css");
 @import url("./styles/chat-animations.css");
 @import url("./styles/chat-send-lifecycle-v2.css");
@@ -113,6 +116,7 @@
 @import url("./styles/ide-chat-dock.css");
 @import url("./styles/ide-chat-session-picker.css");
 @import url("./styles/settings.css");
+@import url("./styles/settings-remote.css");
 @import url("./styles/context-panel.css");
 @import url("./styles/artifact-panel.css");
 @import url("./styles/task-rail.css");
