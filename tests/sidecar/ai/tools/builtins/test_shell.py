@@ -386,22 +386,28 @@ def test_timeout_ceiling_raised(
     assert captured[0] == 300.0
 
 
-def test_timeout_max_capped(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    captured: list[float] = []
+@pytest.mark.parametrize("value", [9999, 0, -1, True, None, "30", float("inf"), float("nan")])
+def test_invalid_foreground_timeout_is_rejected(value, tmp_path):
+    with pytest.raises(ToolExecutionFailure, match="timeout_seconds"):
+        run_command_tool({"command": "echo hi", "timeout_seconds": value}, _guard(tmp_path))
 
-    def mock_run(*_a: object, **kw: object) -> SimpleNamespace:
-        captured.append(kw.get("timeout", 0))  # type: ignore[arg-type]
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("sidecar.ai.tools.builtins.shell.subprocess.run", mock_run)
-    run_command_tool(
-        {"command": "echo hi", "timeout_seconds": 9999},
-        _guard(tmp_path),
-    )
-    assert captured[0] == 600.0
+@pytest.mark.parametrize("seconds", [5400, 86400])
+def test_background_lifetime_is_not_the_foreground_cap(monkeypatch, tmp_path, seconds):
+    captured = {}
+
+    def start(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(job_id="123456abcdef", pid=123)
+
+    monkeypatch.setattr(shell_module, "start_background_job", start)
+    result = run_command_tool({"command": "echo hi", "run_in_background": True,
+                               "timeout_seconds": seconds}, _guard(tmp_path))
+    assert captured["timeout_seconds"] == seconds
+    assert json.loads(result.output)["timeout_seconds"] == seconds
+    with pytest.raises(ToolExecutionFailure, match="timeout_seconds"):
+        run_command_tool({"command": "echo hi", "run_in_background": True,
+                          "timeout_seconds": 86401}, _guard(tmp_path))
 
 
 def test_timeout_returns_bounded_partial_output(

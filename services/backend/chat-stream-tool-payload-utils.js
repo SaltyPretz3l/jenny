@@ -391,7 +391,7 @@ function resolveApprovalCallId(toolName, explicitCallId) {
   );
 }
 
-function approvalTerminalOutput(toolName, approvalState) {
+function approvalTerminalOutput(toolName, approvalState, reason = '') {
   const name = String(toolName || 'tool').trim() || 'tool';
   switch (String(approvalState || '').trim()) {
     case 'denied':
@@ -399,6 +399,9 @@ function approvalTerminalOutput(toolName, approvalState) {
     case 'cancelled':
       return `Tool "${name}" was cancelled before execution.`;
     case 'timeout':
+      if (reason.startsWith('Auto paused after keyboard or mouse inactivity.')) {
+        return `Auto paused because of inactivity. Approval for "${name}" then expired after 10 minutes; the tool never executed. Resume the turn to continue. To work while away, turn off Settings > Tools > Pause Auto when inactive before resuming.`;
+      }
       return `Approval for "${name}" timed out before execution.`;
     case 'preempted':
       return `Approval for "${name}" was preempted before execution.`;

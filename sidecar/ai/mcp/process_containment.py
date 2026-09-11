@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, Callable
 
 try:  # pragma: no cover - platform dependent.
@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - Windows.
     _resource = None  # type: ignore[assignment]
 
 from sidecar.ai.config import MCPServerConfig, read_environment_value
+from sidecar.ai.mcp.builtin_command_discovery import discover_command_directories
 from sidecar.ai.tools.builtins.python_runtime.job_object import JobObject
 from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
 from sidecar.runtime.diagnostics import log_event
@@ -50,15 +51,6 @@ _ENV_PASSTHROUGH_KEYS = (
 )
 # LD_LIBRARY_PATH stays excluded so MCP children cannot inherit frozen libraries.
 _POSIX_DEFAULT_PATH_SEGMENTS = ("/usr/local/bin", "/usr/bin", "/bin")
-_BUILTIN_MCP_OPTIONAL_PATH_COMMANDS = ("git",)
-_WINDOWS_GIT_RELATIVE_DIRS = (
-    ("Git", "cmd"),
-    ("Git", "bin"),
-)
-_WINDOWS_VS_GIT_GLOB = (
-    "Microsoft Visual Studio/*/*/Common7/IDE/CommonExtensions/"
-    "Microsoft/TeamFoundation/Team Explorer/Git/cmd/git.exe"
-)
 
 
 def _is_windows() -> bool:
@@ -133,67 +125,40 @@ def _default_path_segments() -> tuple[str, ...]:
     return _POSIX_DEFAULT_PATH_SEGMENTS
 
 
-def _windows_program_roots() -> list[str]:
-    roots = [
-        read_environment_value("ProgramFiles"),
-        read_environment_value("ProgramFiles(x86)"),
-        read_environment_value("LOCALAPPDATA"),
-    ]
-    system_root = read_environment_value("SYSTEMROOT")
-    system_drive = read_environment_value("SystemDrive")
-    drive = system_drive or (PureWindowsPath(system_root).drive if system_root else "")
-    if drive:
-        drive_root = PureWindowsPath(f"{drive}\\")
-        roots.extend((str(drive_root / "Program Files"), str(drive_root / "Program Files (x86)")))
-    return list(dict.fromkeys(root for root in roots if root))
-
-
-def _windows_git_install_candidates() -> list[Path]:
-    candidates: list[Path] = []
-    for raw_root in _windows_program_roots():
-        root = Path(raw_root)
-        for relative_dir in _WINDOWS_GIT_RELATIVE_DIRS:
-            candidates.append(root.joinpath(*relative_dir, "git.exe"))
-        try:
-            candidates.extend(sorted(root.glob(_WINDOWS_VS_GIT_GLOB)))
-        except OSError:
-            continue
-    return candidates
-
-
-def _discover_optional_command(command: str, *, parent_path: str) -> Path | None:
-    discovered = shutil.which(command, path=parent_path) if parent_path else None
-    resolved = _resolve_command_path(discovered or "")
-    if resolved is not None:
-        return resolved
-    if _is_windows() and command.lower() == "git":
-        for candidate in _windows_git_install_candidates():
-            try:
-                if candidate.is_file():
-                    return candidate.resolve(strict=True)
-            except OSError:
-                continue
-    return None
-
-
-def _optional_builtin_tool_path_segments(config: MCPServerConfig) -> list[str]:
+def _is_desktop_builtin(config: MCPServerConfig) -> bool:
     if config.name != BUILTIN_MCP_SERVER_NAME:
+        return False
+    args = config.args
+    if any(arg.startswith("--host-mode=") and arg != "--host-mode=desktop" for arg in args):
+        return False
+    if "--host-mode" in args:
+        index = args.index("--host-mode")
+        return index + 1 < len(args) and args[index + 1] == "desktop"
+    return True
+
+
+def _optional_builtin_tool_path_segments(
+    config: MCPServerConfig, command_path: Path | None = None,
+) -> list[str]:
+    if not _is_desktop_builtin(config):
         return []
-    parent_path = read_environment_value("PATH")
-    segments: list[str] = []
-    for command in _BUILTIN_MCP_OPTIONAL_PATH_COMMANDS:
-        resolved = _discover_optional_command(command, parent_path=parent_path)
-        if resolved is not None:
-            segments.append(str(resolved.parent))
-    return segments
+    return discover_command_directories(
+        parent_path=read_environment_value("PATH"), windows=_is_windows(),
+        read_env=read_environment_value,
+        excluded_directories=(command_path.parent,) if command_path is not None
+        and (command_path.parent.parent / "pyvenv.cfg").is_file() else (),
+    )
 
 
 def _minimal_path(config: MCPServerConfig, command_path: Path | None) -> str:
     segments: list[str] = []
-    if command_path is not None:
+    if _is_desktop_builtin(config):
+        # The server is launched by absolute path; its private runtime is not
+        # the selected project's command environment.
+        segments.extend(_optional_builtin_tool_path_segments(config, command_path))
+    elif command_path is not None:
         segments.append(str(command_path.parent))
     segments.extend(_default_path_segments())
-    segments.extend(_optional_builtin_tool_path_segments(config))
     return os.pathsep.join(dict.fromkeys(segments))
 
 
@@ -235,15 +200,16 @@ def _set_resource_limit(resource_module: Any, resource_key: Any, value: int) -> 
 
 def _posix_preexec_fn(
     *,
-    memory_limit_mb: int,
+    memory_limit_mb: int | None,
     max_open_files: int,
 ) -> Callable[[], None]:
-    memory_bytes = max(1, int(memory_limit_mb)) * 1024 * 1024
+    memory_bytes = None if memory_limit_mb is None else max(1, int(memory_limit_mb)) * 1024 * 1024
     open_files = max(1, int(max_open_files))
 
     def _apply_limits() -> None:  # pragma: no cover - runs in forked child
         if _resource is not None:
-            _set_resource_limit(_resource, getattr(_resource, "RLIMIT_AS", None), memory_bytes)
+            if memory_bytes is not None:
+                _set_resource_limit(_resource, getattr(_resource, "RLIMIT_AS", None), memory_bytes)
             _set_resource_limit(_resource, getattr(_resource, "RLIMIT_NOFILE", None), open_files)
             _set_resource_limit(_resource, getattr(_resource, "RLIMIT_CORE", None), 0)
         setsid = getattr(os, "setsid", None)

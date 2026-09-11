@@ -76,7 +76,8 @@ necessarily ask. Saved Always allow choices can be reviewed and removed under
 Settings > Tools > Approval rules. A path-bearing decision can be scoped to its
 path; a pathless tool decision can apply to the whole tool.
 
-**Auto** confirms once per session and displays an Auto indicator. It is not
+**Auto** remembers its warning acknowledgement in your app profile, so resuming
+a conversation does not repeat it, and displays an Auto indicator. It is not
 permission to leave the app unattended: the idle guard and safety modes still
 apply, and some calls always require approval. Settings > Tools exposes these
 controls.

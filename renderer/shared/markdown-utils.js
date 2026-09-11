@@ -484,15 +484,13 @@
     if (!content) return '';
 
     const mermaidMode = options && options.mermaid === 'plain' ? 'plain' : 'rich';
+    // Release feeds may contain HTML even when diagrams remain plain text.
+    const escapeRawHtml = mermaidMode === 'plain' && options?.rawHtml !== 'sanitize';
     const frontmatterMode = options && options.frontmatter === 'metadata' ? 'metadata' : 'content';
     const imagesMode = options && options.images === 'omit' ? 'omit' : 'allow';
     const breaksMode = options && options.breaks === true ? 'breaks' : 'no-breaks';
     const contentKey = typeof content === 'string' ? content : String(content);
-    // Structured cache parts keep modes and arbitrary source bytes distinct.
-    // katex_math (synced onto markdown-math-utils from the feature-state
-    // seam) gates the math protect/restore passes. Plain-mode surfaces
-    // (reasoning panels) opt out entirely, mirroring the mermaid: 'plain'
-    // contract. Flag-off leaves this function byte-identical to before.
+    // Plain-mode surfaces opt out of math; feature state gates all other surfaces.
     const mathUtils = mermaidMode === 'plain' ? null : resolveMathUtils();
     const mathEnabled = !!(mathUtils
       && typeof mathUtils.isMathRenderingEnabled === 'function'
@@ -501,7 +499,7 @@
       && typeof mathUtils.restoreMathPlaceholders === 'function');
     // A math-mode render is keyed apart the same way (a katex_math flip
     // mid-session can never serve stale HTML from the other namespace).
-    const cacheParts = [1, mermaidMode, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, contentKey];
+    const cacheParts = [1, mermaidMode, escapeRawHtml, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, contentKey];
 
     ensureConfigured();
 
@@ -542,7 +540,7 @@
     }
     let rawHtml;
     try {
-      rawHtml = (mermaidMode === 'plain' && _markedPlain ? _markedPlain : _marked).parse(parseSource, { breaks: breaksMode === 'breaks' });
+      rawHtml = (escapeRawHtml && _markedPlain ? _markedPlain : _marked).parse(parseSource, { breaks: breaksMode === 'breaks' });
     } catch (_err) {
       return escapeHtmlFallback(renderSource);
     }
@@ -633,6 +631,7 @@
    * Falls back to escaped plain text if dependencies are missing.
    * options.mermaid: 'rich' (default) renders mermaid fences as diagram
    * blocks; 'plain' leaves them as ordinary code blocks (reasoning surface).
+   * options.rawHtml: 'sanitize' preserves allowed HTML in plain mode; otherwise plain mode escapes it.
    */
   function renderMarkdown(content, options) {
     return renderSanitizedMarkdown(content, options);

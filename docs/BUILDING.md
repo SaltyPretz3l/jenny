@@ -1,5 +1,19 @@
 # Building & Distribution
 
+## Windows development and public shortcuts
+
+`Jenny (Dev)` runs `scripts/dev/launch-jenny-dev.bat` from the current checkout.
+It refreshes changed Node dependencies, runs `start.js` (which refreshes the
+preload bundle when needed), and uses the checkout's `.venv/Scripts/python.exe`
+to run current sidecar source. It does not launch the public unpacked executable
+or require an installer rebuild for source changes.
+
+Development and public Jenny share the user's existing chats and settings. Close
+the other instance before starting Dev; a busy profile produces a clear startup
+message. The Dev launcher never performs process cleanup automatically.
+Unpackaged startup maintains only `Jenny (Dev).lnk`; packaged startup maintains
+`Jenny.lnk`, pointing directly at its public executable.
+
 ## Packaging Flow (Sidecar + Electron)
 
 ### Purpose
@@ -764,3 +778,31 @@ owner-device/private HTTPS and full backup/restore are separate release gates.
 ## Optional desktop command worker
 
 `electron-builder.yml` packages only `Dockerfile.worker`, `config/command-worker-image.json`, and the allowlisted Python worker files under `resources/command-worker`; the context builder remains an application script. The application builds the worker locally, records its content digest and launches an immutable image ID. No image publication or browser deployment is needed. Run `node scripts/packaging/probe-desktop-command-worker.js` with a local Linux Docker daemon to qualify the actual stdin transport; add `--recovery` for controller-crash and journal recovery. See [desktop sandbox operations](operations/DESKTOP_COMMAND_SANDBOX.md). Linux/macOS live qualification remains outstanding.
+
+## Packaged tool verification
+
+The sidecar build derives frozen imports from the lazy tool registry and runs
+the resulting executable's `--self-check`, resolving every handler without
+executing tools. Packaged-flow smoke also runs the headless builtin-tool probe
+against a disposable workspace:
+
+```powershell
+.venv/Scripts/python.exe scripts/packaging/probe_packaged_tools.py build/sidecar/sidecar.exe
+```
+
+For Windows development-tool discovery and a long background-job qualification,
+add `--desktop-env --long-seconds 610`. This checks Python/Node/npm, completes a
+production router turn, then checks the still-running packaged job through its
+terminal result. It does not run project tests or benchmarks. The ordinary probe
+needs no GUI, model inference, installed-profile access, or network.
+
+For native desktop command resource qualification on Windows, run:
+
+```powershell
+.venv/Scripts/python.exe scripts/packaging/probe_command_resources.py --artifact build/sidecar/sidecar.exe
+```
+
+This uses production MCP config assembly and transport. A bounded 768 MiB
+allocation fails under the former 512 MiB outer job and succeeds under the native
+desktop policy. The probe also verifies subsequent calls and cancellation/shutdown
+of large-memory descendants. It uses disposable files and no project verifier.

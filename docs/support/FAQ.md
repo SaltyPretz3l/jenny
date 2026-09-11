@@ -72,7 +72,10 @@ questions that need your input. See the [release changelog](../../RELEASE_NOTES.
 
 ### Does Auto run mean Jenny can work unsupervised?
 
-No. Auto asks for confirmation once per session and displays an Auto indicator.
+No. Auto displays an Auto indicator and remembers acknowledgement of its warning
+in the current app profile, including across restarts and resumed conversations.
+Clearing local app storage or changing the warning version asks again. This
+acknowledgement does not grant tool permissions or change the selected run mode.
 The unattended guard defaults to 10 minutes of system inactivity before the next
 side-effecting call needs approval; user-pre-granted calls remain an exception.
 An unanswered approval ends the turn after the existing 10-minute timeout.

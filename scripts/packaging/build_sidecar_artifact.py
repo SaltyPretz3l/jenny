@@ -236,6 +236,13 @@ def _pyinstaller_exclude_args() -> list[str]:
     return args
 
 
+def _pyinstaller_tool_import_args() -> list[str]:
+    from sidecar.ai.tools.registry import lazy_tool_handlers  # noqa: PLC0415 - build-only metadata
+
+    modules = sorted({handler.lazy_target[0] for handler in lazy_tool_handlers()})
+    return [arg for module in modules for arg in ("--hidden-import", module)]
+
+
 def _create_temp_build_run_dir() -> Path:
     TEMP_BUILD_DIR.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix="run-", dir=str(TEMP_BUILD_DIR)))
@@ -444,6 +451,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(spec_path),
         *add_data_args,
         *_pyinstaller_exclude_args(),
+        *_pyinstaller_tool_import_args(),
         str(ENTRYPOINT),
     ]
 
@@ -468,6 +476,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("FAIL: sidecar artifact build")
         print("  - build completed but sidecar artifact was not found in build/sidecar")
         return 1
+
+    return _qualify_and_publish(
+        artifact_path, python_executable, args, build_env, dependency_provenance
+    )
+
+
+def _qualify_and_publish(artifact_path: Path, python_executable: str, args: argparse.Namespace,
+                         build_env: dict[str, str], dependency_provenance: dict) -> int:
+    self_check = _run_command(
+        [str(artifact_path), "--self-check"], timeout_seconds=args.timeout_seconds, env=build_env
+    )
+    if self_check.returncode != 0:
+        print("FAIL: packaged sidecar handler self-check")
+        print(self_check.stdout)
+        print(self_check.stderr)
+        return self_check.returncode
 
     pyinstaller_version = _read_pyinstaller_version(
         python_executable=python_executable,

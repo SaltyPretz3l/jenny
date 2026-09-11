@@ -25,6 +25,37 @@ Two places to look before filing anything:
 These entries describe integrated source. Check the release notes for the
 version and assets actually installed.
 
+### Auto stopped while you were away, or an edit approval timed out
+
+Settings > Tools > **Pause Auto when inactive** controls whether keyboard/mouse
+inactivity pauses automatic execution. It is **Off by default**; enabling it
+reveals an adjustable 1–120 minute threshold. Existing saved values are preserved
+on upgrade, including an earlier ten-minute setting. The underlying value 0
+continues to mean Off.
+
+This is separate from the **ten-minute approval-response deadline**. If the guard
+pauses a run and nobody answers the next approval, the turn stops without running
+that tool. The approval and timeout message identify inactivity as the cause.
+Disable the guard for intended AFK work, then resume the stopped turn. Disabling
+prevents future pauses; it does not grant a pending approval or restore Auto to
+an already-paused live turn. Change that turn's run mode explicitly, or resume it
+after it stops. A larger edit execution timeout cannot fix an approval timeout.
+
+### A project Python dependency is missing although it is installed
+
+Desktop tool command discovery no longer prepends Jenny's private runtime to
+PATH. Project commands use discovered installed tools; explicit interpreter paths
+remain supported through `run_command`. Check `sys.executable` and use the
+project's documented environment before installing dependencies. Discovery does
+not automatically activate a project's virtual environment.
+
+Temporary Python scripts live outside the project. Their `cwd` is the workspace
+(or the requested subdirectory), but Python imports start beside the temporary
+script. For workspace modules, explicitly add the working directory with
+`import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd()))`.
+A `ModuleNotFoundError` result includes this guidance; installed dependencies
+still require the correct interpreter.
+
 ### Some labels remain in English, or the layout has not mirrored
 
 Choose Settings > Appearance > Language and restart Jenny. Missing translated
@@ -951,3 +982,50 @@ log and the Electron main log, plus the turn-diagnostic dump. Include
   with OS, model runtime, reproduction steps, and the diagnostic dump.
 - Security findings → see [SECURITY.md](../../SECURITY.md).
 - "Is this expected behavior?" → check [FAQ.md](FAQ.md) first.
+
+## Desktop coding-tool availability
+
+Repeated `checkpoint source changed before read` after a successful full read
+can indicate the Windows executable-extension identity bug in earlier builds.
+For `.cmd`/`.bat`, pathname stat adds execute bits that open-handle stat omits.
+The corrected checkpoint comparison ignores only those synthetic Windows bits;
+actual replacement/content changes remain guarded. Repeating the read in an
+affected build does not resolve the mismatch.
+
+ChatGPT plan usage refreshes from available response headers during a turn and
+after approval resumes. Earlier builds updated only at terminal notifications,
+so long or cancelled turns could leave the meter showing an older snapshot.
+Updates require a build containing both the sidecar and Electron changes.
+
+Builtin document reads and responses use UTF-8, including in the frozen Windows
+sidecar. A `No module named sidecar.ai.tools.builtins...` error indicates an
+incomplete packaged runtime; the packaged tool self-check and headless probe in
+the building guide qualify those handlers before release.
+
+Selecting a repository as the tools workspace authorizes command-scoped Git
+ownership trust for that exact validated root. Jenny does not edit global Git
+configuration. Select a nested repository separately if it has different
+ownership; parent workspace selection does not trust every repository below it.
+
+First-party desktop commands discover Python, Node/npm/npx, Git and PowerShell
+from executable directories on the desktop PATH and bounded Windows installation
+locations. They do not inherit the entire PATH or install tools. If a nonstandard
+installation is absent, use its absolute executable path. System Python and
+Jenny's separately provisioned managed `python_execute` runtime are independent.
+
+`run_command` defaults to a 10-second timeout. Foreground commands and temporary
+scripts permit up to 600 seconds. Explicit `run_in_background: true` permits a
+requested `timeout_seconds` up to 86400 (24 hours), returns a job ID and effective
+timeout, and continues after normal turn completion. Check its terminal result
+with `check_background_job`; stop it with `stop_background_job`. Invalid or
+over-limit timeouts are rejected. Jobs are not resumable after runtime shutdown,
+restart or reconfiguration. Sandbox and hosted worker limits remain 120 seconds.
+For repeatable long verification, the Workspace Test Runner remains available.
+
+Native desktop commands use available OS memory rather than a shared 512 MiB
+MCP-server memory ceiling. Earlier builds applied that ceiling to the server and
+all descendants, so compilers or Godot could fail allocations even when the
+machine had free RAM. Timeouts, bounded output, process-count limits, cancellation
+and process-tree cleanup still apply. Third-party MCP servers, hosted/sandboxed
+execution and the dedicated managed Python runtime retain their memory policies.
+This resource change does not add filesystem/network isolation to native commands.

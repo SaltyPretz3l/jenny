@@ -82,7 +82,8 @@ class MCPServerConfig:
     args: tuple[str, ...] = ()
     url: str | None = None
     request_timeout_seconds: float = 30.0
-    memory_limit_mb: int = 512
+    # None is internal-only for native desktop tools; external config remains bounded.
+    memory_limit_mb: int | None = 512
     max_processes: int = 5
     max_open_files: int = 256
     cpu_warning_seconds: float = 30.0

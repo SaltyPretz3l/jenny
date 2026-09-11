@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import sidecar.runtime.chat as chat_module
+import sidecar.runtime.chat_resume as resume_module
 from sidecar.runtime.chat import build_chat_send_response
 from sidecar.runtime.chat_helpers import chat_error_notification
 from sidecar.runtime.chat_models import ChatRequestError
@@ -25,6 +26,7 @@ from sidecar.runtime.local_engine.request_context import (
     install_request_context,
 )
 from sidecar.runtime.plan_usage_snapshot import record_plan_usage_snapshot
+from tests.sidecar.runtime.test_chat import _build_approval_plan_for_chat_tests
 from tests.sidecar.runtime.test_chat_dark_paths import _make_brain_container, _TextOnlyEngine
 
 _HEADERS = {
@@ -69,7 +71,9 @@ def _raise_rate_limited_after_stash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_module, "_build_router_response", fake_router_response)
 
 
-def _send(engine: _BindableEngine, feature_flags: dict[str, bool]) -> ChatRequestError:
+def _send(
+    engine: _BindableEngine, feature_flags: dict[str, bool], writer: Any = None
+) -> ChatRequestError:
     brain = _make_brain_container(
         SimpleNamespace(),  # the router is never reached: _build_router_response is patched
         feature_flags=feature_flags,
@@ -82,8 +86,28 @@ def _send(engine: _BindableEngine, feature_flags: dict[str, bool]) -> ChatReques
             approvals_pre_granted=True,
             brain_container=brain,
             invalid_params_code=-32602,
+            stream_notifications=writer is not None,
+            notification_writer=writer,
         )
     return caught.value
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_live_plan_usage_is_emitted_before_terminal_error_and_cleared(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    _raise_rate_limited_after_stash(monkeypatch)
+    messages: list[dict[str, Any]] = []
+    engine = _BindableEngine()
+    _send(engine, {"chatgpt_plan_meter": enabled, "context_usage_live": False}, messages.append)
+    readings = [m for m in messages if m.get("method") == "chat.plan_usage"]
+    assert len(readings) == int(enabled)
+    if enabled:
+        assert readings[0]["params"]["plan_usage"] == _EXPECTED
+        assert readings[0]["params"]["request_id"] == "req-plan-429"
+    assert current_request_context(engine) is None
+    record_plan_usage_snapshot(engine, SimpleNamespace(headers=_HEADERS))
+    assert len([m for m in messages if m.get("method") == "chat.plan_usage"]) == len(readings)
 
 
 def test_router_path_chat_request_error_carries_plan_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,3 +131,33 @@ def test_router_path_flag_off_leaves_error_data_untouched(monkeypatch: pytest.Mo
 
     assert error.data == {}
     assert "plan_usage" not in chat_error_notification(error)["params"]
+
+
+def test_approval_resume_rebinds_live_usage_after_the_original_context_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _BindableEngine()
+    _raise_rate_limited_after_stash(monkeypatch)
+    original_messages: list[dict[str, Any]] = []
+    _send(engine, {}, original_messages.append)
+    assert current_request_context(engine) is None
+    plan = _build_approval_plan_for_chat_tests(remaining_iterations=1)
+    brain = _make_brain_container(SimpleNamespace(), feature_flags={}, engine=engine)
+    resumed_messages: list[dict[str, Any]] = []
+
+    def provider_response_in_resumed_scope(**_kwargs: Any) -> Any:
+        assert current_request_context(engine) is not None
+        record_plan_usage_snapshot(engine, SimpleNamespace(headers=_HEADERS))
+        return "resumed"
+
+    monkeypatch.setattr(resume_module, "execute_with_inner_turn_retry", provider_response_in_resumed_scope)
+    result = resume_module.resume_chat_send_response_from_approval_plan(
+        plan, brain_container=brain, stream_notifications=True,
+        notification_writer=resumed_messages.append,
+    )
+    assert result == "resumed"
+    assert len(resumed_messages) == 1
+    assert resumed_messages[0]["method"] == "chat.plan_usage"
+    assert resumed_messages[0]["params"]["plan_usage"] == _EXPECTED
+    assert len(original_messages) == 1
+    assert current_request_context(engine) is None

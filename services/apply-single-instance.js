@@ -24,6 +24,14 @@ function applySingleInstance(app, onSecondInstance, dependencies = {}) {
   }
   const hasLock = app.requestSingleInstanceLock();
   if (!hasLock) {
+    const env = dependencies.env || process.env;
+    if (env.JENNY_LAUNCH_PATH === 'dev') {
+      const showErrorBox = dependencies.showErrorBox || defaultShowProfileOwnerError;
+      showErrorBox(
+        'Jenny (Dev) did not start',
+        'Another Jenny instance is using your chats and settings. Close it, then launch Jenny (Dev) again to use the current development source.'
+      );
+    }
     app.quit();
     return false;
   }

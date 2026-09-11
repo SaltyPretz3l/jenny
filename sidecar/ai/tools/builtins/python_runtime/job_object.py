@@ -84,8 +84,8 @@ def _raise_ntstatus(message: str, status: int) -> None:
 
 
 class JobObject:
-    def __init__(self, *, memory_limit_mb: int = 512, max_processes: int = 5) -> None:
-        self._memory_limit_mb = max(1, int(memory_limit_mb))
+    def __init__(self, *, memory_limit_mb: int | None = 512, max_processes: int = 5) -> None:
+        self._memory_limit_mb = None if memory_limit_mb is None else max(1, int(memory_limit_mb))
         self._max_processes = max(1, int(max_processes))
         self._handle = None
 
@@ -100,14 +100,16 @@ class JobObject:
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = (
             JOB_OBJECT_LIMIT_ACTIVE_PROCESS
-            | JOB_OBJECT_LIMIT_JOB_MEMORY
-            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
             | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         )
         info.BasicLimitInformation.ActiveProcessLimit = self._max_processes
-        memory_limit_bytes = self._memory_limit_mb * 1024 * 1024
-        info.ProcessMemoryLimit = memory_limit_bytes
-        info.JobMemoryLimit = memory_limit_bytes
+        if self._memory_limit_mb is not None:
+            info.BasicLimitInformation.LimitFlags |= (
+                JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            )
+            memory_limit_bytes = self._memory_limit_mb * 1024 * 1024
+            info.ProcessMemoryLimit = memory_limit_bytes
+            info.JobMemoryLimit = memory_limit_bytes
         if not kernel32.SetInformationJobObject(
             handle,
             JobObjectExtendedLimitInformation,

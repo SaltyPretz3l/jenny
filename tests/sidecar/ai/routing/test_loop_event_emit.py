@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sidecar.ai.error_codes import CMP_LOOP_TOOL_INTERRUPTED
@@ -37,6 +38,7 @@ from sidecar.ai.routing.tool_observation import (
     ToolObservationStore,
 )
 from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.runtime.chat_serialization import _serialize_loop_event
 
 
 def _make_runtime(
@@ -289,3 +291,15 @@ def test_build_interrupted_tool_outcome_tolerates_missing_record_fields() -> Non
     assert outcome.tool_name == "tool"
     assert outcome.tool_input == {}
     assert outcome.output == "stopped"
+
+
+def test_result_forwards_execution_time_without_approval_or_queue_time() -> None:
+    runtime, captured = _make_runtime()
+    outcome = _FakeOutcome()
+    outcome.metadata = {"phase_timings_json": json.dumps({
+        "execute": {"elapsed_ms": 1234.5}, "queue": {"elapsed_ms": 600000},
+    })}
+    emit_tool_result(runtime, outcome, call_id="c1")
+    assert captured[0].duration_ms == 1234.5
+    notification = _serialize_loop_event(captured[0], "req_x", trace_id=None, session_id="session")
+    assert notification["params"]["duration_ms"] == 1234.5

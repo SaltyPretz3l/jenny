@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import stat as stat_module
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Sequence
 
@@ -61,6 +61,18 @@ class NodeIdentity:
             other.inode,
             stat_module.S_IFMT(other.mode),
         )
+
+    def matches_open_stat(self, value: os.stat_result) -> bool:
+        """Compare a handle with lstat without Windows' filename-derived x bits."""
+        opened = NodeIdentity.from_stat(value)
+        if os.name == "nt":
+            # Windows lstat infers execute bits from .exe/.bat/.cmd extensions;
+            # fstat has no filename. Preserve every other mode/identity field.
+            execute_bits = stat_module.S_IXUSR | stat_module.S_IXGRP | stat_module.S_IXOTH
+            return replace(self, mode=self.mode & ~execute_bits) == replace(
+                opened, mode=opened.mode & ~execute_bits
+            )
+        return self == opened
 
 
 @dataclass(frozen=True)

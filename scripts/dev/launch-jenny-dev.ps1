@@ -1,6 +1,6 @@
-# Jenny (Dev) launcher -- consolidated cleanup -> dep refresh -> npm run dev.
-# Safe to re-run; cleanup is no-op when nothing is running, and `npm install`
-# is skipped entirely when the dependency stamp says nothing changed (npm's
+# Jenny (Dev) launcher -- current checkout -> dep refresh -> npm run dev.
+# Shares the regular Jenny profile; close the other app before launching.
+# `npm install` is skipped when the dependency stamp says nothing changed (npm's
 # "no-op" install still resolves the whole tree, which is multi-second).
 #
 # Usage (from a shell):  powershell -NoProfile -File launch-jenny-dev.ps1
@@ -10,7 +10,6 @@
 
 [CmdletBinding()]
 param(
-    [switch]$IncludeWsl,
     [switch]$RefreshDeps
 )
 
@@ -19,7 +18,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 
 # Cold-start attribution: export the launcher's own start time and path label
-# so main.js can measure launcher-to-main time (the cleanup/npm/esbuild work
+# so main.js can measure launcher-to-main time (the preflight/npm/esbuild work
 # below is otherwise invisible to the in-app startup audit). Consumed only when
 # JENNY_COLD_START_AUDIT is enabled; inert otherwise.
 $env:JENNY_LAUNCHER_STARTED_AT_MS = [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -32,12 +31,16 @@ Write-Host ('  repo: {0}' -f $repoRoot) -ForegroundColor DarkGray
 Write-Host '==================================================' -ForegroundColor Cyan
 Write-Host ''
 
-# --- Step 1/3: cleanup lingering runtimes -------------------------------------
-Write-Host '[1/3] Cleaning lingering Jenny / Ollama / sidecar processes...' -ForegroundColor Cyan
-$cleanupArgs = @()
-if ($IncludeWsl) { $cleanupArgs += '-IncludeWsl' }
-& (Join-Path $scriptDir 'cleanup-jenny.ps1') @cleanupArgs
-Write-Host ('  cleanup took {0} ms' -f $launchStopwatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+# --- Step 1/3: identify the current source runtime ----------------------------
+Write-Host '[1/3] Using this checkout and its Python sidecar.' -ForegroundColor Cyan
+$devPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $devPython -PathType Leaf)) {
+    Write-Host ('Missing development Python: {0}. Run npm run setup first.' -f $devPython) -ForegroundColor Red
+    exit 1
+}
+$env:JENNY_BACKEND_PYTHON = $devPython
+Write-Host ('  Python: {0}' -f $devPython) -ForegroundColor DarkGray
+Write-Host 'Close the other Jenny app first. Dev shares your existing chats/settings and never terminates it.' -ForegroundColor Yellow
 Write-Host ''
 
 # --- Step 2/3: refresh node deps ---------------------------------------------
@@ -93,13 +96,12 @@ if ($skipInstall) {
         }
     }
 }
-Write-Host ('  preflight total {0} ms (cleanup + dep check/install)' -f $launchStopwatch.ElapsedMilliseconds) -ForegroundColor DarkGray
+Write-Host ('  preflight total {0} ms (runtime + dep check/install)' -f $launchStopwatch.ElapsedMilliseconds) -ForegroundColor DarkGray
 Write-Host ''
 
 # --- Long-context Ollama tuning ----------------------------------------------
-# Step 1 (cleanup) kills any standalone Ollama, so Jenny's own managed daemon
-# wins the port and spawns fresh. Export the long-context knobs here so that
-# spawned daemon inherits them (Jenny passes OLLAMA_* through to the child):
+# Export the long-context knobs here so a newly managed Ollama
+# daemon inherits them (Jenny passes OLLAMA_* through to the child):
 # Flash Attention + a quantized (q8_0) KV cache roughly halve the per-token KV
 # footprint, which is what keeps 128K+ context from blowing past this 16GB GPU.
 # Process-scoped on purpose -- nothing is written to the user/machine env. These

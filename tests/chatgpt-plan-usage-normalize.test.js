@@ -205,6 +205,7 @@ test('buildPlanUsageRecord includes rate_limit_reached_type only when present, a
   const recordWithReached = buildPlanUsageRecord(withReached, { accountKey: 'k', source: 'chat_error', now: () => 1 });
   assert.equal(recordWithReached.rate_limit_reached_type, 'primary');
   assert.equal(recordWithReached.source, 'chat_error');
+  assert.equal(buildPlanUsageRecord(snapshot, { accountKey: 'k', source: 'chat_progress', now: 1 }).source, 'chat_progress');
 });
 
 test('buildPlanUsageRecord accepts a plain now value in addition to a now() function', () => {

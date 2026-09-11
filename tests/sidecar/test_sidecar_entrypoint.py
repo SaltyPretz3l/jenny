@@ -13,6 +13,20 @@ def test_sidecar_entrypoint_self_check_exits_successfully() -> None:
     assert sidecar_main.run(["--self-check"]) == 0
 
 
+def test_self_check_rejects_an_unresolvable_packaged_handler(monkeypatch):
+    from types import SimpleNamespace
+
+    from sidecar.ai.tools import registry
+
+    def missing():
+        raise ModuleNotFoundError("missing packaged tool")
+
+    monkeypatch.setattr(registry, "lazy_tool_handlers", lambda: (
+        SimpleNamespace(resolve=missing, lazy_target=("missing", "handler")),))
+    with pytest.raises(ModuleNotFoundError, match="missing packaged tool"):
+        sidecar_main.run(["--self-check"])
+
+
 def test_main_prepares_frozen_multiprocessing_before_cli_dispatch(monkeypatch) -> None:
     calls: list[object] = []
 

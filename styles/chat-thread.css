@@ -662,6 +662,12 @@
   width: fit-content;
 }
 
+/* Right-aligned flex items otherwise size their content to an unwrapped code
+   line and spill left of the transcript, beyond its scrollable area. */
+.chat-entry.user > .chat-message-content {
+  max-width: 100%;
+}
+
 .chat-bubble {
   line-height: 1.6;
   white-space: pre-wrap;
@@ -673,6 +679,7 @@
 /* User bubble: quiet solid surface, with no glass or card chrome. */
 .chat-entry.user .chat-bubble {
   width: 100%;
+  overflow-wrap: anywhere;
   padding: var(--space-6) var(--space-8);
   border-radius: var(--radius-md);
   background: var(--tl-user-bubble-bg);

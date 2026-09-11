@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from contextlib import contextmanager
 from typing import Iterator, Literal
+
+MAX_PHASE_TRACE_CHARS = 16_384
 
 PHASE_NAMES: tuple[str, ...] = (
     "queue",
@@ -65,3 +68,25 @@ class PhaseTrace:
 
     def phase_timings_json(self) -> str:
         return json.dumps(self.summary(), separators=(",", ":"))
+
+
+def execution_duration_ms(metadata: object) -> float | None:
+    """Read bounded execution telemetry without treating missing time as zero."""
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("phase_timings_json")
+    if not isinstance(raw, str) or len(raw) > MAX_PHASE_TRACE_CHARS:
+        return None
+    try:
+        phases = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None
+    execution = phases.get("execute") if isinstance(phases, dict) else None
+    value = execution.get("elapsed_ms") if isinstance(execution, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        duration = float(value)
+    except OverflowError:
+        return None
+    return duration if math.isfinite(duration) and duration >= 0 else None

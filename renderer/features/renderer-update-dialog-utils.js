@@ -219,7 +219,7 @@
     }
     var renderMarkdown = resolveMarkdownRenderer(deps || {});
     var releaseNotesHtml = view.releaseNotesMarkdown
-      ? '<div class="update-dialog-notes">' + renderMarkdown(view.releaseNotesMarkdown, { images: 'omit', mermaid: 'plain' }) + '</div>'
+      ? '<div class="update-dialog-notes">' + renderMarkdown(view.releaseNotesMarkdown, { images: 'omit', mermaid: 'plain', rawHtml: 'sanitize' }) + '</div>'
       : '';
     var bodyHtml = releaseNotesHtml;
     return renderStepModal({

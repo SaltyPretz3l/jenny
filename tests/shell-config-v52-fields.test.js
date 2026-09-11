@@ -52,11 +52,11 @@ test('v52 field normalizers enforce canonical language, safety, and guard values
     });
   }
 
-  assert.equal(UNATTENDED_GUARD_MINUTES_DEFAULT, 10);
+  assert.equal(UNATTENDED_GUARD_MINUTES_DEFAULT, 0);
   assert.equal(UNATTENDED_GUARD_MINUTES_MAX, 120);
   for (const [input, expected] of [
     [0, 0], ['0', 0], [1, 1], ['30.9', 30], [200, 120], [0.5, 1],
-    [-1, 10], ['nope', 10], [NaN, 10], [null, 10], [undefined, 10], [{}, 10],
+    [-1, 0], ['nope', 0], [NaN, 0], [null, 0], [undefined, 0], [{}, 0],
   ]) {
     await t.test(`unattendedGuardMinutes ${String(input)}`, () => {
       assert.equal(normalizeUnattendedGuardMinutes(input), expected);
@@ -68,14 +68,14 @@ test('v52 defaults and migration preserve valid forward values', () => {
   const defaults = normalizeState({});
   assert.equal(defaults.uiLanguage, 'en');
   assert.equal(defaults.safetyMode, 'normal');
-  assert.equal(defaults.unattendedGuardMinutes, 10);
+  assert.equal(defaults.unattendedGuardMinutes, 0);
 
   const migrated = normalizeState({ version: 51 });
   assert.equal(migrated.version, 53);
   assert.equal(CONFIG_VERSION, 53);
   assert.equal(migrated.uiLanguage, 'en');
   assert.equal(migrated.safetyMode, 'normal');
-  assert.equal(migrated.unattendedGuardMinutes, 10);
+  assert.equal(migrated.unattendedGuardMinutes, 0);
 
   const forward = normalizeState({
     version: 51,

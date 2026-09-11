@@ -82,7 +82,7 @@ def run_temp_script_tool(
                 workspace=workspace,
                 temp_root=temp_root,
             ),
-            temp_root=temp_root,
+            temp_root=temp_root, language=language,
         )
     except OSError as error:
         raise ToolExecutionFailure(
@@ -324,7 +324,7 @@ def _redact_temp_path(value: str, temp_root: Path) -> str:
 
 
 def _redact_temp_details(
-    result: ToolHandlerResult, *, temp_root: Path
+    result: ToolHandlerResult, *, temp_root: Path, language: str | None = None
 ) -> ToolHandlerResult:
     redacted_output = _redact_temp_path(result.output, temp_root)
     try:
@@ -334,6 +334,14 @@ def _redact_temp_details(
     if isinstance(payload, dict):
         payload["command"] = "[temporary script]"
         payload.pop("cwd", None)
+        if language == "python" and "ModuleNotFoundError:" in str(payload.get("stderr", "")):
+            payload["hint"] = (
+                "Temporary Python scripts run outside the workspace. For a workspace "
+                "module, add the selected working directory explicitly: "
+                "import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())). "
+                "For an installed dependency, verify sys.executable and use the project's "
+                "documented interpreter before installing packages."
+            )
         output = json.dumps(payload, ensure_ascii=False, indent=2)
     else:
         output = redacted_output

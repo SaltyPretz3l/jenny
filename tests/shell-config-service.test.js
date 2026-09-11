@@ -551,7 +551,7 @@ test('shell config service migrates chat UI settings into v12 defaults', () => {
   assert.equal(service.getState().version, CONFIG_VERSION);
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 100, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
 });
 
@@ -566,7 +566,7 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 135, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
 
   service.updateChatUiSettings({
@@ -575,13 +575,13 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.deepEqual(reloaded.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
 });
 

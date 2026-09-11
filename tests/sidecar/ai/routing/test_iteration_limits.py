@@ -20,8 +20,8 @@ from sidecar.ai.routing.iteration_limits import (
     max_iterations_for_agent_surface,
     max_iterations_for_mode,
     should_emit_wind_down,
-    wind_down_threshold,
     tool_timeout_for_runtime,
+    wind_down_threshold,
 )
 
 CLOUD_ENGINE_TYPES = ("chatgpt", "codex-cli")
@@ -276,3 +276,12 @@ def test_command_timeout_preserves_worker_cleanup_or_desktop_margin(host_mode, v
     )
     call = SimpleNamespace(tool_id="run_command", arguments={"timeout_seconds": requested})
     assert tool_timeout_for_runtime(config, None, call) == expected
+
+
+@pytest.mark.parametrize("requested", [5400, 86400])
+def test_background_start_timeout_does_not_inherit_job_lifetime(requested):
+    config = SimpleNamespace(engine_type="ollama", feature_flags={},
+                             tools_execution_timeout_seconds=30, host_mode="desktop")
+    call = SimpleNamespace(tool_id="run_command", arguments={
+        "timeout_seconds": requested, "run_in_background": True})
+    assert tool_timeout_for_runtime(config, None, call) == 30

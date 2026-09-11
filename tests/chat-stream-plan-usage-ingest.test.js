@@ -10,6 +10,25 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+test('live plan usage refreshes mid-turn independently of the context meter', () => {
+  const ctx = makeCtx();
+  ctx.service.featureFlags = { context_usage_live: false, chatgpt_plan_meter: true };
+  const ingestCalls = attachRecordingStore(ctx);
+  for (const percent of [12, 13]) {
+    handleNotification(ctx, {
+      method: 'chat.plan_usage',
+      params: { plan_usage: { ...PLAN_USAGE_PAYLOAD, primary: { ...PLAN_USAGE_PAYLOAD.primary, used_percent: percent } } },
+    }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  }
+  assert.deepEqual(ingestCalls.map((call) => call.raw.primary.used_percent), [12, 13]);
+  assert.deepEqual(ingestCalls[0].opts, { source: 'chat_progress' });
+  assert.equal(callsOf(ctx, 'settleUnfinishedToolRows').length, 0);
+  ctx.service.featureFlags.chatgpt_plan_meter = false;
+  handleNotification(ctx, { method: 'chat.plan_usage', params: { plan_usage: PLAN_USAGE_PAYLOAD } },
+    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  assert.equal(ingestCalls.length, 2);
+});
+
 const { handleNotification } = require('../services/backend/chat-stream-managed-runtime-notifications');
 const { rebuildChatDoneUsage } = require('../services/backend/chat-stream-usage');
 const {

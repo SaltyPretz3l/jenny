@@ -53,7 +53,6 @@ const LOOP_TOOL_INTERRUPTED_CODE = LOOP_PROTOCOL_ERROR_CODES.TOOL_INTERRUPTED;
 const LOOP_TOOL_INTERRUPTED_OUTPUT = 'System error: tool execution interrupted. Retry if needed.';
 const _setTimeout = setTimeout;
 const _clearTimeout = clearTimeout;
-
 // Message array for id-lookup only. peekSessionMessages skips the
 // per-call message re-normalization and turn_events normalize+sort that
 // getSessionMessages pays through getSession(); its message objects are shared
@@ -251,7 +250,8 @@ async function waitForToolApproval(service, streamId, sessionId, requestId, para
   const policyDecisionId = String(
     params.policy_decision_id || params.policyDecisionId || ''
   ).trim();
-  const reason = sanitizeApprovalReason(params.reason);
+  const reason = controller.unattendedPauseRequested === true
+    ? 'Auto paused after keyboard or mouse inactivity. ' + sanitizeApprovalReason(params.reason) : sanitizeApprovalReason(params.reason);
   const { policyScope, policyConsequence } = sanitizeApprovalPolicyPresentation(params);
   const input = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input : {};
   const persistedInputSnapshot = buildPersistedToolInputSnapshot(input);
@@ -400,7 +400,7 @@ async function waitForToolApproval(service, streamId, sessionId, requestId, para
           persistTerminalApprovalResult({
             service, sessionId, streamId, callId, toolName, summary,
             model: service.currentModel, approvalState: resolvedState,
-            inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector,
+            inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: approvalTerminalOutput(toolName, resolvedState, reason),
           });
         }
       } catch (settlementError) {

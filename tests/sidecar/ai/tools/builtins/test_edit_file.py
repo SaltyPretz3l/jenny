@@ -53,24 +53,25 @@ def _full_read_snapshot(tmp_path: Path, relative_path: str) -> dict[str, object]
     return snapshot
 
 
-def test_edit_file_replaces_unique_string_and_creates_checkpoint(tmp_path: Path) -> None:
-    target = tmp_path / "notes.txt"
+@pytest.mark.parametrize("filename", ["notes.txt", "Play-Ascend.cmd", "script.bat"])
+def test_edit_file_replaces_unique_string_and_creates_checkpoint(tmp_path: Path, filename: str) -> None:
+    target = tmp_path / filename
     original = b"hello world\r\n"
     target.write_bytes(original)
 
     result = edit_module.edit_file_tool(
         {
-            "file_path": "notes.txt",
+            "file_path": filename,
             "old_string": "world",
             "new_string": "earth",
-            "expected_read_snapshot": _full_read_snapshot(tmp_path, "notes.txt"),
+            "expected_read_snapshot": _full_read_snapshot(tmp_path, filename),
         },
         _guard(tmp_path),
     )
 
     assert result.success is True
     assert target.read_bytes() == b"hello earth\r\n"
-    assert result.metadata["path"] == "notes.txt"
+    assert result.metadata["path"] == filename
     assert result.metadata["replacements"] == 1
     assert result.metadata["replace_all"] is False
     assert result.metadata["checkpoint_created"] is True

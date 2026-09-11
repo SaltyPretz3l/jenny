@@ -88,7 +88,7 @@
       uiLanguage: 'en',
       use24HourTime: false,
       safetyMode: 'normal',
-      unattendedGuardMinutes: 10,
+      unattendedGuardMinutes: 0,
       backend: { phase: 'starting', detail: jt('shell.bootstrap.connectingToBackend', 'Connecting to backend...') },
       sessions: [],
       currentSessionId: '',

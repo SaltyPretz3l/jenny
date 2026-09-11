@@ -165,7 +165,7 @@
   globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
   state.uiLanguage = chatUiNormalizers.normalizeUiLanguageTag?.(persistedChatZoomState?.uiLanguage) || state.uiLanguage || 'en';
   state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
-  state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 10;
+  state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 0;
   state.ui.appZoomPercent = Number(
     persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 100
   ) || 100;

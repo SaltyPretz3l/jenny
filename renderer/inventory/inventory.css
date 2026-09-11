@@ -698,6 +698,7 @@
 }
 
 .update-dialog-notes {
+  overflow-wrap: anywhere;
   margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: 1px solid var(--border-subtle);

@@ -38,6 +38,7 @@ def _legacy_unit_process_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
         cwd: Path,
         timeout_seconds: float,
         env: dict[str, str],
+        trusted_repo_root: Path | None = None,
     ) -> object:
         return subprocess.run(
             arguments,

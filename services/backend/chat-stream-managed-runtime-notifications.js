@@ -71,6 +71,7 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'tool.result',
   'context.compacted',
   'context.usage',
+  'chat.plan_usage',
   'chat.done',
   'chat.error',
   'runtime.gap_candidate',
@@ -760,6 +761,10 @@ function handleNotification(ctx, notification, {
       summaryPersisted,
       ...ctx.eventBase,
     }, { channel: 'control' });
+    return;
+  }
+  if (notification.method === 'chat.plan_usage') {
+    ingestPlanUsage(ctx, params.plan_usage, 'chat_progress');
     return;
   }
   if (notification.method === 'context.usage') {

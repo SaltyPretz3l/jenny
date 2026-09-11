@@ -29,6 +29,7 @@ from sidecar.ai.host_policy import (
 from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
+    configure_stdio,
     install_termination_handler,
     start_stdin_pump,
 )
@@ -799,6 +800,7 @@ def _parse_bool_arg(value: object) -> bool:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    configure_stdio()
     parser = build_argument_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:

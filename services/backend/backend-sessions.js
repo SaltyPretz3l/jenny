@@ -472,6 +472,8 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     && typeof service.sidecarClient?.notifySessionRunModeUpdated === 'function'
   ) {
     const runMode = String(stored.run_mode || '').trim().toLowerCase();
+    const controller = service.activeStreams.get(streamId);
+    if (controller) delete controller.unattendedPauseRequested;
     service.sidecarClient.notifySessionRunModeUpdated({
       sessionId,
       approvalMode: runMode === 'auto' ? 'auto_run' : 'prompt',
@@ -519,6 +521,8 @@ function pauseSessionAutoRun(service, sessionId, {
     approvalMode: 'prompt',
     readOnly,
   });
+  const controller = service.activeStreams.get(activeStreamId);
+  if (controller && reason === 'unattended_idle') controller.unattendedPauseRequested = true;
   service._emitServiceLog('INFO', 'session.auto_run_pause_requested', {
     sessionId,
     streamId: activeStreamId,

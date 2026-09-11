@@ -42,7 +42,7 @@ const UI_LANGUAGE_TAGS = Object.freeze([
   'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW',
 ]);
 const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
-const UNATTENDED_GUARD_MINUTES_DEFAULT = 10;
+const UNATTENDED_GUARD_MINUTES_DEFAULT = 0;
 const UNATTENDED_GUARD_MINUTES_MAX = 120;
 
 function normalizeUiLanguage(value) {

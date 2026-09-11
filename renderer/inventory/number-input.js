@@ -92,6 +92,7 @@
       + '<input'
       + (id ? ' id="' + id + '"' : '')
       + ' type="number"'
+      + (o.disabled === true ? ' disabled' : '')
       + ' min="' + escapeHtml(String(min)) + '"'
       + ' max="' + escapeHtml(String(max)) + '"'
       + ' step="' + escapeHtml(String(step)) + '"'

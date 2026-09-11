@@ -35,8 +35,8 @@ test('chat UI field builders render inventory controls, current values, titles, 
       id: 'safetyModeSelect', value: 'strict', hint: 'Applies from the next turn.',
     },
     {
-      markup: support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput }),
-      id: 'unattendedGuardMinutesInput', value: '45', hint: '0 turns the guard off.',
+      markup: support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput, selectField }),
+      id: 'unattendedGuardMinutesInput', value: '45', hint: 'Off by default',
     },
   ];
   for (const entry of cases) {
@@ -63,7 +63,7 @@ test('chat UI change resolvers accept only their own controls', () => {
   const document = parse(
     support.buildUiLanguageFieldMarkup({ value: 'ja', selectField })
       + support.buildSafetyModeFieldMarkup({ value: 'paranoid', selectField })
-      + support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput })
+      + support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput, selectField })
       + support.buildDefaultRunModeFieldMarkup({ value: 'auto', selectField })
   );
   const language = document.getElementById('uiLanguageSelect');
@@ -205,4 +205,33 @@ test('24-hour setting changes formatting only after a confirmed save', async () 
     harness.cleanup();
     global.jennyI18n = previous;
   }
+});
+
+
+test('inactivity pause is explicitly opt-in and preserves saved thresholds', () => {
+  for (const [saved, enabled, minutes] of [[undefined, false, '10'], [0, false, '10'], [45, true, '45']]) {
+    const document = parse(support.buildUnattendedGuardFieldMarkup({ value: saved, numberInput, selectField }));
+    const mode = document.getElementById('unattendedGuardModeSelect');
+    const duration = document.getElementById('unattendedGuardMinutesInput');
+    assert.equal(mode.value, enabled ? 'on' : 'off');
+    assert.equal(duration.disabled, !enabled);
+    assert.equal(duration.value, minutes);
+    mode.value = 'on';
+    assert.deepEqual(support.resolveUnattendedGuardChangeEvent({ target: mode }), { value: Number(minutes) });
+    mode.value = 'off';
+    assert.deepEqual(support.resolveUnattendedGuardChangeEvent({ target: mode }), { value: 0 });
+    document.defaultView.close();
+  }
+});
+
+test('inactivity switch persists through the existing settings API', async () => {
+  const harness = createBindingHarness();
+  try {
+    harness.document.getElementById('toolsConfigFieldList').innerHTML = support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput, selectField });
+    await change(harness, 'unattendedGuardModeSelect', 'off');
+    assert.deepEqual(harness.patches.pop(), { unattendedGuardMinutes: 0 });
+    assert.equal(harness.state.unattendedGuardMinutes, 0);
+    await change(harness, 'unattendedGuardModeSelect', 'on');
+    assert.deepEqual(harness.patches.pop(), { unattendedGuardMinutes: 45 });
+  } finally { harness.cleanup(); }
 });

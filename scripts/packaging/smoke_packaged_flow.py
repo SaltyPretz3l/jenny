@@ -896,6 +896,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 step_cap=min(args.step_timeout_seconds, 120),
             ),
         )
+        _run_command(
+            [sys.executable, str(ROOT / "scripts/packaging/probe_packaged_tools.py"),
+             str(artifact_path)],
+            log_path=log_path,
+            timeout_seconds=_remaining_timeout_seconds(deadline=workflow_deadline, step_cap=120),
+        )
         packaged_app_path = _resolve_packaged_app_path()
         signing_status = collect_windows_signing_status(packaged_app_path)
         _append_log(

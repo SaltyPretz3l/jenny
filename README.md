@@ -277,7 +277,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.1.0
+### Source version 1.1.1
 
 This source tree includes guided setup, local coding tools with live command output, experimental platform and Docker workflows, and the plugin host. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. No plugins are bundled. Crash reporting is optional and off by default.
 

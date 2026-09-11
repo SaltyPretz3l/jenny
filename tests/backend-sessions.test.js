@@ -243,6 +243,7 @@ test('pauseSessionAutoRun pushes prompt mode without persisting', () => {
     readOnly: false,
   }]);
   assert.deepEqual(harness.preferenceWrites, []);
+  assert.equal(harness.service.activeStreams.get('stream-auto').unattendedPauseRequested, true);
   assert.deepEqual(harness.logs, [{
     level: 'INFO',
     event: 'session.auto_run_pause_requested',

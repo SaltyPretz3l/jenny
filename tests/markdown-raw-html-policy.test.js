@@ -16,6 +16,17 @@ test('plain mode escapes every raw HTML token', () => {
   assert.match(inline, /&lt;kbd&gt;/);
 });
 
+test('sanitized HTML opt-in stays separate from plain HTML in the render cache', () => {
+  const source = '<h2>Release notes</h2>';
+  const plainOptions = { mermaid: 'plain' };
+  const notesOptions = { ...plainOptions, rawHtml: 'sanitize' };
+  markdownUtils.clearMarkdownRenderCache();
+  for (let pass = 0; pass < 2; pass += 1) {
+    assert.match(markdownUtils.renderMarkdown(source, plainOptions), /&lt;h2&gt;/);
+    assert.match(markdownUtils.renderMarkdown(source, notesOptions), /<h2>Release notes<\/h2>/);
+  }
+});
+
 test('answer mode escapes swallowing constructs and preserves safe inline HTML', () => {
   assert.match(markdownUtils.renderMarkdown('a <script>b c'), /&lt;script&gt;b c/);
   assert.match(markdownUtils.renderMarkdown('s <style>x'), /&lt;style&gt;x/);

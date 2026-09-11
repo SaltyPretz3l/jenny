@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { renderStepModal } = require('../renderer/inventory/step-modal');
+const { JSDOM } = require('jsdom');
+const { renderMarkdown } = require('../renderer/shared/markdown-utils');
 const {
   createUpdateDialogController,
   deriveUpdateDialogViewModel,
@@ -31,6 +33,26 @@ function makeMountElement() {
     },
   };
 }
+
+test('update notes render HTML and Markdown safely through the real renderer', () => {
+  const releaseNotesMarkdown = '<h1>Jenny 1.1.0</h1><p>About &amp; updates</p>'
+    + '<ul><li><strong>Languages</strong> and fixes</li></ul>\n\n'
+    + '## Installation\n\n- Download the installer\n\n'
+    + '<p onclick="alert(1)"><a href="javascript:alert(1)">Unsafe link</a>'
+    + '<img src="https://example.com/tracker.png" onerror="alert(1)"></p>\n\n'
+    + '<script>alert(1)</script>\n\n```mermaid\ngraph TD; A-->B\n```';
+  for (const status of ['idle', 'available']) {
+    const fragment = JSDOM.fragment(renderUpdateDialog({ status, releaseNotesMarkdown }, { renderMarkdown }));
+    const notes = fragment.querySelector('.update-dialog-notes');
+    assert.equal(notes.querySelector('h1').textContent, 'Jenny 1.1.0');
+    assert.equal(notes.querySelector('p').textContent, 'About & updates');
+    assert.equal(notes.querySelector('li strong').textContent, 'Languages');
+    assert.equal(notes.querySelector('h2').textContent, 'Installation');
+    assert.equal(notes.querySelectorAll('li').length, 2);
+    assert.equal(notes.querySelector('script, img, [onclick], [onerror], a[href], .mermaid'), null);
+    assert.match(notes.querySelector('pre').textContent, /graph TD/);
+  }
+});
 
 function makeFakeDocument(mountId, mount) {
   return {

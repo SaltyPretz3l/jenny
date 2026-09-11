@@ -48,7 +48,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.1.1"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _OLLAMA_CATALOG_METADATA_FIELDS = (

@@ -2,13 +2,13 @@
 
 The ChatGPT/Codex backend answers every ``/responses`` call (200 **and**
 429) with an ``x-codex-*`` header family describing how much of the plan's
-rolling usage windows have been consumed. Engines have no notification
-channel of their own (only the tool loop can call ``runtime.emit_safe``), so
-this module uses the request-scoped ``ContextVar`` binding in
+rolling usage windows have been consumed. This module uses the request-scoped
+``ContextVar`` binding in
 ``sidecar.runtime.local_engine.request_context`` as the engine -> runtime
 side channel: :func:`record_plan_usage_snapshot` is called from inside the
 engine's HTTP hook and stashes a scrubbed snapshot into the current request
-context; :func:`attach_plan_usage` is called later from the runtime layer
+context and publishes it through the runtime-bound writer during the turn;
+:func:`attach_plan_usage` is called later from the runtime layer
 (``chat_decision_render.py`` / ``chat_streaming.py``) to copy that snapshot
 onto the outgoing ``chat.done``/``chat.error`` payload.
 
@@ -32,8 +32,10 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from sidecar.protocol import CHAT_PLAN_USAGE_METHOD
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.local_engine.request_context import current_request_context
+from sidecar.runtime.rpc import notification
 
 PLAN_USAGE_SCHEMA_VERSION = 1
 PLAN_USAGE_CONTEXT_KEY = "plan_usage"
@@ -46,6 +48,25 @@ _REACHED_TYPE_ALLOWLIST = frozenset({"primary", "secondary"})
 _HEADER_VALUE_MAX_CHARS = 64
 
 _logger = logging.getLogger(__name__)
+
+
+def bind_live_plan_usage(
+    engine: Any, *, writer: Any, enabled: bool, session_id: str | None
+) -> None:
+    """Bind the request's existing writer; no engine-global callback or polling."""
+    context = current_request_context(engine)
+    if context is None or not enabled or not callable(writer):
+        return
+
+    def publish(snapshot: dict[str, Any]) -> None:
+        writer(notification(CHAT_PLAN_USAGE_METHOD, {
+            "request_id": context.get("request_id"),
+            "trace_id": context.get("trace_id"),
+            "session_id": session_id,
+            "plan_usage": copy.deepcopy(snapshot),
+        }))
+
+    context["plan_usage_writer"] = publish
 
 _WINDOW_HEADER_NAMES: dict[str, dict[str, str]] = {
     "primary": {
@@ -206,6 +227,9 @@ def record_plan_usage_snapshot(engine: Any, response: Any) -> None:
         if context is None:
             return
         context[PLAN_USAGE_CONTEXT_KEY] = snapshot
+        publish = context.get("plan_usage_writer")
+        if callable(publish):
+            publish(snapshot)
         log_event(
             _logger,
             logging.DEBUG,

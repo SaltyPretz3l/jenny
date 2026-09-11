@@ -11,6 +11,8 @@
   root.rendererChatEventSettingsBindings = factory(root.modelCapabilityUtils, root.rendererAsyncFence, root.rendererComposerV2State, root.reasoningEffortProfiles);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (modelCapabilityUtils, asyncFence, composerState, reasoningEffortProfiles) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // Acknowledges this warning copy only; backend tool permissions remain separate.
+  const AUTO_RUN_WARNING_ACK_KEY = 'jenny.auto-run-warning-ack.v1';
   function createSettingsEventBindings(deps) {
     const {
       // DOM
@@ -40,6 +42,7 @@
       clearComposerStatusNotice,
       // controllers
       toastActionHandlers,
+      getAutoRunWarningStorage = () => globalThis.localStorage,
     } = deps || {};
 
     const isPlanCapableModel = modelCapabilityUtils?.isPlanCapableModel;
@@ -238,6 +241,12 @@
 
     async function confirmAutoRun() {
       if (autoRunConfirmed) return Promise.resolve(true);
+      try {
+        if (getAutoRunWarningStorage()?.getItem(AUTO_RUN_WARNING_ACK_KEY) === '1') {
+          autoRunConfirmed = true;
+          return true;
+        }
+      } catch (_error) { /* Unavailable storage keeps the warning enabled. */ }
       if (autoRunConfirmInFlight) return autoRunConfirmInFlight;
       const confirmDialogFactory = globalThis.rendererIdeConfirmDialog?.createIdeConfirmDialog;
       const helpOverlayFactory = globalThis.inventoryHelpOverlay?.createHelpOverlay;
@@ -263,13 +272,20 @@
       let pending;
       pending = Promise.resolve(autoRunConfirmDialog.confirm({
         title: jt('runMode.autoConfirm.title', 'Turn on Auto run?'),
-        message: jt('runMode.autoConfirm.body', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused. Do not leave Jenny running unattended.'),
+        message: jt('runMode.autoConfirm.bodyWithIdle', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused.') + ' ' + (Number(state.unattendedGuardMinutes) > 0
+          ? jt('runMode.autoConfirm.idleOn', 'Inactivity pause is enabled after {minutes} minutes without keyboard or mouse input.', { minutes: state.unattendedGuardMinutes })
+          : jt('runMode.autoConfirm.idleOff', 'Inactivity pause is off: Auto continues while you are away.')) + ' ' + jt('runMode.autoConfirm.idleSettings', 'Change this in Settings > Tools > Pause Auto when inactive.'),
         confirmLabel: jt('runMode.autoConfirm.confirm', 'Turn on Auto'),
         cancelLabel: jt('common.cancel', 'Cancel'),
         variant: 'danger',
       })).then((confirmed) => {
         if (autoRunConfirmInFlight !== pending) return false;
-        if (confirmed === true) autoRunConfirmed = true;
+        if (confirmed === true) {
+          autoRunConfirmed = true;
+          try {
+            getAutoRunWarningStorage()?.setItem(AUTO_RUN_WARNING_ACK_KEY, '1');
+          } catch (_error) { /* Keep the explicit acknowledgement for this renderer. */ }
+        }
         return confirmed === true;
       }, () => false).finally(() => {
         if (autoRunConfirmInFlight === pending) autoRunConfirmInFlight = null;

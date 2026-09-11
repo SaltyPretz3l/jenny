@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from sidecar.ai.tools.phase_trace import PHASE_NAMES, PhaseTrace
+from sidecar.ai.tools.phase_trace import PHASE_NAMES, PhaseTrace, execution_duration_ms
 
 
 def test_phase_vocabulary_is_closed_and_ordered() -> None:
@@ -91,3 +91,13 @@ def test_trace_identity_fields_are_exposed() -> None:
     assert trace.tool == "run_command"
     assert trace.call_id == "call_3"
     assert trace.trace_id == "trace_x.call_3"
+
+
+@pytest.mark.parametrize("value", [None, {}, True, -1, "123", float("nan"), float("inf"), 10 ** 400])
+def test_invalid_execution_durations_are_unknown(value) -> None:
+    assert execution_duration_ms({"phase_timings_json": json.dumps({"execute": {"elapsed_ms": value}})}) is None
+
+
+@pytest.mark.parametrize("raw", [None, "[]", "{", "null", "{}", "x" * 16385])
+def test_missing_or_malformed_execution_trace_is_unknown(raw) -> None:
+    assert execution_duration_ms({"phase_timings_json": raw}) is None

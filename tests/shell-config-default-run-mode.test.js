@@ -53,13 +53,13 @@ test('a defaultRunMode update rides the chatUi bridge, preserves zoom, and store
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 120, defaultRunMode: 'auto', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.deepEqual(reloaded.getChatUiState(), {
     zoomPercent: 120, defaultRunMode: 'auto', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', unattendedGuardMinutes: 10,
+    safetyMode: 'normal', unattendedGuardMinutes: 0,
   });
   // Stored as the top-level config key, never duplicated inside the chatUi block.
   assert.equal(reloaded.getState().defaultRunMode, 'auto');

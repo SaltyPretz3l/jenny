@@ -85,10 +85,10 @@ test('desktop shortcut repair creates or overwrites the Windows desktop shortcut
 
   assert.deepEqual(result, {
     ok: true,
-    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny.lnk',
+    shortcutPath: 'C:\\Users\\example\\Desktop\\Jenny (Dev).lnk',
   });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].shortcutPath, 'C:\\Users\\example\\Desktop\\Jenny.lnk');
+  assert.equal(calls[0].shortcutPath, 'C:\\Users\\example\\Desktop\\Jenny (Dev).lnk');
   assert.equal(calls[0].operation, 'create');
   assert.equal(calls[0].details.target.endsWith(DEV_LAUNCHER_NAME), true);
   assert.equal(calls[0].details.args, '');
@@ -121,6 +121,27 @@ test('desktop shortcut reports a bounded failure when read-back verification mis
     reason: 'verify-failed',
   });
   assert.equal(events.includes('shortcut.desktop_verify_failed'), true);
+});
+
+test('development shortcut maintenance never reads or overwrites the public shortcut', () => {
+  const desktop = path.join(os.tmpdir(), 'jenny-desktop-isolation');
+  const touched = [];
+  let saved;
+  const result = ensureDesktopShortcut({
+    app: { isPackaged: false, getPath: () => desktop },
+    platform: 'win32',
+    shell: {
+      readShortcutLink(file) { touched.push(file); return saved; },
+      writeShortcutLink(file, _operation, details) {
+        touched.push(file);
+        saved = details;
+        return true;
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.ok(touched.length > 0);
+  assert.ok(touched.every((file) => file === path.join(desktop, 'Jenny (Dev).lnk')));
 });
 
 test('desktop shortcut read-back verification checks args, cwd, and iconIndex', () => {

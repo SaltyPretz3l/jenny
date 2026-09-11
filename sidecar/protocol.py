@@ -168,14 +168,16 @@ CHAT_QUESTION_BATCH_METHOD = "chat.question_batch"
 # ``chat.error.params.plan_usage`` (sidecar/runtime/plan_usage_snapshot.py).
 # Key omitted entirely when there is no ChatGPT plan-usage snapshot for the
 # request or the ``chatgpt_plan_meter`` feature flag is off -- older/newer
-# sidecars and consumers that do not know this key are unaffected. Not a new
-# notification method; no ALLOWED_NOTIFICATION_METHODS change.
+# sidecars and consumers that do not know this key are unaffected. The same
+# snapshot also travels mid-turn on CHAT_PLAN_USAGE_METHOD below.
 # ``chat.done.params.resumable_stop`` is an additive optional scalar naming a
 # resumable budget stop: ``tool_cap``, ``diminishing_returns``,
 # ``context_budget``, or ``max_iterations``. The key is omitted when absent;
 # this is not a new notification method and needs no allowlist change.
 CHAT_DONE_METHOD = "chat.done"
 CHAT_ERROR_METHOD = "chat.error"
+# Scrubbed account-usage snapshot per provider response; never a canonical event.
+CHAT_PLAN_USAGE_METHOD = "chat.plan_usage"
 TOOL_EXECUTING_METHOD = "tool.executing"
 # Live stdout/stderr tail for an in-flight run_command (W2-1). EPHEMERAL:
 # batches are never journaled and never enter the canonical turn record — the
@@ -233,6 +235,7 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         BUDGET_UPDATE_METHOD,
         CONTEXT_COMPACTED_METHOD,
         CONTEXT_USAGE_METHOD,
+        CHAT_PLAN_USAGE_METHOD,
         RUNTIME_GAP_CANDIDATE_METHOD,
         RUNTIME_PROGRESS_METHOD,
         PLUGIN_OPERATION_PROGRESS_METHOD,

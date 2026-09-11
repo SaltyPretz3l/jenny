@@ -91,7 +91,7 @@ from sidecar.runtime.local_engine.request_context import (
     clear_chat_request_context,
 )
 from sidecar.runtime.multiplexer import TurnCancellationHandle
-from sidecar.runtime.plan_usage_snapshot import attach_plan_usage
+from sidecar.runtime.plan_usage_snapshot import attach_plan_usage, bind_live_plan_usage
 
 logger = logging.getLogger(__name__)
 SKILL_INVOCATION_ID_PATTERN = re.compile(
@@ -416,6 +416,10 @@ def build_chat_send_response(
     )
     healing_token = bind_tool_call_healing(stack.config)
     try:
+        bind_live_plan_usage(
+            stack.engine, writer=notification_writer if stream_notifications else None,
+            enabled=is_chatgpt_plan_meter_enabled(feature_flags), session_id=session_id,
+        )
         # Unified mode: any turn may answer a clarifying question.
         # interactive_response present-but-None-after-normalize means a
         # malformed payload.

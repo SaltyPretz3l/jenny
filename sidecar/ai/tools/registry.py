@@ -29,6 +29,12 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 ToolHandler = Callable[[dict[str, object], WorkspaceGuard], str | ToolHandlerResult]
 
 
+def lazy_tool_handlers() -> tuple[Any, ...]:
+    """Canonical discovery for frozen imports and import-only self-checks."""
+    return tuple(value for value in globals().values()
+                 if callable(value) and hasattr(value, "lazy_target"))
+
+
 def _lazy_tool_handler(module_name: str, handler_name: str) -> ToolHandler:
     resolved: ToolHandler | None = None
 

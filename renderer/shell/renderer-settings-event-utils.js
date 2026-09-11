@@ -32,7 +32,7 @@
     resolveDefaultRunModeChangeEvent = function fallbackResolveDefaultRunModeChangeEvent() { return null; },
     normalizeUiLanguageTag = function fallbackNormalizeUiLanguageTag() { return 'en'; },
     normalizeSafetyMode = function fallbackNormalizeSafetyMode() { return 'normal'; },
-    normalizeUnattendedGuardMinutes = function fallbackNormalizeUnattendedGuardMinutes() { return 10; },
+    normalizeUnattendedGuardMinutes = function fallbackNormalizeUnattendedGuardMinutes() { return 0; },
     resolveUiLanguageChangeEvent = function fallbackResolveUiLanguageChangeEvent() { return null; },
     resolveSafetyModeChangeEvent = function fallbackResolveSafetyModeChangeEvent() { return null; },
     resolveUnattendedGuardChangeEvent = function fallbackResolveUnattendedGuardChangeEvent() { return null; },

@@ -41,8 +41,8 @@
       keywords: [jt('settings.fieldCopy.defaultRunModeSelect.keywords.runMode', 'run mode'), 'ask', 'auto', 'plan', jt('settings.fieldCopy.defaultRunModeSelect.keywords.newChat', 'new chat'), jt('settings.fieldCopy.defaultRunModeSelect.keywords.toolApproval', 'tool approval')],
     },
     unattendedGuardMinutesInput: {
-      label: jt('settings.unattendedGuard.label', 'Pause Auto mode when you step away (minutes)'),
-      description: jt('settings.unattendedGuard.description', 'Minutes without keyboard or mouse input before Auto mode starts asking again. 0 disables it.'),
+      label: jt('settings.unattendedGuard.durationLabel', 'Pause after inactivity (minutes)'),
+      description: jt('settings.unattendedGuard.optInDescription', 'Optional inactivity pause for Auto mode. Off keeps working while you are away; enable it and choose the idle duration.'),
       sectionId: 'tools',
       keywords: ['unattended', 'idle', 'away', jt('settings.fieldCopy.unattendedGuardMinutesInput.keywords.autoMode', 'auto mode'), 'pause'],
     },

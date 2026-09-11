@@ -30,6 +30,7 @@ from sidecar.ai.routing.loop_events import (
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.tool_observation import KIND_TOOL_EXECUTION_FAILED
 from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.ai.tools.phase_trace import execution_duration_ms
 
 logger = logging.getLogger("sidecar.ai.routing.loop_event_emit")
 
@@ -115,7 +116,7 @@ def emit_tool_result(
     """Emit a ``ToolResultEvent`` (and bracketing ``PhaseCompleted/Started`` events)."""
     # Must run before the event's metadata copy below: this notification is
     # the persistence channel the next turn's history re-frame reads from.
-    from sidecar.ai.routing.tool_execution_results import (
+    from sidecar.ai.routing.tool_execution_results import (  # noqa: PLC0415 - preserve lazy routing import
         annotate_derived_envelope_fields,
     )
 
@@ -154,6 +155,7 @@ def emit_tool_result(
             generated_artifacts=outcome.generated_artifacts,
             error_code=outcome.error_code,
             metadata=dict(outcome.metadata) if outcome.metadata else None,
+            duration_ms=execution_duration_ms(outcome.metadata),
             trusted_attachments=tuple(getattr(outcome, "trusted_attachments", ()) or ()),
         )
     )

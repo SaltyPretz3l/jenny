@@ -1,14 +1,33 @@
 from __future__ import annotations
 
+import os
+import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_path_identity import (
+    NodeIdentity,
     resolve_workspace_leaf,
     revalidate_workspace_leaf,
 )
+
+
+def test_open_identity_retains_all_change_detection_fields(tmp_path: Path) -> None:
+    target = tmp_path / "launcher.cmd"
+    target.write_bytes(b"@echo off\r\n")
+    identity = NodeIdentity.from_stat(target.lstat())
+    with target.open("rb") as handle:
+        opened = os.fstat(handle.fileno())
+        assert identity.matches_open_stat(opened)
+        for field in ["device", "inode", "size", "mtime_ns"]:
+            assert not replace(identity, **{field: getattr(identity, field) + 1}).matches_open_stat(opened)
+        assert not replace(identity, mode=identity.mode ^ stat.S_IWUSR).matches_open_stat(opened)
+        assert not replace(identity, mode=stat.S_IFDIR | stat.S_IMODE(identity.mode)).matches_open_stat(opened)
+        if os.name != "nt":
+            assert not replace(identity, mode=identity.mode ^ stat.S_IXUSR).matches_open_stat(opened)
 
 
 def test_revalidate_workspace_leaf_allows_directory_child_churn(

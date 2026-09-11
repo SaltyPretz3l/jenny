@@ -23,7 +23,7 @@ test('a v51 shell-config migrates through v52 with i18n and safety defaults', ()
   assert.ok(state.version >= 52, `expected version >= 52, got ${state.version}`);
   assert.equal(state.uiLanguage, 'en');
   assert.equal(state.safetyMode, 'normal');
-  assert.equal(state.unattendedGuardMinutes, 10);
+  assert.equal(state.unattendedGuardMinutes, 0);
 });
 
 test('the v51 payload survives the v52 bump untouched', () => {

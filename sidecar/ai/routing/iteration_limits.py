@@ -310,7 +310,8 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
             )
         )
         requested = call.arguments.get("timeout_seconds")
-        if isinstance(requested, (int, float)) and not isinstance(requested, bool):
+        if (call.arguments.get("run_in_background") is not True
+                and isinstance(requested, (int, float)) and not isinstance(requested, bool)):
             # The outer transport deadline must not preempt the handler's
             # advertised timeout before it can terminate and report the child.
             requested_limit = 120.0 if hosted_worker else 600.0

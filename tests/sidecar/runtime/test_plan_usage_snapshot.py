@@ -22,10 +22,37 @@ from sidecar.runtime.plan_usage_snapshot import (
     PLAN_USAGE_CONTEXT_KEY,
     PLAN_USAGE_SCHEMA_VERSION,
     attach_plan_usage,
+    bind_live_plan_usage,
     parse_plan_usage_headers,
     read_plan_usage_snapshot,
     record_plan_usage_snapshot,
 )
+
+
+def test_live_readings_refresh_each_response_and_writer_failure_preserves_stash() -> None:
+    engine = object()
+    readings: list[dict[str, Any]] = []
+    install_request_context(engine, request_id="live", trace_id="trace-live")
+    try:
+        bind_live_plan_usage(engine, writer=readings.append, enabled=True, session_id="session")
+        for percent in [12, 13]:
+            record_plan_usage_snapshot(engine, SimpleNamespace(headers={
+                "x-codex-primary-used-percent": str(percent),
+                "x-codex-primary-reset-at": "1756800000",
+            }))
+        assert [m["params"]["plan_usage"]["primary"]["used_percent"] for m in readings] == [12, 13]
+        assert readings[0]["params"]["session_id"] == "session"
+        readings[0]["params"]["plan_usage"]["primary"]["used_percent"] = 99
+        assert read_plan_usage_snapshot(engine)["primary"]["used_percent"] == 13
+
+        def broken_writer(_message: Any) -> None:
+            raise RuntimeError("disconnected")
+
+        bind_live_plan_usage(engine, writer=broken_writer, enabled=True, session_id="session")
+        record_plan_usage_snapshot(engine, SimpleNamespace(headers=_FULL_HEADERS))
+        assert read_plan_usage_snapshot(engine)["primary"]["used_percent"] == 62.0
+    finally:
+        clear_request_context(engine)
 
 
 def test_chatgpt_plan_meter_flag_defaults_on_like_context_usage_live() -> None:

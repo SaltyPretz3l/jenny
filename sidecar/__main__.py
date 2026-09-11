@@ -84,8 +84,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_self_check() -> int:
     # Import core runtime modules used by packaged startup to verify module wiring.
     from sidecar.ai.container import BrainContainer
+    from sidecar.ai.tools.registry import lazy_tool_handlers
     from sidecar.protocol import API_VERSION
     from sidecar.runtime.request_dispatch import process_message
+
+    for handler in lazy_tool_handlers():
+        if not callable(handler.resolve()):
+            raise RuntimeError(f"Non-callable tool handler: {handler.lazy_target}")
 
     _ = BrainContainer
     _ = process_message

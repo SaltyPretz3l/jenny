@@ -351,7 +351,7 @@ def _validate_git_metadata_root(git_root: Path, workspace: WorkspaceGuard) -> No
 
 def _validate_git_cwd(
     cwd: Path, workspace: WorkspaceGuard, *, cwd_explicit: bool = True
-) -> None:
+) -> Path:
     workspace_root = workspace.require_root()
     git_root = _find_git_root(cwd, workspace_root)
     if git_root is None:
@@ -365,6 +365,7 @@ def _validate_git_cwd(
             },
         )
     _validate_git_metadata_root(git_root, workspace)
+    return git_root.resolve()
 
 
 def _non_repo_message(cwd: Path, workspace_root: Path, *, cwd_explicit: bool) -> str:
@@ -389,13 +390,18 @@ def _non_repo_message(cwd: Path, workspace_root: Path, *, cwd_explicit: bool) ->
     )
 
 
-def _run_git_completed(arguments: list[str], *, cwd: Path) -> object:
+def _run_git_completed(arguments: list[str], *, cwd: Path,
+                       workspace: WorkspaceGuard | None = None) -> object:
+    git_root = _validate_git_cwd(cwd, workspace) if workspace is not None else None
+    trusted_root = (git_root if workspace is not None
+                    and git_root == workspace.require_root().resolve() else None)
     try:
         completed = _run_owned_process(
             ["git", "--no-pager", "--no-optional-locks", *arguments],
             cwd=cwd,
             timeout_seconds=_GIT_RUNTIME_OPTIONS["timeout_seconds"],
             env=_git_environment(),
+            trusted_repo_root=trusted_root,
         )
     except FileNotFoundError as error:
         raise ToolExecutionFailure(
@@ -418,8 +424,9 @@ def _run_git_completed(arguments: list[str], *, cwd: Path) -> object:
     return completed
 
 
-def _run_git(arguments: list[str], *, cwd: Path) -> str:
-    completed = _run_git_completed(arguments, cwd=cwd)
+def _run_git(arguments: list[str], *, cwd: Path,
+             workspace: WorkspaceGuard | None = None) -> str:
+    completed = _run_git_completed(arguments, cwd=cwd, workspace=workspace)
     stdout = _truncate(str(getattr(completed, "stdout", "") or ""))
     stderr = _truncate(str(getattr(completed, "stderr", "") or ""))
     if int(getattr(completed, "returncode", -1)) != 0:
@@ -433,8 +440,9 @@ def _run_git(arguments: list[str], *, cwd: Path) -> str:
     return stdout.strip()
 
 
-def _run_git_raw(arguments: list[str], *, cwd: Path) -> str:
-    completed = _run_git_completed(arguments, cwd=cwd)
+def _run_git_raw(arguments: list[str], *, cwd: Path,
+             workspace: WorkspaceGuard | None = None) -> str:
+    completed = _run_git_completed(arguments, cwd=cwd, workspace=workspace)
     stdout = str(getattr(completed, "stdout", "") or "")
     stderr = _truncate(str(getattr(completed, "stderr", "") or ""))
     if int(getattr(completed, "returncode", -1)) != 0:
@@ -446,8 +454,9 @@ def _run_git_raw(arguments: list[str], *, cwd: Path) -> str:
     return stdout
 
 
-def _run_git_blob(ref: str, path: str, *, cwd: Path) -> str:
-    stdout = _run_git_raw(["show", f"{ref}:{path}"], cwd=cwd)
+def _run_git_blob(ref: str, path: str, *, cwd: Path,
+                  workspace: WorkspaceGuard | None = None) -> str:
+    stdout = _run_git_raw(["show", f"{ref}:{path}"], cwd=cwd, workspace=workspace)
     validate_git_blob_text(stdout)
     return _truncate(stdout)
 
@@ -500,7 +509,7 @@ def _build_git_diff_arguments(
 
 def git_status_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str:
     cwd = _resolve_cwd(arguments, workspace)
-    output = _run_git(["status", "--short", "--branch"], cwd=cwd)
+    output = _run_git(["status", "--short", "--branch"], cwd=cwd, workspace=workspace)
     return output or "(clean working tree)"
 
 
@@ -527,7 +536,7 @@ def git_log_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str
         )
     max_count = max(1, min(max_count, 100))
 
-    output = _run_git(["log", f"--max-count={max_count}", "--oneline"], cwd=cwd)
+    output = _run_git(["log", f"--max-count={max_count}", "--oneline"], cwd=cwd, workspace=workspace)
     return output or "(no commits found)"
 
 
@@ -547,7 +556,7 @@ def git_diff_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
             path_filter=path_filter,
             shortstat=True,
         ),
-        cwd=cwd,
+        cwd=cwd, workspace=workspace,
     )
     stats = _parse_shortstat(shortstat_output)
     if stats is not None and _diff_is_oversized(stats):
@@ -559,7 +568,7 @@ def git_diff_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
             ref=ref,
             path_filter=path_filter,
         ),
-        cwd=cwd,
+        cwd=cwd, workspace=workspace,
     )
     return output or "(no changes found)"
 
@@ -580,7 +589,7 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
         blob_path = resolve_git_blob_path(
             raw_path, cwd=cwd, repo_root=repo_root, workspace=workspace
         )
-        return _run_git_blob(ref, blob_path, cwd=cwd)
+        return _run_git_blob(ref, blob_path, cwd=cwd, workspace=workspace)
 
     shortstat_output = _run_git(
         [
@@ -591,13 +600,13 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
             "--shortstat",
             ref,
         ],
-        cwd=cwd,
+        cwd=cwd, workspace=workspace,
     )
     stats = _parse_shortstat(shortstat_output)
     if stats is not None and _diff_is_oversized(stats):
         metadata_output = _run_git(
             ["show", "--format=medium", "--no-patch", ref],
-            cwd=cwd,
+            cwd=cwd, workspace=workspace,
         )
         summary_output = "\n".join(
             part for part in (metadata_output.strip(), shortstat_output.strip()) if part
@@ -606,6 +615,6 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
 
     output = _run_git(
         ["show", "--no-ext-diff", "--no-textconv", "--stat", "--patch", ref],
-        cwd=cwd,
+        cwd=cwd, workspace=workspace,
     )
     return output or "(no commit details found)"

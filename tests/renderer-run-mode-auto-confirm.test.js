@@ -87,12 +87,13 @@ function createRunModeHarness(t, options = {}) {
   };
 
   const bindings = createSettingsEventBindings({
+    getAutoRunWarningStorage: () => options.storage,
     toastViewport: doc.getElementById('toastViewport'),
     composerModelSelect: doc.getElementById('composerModelSelect'),
     composerEffortSelect: doc.getElementById('composerEffortSelect'),
     composerSettingsButton: doc.getElementById('composerSettingsButton'),
     openComposerSettingsViewButton: doc.getElementById('openComposerSettingsViewButton'),
-    state: { ui: {}, models: {}, modelList: {} },
+    state: { ui: {}, models: {}, modelList: {}, unattendedGuardMinutes: options.unattendedGuardMinutes ?? 0 },
     TOAST_SOURCE: { memory: 'memory', composerAction: 'composer' },
     ACTIVITY_SCOPE: {
       composerPreferredModel: 'model',
@@ -244,6 +245,50 @@ test('overlapping Auto mode requests share one confirmation dialog', async (t) =
 
   assert.deepEqual(await Promise.all([first, second]), [false, true]);
   assert.equal(harness.calls.persistence.length, 1);
+});
+
+test('acknowledged Auto warning survives renderer restart and resumed conversation sends', async (t) => {
+  const saved = new Map();
+  const storage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value) };
+  const first = createRunModeHarness(t, { storage, runMode: 'auto' });
+  assert.equal(await first.control.confirmAutoRun(), true);
+  assert.equal(first.calls.confirm.length, 1);
+  first.cleanup();
+
+  const resumed = createRunModeHarness(t, { storage, runMode: 'auto', withDialog: false });
+  const send = createSendHarness();
+  await send.controller.handleSend();
+  assert.equal(send.calls.length, 1);
+  assert.equal(resumed.calls.confirm.length, 0);
+  assert.equal(resumed.calls.persistence.length, 0, 'warning acknowledgement does not change run mode');
+});
+
+test('cancelled or stale warning acknowledgement is not persisted', async (t) => {
+  const saved = new Map();
+  const storage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value) };
+  const cancelled = createRunModeHarness(t, { storage, confirmation: async () => false });
+  assert.equal(await cancelled.control.confirmAutoRun(), false);
+  cancelled.cleanup();
+  assert.equal(saved.size, 0);
+
+  const gate = deferred();
+  const stale = createRunModeHarness(t, { storage, confirmation: () => gate.promise });
+  const pending = stale.control.confirmAutoRun();
+  stale.cleanup();
+  gate.resolve(true);
+  assert.equal(await pending, false);
+  assert.equal(saved.size, 0);
+});
+
+test('unavailable acknowledgement storage still asks and accepts an explicit confirmation', async (t) => {
+  const storage = {
+    getItem() { throw new Error('storage blocked'); },
+    setItem() { throw new Error('storage blocked'); },
+  };
+  const harness = createRunModeHarness(t, { storage });
+  assert.equal(await harness.control.confirmAutoRun(), true);
+  assert.equal(await harness.control.confirmAutoRun(), true);
+  assert.equal(harness.calls.confirm.length, 1);
 });
 
 test('disposing an open Auto gate rejects it and a fresh instance prompts again', async (t) => {
@@ -444,3 +489,14 @@ test('Auto settings help says blocked commands are refused', () => {
   assert.match(markup, /blocked commands are refused\./);
   assert.doesNotMatch(markup, /blocked commands[^.]*prompt/i);
 });
+
+
+for (const minutes of [0, 45]) {
+  test(`Auto confirmation describes configured inactivity behavior (${minutes})`, async (t) => {
+    const harness = createRunModeHarness(t, { unattendedGuardMinutes: minutes });
+    assert.equal(await harness.control.setRunMode('auto'), true);
+    const text = harness.calls.confirm[0].message;
+    assert.match(text, minutes === 0 ? /Inactivity pause is off/ : /after 45 minutes/);
+    assert.match(text, /Settings > Tools/);
+  });
+}

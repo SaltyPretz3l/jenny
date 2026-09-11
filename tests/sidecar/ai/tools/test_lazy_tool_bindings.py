@@ -9,6 +9,7 @@ build -- it would fail the user, the first time they used that tool.
 
 from __future__ import annotations
 
+from scripts.packaging.build_sidecar_artifact import _pyinstaller_tool_import_args
 from sidecar.ai.tools import registry
 
 
@@ -19,6 +20,15 @@ def _lazy_bindings() -> list[tuple[str, object]]:
         if callable(candidate) and hasattr(candidate, "lazy_target"):
             found.append((name, candidate))
     return found
+
+
+def test_packaging_metadata_contains_every_lazy_binding():
+
+    discovered = {handler.lazy_target[0] for _, handler in _lazy_bindings()}
+    args = _pyinstaller_tool_import_args()
+    assert set(args[1::2]) == discovered
+    assert args[::2] == ["--hidden-import"] * len(discovered)
+    assert "sidecar.ai.tools.builtins.temp_script" in discovered
 
 
 def test_every_lazy_tool_binding_resolves_to_a_callable() -> None:

@@ -42,7 +42,11 @@ def run_owned_git_process(
     cwd: Path,
     timeout_seconds: float,
     env: dict[str, str],
+    trusted_repo_root: Path | None = None,
 ) -> OwnedProcessResult:
+    if trusted_repo_root is not None:
+        arguments = [arguments[0], "-c", f"safe.directory={trusted_repo_root.as_posix()}",
+                     *arguments[1:]]
     try:
         return get_owned_process_service().run(
             arguments,

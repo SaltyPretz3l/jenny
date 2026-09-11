@@ -745,3 +745,39 @@ test('waitForToolApproval still settles the promise when persistTerminalApproval
   assert.equal(approved, false);
   assert.equal(logs.some((entry) => entry.level === 'ERROR' && entry.event === 'chat.tool_approval_settlement_failed'), true);
 });
+
+
+test('inactivity cause survives the real approval timer into persisted and emitted results', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { waitForToolApproval: wait } = loadToolHandlingWithMockedTimers();
+  const messages = [];
+  const emitted = [];
+  const controller = new AbortController();
+  controller.unattendedPauseRequested = true;
+  const service = {
+    sessionStore: {
+      appendMessage(_id, message) { messages.push(normalizeMessageFields(message, 'test-model')); },
+      getSessionMessages() { return messages; },
+      updateMessage(_id, messageId, patch) {
+        const index = messages.findIndex((message) => message.id === messageId);
+        if (index >= 0) messages[index] = { ...messages[index], ...patch };
+      },
+    },
+    pendingToolApprovals: new Map(), currentModel: 'test-model',
+    emit(_event, payload) { emitted.push(payload); },
+  };
+  const pending = wait(service, 'idle-stream', 'idle-session', 'idle-request', {
+    tool_name: 'edit_file', tool_call_id: 'idle-call', tool_input: { file_path: 'a.txt' }, reason: 'Tool policy requires approval',
+  }, controller);
+  assert.match(emitted.find((event) => event.type === 'tool_approval_needed').reason, /keyboard or mouse inactivity/);
+  t.mock.timers.tick(600000);
+  assert.equal(await pending, false);
+  const result = messages.find((message) => message.tool_result)?.tool_result;
+  assert.equal(result.approval_state, 'timeout');
+  assert.equal(result.duration_ms, 0, 'unexecuted approval has no execution duration');
+  assert.match(result.output_text, /Auto paused because of inactivity/);
+  assert.match(result.output_text, /tool never executed/);
+  assert.match(result.output_text, /Settings > Tools/);
+  assert.equal(emitted.find((event) => event.type === 'tool_result').content, result.output_text);
+  assert.equal(service.pendingToolApprovals.size, 0);
+});

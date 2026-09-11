@@ -532,9 +532,9 @@
     return SAFETY_MODES.includes(normalized) ? normalized : 'normal';
   }
   function normalizeUnattendedGuardMinutes(value) {
-    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return 10;
+    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return 0;
     const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) return 10;
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
     return parsed === 0 ? 0 : Math.min(120, Math.max(1, Math.trunc(parsed)));
   }
   function buildUiLanguageFieldMarkup(options) {
@@ -568,10 +568,15 @@
     const source = isPlainObject(options) ? options : {};
     const numberInput = typeof source.numberInput === 'function' ? source.numberInput : getInventoryFn('numberInput', 'inventoryNumberInput');
     if (typeof numberInput !== 'function') return '';
+    const selectField = source.selectField || getInventoryFn('selectField', 'inventorySelectField');
+    const minutes = normalizeUnattendedGuardMinutes(source.value);
     const copy = getFieldCopy('unattendedGuardMinutesInput');
     const label = copy?.label || jt('settings.unattendedGuard.label', 'Pause Auto mode when you step away (minutes)');
-    const hint = jt('settings.unattendedGuard.hint', 'In Auto mode, if you have not touched the keyboard or mouse for this many minutes, the next tool call asks for approval instead of running. 0 turns the guard off. Approvals time out after 10 minutes.');
-    return '<div class="settings-group settings-group--flush" data-unattended-guard-field>' + numberInput({ id: 'unattendedGuardMinutesInput', label, value: normalizeUnattendedGuardMinutes(source.value), min: 0, max: 120,
+    const hint = jt('settings.unattendedGuard.optInHint', 'Off by default: Auto keeps working while you are away. When enabled, keyboard or mouse inactivity makes the next action ask for approval. Unanswered approvals stop the turn after a separate 10 minutes. Disabling prevents future inactivity pauses. An already-paused turn stays in Ask until you change its run mode or resume it after it stops; pending actions still require approval.');
+    const mode = typeof selectField === 'function' ? selectField({ id: 'unattendedGuardModeSelect', label: jt('settings.unattendedGuard.modeLabel', 'Pause Auto when inactive'),
+      value: minutes > 0 ? 'on' : 'off', options: [{ value: 'off', label: jt('common.off', 'Off') }, { value: 'on', label: jt('common.on', 'On') }],
+      dataset: { 'unattended-guard-mode': 'true' } }) : '';
+    return '<div class="settings-group settings-group--flush" data-unattended-guard-field>' + mode + numberInput({ id: 'unattendedGuardMinutesInput', label, value: minutes || 10, disabled: minutes === 0, min: 1, max: 120,
       step: 1, fallback: 10, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'unattended-guard-minutes': 'true' } })
       + `<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
   }
@@ -624,8 +629,14 @@
   }
 
   function resolveUnattendedGuardChangeEvent(event) {
+    const mode = event?.target?.closest?.('[data-unattended-guard-mode]');
+    if (mode) {
+      if (!['on', 'off'].includes(mode.value)) return null;
+      const duration = mode.closest('[data-unattended-guard-field]')?.querySelector('[data-unattended-guard-minutes]');
+      return { value: mode.value === 'off' ? 0 : normalizeUnattendedGuardMinutes(duration?.value) || 10 };
+    }
     const target = event?.target?.closest?.('[data-unattended-guard-minutes]');
-    return target ? { value: normalizeUnattendedGuardMinutes(target.value) } : null;
+    return target && !target.disabled ? { value: normalizeUnattendedGuardMinutes(target.value) } : null;
   }
 
   function encodeToolConfigToggleKey(key) {

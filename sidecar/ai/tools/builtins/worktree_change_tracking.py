@@ -137,14 +137,15 @@ def workspace_change_delta_tool(
         if baseline.session_id != _session_id(arguments):
             raise _missing_baseline()
         repo_root = baseline.initial.repo_root
-    current = _capture(arguments, workspace) if arguments.get("cwd") else _capture_repo(repo_root)
+    current = (_capture(arguments, workspace) if arguments.get("cwd")
+               else _capture_repo(repo_root, workspace=workspace))
     with _LOCK:
         baseline = _require_baseline_locked(baseline_id.strip())
         if _repo_key(baseline.initial.repo_root) != _repo_key(current.repo_root):
             raise _missing_baseline()
         _record_between_calls(baseline, current)
         baseline.last_observed = current
-        payload = _build_delta(baseline, current)
+        payload = _build_delta(baseline, current, workspace=workspace)
     return ToolHandlerResult(output=json.dumps(payload, indent=2), success=True, metadata=payload)
 
 
@@ -244,7 +245,7 @@ def begin_mutation_observation(
             return None
         sole_baseline = _BASELINES.get(active_ids[0]) if len(active_ids) == 1 else None
     snapshot = (
-        _capture_repo(sole_baseline.initial.repo_root)
+        _capture_repo(sole_baseline.initial.repo_root, workspace=workspace)
         if sole_baseline is not None
         else _capture(arguments, workspace)
     )
@@ -278,7 +279,7 @@ def finish_mutation_observation(
     arguments: dict[str, object],
     success: bool = True,
 ) -> dict[str, object] | None:
-    after = _capture_repo(observation.before.repo_root)
+    after = _capture_repo(observation.before.repo_root, workspace=workspace)
     with _LOCK:
         baseline = _BASELINES.get(observation.baseline_id)
         if baseline is None:
@@ -363,13 +364,13 @@ def _capture(arguments: dict[str, object], workspace: WorkspaceGuard) -> Worktre
                 "failure_class": "precondition_unmet",
             },
         )
-    return _capture_repo(repo_root)
+    return _capture_repo(repo_root, workspace=workspace)
 
 
-def _capture_repo(repo_root: Path) -> WorktreeSnapshot:
+def _capture_repo(repo_root: Path, *, workspace: WorkspaceGuard | None = None) -> WorktreeSnapshot:
     raw_status = _run_git_raw(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=repo_root,
+        cwd=repo_root, workspace=workspace,
     )
     status = _parse_porcelain(raw_status)
     if len(status) > MAX_STATUS_PATHS:
@@ -379,10 +380,10 @@ def _capture_repo(repo_root: Path) -> WorktreeSnapshot:
             retryable=False,
         )
     try:
-        head = _run_git(["rev-parse", "--verify", "HEAD"], cwd=repo_root)
+        head = _run_git(["rev-parse", "--verify", "HEAD"], cwd=repo_root, workspace=workspace)
     except ToolExecutionFailure:
         head = None
-    branch = _run_git(["branch", "--show-current"], cwd=repo_root)
+    branch = _run_git(["branch", "--show-current"], cwd=repo_root, workspace=workspace)
     return WorktreeSnapshot(
         repo_root=repo_root.resolve(),
         head=head,
@@ -439,7 +440,8 @@ def _is_internal_status_path(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in _INTERNAL_STATUS_PREFIXES)
 
 
-def _build_delta(baseline: WorktreeBaseline, current: WorktreeSnapshot) -> dict[str, object]:
+def _build_delta(baseline: WorktreeBaseline, current: WorktreeSnapshot,
+                 *, workspace: WorkspaceGuard | None = None) -> dict[str, object]:
     initial = baseline.initial.status
     final = current.status
     all_paths = sorted(set(initial) | set(final) | baseline.session_paths | baseline.external_paths)
@@ -450,6 +452,7 @@ def _build_delta(baseline: WorktreeBaseline, current: WorktreeSnapshot) -> dict[
                 baseline.initial.repo_root,
                 baseline.initial.head,
                 (path for path in all_paths if path not in initial),
+                workspace=workspace,
             )
         )
     changed_from_initial = _changed_paths(baseline.initial, current)
@@ -507,7 +510,8 @@ def _build_delta(baseline: WorktreeBaseline, current: WorktreeSnapshot) -> dict[
     }
 
 
-def _paths_at_ref(repo_root: Path, ref: str, paths: Iterable[str]) -> set[str]:
+def _paths_at_ref(repo_root: Path, ref: str, paths: Iterable[str],
+                  *, workspace: WorkspaceGuard | None = None) -> set[str]:
     candidates = list(paths)
     matched: set[str] = set()
     chunk: list[str] = []
@@ -527,7 +531,7 @@ def _paths_at_ref(repo_root: Path, ref: str, paths: Iterable[str]) -> set[str]:
                 "--",
                 *(f":(literal){path}" for path in chunk),
             ],
-            cwd=repo_root,
+            cwd=repo_root, workspace=workspace,
         )
         matched.update(path for path in output.split("\0") if path)
         chunk = []

@@ -2,11 +2,12 @@ const fs = require('fs');
 const path = require('path');
 
 const WINDOWS_SHORTCUT_NAME = 'Jenny.lnk';
+const DEV_WINDOWS_SHORTCUT_NAME = 'Jenny (Dev).lnk';
 // Shortcut name written by every build before the product was renamed from
 // "Jenny Shell" to "Jenny" (1.0.0). Removed once the new shortcut is in place.
 const LEGACY_WINDOWS_SHORTCUT_NAME = 'Jenny Shell.lnk';
 const APP_USER_MODEL_ID = 'com.jenny.shell';
-const DEV_LAUNCHER_NAME = 'launch-jenny.cmd';
+const DEV_LAUNCHER_NAME = path.join('scripts', 'dev', 'launch-jenny-dev.bat');
 
 function getDevLauncherPath(appRoot = path.resolve(__dirname, '..')) {
   return path.join(appRoot, DEV_LAUNCHER_NAME);
@@ -26,7 +27,7 @@ function buildDesktopShortcutOptions({
       target,
       args: '',
       cwd,
-      description: 'Launch Jenny',
+      description: isPackaged ? 'Launch Jenny' : 'Launch Jenny (Dev) from current source',
       icon,
       iconIndex: 0,
       appUserModelId,
@@ -88,7 +89,9 @@ function ensureDesktopShortcut({
       isPackaged: Boolean(app.isPackaged),
       appUserModelId,
     });
-    const shortcutPath = path.join(desktopPath, WINDOWS_SHORTCUT_NAME);
+    const shortcutPath = path.join(
+      desktopPath, app.isPackaged ? WINDOWS_SHORTCUT_NAME : DEV_WINDOWS_SHORTCUT_NAME
+    );
     // #11: skip the disk rewrite when an existing shortcut already matches -- the
     // common case on every relaunch. Only the fields we set are compared.
     if (typeof shell.readShortcutLink === 'function') {
@@ -96,7 +99,7 @@ function ensureDesktopShortcut({
         const existing = shell.readShortcutLink(shortcutPath);
         if (shortcutDetailsMatch(existing, details)) {
           logger('INFO', 'shortcut.desktop_unchanged', { shortcutPath });
-          removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
+          if (app.isPackaged) removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
           return { ok: true, shortcutPath, unchanged: true };
         }
       } catch (_readError) {
@@ -133,7 +136,7 @@ function ensureDesktopShortcut({
       target: details.target,
       args: details.args,
     });
-    removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
+    if (app.isPackaged) removeLegacyDesktopShortcut({ desktopPath, shell, details, logger });
     return { ok: true, shortcutPath };
   } catch (error) {
     logger('WARN', 'shortcut.desktop_create_failed', {
@@ -146,6 +149,7 @@ function ensureDesktopShortcut({
 module.exports = {
   APP_USER_MODEL_ID,
   DEV_LAUNCHER_NAME,
+  DEV_WINDOWS_SHORTCUT_NAME,
   LEGACY_WINDOWS_SHORTCUT_NAME,
   WINDOWS_SHORTCUT_NAME,
   buildDesktopShortcutOptions,

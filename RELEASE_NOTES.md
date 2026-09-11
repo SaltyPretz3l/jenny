@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.1.1 - 2026-09-11
+
+Small bug fixes.
+
 ## 1.1.0 - 2026-09-09
 
 First feature update after 1.0.0. The

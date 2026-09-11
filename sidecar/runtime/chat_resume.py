@@ -1,9 +1,4 @@
-"""Approval-resume entry point and live-context validation for the chat hub.
-
-Imports leaf helpers from chat_response_builders and chat_decision_render.
-Calls to live prompt, dynamic-system-message, and approval-plan helpers resolve
-through _chat_hub so tests patching sidecar.runtime.chat retain their seam.
-"""
+"""Approval-resume entry point and live-context validation for the chat hub."""
 
 from __future__ import annotations
 
@@ -17,6 +12,7 @@ from sidecar.ai.context.builder import ContextBuilder, normalize_learned_lessons
 from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
+    is_chatgpt_plan_meter_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.routing.iteration_limits import (
@@ -996,6 +992,11 @@ def resume_chat_send_response_from_approval_plan(
         runtime_config=stack.config,
         diagnostics_store=getattr(stack, "turn_diagnostics", None),
     ):
+        _chat_hub.bind_live_plan_usage(
+            stack.engine, writer=notification_writer if stream_notifications else None,
+            enabled=is_chatgpt_plan_meter_enabled(stack.config.feature_flags),
+            session_id=plan.request_context.session_id,
+        )
         return execute_with_inner_turn_retry(
             params=(
                 live_params

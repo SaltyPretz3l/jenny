@@ -2,8 +2,8 @@
   "schema": 1,
   "totals": {
     "pending": 109,
-    "migrated": 7230,
-    "excluded": 8681,
+    "migrated": 7236,
+    "excluded": 8685,
     "by_kind": {
       "config_copy": {
         "pending": 5,
@@ -23,7 +23,7 @@
       "dom_identity": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 3095
+        "excluded": 3098
       },
       "dom_text": {
         "pending": 2,
@@ -53,11 +53,11 @@
       "structural": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 2077
+        "excluded": 2078
       },
       "translation": {
         "pending": 0,
-        "migrated": 6819,
+        "migrated": 6825,
         "excluded": 0
       }
     },
@@ -69,12 +69,12 @@
       },
       "renderer/shell": {
         "pending": 14,
-        "migrated": 2138,
-        "excluded": 2143
+        "migrated": 2141,
+        "excluded": 2147
       },
       "renderer/chat": {
         "pending": 19,
-        "migrated": 1040,
+        "migrated": 1043,
         "excluded": 1879
       },
       "renderer/features/setup-scenes": {
@@ -11072,6 +11072,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|11271a947fa6|1",
+      "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Change this in Settings > Tools > Pause Auto when inactive.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|12ce660b7ee2|1",
       "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
       "kind": "translation",
@@ -11112,11 +11120,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|3fba789a41cc|1",
+      "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|45901322ec51|1",
       "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
       "kind": "translation",
       "via": "literal",
       "text": "Run mode: Auto — tools run without asking",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|4af7a10de74a|1",
+      "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Inactivity pause is off: Auto continues while you are away.",
       "disposition": "migrated"
     },
     {
@@ -11176,19 +11200,19 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|d253e34aaaed|1",
+      "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Inactivity pause is enabled after {minutes} minutes without keyboard or mouse input.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|ddecd049e2b9|1",
       "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
       "kind": "translation",
       "via": "literal",
       "text": "Could not save preferred model.",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/chat/renderer-chat-event-settings-bindings.js|translation|e3fc0c405576|1",
-      "file": "renderer/chat/renderer-chat-event-settings-bindings.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused. Do not leave Jenny running unattended.",
       "disposition": "migrated"
     },
     {
@@ -103408,6 +103432,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-field-copy.js|translation|37f51d9b82f0|1",
+      "file": "renderer/shell/renderer-settings-field-copy.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Optional inactivity pause for Auto mode. Off keeps working while you are away; enable it and choose the idle duration.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-field-copy.js|translation|3812d6ce1b87|1",
       "file": "renderer/shell/renderer-settings-field-copy.js",
       "kind": "translation",
@@ -103560,14 +103592,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/shell/renderer-settings-field-copy.js|translation|5348494ef374|1",
-      "file": "renderer/shell/renderer-settings-field-copy.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Minutes without keyboard or mouse input before Auto mode starts asking again. 0 disables it.",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/shell/renderer-settings-field-copy.js|translation|53ec4b9a87c6|1",
       "file": "renderer/shell/renderer-settings-field-copy.js",
       "kind": "translation",
@@ -103645,6 +103669,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "code font",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-field-copy.js|translation|5d7692553417|1",
+      "file": "renderer/shell/renderer-settings-field-copy.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Pause after inactivity (minutes)",
       "disposition": "migrated"
     },
     {
@@ -104261,14 +104293,6 @@
       "kind": "translation",
       "via": "literal",
       "text": "line length",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/shell/renderer-settings-field-copy.js|translation|bf2fcadcbd78|1",
-      "file": "renderer/shell/renderer-settings-field-copy.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Pause Auto mode when you step away (minutes)",
       "disposition": "migrated"
     },
     {
@@ -108240,6 +108264,22 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/shell/renderer-settings-support.js|dom_identity|2bfa4ae637b8|2",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-unattended-guard-minutes]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-support.js|dom_identity|503e32eeb76f|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-unattended-guard-mode]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-settings-support.js|dom_identity|542b8c6cdbef|1",
       "file": "renderer/shell/renderer-settings-support.js",
       "kind": "dom_identity",
@@ -108293,6 +108333,14 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-ui-language]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-support.js|dom_identity|f047306d82dc|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-unattended-guard-field]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -108453,6 +108501,14 @@
       "kind": "structural",
       "via": "literal",
       "text": "imageRead",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-support.js|structural|921fb982748c|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "unattendedGuardModeSelect",
       "disposition": "excluded:wire"
     },
     {
@@ -108733,14 +108789,6 @@
       "kind": "translation",
       "via": "literal",
       "text": "Applies after you restart Jenny. Translations other than English are machine-drafted previews; report anything odd.",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/shell/renderer-settings-support.js|translation|41996fc30e00|1",
-      "file": "renderer/shell/renderer-settings-support.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "In Auto mode, if you have not touched the keyboard or mouse for this many minutes, the next tool call asks for approval instead of running. 0 turns the guard off. Approvals time out after 10 minutes.",
       "disposition": "migrated"
     },
     {
@@ -109048,6 +109096,22 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-support.js|translation|94acf5ebfc3c|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Off by default: Auto keeps working while you are away. When enabled, keyboard or mouse inactivity makes the next action ask for approval. Unanswered approvals stop the turn after a separate 10 minutes. Disabling prevents future inactivity pauses. An already-paused turn stays in Ask until you change its run mode or resume it after it stops; pending actions still require approval.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-support.js|translation|a19ed8d20689|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Pause Auto when inactive",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-support.js|translation|a7018ae3c854|1",
       "file": "renderer/shell/renderer-settings-support.js",
       "kind": "translation",
@@ -109208,6 +109272,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-support.js|translation|e0049a66519c|2",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "On",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-support.js|translation|e0503f30938d|1",
       "file": "renderer/shell/renderer-settings-support.js",
       "kind": "translation",
@@ -109233,6 +109305,14 @@
     },
     {
       "id": "renderer/shell/renderer-settings-support.js|translation|e3de5ab0ca4c|1",
+      "file": "renderer/shell/renderer-settings-support.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Off",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-support.js|translation|e3de5ab0ca4c|2",
       "file": "renderer/shell/renderer-settings-support.js",
       "kind": "translation",
       "via": "literal",

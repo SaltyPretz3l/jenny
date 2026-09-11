@@ -286,6 +286,15 @@ def _default_mcp_servers(
             # ERROR_NOT_ENOUGH_QUOTA.  Keep the server bounded while accounting
             # for its documented nested-process topology.
             max_processes=16,
+            # Native coding commands inherit this outer job. A server-sized
+            # 512 MiB budget also caps compilers/editors and their children.
+            # Use OS memory availability for native desktop execution only;
+            # managed Python retains its own inner resource limits.
+            memory_limit_mb=(
+                None if config.host_mode == "desktop"
+                and config.desktop_execution_policy_version is None
+                and config.host_execution_policy_version is None else 512
+            ),
             # First-party server honors notifications/cancelled by aborting the
             # in-flight tool's owned subprocess tree, so Stop cancels the
             # running command instead of terminating the whole tool server.

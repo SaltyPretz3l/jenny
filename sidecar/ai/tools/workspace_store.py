@@ -238,11 +238,11 @@ class GuardedWorkspaceStore:
             try:
                 fd = os.open(str(resolved.path), flags)
                 opened_stat = os.fstat(fd)
-                if NodeIdentity.from_stat(opened_stat) != resolved.leaf_identity:
+                if not resolved.leaf_identity.matches_open_stat(opened_stat):
                     raise _store_failure("workspace store entry changed before read")
                 data = _read_fd_bounded(fd, limit)
                 final_stat = os.fstat(fd)
-                if NodeIdentity.from_stat(final_stat) != resolved.leaf_identity:
+                if not resolved.leaf_identity.matches_open_stat(final_stat):
                     raise _store_failure("workspace store entry changed during read")
                 return StoreRead(data=data, stat_result=final_stat)
             except ToolExecutionFailure:
@@ -347,14 +347,14 @@ class GuardedWorkspaceStore:
             raise _store_failure("failed to open checkpoint source") from error
         try:
             source_stat = os.fstat(fd)
-            if NodeIdentity.from_stat(source_stat) != source_identity.leaf_identity:
+            if not source_identity.leaf_identity.matches_open_stat(source_stat):
                 raise _store_failure("checkpoint source changed before read")
             if not stat_module.S_ISREG(source_stat.st_mode):
                 raise _store_failure("checkpoint source is not a regular file", retryable=False)
             if source_stat.st_size > limit:
                 raise _cap_failure("checkpoint source exceeds byte limit")
             data = _read_fd_bounded(fd, limit)
-            if NodeIdentity.from_stat(os.fstat(fd)) != source_identity.leaf_identity:
+            if not source_identity.leaf_identity.matches_open_stat(os.fstat(fd)):
                 raise _store_failure("checkpoint source changed during read")
         finally:
             os.close(fd)

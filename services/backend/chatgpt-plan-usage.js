@@ -127,7 +127,7 @@ function buildPlanUsageRecord(snapshot, { accountKey, source, now = Date.now } =
     account_key: String(accountKey || ''),
     primary: snapshot?.primary || null,
     captured_at_ms: typeof now === 'function' ? now() : Number(now),
-    source: source === 'chat_error' ? 'chat_error' : 'chat_done',
+    source: ['chat_error', 'chat_progress'].includes(source) ? source : 'chat_done',
   };
   if (snapshot?.secondary) {
     record.secondary = snapshot.secondary;

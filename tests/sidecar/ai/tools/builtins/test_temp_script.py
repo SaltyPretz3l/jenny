@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -162,3 +163,19 @@ def test_live_output_redacts_temporary_path(
         output_chunk_slot.end_tool_call()
 
     assert emitted[0]["lines"][0]["text"] == "<temporary-script>/script.cmd"  # type: ignore[index]
+
+
+def test_python_workspace_import_failure_has_actionable_hint_and_recovers(tmp_path, monkeypatch):
+    real_which = temp_script_module.shutil.which
+    monkeypatch.setattr(temp_script_module.shutil, "which", lambda name: sys.executable if name in {"python", "python3"} else real_which(name))
+    (tmp_path / "ascend_fixture_module.py").write_text("answer = 42", encoding="utf-8")
+    guard = WorkspaceGuard(str(tmp_path))
+    failed = run_temp_script_tool({"language": "python", "script": "import ascend_fixture_module"}, guard)
+    assert not failed.success
+    payload = json.loads(failed.output)
+    assert "sys.path.insert" in payload["hint"]
+    assert "sys.executable" in payload["hint"]
+    fixed = run_temp_script_tool({"language": "python", "script": "import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())); import ascend_fixture_module; print(ascend_fixture_module.answer)"}, guard)
+    assert fixed.success
+    assert json.loads(fixed.output)["stdout"].strip() == "42"
+    assert "hint" not in json.loads(fixed.output)

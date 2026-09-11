@@ -21,6 +21,15 @@ CANCEL_NOTIFICATION_METHOD = "notifications/cancelled"
 INITIALIZED_NOTIFICATION_METHOD = "notifications/initialized"
 
 
+def configure_stdio() -> None:
+    """Pin the wire encoding even when a frozen interpreter ignores PYTHON* env."""
+    for stream, errors in ((sys.stdin, "strict"), (sys.stdout, "strict"),
+                           (sys.stderr, "backslashreplace")):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors=errors)
+
+
 def start_stdin_pump() -> "queue.Queue[str | None]":
     """Drain stdin on a reader thread so cancellation notifications are seen
     while the dispatch thread is blocked inside a tool handler.

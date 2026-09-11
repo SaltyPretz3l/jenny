@@ -483,7 +483,7 @@
     },
     {
       "name": "git_status",
-      "description": "Show the working tree status of the git repository.",
+      "description": "Show the working tree status of the git repository. Git ownership trust is command-scoped to the validated repository only when it is the selected workspace root; nested repositories need their own selection.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -512,7 +512,7 @@
     },
     {
       "name": "git_log",
-      "description": "Show recent git commit history.",
+      "description": "Show recent git commit history. Git ownership trust is command-scoped to the validated repository only when it is the selected workspace root; nested repositories need their own selection.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -542,7 +542,7 @@
     },
     {
       "name": "git_diff",
-      "description": "Show a bounded git diff for the working tree or index.",
+      "description": "Show a bounded git diff for the working tree or index. Git ownership trust is command-scoped to the validated repository only when it is the selected workspace root; nested repositories need their own selection.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -574,7 +574,7 @@
     },
     {
       "name": "git_show",
-      "description": "Show a bounded commit patch, or bounded UTF-8 file content at ref:path when path is supplied. Git runs argv-only, so refs containing ^ are safe from Windows cmd.exe escaping.",
+      "description": "Show a bounded commit patch, or bounded UTF-8 file content at ref:path when path is supplied. Git runs argv-only, so refs containing ^ are safe from Windows cmd.exe escaping. Git ownership trust is command-scoped to the validated repository only when it is the selected workspace root; nested repositories need their own selection.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -605,7 +605,7 @@
     },
     {
       "name": "workspace_change_baseline",
-      "description": "Capture an opaque, in-memory Git worktree baseline for the current session and repository.",
+      "description": "Capture an opaque, in-memory Git worktree baseline for the current session and repository. Git ownership trust is command-scoped to the validated repository only when it is the selected workspace root; nested repositories need their own selection.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -1308,8 +1308,8 @@
         "properties": {
           "command": { "type": "string", "description": "The command to execute using cmd.exe syntax on Windows or POSIX /bin/sh syntax elsewhere." },
           "cwd": { "type": "string", "description": "Working directory override." },
-          "timeout_seconds": { "type": "number", "description": "Timeout in seconds (default 10, max 600)." },
-          "run_in_background": { "type": "boolean", "description": "Run the command in the background and return a job_id." },
+          "timeout_seconds": { "type": "number", "minimum": 0.1, "maximum": 86400, "description": "Execution timeout in seconds (default 10). Foreground maximum 600; explicit run_in_background=true maximum 86400 (24 hours). Over-limit requests are rejected." },
+          "run_in_background": { "type": "boolean", "description": "Run the command in the background and return a job_id and effective timeout_seconds. Poll check_background_job for the terminal outcome or use stop_background_job to cancel. Jobs continue after turn completion but not runtime shutdown/reconfiguration." },
           "expected_exit_codes": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "integer" }, "description": "Explicit acceptable exits. Supersedes zero and semantic-exit handling; incompatible with background execution." },
           "purpose": { "type": "string", "description": "One short plain sentence explaining what will happen in the user's terms." }
         },
@@ -1319,7 +1319,7 @@
     {
       "name": "run_temp_script",
       "aliases": [],
-      "description": "Run an automatically cleaned-up platform shell script outside the repository. Uses cmd.exe on Windows and /bin/sh elsewhere; background mode is not supported. Pass language to run the script under a specific interpreter instead of the platform shell.",
+      "description": "Run an automatically cleaned-up platform shell script outside the repository. Uses cmd.exe on Windows and /bin/sh elsewhere; background mode is not supported. Pass language to run the script under a specific interpreter instead of the platform shell. Python scripts live outside the workspace: cwd does not add project modules to sys.path. For workspace imports, explicitly use import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())). Check sys.executable before installing missing dependencies; use run_command with the project interpreter absolute path when required.",
       "category": "builtin",
       "side_effecting": true,
       "read_only": false,

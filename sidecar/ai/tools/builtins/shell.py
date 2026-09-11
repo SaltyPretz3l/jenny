@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -72,7 +73,9 @@ logger = logging.getLogger(__name__)
 configure_shell_security = _configure_shell_security
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
+MIN_TIMEOUT_SECONDS = 0.1
 MAX_TIMEOUT_SECONDS = 600.0
+MAX_BACKGROUND_TIMEOUT_SECONDS = 86_400.0
 MAX_OUTPUT_CHARS = 20_000
 MAX_FAILURE_STREAM_CHARS = 6_000
 MAX_EXPECTED_EXIT_CODES = 16
@@ -114,18 +117,18 @@ def _truncate_failure_stream(value: str) -> str:
 
 
 def _parse_timeout(arguments: dict[str, object]) -> float:
-    raw = arguments.get("timeout_seconds")
-    if isinstance(raw, (int, float)):
-        timeout_seconds = float(raw)
-    elif isinstance(raw, str):
-        try:
-            timeout_seconds = float(raw)
-        except ValueError:
-            timeout_seconds = DEFAULT_TIMEOUT_SECONDS
-    else:
-        timeout_seconds = DEFAULT_TIMEOUT_SECONDS
-    timeout_seconds = max(0.1, timeout_seconds)
-    return min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+    raw = arguments.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+    ceiling = (MAX_BACKGROUND_TIMEOUT_SECONDS if arguments.get("run_in_background") is True
+               else MAX_TIMEOUT_SECONDS)
+    if (isinstance(raw, bool) or not isinstance(raw, (int, float))
+            or not MIN_TIMEOUT_SECONDS <= raw <= ceiling or not math.isfinite(raw)):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message=f"timeout_seconds must be a finite number from 0.1 to {ceiling:g}; "
+                    "use run_in_background=true for commands longer than 600 seconds",
+            retryable=False,
+        )
+    return float(raw)
 
 
 def _parse_command(arguments: dict[str, object]) -> str:
@@ -503,6 +506,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         job_id = started.job_id
         bg_payload = {
             "job_id": job_id,
+            "timeout_seconds": timeout_seconds,
             "status": "started",
             "message": f"Background job {job_id} started. Use check_background_job to check status.",
             "shell": _shell_name(),

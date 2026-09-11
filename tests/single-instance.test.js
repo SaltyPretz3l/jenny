@@ -45,6 +45,29 @@ test('single-instance helper registers the second-instance handler', () => {
   assert.equal(called, true);
 });
 
+test('development launch explains a shared-profile conflict and never bootstraps', () => {
+  const notices = [];
+  let quits = 0;
+  let starts = 0;
+  const app = {
+    requestSingleInstanceLock: () => false,
+    quit: () => { quits += 1; },
+    on: () => { throw new Error('must not attach runtime listeners'); },
+  };
+  const started = startWhenSingleInstanceAvailable({
+    acquireLock: () => applySingleInstance(app, undefined, {
+      env: { JENNY_LAUNCH_PATH: 'dev' },
+      showErrorBox: (...args) => notices.push(args),
+    }),
+    onStart: () => { starts += 1; },
+  });
+  assert.equal(started, false);
+  assert.equal(starts, 0);
+  assert.equal(quits, 1);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0][1], /Close it.*launch Jenny \(Dev\) again/);
+});
+
 test('startup guard skips bootstrap work when the single-instance lock is unavailable', () => {
   let started = false;
 
