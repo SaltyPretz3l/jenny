@@ -4,6 +4,23 @@
 
 Small bug fixes.
 
+Windows remains unsigned; Linux packages are experimental. No macOS installer.
+Packaged Windows startup, tool probes, provenance and download hashes passed.
+Installed upgrade/recovery and manual visual checks remain unqualified.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | a61ec1f4d703d1c1bcea42c6dc6b52a8c53157cd54337c14e5b765291e8264d7 |
+| dist/Jenny-Setup-x64.exe.blockmap | 9ec940ad3c4cd4ae533d767cfabb5fc5a4319eba9031d63ac24883bcd39bde6b |
+| dist/Jenny-amd64.deb | 89218e44c416080b7070aa135725f305ebc394cf4c4fb2a8e5049c2880bcee67 |
+| dist/Jenny-x86_64.AppImage | e7e4b4cfcdef87b4b6c8a90411d294d80dc5d60f550d750e2a97082b6c4db565 |
+| dist/SHA256SUMS-linux.txt | 6d6cbf92d98595625f6bc82aa91b064d4b1d79b76ae1a0ed711f449f6f041866 |
+| dist/SHA256SUMS-windows.txt | 53b6cdd624607b880b3f612afde01dc2b648821a8ac300d840d532e049548309 |
+| dist/latest-linux.yml | bed5adce8502262add4dbcdd83a6ff656319e643d1334fb2b3421c71f1fa7217 |
+| dist/latest.yml | 4bc6753119dc53750e2e0f705752fde79d36816c4d93da84d7355bd864a52ed8 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.1.0 - 2026-09-09
 
 First feature update after 1.0.0. The
@@ -195,7 +212,6 @@ The signing, asset and qualification record below describes the shipped files.
 
 ### 1.1.0 download checksums
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 195ef481bc0ef360fc5f2b676bbfbfff46a25929a9602d38040e4aea71b6b607 |
@@ -206,7 +222,6 @@ The signing, asset and qualification record below describes the shipped files.
 | dist/SHA256SUMS-windows.txt | 931f5fbdf0f84ecdc87f28afc8aecc3fce8029d3c8e715bd25aed206e01cc3ee |
 | dist/latest-linux.yml | d05e9dc4ebeaaa5677caef0c3f49a74cf6a1ecd8b3549074b5028fd333025fdc |
 | dist/latest.yml | f7f81c08160da1387e836e374c5b48ef3065e531c3577e6fda279d9cae2176ee |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.0.0 - 2026-09-06
 
