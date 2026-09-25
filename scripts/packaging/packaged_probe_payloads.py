@@ -134,7 +134,9 @@ def _validate_packaged_smoke_payload(payload: dict[str, object]) -> dict[str, ob
         )
     if payload.get("rendererReady") is not True:
         raise RuntimeError("packaged app smoke did not observe renderer-ready")
-    if str(backend_status.get("phase", "")).strip().lower() != "ready":
+    # Mirrors BACKEND_UP_PHASES in services/main/packaged-smoke.js: without a
+    # model (the release CI runners) startup ends in model_unavailable.
+    if str(backend_status.get("phase", "")).strip().lower() not in {"ready", "model_unavailable"}:
         raise RuntimeError(
             "packaged app smoke backend was not ready: "
             f"{str(backend_status.get('detail', '')).strip() or 'missing detail'}"

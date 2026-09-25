@@ -10,6 +10,7 @@ const { resolvePackagedSidecarLaunchAsync } = require('../backend/packaged-sidec
 const { CalendarService } = require('../calendar-service');
 const { createBackgroundJobTracker } = require('./background-job-tracker');
 const { resolveChromiumSandboxStatus } = require('./chromium-sandbox-status');
+const { BACKEND_UP_PHASES } = require('./packaged-smoke');
 const { createChatStreamBridge } = require('../chat-stream-bridge');
 const { CompanionService } = require('../companion-service');
 const { HomeAssistantService } = require('../home-assistant-service');
@@ -374,8 +375,9 @@ function createBackendServiceWithDeps({
       packagedSmokeController.markBackendFailed(status, status.detail || '');
     }
     // start() can return while the startup model load still holds the phase
-    // at sidecar_spawned; the ready status that follows completes the smoke.
-    if (packagedSmokeController && status && status.phase === 'ready') {
+    // at sidecar_spawned; the ready (or, without a model, model_unavailable)
+    // status that follows completes the smoke.
+    if (packagedSmokeController && status && BACKEND_UP_PHASES.has(status.phase)) {
       packagedSmokeController.markBackendReady?.(status);
     }
     if (status && status.phase === 'ready') {

@@ -192,6 +192,40 @@ test('packaged smoke controller writes success JSON and requests graceful shutdo
   assert.equal(ipcMainRef.listeners.has('renderer-ready'), false);
 });
 
+// A machine without a model (the release CI runners) ends startup in
+// model_unavailable: the packaged sidecar is up, so the smoke passes.
+test('packaged smoke controller succeeds when the backend is up without a model', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-packaged-smoke-nomodel-'));
+  const savedExitCode = process.exitCode;
+  t.after(() => {
+    process.exitCode = savedExitCode;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+  const outputPath = path.join(tempDir, 'result.json');
+  const ipcMainRef = new FakeIpcMain();
+  const sender = {};
+  const shutdownCalls = [];
+  const controller = createPackagedSmokeController({
+    outputPath,
+    timeoutMs: 60_000,
+    appRef: { exit() {}, quit() {} },
+    requestShutdown(code) { shutdownCalls.push(code); },
+    ipcMainRef,
+    getWindow: () => ({ isDestroyed: () => false, webContents: sender }),
+    getBackendStatus: () => ({ phase: 'starting' }),
+    readyChannel: 'renderer-ready',
+  });
+  ipcMainRef.emit('renderer-ready', { sender });
+  controller.markBackendReady({ phase: 'sidecar_spawned', launchSource: 'packaged-binary' });
+  assert.equal(fs.existsSync(outputPath), false, 'sidecar_spawned is not a finished startup');
+  controller.markBackendReady({ phase: 'model_unavailable', launchSource: 'packaged-binary' });
+
+  const payload = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  assert.equal(payload.ok, true);
+  assert.equal(payload.backendStatus.phase, 'model_unavailable');
+  assert.deepEqual(shutdownCalls, [0]);
+});
+
 // ---------------------------------------------------------------------------
 // createPackagedSmokeController — failure path.
 // ---------------------------------------------------------------------------

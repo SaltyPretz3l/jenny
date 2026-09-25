@@ -5,6 +5,9 @@ const path = require('path');
 
 const DEFAULT_PACKAGED_SMOKE_TIMEOUT_MS = 45_000;
 const PACKAGED_SMOKE_REQUEST_FILENAME = 'packaged-smoke-request.json';
+// Startup is finished and the packaged sidecar is up. A machine without a model
+// (the release CI runners) ends in model_unavailable instead of ready.
+const BACKEND_UP_PHASES = new Set(['ready', 'model_unavailable']);
 
 function parsePackagedSmokeCliArgs(argv = process.argv.slice(1)) {
   const args = Array.isArray(argv) ? argv : [];
@@ -193,7 +196,7 @@ function createPackagedSmokeController({
       return;
     }
     const backendStatus = state.backendStatus || getBackendStatus() || {};
-    if (String(backendStatus.phase || '').trim().toLowerCase() !== 'ready') {
+    if (!BACKEND_UP_PHASES.has(String(backendStatus.phase || '').trim().toLowerCase())) {
       return;
     }
     writeResult({
@@ -256,6 +259,7 @@ function createPackagedSmokeController({
 }
 
 module.exports = {
+  BACKEND_UP_PHASES,
   DEFAULT_PACKAGED_SMOKE_TIMEOUT_MS,
   PACKAGED_SMOKE_REQUEST_FILENAME,
   parsePackagedSmokeCliArgs,

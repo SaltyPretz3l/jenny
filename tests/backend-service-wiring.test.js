@@ -506,6 +506,22 @@ test('backend-status handler: a later ready status reaches the packaged smoke', 
   }
 });
 
+// Without a model (the release CI runners) the startup load ends in
+// model_unavailable; the smoke must hear that too (1.2.0 Linux release leg).
+test('backend-status handler: a model_unavailable status reaches the packaged smoke', async () => {
+  const { created, smokeReadyCalls, smokeControllerCalls } = createRecordingFixture();
+  try {
+    const status = { phase: 'model_unavailable', launchSource: 'packaged-binary' };
+    created.backendService.emit('backend-status', status);
+    await Promise.resolve();
+    assert.equal(smokeReadyCalls.length, 1, 'markBackendReady must be called on model_unavailable');
+    assert.equal(smokeReadyCalls[0][0], status);
+    assert.equal(smokeControllerCalls.length, 0);
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
 test('backend-status handler: calls refreshGpuMemorySample with force:true when phase is ready', async () => {
   const { created, gpuRefreshCalls } = createRecordingFixture();
   try {
