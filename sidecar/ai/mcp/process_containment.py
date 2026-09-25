@@ -28,6 +28,18 @@ _CPU_SAMPLE_INTERVAL_SECONDS = 1.0
 _CPU_SATURATION_RATIO = 0.9
 _PROCESS_EXIT_TIMEOUT_SECONDS = 1.5
 _ENV_PASSTHROUGH_KEYS = (
+    # The builtin server resolves its operation-ledger root from this override
+    # when started without a ledger argument (hermetic test roots).
+    "JENNY_OPERATION_LEDGER_ROOT",
+    # PDF OCR switches, language-data override, the dev-only OCR/media site root,
+    # and the optional PDF add-on root used by the builtin server.
+    "JENNY_ENABLE_PDF_OCR",
+    "JENNY_ENABLE_PDF_OCR_RAPID",
+    "JENNY_PDF_OCR_SITE_DIR",
+    "JENNY_SIDECAR_MEDIA_SITE_DIR",
+    "JENNY_SIDECAR_PDF_ADDON_DIR",
+    "JENNY_TESSDATA_DIR",
+    "TESSDATA_PREFIX",
     "SYSTEMROOT",
     "COMSPEC",
     "PATHEXT",
@@ -176,6 +188,11 @@ def _minimal_env(
         value = read_environment_value(key)
         if value:
             env[key] = value
+    if config.memory_limit_mb is not None:
+        # OpenBLAS reserves one large buffer per core when numpy loads it;
+        # under the job memory cap that allocation fails and numpy cannot
+        # import at all. One BLAS thread keeps the OCR stack loadable.
+        env["OPENBLAS_NUM_THREADS"] = "1"
     return env
 
 

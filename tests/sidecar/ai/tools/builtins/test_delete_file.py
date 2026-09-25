@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -197,19 +198,66 @@ def test_delete_file_moves_outside_target_link_without_touching_target(tmp_path:
         outside.unlink(missing_ok=True)
 
 
-def test_delete_file_refuses_jenny_directory(tmp_path: Path) -> None:
-    backups = tmp_path / ".jenny" / "backups"
-    backups.mkdir(parents=True)
-    keep = backups / "keep.bak"
-    keep.write_text("x\n", encoding="utf-8")
+@pytest.mark.parametrize(
+    "reserved_path",
+    [".JENNY/backups", ".Jenny/trash", ".jenny", r".jenny\backups"],
+    ids=["uppercase-backups", "mixed-case-trash", "store-root", "backslash"],
+)
+def test_delete_file_refuses_jenny_directory_in_any_spelling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reserved_path: str,
+) -> None:
+    target = tmp_path / "reserved-target"
+    target.mkdir()
+    leaf = delete_module.resolve_workspace_leaf(tmp_path, "reserved-target")
+    monkeypatch.setattr(
+        delete_module,
+        "resolve_workspace_leaf",
+        lambda _root, _path: replace(leaf, relative_path=reserved_path),
+    )
 
     result = delete_module.delete_file_tool(
-        {"path": ".jenny/backups/keep.bak"}, _guard(tmp_path)
+        {"path": reserved_path, "recursive": True}, _guard(tmp_path)
     )
 
     assert result.success is False
-    assert ".jenny" in result.output
-    assert keep.exists()
+    assert "the .jenny directory holds Jenny's backups and trash" in result.output
+    assert target.exists()
+
+
+def test_delete_file_jenny_refusal_precedes_store_destination_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / ".JENNY" / "backups"
+    target.mkdir(parents=True)
+
+    def _fail_if_reached(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("store destination resolver must not be called")
+
+    monkeypatch.setattr(GuardedWorkspaceStore, "resolve", _fail_if_reached)
+
+    result = delete_module.delete_file_tool(
+        {"path": ".JENNY/backups", "recursive": True}, _guard(tmp_path)
+    )
+
+    assert result.success is False
+    assert "the .jenny directory holds Jenny's backups and trash" in result.output
+    assert target.exists()
+
+
+def test_delete_file_allows_jenny_prefix_sibling(tmp_path: Path) -> None:
+    target = tmp_path / ".jennyx" / "file.txt"
+    target.parent.mkdir()
+    target.write_text("delete me\n", encoding="utf-8")
+
+    result = delete_module.delete_file_tool(
+        {"path": ".jennyx/file.txt"}, _guard(tmp_path)
+    )
+
+    assert result.success is True
+    assert not target.exists()
 
 
 def test_delete_file_reports_missing_path(tmp_path: Path) -> None:

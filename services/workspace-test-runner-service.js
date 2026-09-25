@@ -16,6 +16,7 @@ const {
 const { parseSummaryBounded } = require('./workspace-test-runner-summary');
 const { WORKSPACE_TEST_RUNNER_ERROR_CODES } = require('./backend/error-codes');
 const { isChildPath, resolveRealPathSafe } = require('./backend/path-utils');
+const { createWorkspaceTestRunnerResources } = require('./workspace-test-runner-resources');
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 // S18: an upper bound on stored configurations per workspace, so a malformed or
@@ -96,6 +97,9 @@ function createWorkspaceTestRunnerService(deps = {}) {
   const configWriter = typeof deps.configWriter === 'function' ? deps.configWriter : null;
   const summaryParser = typeof deps.summaryParser === 'function' ? deps.summaryParser : parseSummaryBounded;
   const log = typeof deps.log === 'function' ? deps.log : null;
+  const resources = createWorkspaceTestRunnerResources({
+    resourceAdmissionProvider: deps.resourceAdmissionProvider ?? null,
+  });
   let runCounter = 0;
   const makeRunId = typeof deps.makeRunId === 'function'
     ? deps.makeRunId
@@ -111,6 +115,8 @@ function createWorkspaceTestRunnerService(deps = {}) {
   let resolveActiveSettlement = null;
   let activeTerminationRetry = null;
   let activeTerminationRetryPromise = null;
+  let activeResourceAdmission = null;
+  let activeRequestAbortCleanup = null;
   let disposePromise = null;
   let disposed = false;
   try {
@@ -135,10 +141,13 @@ function createWorkspaceTestRunnerService(deps = {}) {
 
   function releaseActiveRun(configId, runId) {
     if (!activeRun || activeRun.runId !== runId) return false;
+    activeRequestAbortCleanup?.();
+    activeRequestAbortCleanup = null;
     activeRun = null;
     activeController = null;
     activeTerminationRetry = null;
     activeTerminationRetryPromise = null;
+    activeResourceAdmission = null;
     emitState('finished', configId, runId);
     return true;
   }
@@ -149,6 +158,11 @@ function createWorkspaceTestRunnerService(deps = {}) {
 
   function currentConfigs() {
     return normalizeConfigs(configProvider());
+  }
+
+  function runAuthorityCurrent(root, scope) {
+    scope?.assertCurrent();
+    return String(scope ? scope.root : resolveRoot()).trim() === root;
   }
 
   function listConfigs() {
@@ -170,7 +184,8 @@ function createWorkspaceTestRunnerService(deps = {}) {
   // silently persisting a set whose Stop control the renderer can no longer
   // reach while the process keeps running.
   function saveConfigs(configs) {
-    if (!resolveRoot()) {
+    const root = resolveRoot();
+    if (!root) {
       return envelope(WORKSPACE_TEST_RUNNER_ERROR_CODES.ROOT_MISSING);
     }
     const detailed = normalizeConfigsDetailed(configs);
@@ -178,7 +193,8 @@ function createWorkspaceTestRunnerService(deps = {}) {
     const rejected = detailed.rejected.concat(
       detailed.configs.slice(MAX_CONFIGS).map((config) => ({ id: config.id, reason: REJECT_REASONS.OVER_CAP }))
     );
-    if (activeRun && !findConfig(normalized, activeRun.configId)) {
+    if (activeRun && resolveRealPathSafe(activeRun.root) === resolveRealPathSafe(root)
+      && !findConfig(normalized, activeRun.configId)) {
       return envelope(WORKSPACE_TEST_RUNNER_ERROR_CODES.CONFIG_ACTIVE_RUN);
     }
     if (configWriter) {
@@ -187,21 +203,23 @@ function createWorkspaceTestRunnerService(deps = {}) {
     return { configs: normalized, rejected };
   }
 
-  async function run(payload) {
+  async function run(payload, scope = null) {
     if (disposed) {
       return envelope(
         WORKSPACE_TEST_RUNNER_ERROR_CODES.ALREADY_RUNNING,
         'The test runner is shutting down and cannot start another run.'
       );
     }
-    const root = resolveRoot();
+    scope?.assertCurrent();
+    const root = scope ? scope.root : resolveRoot();
+    const runHistory = scope ? scope.history : history;
     if (!root) {
       return envelope(WORKSPACE_TEST_RUNNER_ERROR_CODES.ROOT_MISSING);
     }
     const configId = String((payload && payload.configId) || '').trim();
     const includeOutput = payload ? payload.includeOutput === true : false;
     const attribution = readAttribution(payload);
-    const config = findConfig(currentConfigs(), configId);
+    const config = findConfig(scope ? normalizeConfigs(scope.configs) : currentConfigs(), configId);
     if (!config) {
       return envelope(WORKSPACE_TEST_RUNNER_ERROR_CODES.CONFIG_NOT_FOUND);
     }
@@ -217,7 +235,7 @@ function createWorkspaceTestRunnerService(deps = {}) {
       // verification gate. The user's own double-click stays silent, as before.
       if (attribution.initiator === 'jenny') {
         try {
-          history?.recordSkip?.(configId, {
+          runHistory?.recordSkip?.(configId, {
             runId: String(makeRunId()),
             startedAt: now().toISOString(),
             reason: 'already_running',
@@ -231,28 +249,64 @@ function createWorkspaceTestRunnerService(deps = {}) {
     }
 
     const runId = String(makeRunId());
-    activeRun = { runId, configId };
+    activeRun = { runId, configId, scoped: !!scope, root };
     const controller = new AbortController();
     activeController = controller;
+    const requestSignal = scope?.abortSignal || null;
+    if (requestSignal && typeof requestSignal.addEventListener === 'function') {
+      const onRequestAbort = () => controller.abort(requestSignal.reason);
+      requestSignal.addEventListener('abort', onRequestAbort, { once: true });
+      activeRequestAbortCleanup = () => requestSignal.removeEventListener?.('abort', onRequestAbort);
+      if (requestSignal.aborted) onRequestAbort();
+    } else {
+      activeRequestAbortCleanup = null;
+    }
     activeSettlement = new Promise((resolve) => { resolveActiveSettlement = resolve; });
     activeTerminationRetry = null;
     activeTerminationRetryPromise = null;
+    activeResourceAdmission = null;
     const startedAt = now().toISOString();
     let terminationConfirmed = true;
+    let historyStarted = false;
+    let resourceStatus = 'failed';
     try {
-      history?.recordStart?.(configId, { runId, startedAt, ...attribution });
-      // S13: the run is now live — push 'started' so the widget badges it running.
+      scope?.assertCurrent();
+      const admissionRequest = resources.admit({
+        root,
+        cwd: effectiveCwd,
+        initiator: attribution.initiator,
+        signal: controller.signal,
+        validate: () => runAuthorityCurrent(root, scope),
+        toolClaim: scope?.toolClaim || null,
+      });
+      activeResourceAdmission = admissionRequest ? await admissionRequest : null;
+      activeResourceAdmission?.assertCurrent();
+      scope?.assertCurrent();
+      const validatedCwd = activeResourceAdmission?.resolvedCwd || effectiveCwd;
+      if (scope?.beforeProducer) await scope.beforeProducer();
+      // This is the last synchronous gate before the producer. It catches a
+      // policy/root/cwd replacement that raced the queued resource grant.
+      activeResourceAdmission?.assertCurrent();
+      scope?.assertCurrent();
+      runHistory?.recordStart?.(configId, { runId, startedAt, ...attribution });
+      historyStarted = true;
+      // Resource ownership and live authority are established before a run is
+      // visible in durable history or dispatched to the producer.
       emitState('started', configId, runId);
+      activeResourceAdmission?.assertCurrent();
+      scope?.assertCurrent();
+      if (activeResourceAdmission) terminationConfirmed = false;
       const result = await runner.runTestCommand({
         command: config.command,
         // S16: the runner receives the VALIDATED ABSOLUTE cwd, never the raw value.
-        cwd: effectiveCwd,
+        cwd: validatedCwd,
         userEnv: config.env,
         timeoutMs: config.timeoutMs || defaultTimeoutMs,
         // S14: the runner kills the tree + resolves status:'aborted' when this fires.
         abortSignal: controller.signal,
         now,
       });
+      resourceStatus = result.status === 'passed' ? 'succeeded' : 'failed';
       const record = {
         status: result.status,
         exitCode: result.exitCode ?? null,
@@ -281,7 +335,9 @@ function createWorkspaceTestRunnerService(deps = {}) {
       if (counts.failedCount !== undefined) {
         record.failedCount = counts.failedCount;
       }
-      terminationConfirmed = result.terminationConfirmed !== false;
+      terminationConfirmed = activeResourceAdmission
+        ? result.terminationConfirmed === true
+        : result.terminationConfirmed !== false;
       if (!terminationConfirmed && typeof result.retryTermination === 'function') {
         activeTerminationRetry = result.retryTermination;
       }
@@ -292,13 +348,13 @@ function createWorkspaceTestRunnerService(deps = {}) {
           });
         } catch (_error) { /* logging cannot release process ownership */ }
       }
-      if (typeof result.terminationConfirmed === 'boolean') {
-        record.terminationConfirmed = result.terminationConfirmed;
+      if (activeResourceAdmission || typeof result.terminationConfirmed === 'boolean') {
+        record.terminationConfirmed = terminationConfirmed;
       }
       if (result.terminationWarning) {
         record.terminationWarning = String(result.terminationWarning).slice(0, 80);
       }
-      history?.recordFinish?.(configId, runId, record);
+      runHistory?.recordFinish?.(configId, runId, record);
       // The bounded, token-masked output tails are OPT-IN and ride the returned
       // record only. History stays lean because the renderer reads it wholesale
       // on every panel render, and the renderer's own run path never asks for the
@@ -319,15 +375,20 @@ function createWorkspaceTestRunnerService(deps = {}) {
       // in history OR a stuck running badge in the renderer. Finalize the run as
       // 'error' (the finally still emits the settle event below) and re-throw so
       // callers still see the failure (the single-run lock test depends on this).
-      history?.recordFinish?.(configId, runId, {
-        status: 'error',
-        exitCode: null,
-        durationMs: null,
-        startedAt,
-        finishedAt: now().toISOString(),
-      });
+      if (historyStarted) {
+        runHistory?.recordFinish?.(configId, runId, {
+          status: 'error',
+          exitCode: null,
+          durationMs: null,
+          startedAt,
+          finishedAt: now().toISOString(),
+        });
+      }
       throw error;
     } finally {
+      if (activeResourceAdmission && !activeResourceAdmission.settle(terminationConfirmed, resourceStatus)) {
+        terminationConfirmed = false;
+      }
       const settle = resolveActiveSettlement;
       resolveActiveSettlement = null;
       settle?.({ terminationConfirmed });
@@ -373,6 +434,10 @@ function createWorkspaceTestRunnerService(deps = {}) {
       const retried = await activeTerminationRetryPromise;
       if (retried?.confirmed !== true) activeTerminationRetryPromise = null;
       if (retried?.confirmed === true) {
+        if (activeResourceAdmission && !activeResourceAdmission.confirmCleanup()) {
+          return { aborted: true, runId, terminationConfirmed: false,
+            reason: 'resource_cleanup_unconfirmed' };
+        }
         releaseActiveRun(configId, runId);
         return { aborted: true, runId, terminationConfirmed: true };
       }
@@ -393,18 +458,22 @@ function createWorkspaceTestRunnerService(deps = {}) {
     return disposePromise;
   }
 
-  function getState() {
+  function getState(scope = null) {
+    scope?.assertCurrent();
+    const visibleRun = activeRun && (!scope || activeRun.root === scope.root) ? activeRun : null;
+    const visibleHistory = scope ? scope.history : history;
     return {
-      configs: currentConfigs(),
-      history: history && typeof history.read === 'function' ? history.read() : { byConfig: {} },
-      activeRun: activeRun ? activeRun.runId : null,
+      configs: scope ? scope.configs : currentConfigs(),
+      history: visibleHistory && typeof visibleHistory.read === 'function' ? visibleHistory.read() : { byConfig: {} },
+      activeRun: visibleRun ? visibleRun.runId : null,
       // S13: the running config id lets the widget badge the right row as running
       // (activeRun alone is just the opaque runId).
-      activeConfigId: activeRun ? activeRun.configId : null,
+      activeConfigId: visibleRun ? visibleRun.configId : null,
     };
   }
 
-  return { listConfigs, run, abort, abortAndWait, dispose, saveConfigs, getState };
+  return { listConfigs, run, abort, abortAndWait, dispose, saveConfigs, getState,
+    hasWorkspaceRun: () => !!activeRun && !activeRun.scoped };
 }
 
 module.exports = {

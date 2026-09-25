@@ -42,6 +42,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* A row is bounded by its column; whatever a tool returns wraps or is
+     clipped here, never widening the chat panel (owner gate 2026-09-20). */
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.tool-call-section {
+  min-width: 0;
 }
 
 .tool-result-notice-code { flex: none; }

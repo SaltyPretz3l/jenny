@@ -121,18 +121,7 @@
       return Boolean(rootEl) && rootEl.hidden !== true;
     }
 
-    function open() {
-      if (disposed || !ensureMounted()) {
-        return false;
-      }
-      submitToken += 1;
-      const input = getInput();
-      if (input) {
-        input.value = '';
-      }
-      setStatus('', false);
-      submitting = false;
-      rootEl.hidden = false;
+    function focusInput(input) {
       if (input && typeof input.focus === 'function') {
         try {
           input.focus();
@@ -140,6 +129,27 @@
           // focus is best-effort (jsdom / detached nodes).
         }
       }
+    }
+
+    function open() {
+      if (disposed || !ensureMounted()) {
+        return false;
+      }
+      const input = getInput();
+      if (isOpen()) {
+        // A second chord while the popover is up only refocuses it: wiping
+        // the typed text (and the in-flight submit's token) lost the note.
+        focusInput(input);
+        return true;
+      }
+      submitToken += 1;
+      if (input) {
+        input.value = '';
+      }
+      setStatus('', false);
+      submitting = false;
+      rootEl.hidden = false;
+      focusInput(input);
       return true;
     }
 
@@ -168,7 +178,7 @@
         return;
       }
       submitting = true;
-      setStatus('Saving…', false);
+      setStatus(jt('scratchpad.capture.saving', 'Saving…'), false);
       const token = submitToken;
       Promise.resolve(onCapture(text, {})).then((result) => {
         if (disposed || token !== submitToken) {

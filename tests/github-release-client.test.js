@@ -1,7 +1,13 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createGitHubReleaseClient, RELEASES_URL } = require('../services/github-release-client');
+const {
+  createGitHubReleaseClient,
+  GITHUB_UPDATE_HOSTS,
+  MAX_BODY_BYTES,
+  RELEASES_URL,
+  UPDATE_CHECK_TIMEOUT_MS,
+} = require('../services/github-release-client');
 
 function release(overrides = {}) {
   return { tag_name: 'v1.0.2', draft: false, prerelease: false, name: 'Jenny',
@@ -14,6 +20,18 @@ const target = { platform: 'win32', arch: 'x64' };
 function clientFor(value) {
   return createGitHubReleaseClient({ fetchImpl: async () => new Response(JSON.stringify(value)) });
 }
+
+test('updater transport exports one bounded GitHub policy', () => {
+  assert.deepEqual(GITHUB_UPDATE_HOSTS, [
+    'github.com',
+    'api.github.com',
+    'objects.githubusercontent.com',
+    'release-assets.githubusercontent.com',
+    'github-releases.githubusercontent.com',
+  ]);
+  assert.equal(MAX_BODY_BYTES, 1024 * 1024);
+  assert.equal(UPDATE_CHECK_TIMEOUT_MS, 15_000);
+});
 
 test('fixed, unauthenticated GitHub request validates stable release and platform package', async () => {
   let calls = 0;

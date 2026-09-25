@@ -96,6 +96,76 @@ test('invalid edited plan falls back to the normalized original plan', async () 
   assert.equal(Object.hasOwn(result.metadata, 'plan_edited'), false);
 });
 
+test('edited approval restates the edited plan in model-visible content', async () => {
+  for (const decision of ['approved', 'approved_auto']) {
+    const result = await tool.execute(
+      { title: 'Original title', steps: ['Original step'] },
+      context({
+        planDecision: decision,
+        planEditedPlan: { title: 'Edited title', steps: ['Edited step'] },
+      })
+    );
+
+    assert.match(result.content, /The user edited your proposed plan before deciding/);
+    assert.match(result.content, /Title: Edited title/);
+    assert.match(result.content, /1\. Edited step/);
+    assert.deepEqual(result.metadata.plan, tool.normalizePlan({
+      title: 'Edited title', steps: ['Edited step'],
+    }));
+  }
+});
+
+test('unedited approval content is unchanged', async () => {
+  const approved = await tool.execute(
+    { title: 'Original title', steps: ['Original step'] },
+    context({ planDecision: 'approved' })
+  );
+  const approvedAuto = await tool.execute(
+    { title: 'Original title', steps: ['Original step'] },
+    context({ planDecision: 'approved_auto' })
+  );
+
+  assert.equal(
+    approved.content,
+    'Plan approved. Continue building now under the normal approval policy.'
+  );
+  assert.equal(
+    approvedAuto.content,
+    'Plan approved. Continue building without ordinary approval prompts for the remainder of this run.'
+  );
+});
+
+test('rejected with edits carries the feedback and the edited plan', async () => {
+  const result = await tool.execute(
+    { title: 'Original title', steps: ['Original step'] },
+    context({
+      planDecision: 'rejected',
+      planFeedback: 'Please revise the rollout.',
+      planEditedPlan: { title: 'Edited rejection', steps: ['Use the safer rollout'] },
+    })
+  );
+
+  assert.match(result.content, /\n\nUser feedback: Please revise the rollout\.\n\n/);
+  assert.match(result.content, /The user edited your proposed plan before deciding/);
+  assert.match(result.content, /Title: Edited rejection/);
+  assert.match(result.content, /1\. Use the safer rollout/);
+});
+
+test('accepted with edits keeps its wording and carries the edited plan', async () => {
+  const result = await tool.execute(
+    { title: 'Original title', steps: ['Original step'] },
+    context({
+      planDecision: 'accepted',
+      planEditedPlan: { title: 'Edited acceptance', steps: ['Keep this plan for later'] },
+    })
+  );
+
+  assert.match(result.content, /does not want it built yet/);
+  assert.match(result.content, /The user edited your proposed plan before deciding/);
+  assert.match(result.content, /Title: Edited acceptance/);
+  assert.match(result.content, /1\. Keep this plan for later/);
+});
+
 for (const decision of ['approved', 'approved_auto']) {
   test(`${decision} persists the Plan Mode transition before success`, async () => {
     const writes = [];
@@ -182,6 +252,17 @@ test('rejection retains Plan Mode and returns bounded feedback', async () => {
   assert.equal(result.metadata.plan_feedback, '<no feedback given>');
 });
 
+test('rejection says the user chose Keep planning and quotes the feedback as theirs', async () => {
+  const result = await tool.execute(
+    { title: 'Add kiwi', steps: ['Edit README'] },
+    context({ planDecision: 'rejected', planFeedback: "instead of kiwi, plan to add 'strawberry'" })
+  );
+  assert.match(result.content, /^The user did not approve this plan and chose Keep planning\./);
+  assert.match(result.content, /submit it again with exit_plan_mode/);
+  assert.match(result.content, /\n\nUser feedback: instead of kiwi, plan to add 'strawberry'$/);
+  assert.equal(result.metadata.plan_feedback, "instead of kiwi, plan to add 'strawberry'");
+});
+
 test('session write failure is structured and leaves Plan Mode active', async () => {
   const result = await tool.execute(
     { title: 'Build it', steps: ['Implement'] },
@@ -202,4 +283,30 @@ test('duplicate proposal is rejected while another proposal is pending', async (
   );
   assert.equal(result.isError, true);
   assert.match(result.content, /already pending or approved/);
+});
+
+test('accepted keeps Plan Mode, writes nothing, and asks for one toolless reply', async () => {
+  const writes = [];
+  const prepared = [];
+  const result = await tool.execute(
+    { title: 'Hold it', steps: ['Inspect', 'Verify'] },
+    context({
+      planDecision: 'accepted',
+      executionAuthority: { token: 'binding' },
+      backendService: {
+        async setSessionPreferences(...args) { writes.push(args); return {}; },
+        sessionExecutionAuthority: { preparePlanExit: (...args) => { prepared.push(args); return () => {}; } },
+        sessionStore: { getSession: () => ({ plan_mode: true, run_mode: 'plan' }) },
+      },
+    })
+  );
+  assert.equal(result.isError, false);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(prepared, [], 'accepting is not execution authority');
+  assert.equal(result.metadata.plan_decision, 'accepted');
+  assert.equal(result.metadata.plan_mode_cleared, false);
+  assert.equal(result.metadata.turn_disposition, 'final_reply');
+  assert.deepEqual(result.metadata.plan, tool.normalizePlan({ title: 'Hold it', steps: ['Inspect', 'Verify'] }));
+  assert.match(result.content, /does not want it built yet/);
+  assert.deepEqual([...tool.PLAN_DECISIONS], ['approved', 'approved_auto', 'accepted', 'rejected']);
 });

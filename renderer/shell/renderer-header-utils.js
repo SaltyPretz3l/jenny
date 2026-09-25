@@ -8,6 +8,13 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
+  // Backend phases where New Chat stays usable: the composer's usable +
+  // preparing sets (renderer-render-pipeline-chrome.js backendComposer*).
+  const NEW_CHAT_BACKEND_PHASES = new Set([
+    'ready', 'model_unavailable',
+    'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying',
+  ]);
+
   function createHeaderController(deps) {
     const { state } = deps;
     const {
@@ -167,13 +174,16 @@
           ((!state.currentSessionId && !isAnySendBusy()) || isSendPreflightPending());
       }
       if (newChatButton) {
-        // model_unavailable keeps New Chat usable — the composer is live in
-        // that phase (sending retries the model load), so session creation
-        // must not stay locked behind a 'ready'-only gate.
+        // New Chat mirrors the composer's backend gate: it stays usable while
+        // the model is unavailable (sending retries the load) and while the
+        // sidecar (re)initializes. Session creation is owned by Electron main,
+        // and a plugin/config refresh briefly re-enters sidecar_spawned; a
+        // disabled button silently drops real clicks and every newChatButton
+        // .click() caller (strip, palette, IDE dock) (F37).
         newChatButton.disabled =
           !state.auth.authenticated
           || isSendPreflightPending()
-          || (!['ready', 'model_unavailable'].includes(state.backend.phase) && !isAnySendBusy());
+          || (!NEW_CHAT_BACKEND_PHASES.has(state.backend.phase) && !isAnySendBusy());
       }
       updateTokenDisplay();
     }

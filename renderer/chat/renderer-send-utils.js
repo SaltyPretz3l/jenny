@@ -382,6 +382,13 @@
         summarizeDurableFailurePreview,
       },
     });
+    const durableModule = globalThis.rendererDurableSend || (typeof require === 'function' ? require('./renderer-durable-send') : null);
+    const durableSend = durableModule.createController({ state,
+      shell: { ...window.jennyShell, activeFileContext: window.rendererIdeActiveFileContext }, receipts: sendReceipts,
+      callbacks: { ...deps.callbacks, renderMessages, renderSessions, renderHeader, renderComposerState,
+        attachPendingOriginToSession, rekeySessionOrigin },
+      helpers: { clipSessionTitle, buildOptimisticAttachmentMetadata, adoptPersistedUserMessageIdInStore },
+      multiStreamController, isDisposed: () => disposalFence.isDisposed() });
     const skillsBridge = window.jennyShell?.skills || null;
     const sendSlashDispatch = _skillSlashCommands.createSendSlashDispatch({
       state, registry: slashCommandRegistry, chatInput, renderComposerState,
@@ -392,7 +399,6 @@
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
     });
-
     async function startPromptSend(prompt, options) {
       let settings = options || {};
       let slashDispatch = sendSlashDispatch.dispatch(prompt, settings);
@@ -468,13 +474,14 @@
       const runtimePreferences = runModeState.resolveSendRuntimePreferences({
         snapshot: settings.runtimePreferencesSnapshot, session: requestedSession, current: getCurrentRuntimePreferences, clone: cloneJsonLike,
       });
+      if (['ask', 'auto'].includes(settings.runModeOverride)) Object.assign(runtimePreferences, { runMode: settings.runModeOverride, planMode: false });
       const visionGate = globalThis.rendererComposerVisionGate?.evaluateComposerVisionGate?.({ state, runtimePreferences });
       if (visionGate?.blocked && !usesReplayImageAttachments && !isEditRegenerate && !normalizedInteractiveResponse) {
         setComposerStatusNotice(visionGate.notice, { owner: 'attachments.vision', tone: visionGate.tone, at: 0 }); renderComposerState(); return null;
       }
       const requestedSessionBusy = isSessionBusy(requestedSessionId);
       const pluginCommandInvocation = settings.pluginCommandInvocation && typeof settings.pluginCommandInvocation === 'object' ? settings.pluginCommandInvocation : null;
-      const rawSkillInvocation = (settings.skillInvocation && typeof settings.skillInvocation === 'object' ? settings.skillInvocation : null) || (settings.outboxDispatch ? getQueuedSend(requestedSessionId)?.meta?.skillInvocation || null : null);
+      const rawSkillInvocation = settings.skillInvocation && typeof settings.skillInvocation === 'object' ? settings.skillInvocation : null;
       const skillInvocation = rawSkillInvocation && typeof rawSkillInvocation.id === 'string' ? Object.fromEntries(['id', 'name', 'scope', 'command'].filter((key) => typeof rawSkillInvocation[key] === 'string').map((key) => [key, rawSkillInvocation[key]])) : null;
       // Dock-scoped approval-steer (see isDockApprovalSteerActive above): once a
       // turn's stream has actually gone terminal (requestedSessionBusy false), a
@@ -483,23 +490,18 @@
       // session while its stream is mid-flight, so busy is the true signal.
       // Ungating this let a stale flag strand the queued-send drain (below)
       // exactly like it must not strand a fresh dock send.
-      if (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive())) {
+      const durableEligible = !isEditRegenerate && durableModule.eligible(state, window.jennyShell, settings, prompt, normalizedInteractiveResponse);
+      if (durableEligible && !durableSend.hasCapacity()) return null;
+      if (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive()))) {
         const commandRefusal = _sendFlowHelpers.rejectBusyPluginCommand({ invocation: pluginCommandInvocation, sessionId: requestedSessionId, setNotice: setComposerStatusNotice, render: renderComposerState, log: appendClientLog });
         if (commandRefusal) return commandRefusal;
         if (
           canQueueForSession(requestedSessionId)
           && (String(prompt || '').trim() || attachmentBudget.accepted.length)
         ) {
-          // Snapshot the @-mention + active-file context the user is looking at
-          // NOW, so a later dispatchQueuedSendForSession does not re-collect
-          // against an already-cleared composer / a different focused file.
-          // The stash + composer clear stay fully SYNCHRONOUS (no await before
-          // them): the stream-terminal handler dispatches queued sends the moment
-          // a stream settles, so yielding before the stash would let it run
-          // getQueuedSend() and miss this entry, stranding the send. Mention PATHS
-          // + the active-file slice are captured synchronously; the async
-          // mention-content read is backfilled onto the queued entry when it
-          // settles (guarded against dispatch/clear/replacement meanwhile).
+          // Legacy outbox capture and draft consumption must precede any await:
+          // terminal dispatch may run while mention contents are still resolving.
+          // Backfill only the same queued entry, deduping against resolved mentions.
           const queuedAccepted = Array.isArray(attachmentBudget.accepted) ? attachmentBudget.accepted : [];
           const queuedAttachedPaths = queuedAccepted.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean);
           const queuedAttachedNames = queuedAccepted.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean);
@@ -507,12 +509,8 @@
           const queuedMentionContentsPromise = Promise.resolve(
             window.rendererIdeMentionAutocomplete?.collectMentionContents?.() || []
           );
-          // Dedupe the active-file slice against ATTACHMENTS only here (synchronous
-          // + known now). The @-mention dedupe is applied in the backfill below
-          // against the mentions that actually RESOLVED — matching the live send
-          // path, which dedupes against resolved mentions, not merely requested
-          // ones. (Deduping against requested paths would drop the slice for a
-          // focused file whose @-mention read fails, losing it from both snapshots.)
+          // Initially dedupe only attachments; failed mention reads must not
+          // discard the active-file snapshot from both context sources.
           const queuedActiveFileContext = window.rendererIdeActiveFileContext?.readActiveFileContextForTurn?.({
             mentionedPaths: [],
             attachedPaths: queuedAttachedPaths,
@@ -641,6 +639,14 @@
       const mentionContentsPromise = Object.prototype.hasOwnProperty.call(settings, 'mentionContentsSnapshot')
         ? Promise.resolve(Array.isArray(settings.mentionContentsSnapshot) ? settings.mentionContentsSnapshot : [])
         : Promise.resolve(window.rendererIdeMentionAutocomplete?.collectMentionContents?.() || []).catch(() => []);
+      if (durableEligible) {
+        const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
+          effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
+          runModeProjection, toolPreferences, approvalMode, pluginCommandInvocation, skillInvocation,
+          sendReceipt, mentionContentsPromise, preserveComposerDraft });
+        sendSlashDispatch.clearAccepted(result, skillInvocation, settings);
+        return result;
+      }
       if (!preserveComposerDraft) syncComposerInputHeight();
       thinkingController.resumeAutoScroll();
       setFollowLatest(true);
@@ -914,6 +920,7 @@
       if (!disposalFence.dispose()) return;
       sendSlashDispatch.dispose();
       dispatchQueuedSendForSession?.dispose?.();
+      durableSend.dispose();
       sendReceipts.dispose();
       sendOutbox.dispose?.();
     }

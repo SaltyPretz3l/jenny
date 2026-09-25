@@ -21,11 +21,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
+const { PassThrough } = require('stream');
 
 const { resolveRealPathSafe } = require('../services/backend/path-utils');
 const { getBridgeChannel } = require('../services/ipc-contract');
 const { WORKSPACE_TEST_RUNNER_ERROR_CODES } = require('../services/backend/error-codes');
 const { createWorkspaceTestRunnerWiring } = require('../services/main/workspace-test-runner-wiring');
+const { encodeFrame } = require('../services/backend/sidecar-client-transport-codec');
 const {
   registerWorkspaceTestRunnerIpcHandlers,
   registerMainIpcHandlers,
@@ -92,6 +95,89 @@ function passingRunner() {
     },
   };
 }
+
+test('scoped runs use captured config/root and share the UI run limit across root changes', async t => {
+ const { userDataDir, makeRoot } = sandbox(t);
+ const alpha = makeRoot('alpha');
+ const beta = makeRoot('beta');
+ writeConfigs(userDataDir, alpha, [{ id: 'alpha-test', label: 'Alpha', command: 'echo alpha' }]);
+ writeConfigs(userDataDir, beta, [{ id: 'beta-test', label: 'Beta', command: 'echo beta' }]);
+ let selected = beta;
+ let finish;
+ let observed;
+ const wiring = createWorkspaceTestRunnerWiring({ userDataDir,
+  shellConfigService: { getToolsWorkspaceRoot: () => selected }, featureFlagProvider: flag(true),
+  runner: { runTestCommand: options => { observed = options; return new Promise(resolve => { finish = resolve; }); } },
+ });
+ const authority = Object.freeze({ project_id: 'project_alpha', root_path: alpha, root_revision: 1 });
+ let current = true;
+ const owner = { requireCurrent: value => { assert.deepEqual(value, authority); if (!current) throw new Error('stale'); } };
+ const scoped = wiring.forProjectAuthority(authority, owner);
+ assert.equal(scoped.listConfigs().configs[0].id, 'alpha-test');
+ assert.equal(wiring.listConfigs().configs[0].id, 'beta-test');
+ const pending = scoped.run({ configId: 'alpha-test' });
+ assert.equal(observed.cwd, alpha);
+ assert.equal(wiring.hasWorkspaceRun(), false);
+ assert.equal(wiring.saveConfigs([{ id: 'beta-test', label: 'Updated beta', command: 'echo beta' }]).configs[0].label, 'Updated beta');
+ assert.equal((await wiring.run({ configId: 'beta-test' })).error.code, WORKSPACE_TEST_RUNNER_ERROR_CODES.ALREADY_RUNNING);
+ selected = alpha;
+ assert.equal(wiring.getState().history.byConfig['alpha-test'][0].status, 'running');
+ selected = beta;
+ assert.equal(scoped.getState().history.byConfig['alpha-test'][0].status, 'running');
+ finish({ status: 'passed', exitCode: 0, terminationConfirmed: true });
+ assert.equal((await pending).status, 'passed');
+ assert.equal(scoped.getState().history.byConfig['alpha-test'][0].status, 'passed');
+ current = false;
+ assert.throws(() => scoped.listConfigs(), /stale/);
+ assert.throws(() => scoped.run({ configId: 'alpha-test' }), /stale/);
+ await wiring.dispose();
+});
+
+test('unbound scoped test runner never borrows the UI workspace', async t => {
+ const { userDataDir, makeRoot } = sandbox(t);
+ const root = makeRoot('selected');
+ writeConfigs(userDataDir, root, [{ id: 'private-test', label: 'Private', command: 'echo private' }]);
+ const runner = passingRunner();
+ const wiring = createWorkspaceTestRunnerWiring({ userDataDir, runner,
+  shellConfigService: { getToolsWorkspaceRoot: () => root }, featureFlagProvider: flag(true) });
+ const scope = wiring.forProjectAuthority({ project_id: 'project_general', root_path: null }, { requireCurrent() {} });
+ assert.deepEqual(scope.listConfigs().configs, []);
+ assert.equal((await scope.run({ configId: 'private-test' })).error.code, WORKSPACE_TEST_RUNNER_ERROR_CODES.ROOT_MISSING);
+ assert.equal(runner.calls.length, 0);
+ await wiring.dispose();
+});
+
+test('Windows production wiring uses the private contained helper launch', async t => {
+ const { userDataDir, makeRoot } = sandbox(t);
+ const root = makeRoot('contained');
+ writeConfigs(userDataDir, root, [{ id: 'unit', label: 'Unit', command: 'npm test' }]);
+ let launch = null;
+ const wiring = createWorkspaceTestRunnerWiring({ userDataDir, platform: 'win32',
+  shellConfigService: { getToolsWorkspaceRoot: () => root }, featureFlagProvider: flag(true),
+  sidecarLaunchSpecProvider: () => ({ hostMode: 'desktop', launchCommand: 'python',
+    launchArgs: ['-m', 'sidecar'], cwd: 'C:\\app' }),
+  containedSpawnImpl(command, args) {
+   launch = { command, args };
+   const child = new EventEmitter();
+   child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+   child.stdin.once('data', chunk => {
+    const body = chunk.toString('utf8').split('\r\n\r\n')[1];
+    const request = JSON.parse(body);
+    child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-08-17', id: request.id,
+     result: { api_version: '2026-08-17', schema_version: 1, operation_id: request.id,
+      status: 'passed', exit_code: 0, duration_ms: 1, stdout_tail: '', stderr_tail: '',
+      cleanup: { cleanup: 'confirmed', process_tree_terminated: true,
+       output_readers_terminated: true, reason: null } } }).frame);
+    child.stdout.end(); child.stderr.end();
+    setImmediate(() => child.emit('close', 0, null));
+   });
+   return child;
+  },
+ });
+ assert.equal((await wiring.run({ configId: 'unit' })).status, 'passed');
+ assert.deepEqual(launch, { command: 'python', args: ['-m', 'sidecar', '--workspace-test-runner-helper'] });
+ await wiring.dispose();
+});
 
 function flag(on) {
   return () => ({ workspace_test_runner: on });

@@ -1,5 +1,7 @@
 'use strict';
 
+const { resourceTerminationConfirmed } = require('./host-resource-admission');
+
 const DEFAULT_LIMITS = Object.freeze({
   global: 2, perPlugin: 1, perContribution: 1,
   idleMs: 300_000, absoluteMs: 3_600_000,
@@ -12,12 +14,15 @@ function sessionKey(authority, identity = {}) {
 class HostSessionManager {
   constructor({ startSession, terminateSession, limits = DEFAULT_LIMITS,
     onUnprovenTermination = async () => {}, isAuthorityCurrent = () => true,
+    getEffectiveGlobalLimit = null,
     setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}) {
     this._start = startSession;
     this._terminate = terminateSession;
     this._limits = { ...DEFAULT_LIMITS, ...limits };
     this._onUnproven = onUnprovenTermination;
     this._isCurrent = isAuthorityCurrent;
+    this._getEffectiveGlobalLimit = typeof getEffectiveGlobalLimit === 'function'
+      ? getEffectiveGlobalLimit : () => this._limits.global;
     this._setTimeout = setTimeoutFn;
     this._clearTimeout = clearTimeoutFn;
     this._sessions = new Map();
@@ -28,6 +33,9 @@ class HostSessionManager {
     this._unusable = new Set();
     this._timers = new Map();
     this._disposed = false;
+    this._quiescing = false;
+    this._quiesceConfirmed = false;
+    this._quiescePromise = null;
   }
 
   _identity(contributionId, descriptor = {}) {
@@ -96,8 +104,24 @@ class HostSessionManager {
     return Object.freeze(session);
   }
 
+  _effectiveGlobalLimit() {
+    try {
+      const value = this._getEffectiveGlobalLimit(this._limits.global);
+      return Number.isSafeInteger(value) && value >= 0
+        ? Math.min(value, this._limits.global) : 0;
+    } catch (_error) { return 0; }
+  }
+
+  async _recordUnproven(record) {
+    try {
+      const result = await this._onUnproven(record);
+      return result !== false && result?.ok !== false;
+    } catch (_error) { return false; }
+  }
+
   async acquire({ authority, contributionId, descriptor = {}, ...request }) {
     if (this._disposed) return { ok: false, reason: 'session_manager_disposed' };
+    if (this._quiescing) return { ok: false, reason: 'session_manager_quiescing' };
     if (this._revokingGenerations.has(authority?.active_generation_id)) {
       return { ok: false, reason: 'generation_revoked' };
     }
@@ -115,7 +139,7 @@ class HostSessionManager {
       return { ok: true, session: active, reused: true };
     }
     if (this._pending.has(key)) return this._pending.get(key);
-    if (this._sessions.size + this._pending.size >= this._limits.global) {
+    if (this._sessions.size + this._pending.size >= this._effectiveGlobalLimit()) {
       return { ok: false, reason: 'host_session_global_limit' };
     }
     if (this._pluginCount(identity) >= this._limits.perPlugin) {
@@ -131,15 +155,20 @@ class HostSessionManager {
           key, result.session, authority, identity
         );
         const generationRevoked = this._revokingGenerations.has(authority?.active_generation_id);
-        if (this._disposed || generationRevoked || !this._isCurrent(authority, request.policyToken)) {
+        if (this._disposed || this._quiescing || generationRevoked
+          || !this._isCurrent(authority, request.policyToken)) {
           const reason = this._disposed ? 'session_manager_disposed'
-            : (generationRevoked ? 'generation_revoked' : 'managed_policy_revoked');
+            : (this._quiescing ? 'session_manager_quiescing'
+              : (generationRevoked ? 'generation_revoked' : 'managed_policy_revoked'));
+          // Publish the exact native identity before any await. Cleanup
+          // reconciliation must be able to find a launch that policy prevented
+          // from becoming reusable.
+          this._sessions.set(key, session);
           this._unusable.add(key);
-          const termination = await this._terminate(session, reason);
-          if (termination?.terminated !== true || termination?.tree_empty !== true) {
-            await this._onUnproven({ session, result: termination, reason });
-          } else this._unusable.delete(key);
-          return { ok: false, reason };
+          const termination = await this._terminateKey(key, reason);
+          return { ok: false, reason, termination,
+            ...(termination?.cleanup_persisted === false
+              ? { cleanup_persistence_failed: true } : {}) };
         }
         this._sessions.set(key, session);
         this._schedule(key, session);
@@ -158,11 +187,16 @@ class HostSessionManager {
       if (!session) return { ok: true, already_absent: true };
       this._unusable.add(key);
       const result = await this._terminate(session, reason);
-      if (result?.terminated === true && result?.tree_empty === true) {
+      if (resourceTerminationConfirmed(result)) {
         this._sessions.delete(key);
         this._unusable.delete(key);
         this._clearTimers(key);
-      } else await this._onUnproven({ session, result, reason });
+      } else {
+        const persisted = await this._recordUnproven({ session, result, reason });
+        if (!persisted) return { ...(result || {}), ok: false,
+          reason: 'cleanup_persistence_failed', cleanup_persisted: false,
+          termination_reason: result?.reason || reason };
+      }
       return result;
     })();
     const termination = operation.finally(() => { this._terminations.delete(key); });
@@ -203,7 +237,7 @@ class HostSessionManager {
       this._terminateKey(key, reason)
     )));
     const unproven = results.filter((result) => (
-      result?.terminated !== true || result?.tree_empty !== true
+      !resourceTerminationConfirmed(result)
     ));
     return {
       ok: unproven.length === 0,
@@ -223,7 +257,7 @@ class HostSessionManager {
     const targets = [...this._sessions.entries()].filter(([, value]) => matches(value));
     const results = await Promise.all(targets.map(([key]) => this._terminateKey(key, reason)));
     const unproven = results.find((result) => (
-      result?.terminated !== true || result?.tree_empty !== true
+      !resourceTerminationConfirmed(result)
     ));
     return unproven ? { ok: false, status: 'pending_restart',
       reason: unproven.reason || 'termination_unproven' } : { ok: true, status: 'complete' };
@@ -241,8 +275,57 @@ class HostSessionManager {
     return match ? { ok: true, session: match[1] }
       : { ok: false, reason: 'host_session_not_found' };
   }
-  async handleUnexpectedExit(sessionId, reason = 'host_process_exited', onInvalidated = async () => {}) {
-    const match = [...this._sessions.entries()].find(([, value]) => value.session_id === sessionId);
+  confirmTermination({ session_id: sessionId, session_epoch: sessionEpoch } = {}) {
+    const sameId = [...this._sessions.entries()].filter(([, value]) => (
+      value.session_id === sessionId
+    ));
+    const match = sameId.find(([, value]) => value.session_epoch === sessionEpoch);
+    if (!match) return sameId.length
+      ? { ok: false, reason: 'host_session_cleanup_identity_mismatch' }
+      : { ok: true, already_absent: true };
+    const [key] = match;
+    if (!this._unusable.has(key)) {
+      return { ok: false, reason: 'host_session_cleanup_not_pending' };
+    }
+    this._sessions.delete(key);
+    this._unusable.delete(key);
+    this._clearTimers(key);
+    return { ok: true, confirmed: true };
+  }
+  markSupervisorSessionsUnusable(sessions = []) {
+    const wanted = new Set((Array.isArray(sessions) ? sessions : []).map((session) => (
+      `${String(session?.session_id || '')}\0${String(session?.session_epoch || '')}`
+    )));
+    const matched = [];
+    for (const [key, session] of this._sessions) {
+      if (!wanted.has(`${String(session.session_id || '')}\0${String(session.session_epoch || '')}`)) {
+        continue;
+      }
+      this._unusable.add(key);
+      matched.push(session);
+    }
+    return matched;
+  }
+  async handleSupervisorExit(sessions, reason = 'native_supervisor_exited',
+    onInvalidated = async () => {}) {
+    const matched = this.markSupervisorSessionsUnusable(sessions);
+    const results = await Promise.all(matched.map(async (session) => {
+      let invalidationRecorded = true;
+      try { await onInvalidated(session); } catch (_error) { invalidationRecorded = false; }
+      const key = [...this._sessions.entries()].find(([, current]) => current === session)?.[0];
+      const termination = key ? await this._terminateKey(key, reason)
+        : { ok: true, already_absent: true };
+      return { session, termination, invalidation_recorded: invalidationRecorded };
+    }));
+    return { ok: results.every((result) => result.invalidation_recorded
+        && resourceTerminationConfirmed(result.termination)), results };
+  }
+  async handleUnexpectedExit(sessionId, reason = 'host_process_exited',
+    onInvalidated = async () => {}, sessionEpoch = null) {
+    const match = [...this._sessions.entries()].find(([, value]) => (
+      value.session_id === sessionId
+      && (sessionEpoch === null || value.session_epoch === sessionEpoch)
+    ));
     if (!match) return { ok: false, reason: 'host_session_not_found' };
     const [key, session] = match;
     // Mark the session unusable before the first await. The process may already
@@ -254,16 +337,54 @@ class HostSessionManager {
     const termination = await this._terminateKey(key, reason);
     if (!invalidationRecorded) this._unusable.add(key);
     return { ok: invalidationRecorded
-        && termination?.terminated === true && termination?.tree_empty === true,
+        && resourceTerminationConfirmed(termination),
       session, termination };
+  }
+  beginQuiesce(reason = 'backend_stop') {
+    if (this._disposed) {
+      return Promise.resolve({ ok: false, reason: 'session_manager_disposed' });
+    }
+    if (this._quiescePromise) return this._quiescePromise;
+    this._quiescing = true;
+    this._quiesceConfirmed = false;
+    const operation = (async () => {
+      await Promise.allSettled([...this._pending.values()]);
+      const results = await Promise.all([...this._sessions.keys()].map((key) => (
+        this._terminateKey(key, reason)
+      )));
+      const snapshot = this.snapshot();
+      const ok = snapshot.active === 0 && snapshot.pending === 0 && snapshot.unusable === 0
+        && results.every(resourceTerminationConfirmed);
+      this._quiesceConfirmed = ok;
+      if (!ok) this._quiescePromise = null;
+      return { ok, ...(ok ? {} : { reason: 'host_session_cleanup_unconfirmed' }),
+        terminated_count: results.filter(resourceTerminationConfirmed).length,
+        unproven_count: results.filter((result) => !resourceTerminationConfirmed(result)).length };
+    })();
+    this._quiescePromise = operation;
+    return operation;
+  }
+  reopenAfterQuiesce() {
+    if (this._disposed) return { ok: false, reason: 'session_manager_disposed' };
+    if (!this._quiescing) return { ok: true };
+    if (!this._quiesceConfirmed) {
+      return { ok: false, reason: 'host_session_cleanup_unconfirmed' };
+    }
+    this._quiescing = false;
+    this._quiesceConfirmed = false;
+    this._quiescePromise = null;
+    return { ok: true };
   }
   async dispose() {
     this._disposed = true;
+    this._quiescing = true;
     const keys = [...this._sessions.keys()];
     await Promise.allSettled(keys.map((key) => this._terminateKey(key, 'shutdown')));
     await Promise.allSettled([...this._pending.values()]);
     for (const key of this._timers.keys()) this._clearTimers(key);
-    this._unusable.clear();
+    for (const key of this._unusable) {
+      if (!this._sessions.has(key)) this._unusable.delete(key);
+    }
     return this.snapshot();
   }
 }

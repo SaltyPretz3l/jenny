@@ -12,6 +12,57 @@ from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
 
+_AUTH_FAILURE_STATUS_CODES = frozenset({401, 403})
+# One warning per server per process: the probe runs on every catalog refresh,
+# so an unauthorized server would otherwise either spam the log or (at DEBUG)
+# stay invisible while the served window and vision verdict silently degrade.
+_auth_failures_logged: set[str] = set()
+
+
+def _log_probe_failure(
+    *,
+    probe_base_url: str,
+    authenticated: bool,
+    error: Exception,
+) -> None:
+    status_code = getattr(error, "status_code", None)
+    auth_failure = status_code in _AUTH_FAILURE_STATUS_CODES
+    data = {
+        "base_url": probe_base_url,
+        "error_type": type(error).__name__,
+        "status_code": status_code if isinstance(status_code, int) else 0,
+        "authenticated": authenticated,
+    }
+    if not auth_failure:
+        log_event(
+            logger,
+            logging.DEBUG,
+            component="ai.engines.local_server_props",
+            event="ai.engines.local_server_props.probe_failed",
+            message="Local server capability probe failed.",
+            status="degraded",
+            data=data,
+        )
+        return
+    if probe_base_url in _auth_failures_logged:
+        return
+    _auth_failures_logged.add(probe_base_url)
+    log_event(
+        logger,
+        logging.WARNING,
+        component="ai.engines.local_server_props",
+        event="ai.engines.local_server_props.probe_unauthorized",
+        message=(
+            "Local server rejected the capability probe as unauthorized; the served "
+            "context window and vision verdict fall back to model-name detection. "
+            "The probe "
+            + ("sent a bearer token that the server rejected." if authenticated
+               else "had no API key for this server.")
+        ),
+        status="degraded",
+        data=data,
+    )
+
 
 def props_base_url(base_url: str) -> str:
     normalized = str(base_url).rstrip("/")
@@ -49,14 +100,10 @@ def probe_server_modalities(
                 error = error or exc
 
     if error is not None:
-        log_event(
-            logger,
-            logging.DEBUG,
-            component="ai.engines.local_server_props",
-            event="ai.engines.local_server_props.probe_failed",
-            message="Local server capability probe failed.",
-            status="degraded",
-            data={"base_url": probe_base_url, "error_type": type(error).__name__},
+        _log_probe_failure(
+            probe_base_url=probe_base_url,
+            authenticated=bool((headers or {}).get("Authorization")),
+            error=error,
         )
         return None
     if not isinstance(props, dict):

@@ -263,6 +263,7 @@ function forkSession(sessionStore, sourceSessionId, atMessageId, options = {}) {
 
   const session = normalizeSession(branchSessionId, {
     title: branchTitle,
+    project_id: sourceSession.project_id,
     preferred_model: sourceSession.preferred_model,
     reasoning_effort: sourceSession.reasoning_effort,
     conversation_mode: sourceSession.conversation_mode,
@@ -323,15 +324,17 @@ function collectCarriedArtifactEntries(sessionStore, sourceSessionId, atMessageI
   return entries;
 }
 
-async function cleanupClonedBranchArtifacts(artifactService, branchSessionId) {
-  if (typeof artifactService?.deleteSessionArtifacts !== 'function') {
+async function cleanupClonedBranchArtifacts(artifactService, branchSessionId, clone) {
+  if (typeof clone?.cleanupArtifacts !== 'function'
+    && typeof artifactService?.deleteSessionArtifacts !== 'function') {
     return;
   }
   try {
-    await artifactService.deleteSessionArtifacts(branchSessionId);
+    if (typeof clone?.cleanupArtifacts === 'function') await clone.cleanupArtifacts();
+    else await artifactService.deleteSessionArtifacts(branchSessionId);
   } catch (_error) {
-    // Best effort: an undeletable leftover dir is reclaimed by the next
-    // orphan prune once protection is released.
+    // Preserve leftovers when captured cleanup cannot be proven safe. Scoped
+    // pruning never guesses ownership from an unbound directory name.
   }
 }
 
@@ -405,14 +408,14 @@ async function forkSessionWithArtifacts(sessionStore, sourceSessionId, atMessage
         });
       } catch (error) {
         // A throwing fork must not leak the copied dir.
-        await cleanupClonedBranchArtifacts(artifactService, branchSessionId);
+        await cleanupClonedBranchArtifacts(artifactService, branchSessionId, clone);
         throw error;
       }
       if (summary) {
         return summary;
       }
       // The branch never persisted: reclaim the copied files immediately.
-      await cleanupClonedBranchArtifacts(artifactService, branchSessionId);
+      await cleanupClonedBranchArtifacts(artifactService, branchSessionId, clone);
       return null;
     }
 
@@ -420,7 +423,7 @@ async function forkSessionWithArtifacts(sessionStore, sourceSessionId, atMessage
       // Files copied but at least one carryable reference could not be
       // rewritten: fall back to strip-and-mark for the whole fork rather
       // than persist a half-carried branch.
-      await cleanupClonedBranchArtifacts(artifactService, branchSessionId);
+      await cleanupClonedBranchArtifacts(artifactService, branchSessionId, clone);
     }
     return forkSession(sessionStore, sourceSessionId, atMessageId, forkOptions);
   } finally {

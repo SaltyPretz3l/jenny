@@ -207,7 +207,25 @@
       return applyBatchClose('closeAllSessions');
     }
 
+    /* The "Needs you" inbox mirrors exactly the waits these badges do, so it
+     * refreshes on exactly the passes that refresh them: afterRenderSessions
+     * (the session list changed) and every workspace-chrome pass -- which is
+     * the only signal an approval in a session that is not open produces, as
+     * queueSessionRender drops the `sessions` flag for such a session and
+     * keeps only `chrome`. No timer and no poll of its own. */
+    const renderAttentionInbox = () => {
+      try {
+        state.attentionInboxController?.render?.();
+      } catch (_error) { /* chrome only: a failed inbox render never breaks a pass */ }
+      try {
+        /* The reader syncs the active chat's seen cursor and panel-arrival read
+         * on this pass; it never builds a model here. */
+        state.awayDigestReader?.onChromePass?.();
+      } catch (_error) { /* chrome only: a failed digest read never breaks a pass */ }
+    };
+
     const renderWorkspaceSidebarBadges = (sessionElements, visibleSessions) => {
+      renderAttentionInbox();
       const approvalIds = getApprovalSessionIds();
       const linkedCounts = Array.isArray(visibleSessions)
         ? visibleSessions.reduce((m, s) => {
@@ -221,7 +239,7 @@
           return m;
         }, {});
       getWorkspaceChromeController()?.renderSidebarBadges(sessionElements, state.workspace?.openSessionIds || [], getStreamingSessionIds(), approvalIds, linkedCounts,
-        getAttentionStates(Array.from(sessionElements || [], (element) => element.dataset?.sessionId)));
+        getAttentionStates(Array.from(sessionElements || [], (element) => element.dataset?.sessionId)), state.awayDigest?.digest?.outcomeBySession || null);
     };
 
     async function handleLinkedSessionsChanged(sessionId, linkedSessionIds) {

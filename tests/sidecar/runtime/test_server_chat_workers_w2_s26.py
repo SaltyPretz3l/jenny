@@ -14,6 +14,7 @@ from sidecar.runtime.outcomes import ProcessOutcome
 class _Transport:
     def __init__(self) -> None:
         self.send_control_calls: list[dict[str, Any]] = []
+        self.send_terminal_result_calls: list[tuple[Any, Any]] = []
         self.unregister_turn_calls: list[tuple[str, Any]] = []
 
     def approval_reader_factory(self, *_args: Any, **_kwargs: Any) -> None:
@@ -21,6 +22,9 @@ class _Transport:
 
     def send_control(self, message: dict[str, Any]) -> None:
         self.send_control_calls.append(message)
+
+    def send_terminal_result(self, notifications: Any, response: Any) -> None:
+        self.send_terminal_result_calls.append((notifications, response))
 
     def unregister_turn(self, request_id: str, *, expected_handle: Any) -> None:
         self.unregister_turn_calls.append((request_id, expected_handle))
@@ -47,7 +51,10 @@ def test_chat_worker_exception_emits_canonical_semantic_error() -> None:
 
     worker()
 
-    assert transport.send_control_calls == [
+    # Delivered on the terminal (data) lane so it trails any queued frames.
+    assert transport.send_control_calls == []
+    assert transport.send_terminal_result_calls == [(
+        [],
         {
             "jsonrpc": "2.0",
             "api_version": API_VERSION,
@@ -62,8 +69,8 @@ def test_chat_worker_exception_emits_canonical_semantic_error() -> None:
                     "api_version": API_VERSION,
                 },
             },
-        }
-    ]
+        },
+    )]
 
 
 class _LiveThread:

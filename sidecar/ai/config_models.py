@@ -233,6 +233,7 @@ class RuntimeConfig:
     reasoning_effort: str = ""
     session_start_date: str = ""
     safety_mode: str = "normal"
+    auto_approve_streak_cap: int = 50
     ui_language: str = "en"
     use_24_hour_time: bool = False
     tools_enabled: bool = True

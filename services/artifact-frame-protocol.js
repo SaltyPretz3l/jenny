@@ -136,7 +136,7 @@ function createArtifactFrameProtocol({
     });
   }
 
-  function install({ sessionRef, ipcMainLike } = {}) {
+  function install({ sessionRef, ipcMainLike, authorization = {} } = {}) {
     if (sessionRef && sessionRef.protocol && typeof sessionRef.protocol.handle === 'function') {
       sessionRef.protocol.handle(ARTIFACT_FRAME_SCHEME, handleRequest);
     }
@@ -147,7 +147,7 @@ function createArtifactFrameProtocol({
       const { registerIpcInvokeHandlers } = require('./ipc-contract');
       registerIpcInvokeHandlers(ipcMainLike, {
         'artifactFrame.stage': (_event, html) => stageDocument(html),
-      });
+      }, authorization);
     }
   }
 

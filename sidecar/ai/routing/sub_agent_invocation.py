@@ -7,18 +7,19 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from sidecar.ai.engines.admitted import InferenceAdmissionRefused
 from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED,
 )
-from sidecar.ai.routing.delegation_contract import normalize_delegation_contract
+from sidecar.ai.routing import delegation_contract as _delegation_contract
+from sidecar.ai.routing import loop_runtime as _loop_runtime
 from sidecar.ai.routing.iteration_limits import (
     AGENT_SURFACE_SUB_AGENT,
     SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
     SUB_AGENT_REPORT_MODE_STRUCTURED,
     parse_sub_agent_report_object,
 )
-from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.runtime.approval_plan import stable_hash
 from sidecar.runtime.chat_models import (
@@ -94,7 +95,7 @@ def build_delegation_contract_payload(  # noqa: PLR0913
     verification: tuple[str, ...] | list[str],
     return_format: str,
 ) -> dict[str, Any]:
-    normalized = normalize_delegation_contract(
+    normalized = _delegation_contract.normalize_delegation_contract(
         {
             "goal": goal,
             "context": context,
@@ -252,6 +253,8 @@ def _child_request_context(
         session_id=parent_context.session_id,
         mode=parent_context.mode,
         approvals_pre_granted=False,
+        execution_context=parent_context.execution_context,
+        inference_budget_required=parent_context.inference_budget_required,
         memory_policy=DISABLED_MEMORY_POLICY,
         reasoning_effort=parent_context.reasoning_effort,
         session_start_date=parent_context.session_start_date,
@@ -358,7 +361,7 @@ def _child_loop_runtime(
     child_cancel: TurnCancellationHandle,
     max_runtime_ms: int | None,
     absolute_deadline: float | None = None,
-) -> LoopRuntime:
+) -> _loop_runtime.LoopRuntime:
     try:
         max_iterations = int(child_context.sub_agent_iteration_budget or 10)
     except (TypeError, ValueError):
@@ -376,7 +379,21 @@ def _child_loop_runtime(
         deadline = (
             requested_deadline if deadline is None else min(float(deadline), requested_deadline)
         )
-    return LoopRuntime(
+    parent_inference_admission = getattr(parent_runtime, "inference_admission", None)
+    child_inference_admission = None
+    if parent_inference_admission is not None:
+        bind_request = getattr(parent_inference_admission, "bind_request", None)
+        if callable(bind_request):
+            child_inference_admission = bind_request(
+                request_id=child_context.request_id,
+                session_id=child_context.session_id,
+            )
+        else:
+            def _refuse_unbound_child(_context: Any) -> None:
+                raise InferenceAdmissionRefused("inference_child_binding_unavailable")
+
+            child_inference_admission = _refuse_unbound_child
+    return _loop_runtime.LoopRuntime(
         request_id=child_context.request_id,
         trace_id=child_context.trace_id or "",
         session_id=child_context.session_id or "",
@@ -390,6 +407,8 @@ def _child_loop_runtime(
         electron_tool_writer=getattr(parent_runtime, "electron_tool_writer", None),
         electron_tool_reader=getattr(parent_runtime, "electron_tool_reader", None),
         electron_tool_reader_factory=getattr(parent_runtime, "electron_tool_reader_factory", None),
+        operation_admission=getattr(parent_runtime, "operation_admission", None),
+        inference_admission=child_inference_admission,
         request_context=child_context,
     )
 
@@ -398,7 +417,7 @@ def _failure_result(  # noqa: PLR0913 - mirrors the fixed failure envelope.
     *,
     child_context: ChatRequestContext,
     child_cancel: TurnCancellationHandle,
-    child_runtime: LoopRuntime,
+    child_runtime: _loop_runtime.LoopRuntime,
     decision: ChatDecision | None,
     error_code: str,
     error_message: str,
@@ -424,7 +443,7 @@ def _run_child_decision(  # noqa: PLR0913 - explicit child-runtime seam.
     *,
     router: Any,
     child_context: ChatRequestContext,
-    child_runtime: LoopRuntime,
+    child_runtime: _loop_runtime.LoopRuntime,
     child_cancel: TurnCancellationHandle,
     child_messages: list[dict[str, object]],
     latest_user_content: str,
@@ -561,7 +580,7 @@ def _settle_child_response(
     *,
     child_context: ChatRequestContext,
     child_cancel: TurnCancellationHandle,
-    child_runtime: LoopRuntime,
+    child_runtime: _loop_runtime.LoopRuntime,
     decision: ChatDecision | None,
 ) -> SubAgentInvocationResult:
     completion_reason = str(child_runtime.completion_reason or "").strip() or None
@@ -718,12 +737,12 @@ def invoke_sub_agent(  # noqa: PLR0913
     )
 
 
-def _bounded_iterations_used(runtime: LoopRuntime) -> int:
+def _bounded_iterations_used(runtime: _loop_runtime.LoopRuntime) -> int:
     return min(max(int(runtime.current_iteration or 0), 0), max(int(runtime.max_iterations), 1))
 
 
 def _observed_tool_results_used(
-    runtime: LoopRuntime,
+    runtime: _loop_runtime.LoopRuntime,
     decision: ChatDecision | None,
 ) -> int:
     if decision is not None:

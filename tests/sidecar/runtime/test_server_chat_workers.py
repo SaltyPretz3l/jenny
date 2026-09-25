@@ -457,6 +457,111 @@ class TestMakeChatSendWorkerSuccess:
         approval_calls = [c for c in transport.send_control_calls if isinstance(c, dict) and c.get("method") == "tool.request_approval"]
         assert len(approval_calls) == 1
 
+    def test_paused_outcome_is_enqueued_after_plugin_release_and_verified_unregister(
+        self,
+    ) -> None:
+        order: list[str] = []
+
+        class _PauseHandle(FakeCancelHandle):
+            session_id = "session-pause"
+
+        class _PauseTransport(FakeTransport):
+            active = True
+
+            def unregister_turn(self, request_id: str, *, expected_handle: Any) -> None:
+                order.append("unregister")
+                self.active = False
+                super().unregister_turn(request_id, expected_handle=expected_handle)
+
+            def has_active_session_turn(self, session_id: str) -> bool:
+                assert session_id == "session-pause"
+                order.append("verify_unregister")
+                return self.active
+
+            def send_terminal_result(self, notifications: Any, response: Any) -> None:
+                order.append("terminal")
+                super().send_terminal_result(notifications, response)
+
+        class _Admission:
+            def release(self) -> None:
+                order.append("plugin_release")
+
+        handle = _PauseHandle()
+        transport = _PauseTransport(cancel_handle=handle)
+        outcome = ProcessOutcome(
+            initialized=True, shutdown_requested=False,
+            response={"jsonrpc": "2.0", "id": 1, "result": {"status": "paused"}},
+            notifications=[{"method": "turn.event", "params": {}}],
+            deliver_after_worker_cleanup=True,
+        )
+        worker = make_chat_send_worker(
+            message={"id": 1}, transport=transport, cancel_handle=handle,
+            request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
+            logger=RecordingLogger(), plugin_runtime_admission=_Admission(),
+        )
+
+        worker()
+
+        assert order == ["plugin_release", "unregister", "verify_unregister", "terminal"]
+        assert transport.send_terminal_result_calls == [
+            (outcome.notifications, outcome.response)
+        ]
+
+    def test_paused_outcome_is_not_sent_when_exact_unregister_is_unconfirmed(self) -> None:
+        class _PauseHandle(FakeCancelHandle):
+            session_id = "session-pause"
+
+        class _StaleTransport(FakeTransport):
+            def has_active_session_turn(self, session_id: str) -> bool:
+                assert session_id == "session-pause"
+                return True
+
+        transport = _StaleTransport()
+        outcome = ProcessOutcome(
+            initialized=True, shutdown_requested=False,
+            response={"jsonrpc": "2.0", "id": 1, "result": {"status": "paused"}},
+            notifications=[], deliver_after_worker_cleanup=True,
+        )
+        worker = make_chat_send_worker(
+            message={"id": 1}, transport=transport, cancel_handle=_PauseHandle(),
+            request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
+            logger=RecordingLogger(),
+        )
+
+        worker()
+
+        assert len(transport.unregister_turn_calls) == 1
+        assert transport.send_terminal_result_calls == []
+
+    def test_paused_plugin_cleanup_failure_still_unregisters_and_suppresses_success(self) -> None:
+        class _PauseHandle(FakeCancelHandle):
+            session_id = "session-pause"
+
+        class _PauseTransport(FakeTransport):
+            def has_active_session_turn(self, _session_id: str) -> bool:
+                return False
+
+        class _BrokenAdmission:
+            def release(self) -> None:
+                raise RuntimeError("release failed")
+
+        transport = _PauseTransport()
+        outcome = ProcessOutcome(
+            initialized=True, shutdown_requested=False,
+            response={"jsonrpc": "2.0", "id": 1, "result": {"status": "paused"}},
+            notifications=[], deliver_after_worker_cleanup=True,
+        )
+        worker = make_chat_send_worker(
+            message={"id": 1}, transport=transport, cancel_handle=_PauseHandle(),
+            request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
+            logger=RecordingLogger(), plugin_runtime_admission=_BrokenAdmission(),
+        )
+
+        worker()
+
+        assert len(transport.unregister_turn_calls) == 1
+        assert transport.send_terminal_result_calls == []
+
 
 # ---------------------------------------------------------------------------
 # make_chat_send_worker — error path
@@ -464,7 +569,7 @@ class TestMakeChatSendWorkerSuccess:
 
 
 class TestMakeChatSendWorkerError:
-    def test_exception_triggers_send_control_with_error_code_minus32603(self) -> None:
+    def test_exception_sends_the_error_response_through_the_terminal_lane(self) -> None:
         cancel_handle = FakeCancelHandle()
         transport = FakeTransport(cancel_handle=cancel_handle)
         logger = RecordingLogger()
@@ -486,11 +591,39 @@ class TestMakeChatSendWorkerError:
 
         worker()
 
-        assert len(transport.send_control_calls) == 1
-        ctrl = transport.send_control_calls[0]
-        assert ctrl["error"]["code"] == -32603
-        assert "SpecificError" in ctrl["error"]["message"]
-        assert ctrl["id"] == "err-req"
+        # The control lane would overtake data frames this turn already queued.
+        assert transport.send_control_calls == []
+        assert len(transport.send_terminal_result_calls) == 1
+        notifications, response = transport.send_terminal_result_calls[0]
+        assert notifications == []
+        assert response["error"]["code"] == -32603
+        assert "SpecificError" in response["error"]["message"]
+        assert response["id"] == "err-req"
+
+    def test_plugin_release_failure_still_unregisters_a_completed_turn(self) -> None:
+        class _BrokenAdmission:
+            def release(self) -> None:
+                raise RuntimeError("release failed")
+
+        cancel_handle = FakeCancelHandle()
+        transport = FakeTransport(cancel_handle=cancel_handle)
+        worker = make_chat_send_worker(
+            message={"id": "rel-req"}, transport=transport, cancel_handle=cancel_handle,
+            request_id="rel-req", chat_send_runner=lambda *_args, **_kwargs: _make_outcome(),
+            logger=RecordingLogger(), plugin_runtime_admission=_BrokenAdmission(),
+        )
+
+        raised: list[Exception] = []
+        try:
+            worker()
+        except RuntimeError as error:
+            raised.append(error)
+
+        assert [str(error) for error in raised] == ["release failed"]
+        # A leaked registration would reject every later send for the session.
+        assert transport.unregister_turn_calls == [
+            {"request_id": "rel-req", "expected_handle": cancel_handle}
+        ]
 
     def test_unregister_turn_still_called_after_exception(self) -> None:
         cancel_handle = FakeCancelHandle()
@@ -658,6 +791,34 @@ class TestStartChatSendWorkerIfAllowed:
         assert result is False
         assert admission.released is True
         assert transport.register_turn_calls == []
+
+    def test_capacity_rejection_releases_plugin_admission_before_answering(self) -> None:
+        order: list[str] = []
+
+        class _OrderedTransport(FakeTransport):
+            def send_control(self, message: Any) -> None:
+                order.append("send_control")
+                super().send_control(message)
+
+        class Admission:
+            def release(self) -> None:
+                order.append("plugin_release")
+
+        transport = _OrderedTransport()
+        result = start_chat_send_worker_if_allowed(
+            message=_base_message("capacity-order"),
+            transport=transport,
+            worker_threads={FakeThread(alive=True)},
+            active_cancel_handles={},
+            chat_send_runner=lambda *a, **kw: _make_outcome(),
+            logger=RecordingLogger(),
+            max_active_workers=1,
+            plugin_admission_resolver=lambda _message: Admission(),
+        )
+
+        assert result is False
+        # A transport failure while answering must not leak the admission.
+        assert order == ["plugin_release", "send_control"]
 
     def test_returns_false_and_no_thread_when_at_capacity(self) -> None:
         transport = FakeTransport()

@@ -19,6 +19,10 @@ import pytest
 
 from sidecar.ai.engines.engine_events import ENGINE_EVENT_TOOL_CALL_COMPLETED, EngineEvent
 from sidecar.ai.engines.ollama_runtime import stream_with_tools
+from sidecar.ai.routing.tool_call_canonicalization import (
+    canonicalize_tool_call_arguments,
+    canonicalize_tool_calls,
+)
 from tests.sidecar.ai.engines.test_ollama_runtime import FakeEngine, FakeResponse
 
 
@@ -153,3 +157,43 @@ def test_kill_switch_suppresses_announcement(monkeypatch: pytest.MonkeyPatch) ->
     # The final result still carries the call — behavior reverts byte-identically.
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].tool_id == "write_file"
+
+
+def test_announcement_carries_the_call_as_dispatch_will_run_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Gate A4 F6: a pause at an approval proves the pending call against this
+    # announcement's tool_input, so an aliased argument must arrive canonical.
+    _patch_stream(
+        monkeypatch,
+        [
+            _tool_call_chunk(
+                {
+                    "id": "call-1",
+                    "function": {
+                        "name": "write_file:write_file",
+                        "arguments": {"file_path": "a.txt", "content": "five"},
+                    },
+                },
+                done=True,
+            ),
+        ],
+    )
+
+    events, result = _drain(
+        stream_with_tools(
+            FakeEngine(),
+            prompt="hi",
+            tools=[{"function": {"name": "write_file"}}],
+        )
+    )
+
+    [announced] = [
+        event for event in events
+        if isinstance(event, EngineEvent) and event.kind == ENGINE_EVENT_TOOL_CALL_COMPLETED
+    ]
+    calls, _, _ = canonicalize_tool_calls(result.tool_calls)
+    [dispatched], _, _ = canonicalize_tool_call_arguments(calls)
+    assert announced.tool_name == dispatched.tool_id == "write_file"
+    assert announced.arguments == dispatched.arguments == {"path": "a.txt", "content": "five"}
+    assert announced.tool_call_id == result.tool_calls[0].call_id

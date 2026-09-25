@@ -482,6 +482,18 @@
     function handlePointerMove(event) {
       if (pointerActive) markUserIntent('pointer', event);
     }
+    // Focusing a control the viewport clips (a click on a half-visible row
+    // action) makes the browser scroll it into view: attribute that move
+    // instead of reporting it as an unexplained jump. Fully visible targets
+    // arm nothing, so a real mystery jump still warns.
+    function handleFocusIn(event) {
+      var target = event && event.target;
+      if (!target || target === scrollContainer || typeof target.getBoundingClientRect !== 'function'
+        || typeof scrollContainer.getBoundingClientRect !== 'function') return;
+      var box = target.getBoundingClientRect();
+      var viewport = scrollContainer.getBoundingClientRect();
+      if (box.top < viewport.top || box.bottom > viewport.bottom) armProgrammaticMarker('focus_reveal');
+    }
     function handlePointerEnd() {
       pointerActive = false;
     }
@@ -550,6 +562,7 @@
       registerManaged(registerListener, scrollContainer, 'wheel', handleWheel, passiveOptions);
       registerManaged(registerListener, scrollContainer, 'pointerdown', handlePointerDown, passiveOptions);
       registerManaged(registerListener, scrollContainer, 'pointermove', handlePointerMove, passiveOptions);
+      registerManaged(registerListener, scrollContainer, 'focusin', handleFocusIn, passiveOptions);
       var pointerEndTarget = win && typeof win.addEventListener === 'function'
         ? win
         : (scrollContainer.ownerDocument || scrollContainer);

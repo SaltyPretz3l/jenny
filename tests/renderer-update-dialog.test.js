@@ -133,6 +133,19 @@ test('update dialog view model maps updater states to compact actions', () => {
   );
 });
 
+test('latched installer launch failure does not offer a retry action', () => {
+  const view = deriveUpdateDialogViewModel({
+    status: 'error',
+    errorStage: 'install',
+    errorCode: 'install-launch-failed',
+    canInstall: false,
+    installUnavailableReason: 'restart-required',
+  });
+
+  assert.deepEqual(view.actions.map((action) => action.id), ['close']);
+  assert.match(view.summary, /restart Jenny/i);
+});
+
 test('update dialog renders release notes through the supplied markdown sanitizer', () => {
   const html = renderUpdateDialog(
     {

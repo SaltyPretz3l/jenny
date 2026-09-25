@@ -21,6 +21,25 @@ test('assistant error recovery metadata includes friendly provider next action c
   assert.equal(metadata.next_action_label, 'Retry turn');
 });
 
+// A run-mode flip mid-request (Plan toggled while the model loaded, 2026-09-15
+// GUI gate) fails the turn by design. The card must name that cause and offer
+// the retry alone, not the generic "Retry available" transport copy.
+test('a run-mode change mid-request classifies as run_mode_changed with one retry action', () => {
+  const metadata = buildAssistantErrorRecoveryMetadata({
+    code: 'run_mode_changed',
+    category: 'runtime',
+    message: 'The run mode changed while this request was running, so the reply stopped.',
+    retryable: true,
+  });
+
+  assert.equal(classifyAssistantError({ error_code: 'run_mode_changed' }), 'run_mode_changed');
+  assert.equal(metadata.recovery_class, 'run_mode_changed');
+  assert.equal(metadata.next_action, 'retry_turn');
+  assert.deepEqual(metadata.recovery_actions.map((action) => action.id), ['retry_turn']);
+  assert.equal(metadata.recovery_title, 'Run mode changed');
+  assert.match(metadata.recovery_hint, /retry to run it in the new mode/i);
+});
+
 test('assistant error recovery metadata includes sidecar restart guidance', () => {
   const metadata = buildAssistantErrorRecoveryMetadata({
     code: 'CMP-SIDECAR-0003',
@@ -118,4 +137,30 @@ test('generic stream-incomplete terminals keep retryable recovery', () => {
 
   assert.equal(classifyAssistantError(error), 'retryable');
   assert.equal(buildAssistantErrorRecoveryMetadata(error).recovery_class, 'retryable');
+});
+
+// The same flip refused by the session runtime's inference admission reaches
+// Electron as the sidecar's generic generation failure (CMP-LOOP-0003) with the
+// refusal reason in error_message; it must classify like the Electron-side
+// throw, not as "Model stopped responding" (2026-09-15 live gate, turn C).
+test('an inference admission refused for a run-mode change classifies as run_mode_changed', () => {
+  const payload = {
+    code: 'CMP-LOOP-0003',
+    category: 'runtime',
+    message: 'model generation failed: run_mode_changed',
+    retryable: false,
+    error_type: 'InferenceAdmissionRefused',
+    error_message: 'run_mode_changed',
+  };
+  const metadata = buildAssistantErrorRecoveryMetadata(payload);
+
+  assert.equal(classifyAssistantError(payload), 'run_mode_changed');
+  assert.equal(metadata.recovery_class, 'run_mode_changed');
+  assert.deepEqual(metadata.recovery_actions.map((action) => action.id), ['retry_turn']);
+  assert.equal(metadata.recovery_title, 'Run mode changed');
+  assert.notEqual(classifyAssistantError({
+    ...payload,
+    message: 'model generation failed: inference_authority_stale',
+    error_message: 'inference_authority_stale',
+  }), 'run_mode_changed');
 });

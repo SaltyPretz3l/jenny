@@ -1,3 +1,4 @@
+const { waitForApproval } = require('./chat-stream-tool-approval');
 const { summarizeToolPayload } = require('./backend-service-utils');
 const {
   resolveToolResultStatus,
@@ -26,12 +27,9 @@ const {
   toPersistedToolResultAttachmentRefs,
 } = require('./tool-result-attachments');
 const {
-  sanitizeToolSummary, sanitizeApprovalReason,
-  sanitizeApprovalPolicyPresentation,
+  sanitizeToolSummary,
   buildPersistedToolInputSnapshot,
-  buildScopedApprovalId,
   buildApprovalCanonicalEvent,
-  approvalStateFromAbortSignal,
   normalizeGeneratedArtifactsFromNotification,
   mergeLocalGeneratedArtifactPaths,
   normalizeToolResultMetadataFromNotification,
@@ -41,32 +39,15 @@ const {
   completedToolResultCallIdsForStream,
   buildToolCallPayload,
   findToolMessageId,
-  resolveApprovalCallId,
   approvalTerminalOutput,
   normalizeDurationMs,
   makeNoteTurnEvent,
+  peekToolLookupMessages,
 } = require('./chat-stream-tool-payload-utils');
 const planDocuments = require('./plan-document-events');
 
-const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const LOOP_TOOL_INTERRUPTED_CODE = LOOP_PROTOCOL_ERROR_CODES.TOOL_INTERRUPTED;
 const LOOP_TOOL_INTERRUPTED_OUTPUT = 'System error: tool execution interrupted. Retry if needed.';
-const _setTimeout = setTimeout;
-const _clearTimeout = clearTimeout;
-// Message array for id-lookup only. peekSessionMessages skips the
-// per-call message re-normalization and turn_events normalize+sort that
-// getSessionMessages pays through getSession(); its message objects are shared
-// by reference and must only be read. Everything downstream of these lookups
-// (findToolMessageId) is read-only, and every store write path replaces message
-// objects rather than mutating them. Falls back for stores predating the
-// accessor, and for test doubles that only implement getSessionMessages.
-function peekToolLookupMessages(service, sessionId) {
-  const store = service?.sessionStore;
-  if (typeof store?.peekSessionMessages === 'function') {
-    return store.peekSessionMessages(sessionId);
-  }
-  return typeof store?.getSessionMessages === 'function' ? store.getSessionMessages(sessionId) : [];
-}
 
 function recordToolObservability(service, observationType, payload = {}) {
   const aggregator = service?.toolObservabilityAggregator;
@@ -99,6 +80,7 @@ function upsertToolResultMessage({
   sessionId,
   callId,
   streamId = '',
+  turnId = streamId,
   summary,
   model,
   toolResult,
@@ -125,6 +107,7 @@ function upsertToolResultMessage({
     summary: sanitizeToolSummary(toolResult?.summary || safeSummary).trim(),
   };
   const patch = {
+    turn_id: turnId,
     role: 'tool',
     kind: 'tool_result',
     content: safeSummary,
@@ -174,6 +157,7 @@ function persistTerminalApprovalResult({
   };
   const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
   upsertToolResultMessage({
+    turnId: turnEventCollector?.turnId || streamId,
     service,
     sessionId,
     callId,
@@ -243,202 +227,11 @@ function persistTerminalApprovalResult({
     metadata,
   });
 }
-
-async function waitForToolApproval(service, streamId, sessionId, requestId, params, controller, turnEventCollector = null) {
-  const toolName = String(params.tool_name || '').trim();
-  const callId = resolveApprovalCallId(toolName, params.tool_call_id);
-  const policyDecisionId = String(
-    params.policy_decision_id || params.policyDecisionId || ''
-  ).trim();
-  const reason = controller.unattendedPauseRequested === true
-    ? 'Auto paused after keyboard or mouse inactivity. ' + sanitizeApprovalReason(params.reason) : sanitizeApprovalReason(params.reason);
-  const { policyScope, policyConsequence } = sanitizeApprovalPolicyPresentation(params);
-  const input = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input : {};
-  const persistedInputSnapshot = buildPersistedToolInputSnapshot(input);
-  const summary = sanitizeToolSummary(summarizeToolPayload(toolName, input));
-  const approvalId = buildScopedApprovalId({ sessionId, streamId, callId });
-  const toolUseMessageId = buildToolUseMessageId(streamId, callId);
-  const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
-  const planApproval = planDocuments.preparePlanApproval({ toolName, service, sessionId, streamId, callId, input, approvalId, turnEventCollector });
-
-  if (planDocuments.denyUnrenderablePlan(planApproval, persistTerminalApprovalResult, {
-    service, sessionId, streamId, callId, toolName, summary, model: service.currentModel,
-    inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector,
-  })) return false;
-
-  service.sessionStore.appendMessage(sessionId, {
-    id: toolUseMessageId,
-    role: 'assistant',
-    kind: 'tool_use',
-    content: summary,
-    tool_call: buildToolCallPayload({
-      callId,
-      approvalId, policyDecisionId, reason,
-      toolName,
-      input,
-      inputSnapshot: persistedInputSnapshot,
-      summary,
-      status: 'pending_approval',
-      approvalState: 'pending',
-      streamId,
-    }),
-    finalizedAt: new Date().toISOString(),
-    timestamp: new Date().toISOString(),
-    model_used: service.currentModel,
-  }, { updatePreview: false });
-
-  service.emit('chat-stream', {
-    type: 'tool_use',
-    streamId,
-    sessionId,
-    model: service.currentModel,
-    callId,
-    approvalId,
-    ...(policyDecisionId ? { policyDecisionId } : {}),
-    ...(reason ? { reason } : {}),
-    ...(policyScope ? { policyScope } : {}),
-    ...(policyConsequence ? { policyConsequence } : {}),
-    toolName,
-    input: persistedInputSnapshot.input,
-    summary,
-    status: 'pending_approval',
-  });
-  noteTurnEvent('tool_use', () => ({
-    primary_message_id: toolUseMessageId,
-    source_message_ids: [toolUseMessageId],
-    tool_call_id: callId,
-    status: 'pending_approval',
-    payload: {
-      approval_id: approvalId,
-      ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}),
-      ...(reason ? { reason } : {}),
-      ...(policyScope ? { policy_scope: policyScope } : {}),
-      ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
-      tool_name: toolName,
-      input: persistedInputSnapshot.input,
-      summary,
-      parent_stream_id: streamId,
-    },
-  }));
-  noteTurnEvent(null, () => buildApprovalCanonicalEvent({
-    streamId,
-    sessionId,
-    callId,
-    type: 'tool_approval_requested',
-    payload: {
-      approval_id: approvalId,
-      approval_state: 'pending',
-      ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}),
-      ...(reason ? { reason } : {}),
-      ...(policyScope ? { policy_scope: policyScope } : {}),
-      ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
-      tool_name: toolName,
-      summary,
-    },
-  }));
-  service.emit('chat-stream', {
-    type: 'tool_approval_needed',
-    streamId,
-    sessionId,
-    model: service.currentModel,
-    callId,
-    approvalId,
-    ...(policyDecisionId ? { policyDecisionId } : {}),
-    ...(reason ? { reason } : {}),
-    ...(policyScope ? { policyScope } : {}),
-    ...(policyConsequence ? { policyConsequence } : {}),
-    toolName,
-    input: persistedInputSnapshot.input,
-    summary,
-    policy: 'ask',
-    ...planApproval.messageFields,
-  });
-
-  // The settled flag + abort handler ordering is safe because JavaScript is
-  // single-threaded: finish() cannot be re-entered, and the abort listener
-  // registration cannot race with the early-abort check.
-  return new Promise((resolve) => {
-    let settled = false;
-    let timeoutId;
-    const handleAbort = () => finish(false, approvalStateFromAbortSignal(controller));
-    const finish = (approved, approvalState = 'denied', feedback = '', plan = null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      _clearTimeout(timeoutId);
-      controller.signal.removeEventListener('abort', handleAbort);
-      service.pendingToolApprovals.delete(approvalId);
-      const normalizedApproved = Boolean(approved);
-      const resolvedState = planDocuments.resolvePlanApprovalState(normalizedApproved, approvalState);
-      // Everything above is unconditional teardown, so the waiter can never
-      // be re-entered. Everything below is fallible bookkeeping; a throw here
-      // is logged and swallowed, and resolve() always runs in `finally`
-      // with the decision already computed above (SP-13 containment).
-      try {
-        service.sessionStore.updateMessage(sessionId, toolUseMessageId, {
-          tool_call: buildToolCallPayload({
-            callId, approvalId, policyDecisionId, reason, policyScope, policyConsequence, toolName, input,
-            inputSnapshot: persistedInputSnapshot, summary,
-            status: resolvedState, approvalState: resolvedState, streamId,
-          }),
-        });
-        service.emit('chat-stream', {
-          type: 'tool_use', streamId, sessionId, model: service.currentModel,
-          callId, approvalId, ...(policyDecisionId ? { policyDecisionId } : {}),
-          toolName, input: persistedInputSnapshot.input, summary, status: resolvedState,
-        });
-        noteTurnEvent(null, () => buildApprovalCanonicalEvent({
-          streamId, sessionId, callId, type: 'tool_approval_resolved',
-          payload: {
-            approval_id: approvalId, approval_state: resolvedState, approved: normalizedApproved,
-            ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}), tool_name: toolName,
-          },
-        }));
-        if (!normalizedApproved) {
-          planDocuments.abandonPlanApproval({ toolName, service, sessionId, streamId, callId, turnEventCollector });
-          persistTerminalApprovalResult({
-            service, sessionId, streamId, callId, toolName, summary,
-            model: service.currentModel, approvalState: resolvedState,
-            inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: approvalTerminalOutput(toolName, resolvedState, reason),
-          });
-        }
-      } catch (settlementError) {
-        service?._emitServiceLog?.('ERROR', 'chat.tool_approval_settlement_failed', {
-          approvalId, sessionId, streamId, callId, toolName,
-          approved: normalizedApproved, approvalState: resolvedState,
-          message: String(settlementError?.message || settlementError || ''),
-        });
-      } finally {
-        resolve(planDocuments.planApprovalWaiterResult({ toolName, approved: normalizedApproved, state: resolvedState, feedback, plan }));
-      }
-    };
-    service.pendingToolApprovals.set(approvalId, {
-      approvalId,
-      streamId,
-      sessionId,
-      requestId,
-      callId,
-      toolName,
-      toolInput: input,
-      messageId: toolUseMessageId,
-      resolve: finish,
-      policyDecisionId,
-      ...(reason ? { reason } : {}),
-      policyScope,
-      policyConsequence,
-    });
-    if (controller.signal.aborted) {
-      finish(false, 'cancelled');
-      return;
-    }
-    controller.signal.addEventListener('abort', handleAbort, { once: true });
-    const timer = _setTimeout(() => finish(false, 'timeout'), APPROVAL_TIMEOUT_MS);
-    if (typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
-    timeoutId = timer;
-  });
+function waitForToolApproval(service, streamId, sessionId, requestId, params, controller,
+  turnEventCollector = null, executionAuthority = null) {
+  return waitForApproval(service, streamId, sessionId, requestId, params, controller,
+    turnEventCollector, executionAuthority, persistTerminalApprovalResult);
 }
-
 function handleToolNotification(service, context, notification, options = {}) {
   const {
     seenToolCalls,
@@ -446,14 +239,18 @@ function handleToolNotification(service, context, notification, options = {}) {
     model,
     resolvedSessionId,
     streamId,
+    workspaceRoot = '',
     eventBase,
     turnEventCollector = null,
   } = context;
   const params = notification.params && typeof notification.params === 'object'
     ? notification.params
     : {};
-  const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
-  if (notification.method === 'tool.executing') {
+  const noteTurnEvent = options.canonicalEvent === true || turnEventCollector?.canonicalPrimary === true ? () => null
+    : makeNoteTurnEvent(turnEventCollector, streamId);
+  if (notification.method === 'tool.executing' || notification.method === 'tool.requested') {
+    const requested = notification.method === 'tool.requested';
+    const status = requested ? 'pending' : 'running';
     const callId = String(params.tool_call_id || '').trim();
     if (!callId) {
       return true;
@@ -485,9 +282,10 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
+          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
-          status: 'running',
+          status,
           approvalState: 'auto',
           streamId,
           externalPayloads,
@@ -495,6 +293,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       });
     } else {
       service.sessionStore.appendMessage(resolvedSessionId, {
+        turn_id: turnEventCollector?.turnId || streamId,
         id: toolUseMessageId,
         role: 'assistant',
         kind: 'tool_use',
@@ -504,9 +303,10 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
+          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
-          status: 'running',
+          status,
           approvalState: 'auto',
           streamId,
           externalPayloads,
@@ -520,7 +320,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       primary_message_id: existingToolUseId || toolUseMessageId,
       source_message_ids: [existingToolUseId || toolUseMessageId],
       tool_call_id: callId,
-      status: 'running',
+      status,
       payload: {
         tool_name: toolName,
         input: persistedInputSnapshot.input,
@@ -533,13 +333,13 @@ function handleToolNotification(service, context, notification, options = {}) {
       primary_message_id: existingToolUseId || toolUseMessageId,
       source_message_ids: [existingToolUseId || toolUseMessageId],
       tool_call_id: callId,
-      status: 'running',
+      status,
       payload: {
         tool_name: toolName,
       },
     }));
-    seenToolCalls.add(callId);
-    recordToolObservability(service, 'executing', {
+    if (!requested) seenToolCalls.add(callId);
+    if (!requested) recordToolObservability(service, 'executing', {
       streamId,
       sessionId: resolvedSessionId,
       callId,
@@ -554,7 +354,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       toolName,
       input: persistedInputSnapshot.input,
       summary,
-      status: 'running',
+      status,
       ...(Object.keys(externalPayloads).length ? { externalPayloads } : {}),
     });
     return true;
@@ -592,13 +392,16 @@ function handleToolNotification(service, context, notification, options = {}) {
     const trustedAttachmentRefs = ingestToolResultAttachments(
       service,
       params.trusted_attachments,
-      { streamId, callId, toolName }
+      { sessionId: resolvedSessionId, streamId, callId, toolName }
     );
     const persistedAttachmentRefs = toPersistedToolResultAttachmentRefs(trustedAttachmentRefs);
+    const resultTraceId = String(params.trace_id || '').trim();
     const normalizedMetadata = {
       ...normalizeToolResultMetadataFromNotification(params.metadata),
       ...workspaceIdentityForDiffMetadata(service, params.metadata, context.workspaceRoot),
-      trace_id: String(params.trace_id || '').trim() || undefined,
+      // Omit rather than store `undefined`: the canonical message must round-trip
+      // through JSON persistence with the same key set.
+      ...(resultTraceId ? { trace_id: resultTraceId } : {}),
     };
     planDocuments.recordPlanToolOutcome({ toolName, service, sessionId: resolvedSessionId, streamId, callId,
       result: { isError: params.success === false, metadata: normalizedMetadata }, turnEventCollector });
@@ -636,6 +439,7 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
+          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
           status: toolStatus,
@@ -646,6 +450,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       });
     }
     upsertToolResultMessage({
+      turnId: turnEventCollector?.turnId || streamId,
       service,
       sessionId: resolvedSessionId,
       callId,
@@ -851,6 +656,7 @@ function settleUnfinishedToolsForStream(
     model = '',
     resolvedSessionId = '',
     streamId = '',
+    workspaceRoot = '',
     eventBase = {},
     turnEventCollector = null,
   } = context || {};
@@ -887,6 +693,7 @@ function settleUnfinishedToolsForStream(
         policyDecisionId,
         toolName,
         input,
+        workspaceRoot,
         summary,
         status: normalizedTerminalState,
         approvalState: 'auto',
@@ -900,6 +707,7 @@ function settleUnfinishedToolsForStream(
       }),
     });
     upsertToolResultMessage({
+      turnId: turnEventCollector?.turnId || normalizedStreamId,
       service,
       sessionId: normalizedSessionId,
       callId,

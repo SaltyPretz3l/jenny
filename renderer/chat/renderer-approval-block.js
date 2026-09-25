@@ -53,6 +53,65 @@
     ? stringUtils.escapeHtml
     : fallbackEscapeHtml;
 
+  // Resolved per render: index.html may load the button primitive after this.
+  function resolveActionButton() {
+    if (typeof globalThis !== 'undefined' && typeof globalThis.inventoryActionButton === 'function') {
+      return globalThis.inventoryActionButton;
+    }
+    if (typeof require === 'function') {
+      try { return require('../inventory/action-button'); } catch (_error) { /* not available */ }
+    }
+    return null;
+  }
+
+  // Paused work, and paused work being discarded: the runtime holds the turn.
+  const HELD_STATUSES = new Set(['paused', 'withdrawing']);
+
+  // Which card a pending approval row shows (A4, owner-approved 2026-09-22).
+  // Live wins: Allow and Deny resolve by call id, so any approval the runtime
+  // holds for the call is answerable. A paused reply for the turn offers its
+  // Resume; one being discarded, or a card whose answer was refused, folds to
+  // a receipt, as does a row the sealed fold marked interrupted (the turn is
+  // over). Anything else keeps today's buttons: before the live approvals and
+  // paused work load, a card must not claim it is dead.
+  function resolveApprovalCardState(state, ref) {
+    const callId = normalizeText(ref && ref.callId);
+    if (!state || !callId) return { state: 'live' };
+    const approvals = state.pendingToolApprovals && typeof state.pendingToolApprovals.values === 'function'
+      ? [...state.pendingToolApprovals.values()] : [];
+    if (approvals.some((approval) => normalizeText(approval && approval.callId) === callId)) {
+      return { state: 'live' };
+    }
+    const sessionId = normalizeText(ref.sessionId);
+    const turnId = normalizeText(ref.turnId);
+    const rows = sessionId && turnId && typeof state.runtimeSendController?.listPending === 'function'
+      ? state.runtimeSendController.listPending(sessionId) : [];
+    const held = rows.find((row) => row.turnId === turnId && HELD_STATUSES.has(row.status));
+    if (held) return held.status === 'paused' ? { state: 'paused', resumeKey: held.key } : { state: 'inactive' };
+    if (state.inactiveApprovalCallIds instanceof Set && state.inactiveApprovalCallIds.has(callId)) {
+      return { state: 'inactive' };
+    }
+    if (normalizeText(ref.rowState) === 'interrupted') return { state: 'inactive' };
+    return { state: 'live' };
+  }
+
+  // Every input resolveApprovalCardState reads, as one string: the transcript
+  // forces a full render when it changes, because no message changed with it.
+  function approvalCardStateKey(state, sessionId) {
+    if (!state) return '';
+    const live = state.pendingToolApprovals && typeof state.pendingToolApprovals.values === 'function'
+      ? [...state.pendingToolApprovals.values()].map((approval) => normalizeText(approval && approval.callId)).sort()
+      : [];
+    const id = normalizeText(sessionId);
+    const paused = id && typeof state.runtimeSendController?.listPending === 'function'
+      ? state.runtimeSendController.listPending(id).filter((row) => HELD_STATUSES.has(row.status))
+        .map((row) => `${row.turnId}=${row.status}:${row.key}`).sort()
+      : [];
+    const inactive = state.inactiveApprovalCallIds instanceof Set ? [...state.inactiveApprovalCallIds].sort() : [];
+    return live.length || paused.length || inactive.length
+      ? `${live.join(',')}/${paused.join(',')}/${inactive.join(',')}` : '';
+  }
+
   function resolveBackendStrings() {
     if (typeof globalThis !== 'undefined' && globalThis.jennyBackendStrings) {
       return globalThis.jennyBackendStrings;
@@ -144,9 +203,24 @@
         + `${approvalAttrMarkup}`
         + ` data-approval-status="pending" data-approval-variant="plan"></div>`;
     }
+    // The runtime no longer waits on this approval: a paused reply offers
+    // Resume in place of the three buttons, and a withdrawn one folds to one
+    // quiet receipt line.
+    const cardState = source.cardState === 'paused' || source.cardState === 'inactive'
+      ? source.cardState : 'live';
+    const rowIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"${approvalAttrMarkup}`;
+    if (cardState === 'inactive') {
+      const receipt = `<p class="tool-approval-receipt">${escapeHtml(jt('approval.block.noLongerActive', 'Approval no longer active'))}</p>`;
+      return mode === 'inline'
+        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity} data-approval-status="inactive">${receipt}</div>`
+        : `<div class="tool-approval-block"${rowIdentity} data-approval-status="inactive">${receipt}</div>`;
+    }
     const promptTag = mode === 'inline' ? 'p' : 'div';
+    const kickerLabel = cardState === 'paused'
+      ? jt('approval.block.paused', 'Paused')
+      : jt('approval.block.needed', 'Approval needed');
     const kickerMarkup = mode === 'inline'
-      ? `<div class="tool-approval-kicker"><span class="tool-approval-kicker-dot" aria-hidden="true"></span>${escapeHtml(jt('approval.block.needed', 'Approval needed'))}</div>`
+      ? `<div class="tool-approval-kicker"><span class="tool-approval-kicker-dot" aria-hidden="true"></span>${escapeHtml(kickerLabel)}</div>`
       : '';
     // The headline says what will happen. A model-authored purpose wins it when
     // present -- only the model knows intent -- and the facts row below is the
@@ -213,29 +287,46 @@
     // travels on the button that was pressed.
     const buttonIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
       + `${approvalAttrMarkup}`;
-    const actionsMarkup = `<div class="tool-approval-actions">`
+    const alwaysAllowMarkup = source.oneOffOnly === true || source.one_off_only === true ? ''
+      : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
+        + ` data-approval-scope="always"${buttonIdentity}`
+        + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
+        + ` aria-label="${escapeHtml(jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`;
+    const actionButton = cardState === 'paused' ? resolveActionButton() : null;
+    const resumeKey = normalizeText(source.resumeKey);
+    const pausedActionsMarkup = `<div class="tool-approval-actions tool-approval-actions--paused">`
+      + (actionButton && resumeKey ? actionButton({
+        id: 'resume-paused-approval',
+        label: jt('approval.block.resume', 'Resume'),
+        variant: 'secondary',
+        size: 'sm',
+        className: 'resume-turn-action',
+        ariaLabel: jt('approval.block.resumeAriaLabel', 'Resume the paused reply to answer'),
+        title: jt('approval.block.resumeAriaLabel', 'Resume the paused reply to answer'),
+        dataset: { 'resume-key': resumeKey },
+      }) : '')
+      + `<span class="tool-approval-paused-note">${escapeHtml(jt('approval.block.pausedNote', 'Resume to answer.'))}</span>`
+      + `</div>`;
+    const actionsMarkup = cardState === 'paused' ? pausedActionsMarkup : `<div class="tool-approval-actions">`
       + `<button class="tool-approve-btn" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`
-      + `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
-      + ` data-approval-scope="always"${buttonIdentity}`
-      + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
-      + ` aria-label="${escapeHtml(jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`
+      + alwaysAllowMarkup
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`
       + `</div>`;
 
+    const approvalStatus = cardState === 'paused' ? 'paused' : 'pending';
     const block = `<div class="tool-approval-block"`
-      + ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
-      + `${approvalAttrMarkup}>`
+      + `${rowIdentity}`
+      + `${mode === 'card' && cardState === 'paused' ? ' data-approval-status="paused"' : ''}>`
       + `${kickerMarkup}${promptMarkup}${policyMarkup}${commandMarkup}${actionsMarkup}`
       + `</div>`;
 
     if (mode === 'inline') {
       return `<div class="approval-gap-row" role="status" aria-live="polite"`
-        + ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
-        + `${approvalAttrMarkup}`
-        + ` data-approval-status="pending">`
+        + `${rowIdentity}`
+        + ` data-approval-status="${approvalStatus}">`
         + `${block}`
         + `</div>`;
     }
@@ -243,6 +334,8 @@
   }
 
   return {
+    approvalCardStateKey,
     renderApprovalBlock,
+    resolveApprovalCardState,
   };
 });

@@ -122,6 +122,10 @@ def test_initialize_response_exposes_active_model_reasoning_capabilities() -> No
         brain_container=brain_container,
     )
 
+    assert response["result"]["runtime_inference_admission_version"] == 1
+    assert response["result"]["runtime_inference_budget_version"] == 1
+    assert response["result"]["runtime_tool_resource_admission_version"] == 1
+    assert response["result"]["runtime_continuation_version"] == 1
     assert response["result"]["active_model_capabilities"] == {"text": True, "thinking": True}
     assert response["result"]["active_model_reasoning_support"] == "supported"
     assert response["result"]["active_app_profile"] == {

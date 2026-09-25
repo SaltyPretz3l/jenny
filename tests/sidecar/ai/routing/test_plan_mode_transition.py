@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import pytest
 
 from sidecar.ai.context.builder_shared import RuntimeToolStatus
+from sidecar.ai.context.prompt_modes import build_approved_plan_overlay
 from sidecar.ai.context.runtime_message_markers import (
     APPROVED_PLAN_OVERLAY_HEADING,
     PLAN_MODE_OVERLAY_HEADING,
+    PLAN_REVISION_OVERLAY_HEADING,
     RESTORED_TOOL_CONTRACT_HEADING,
     RUNTIME_SYSTEM_MESSAGE_HEADINGS,
 )
@@ -177,6 +180,41 @@ def test_approved_transition_replaces_plan_overlay_and_keeps_prompt_policy(
     }
 
 
+def test_edited_approval_overlay_says_the_edit_supersedes_the_proposal() -> None:
+    plan = {"title": "Edited plan", "steps": ["Use the edited step"]}
+    edited = _outcome("approved")
+    edited.metadata["plan"] = plan
+    edited.metadata["plan_edited"] = True
+    edited_messages: list[dict[str, object]] = []
+
+    transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[edited],
+        working_messages=edited_messages,
+    )
+
+    edited_overlay = str(edited_messages[0]["content"])
+    supersedes = (
+        "The user edited this plan before approving it; it supersedes the plan in "
+        "your exit_plan_mode call."
+    )
+    assert supersedes in edited_overlay
+    assert "1. Use the edited step" in edited_overlay
+
+    unedited_messages: list[dict[str, object]] = []
+    unedited = _outcome("approved")
+    unedited.metadata["plan"] = plan
+    transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[unedited],
+        working_messages=unedited_messages,
+    )
+
+    unedited_overlay = str(unedited_messages[0]["content"])
+    assert supersedes not in unedited_overlay
+    assert unedited_overlay == build_approved_plan_overlay(plan)
+
+
 def test_approval_policy_follows_restored_mode_not_decision() -> None:
     auto = transition_after_exit_outcome(
         request_context=_context(),
@@ -276,6 +314,57 @@ def test_rejection_retains_plan_mode() -> None:
     assert rejected.approvals_pre_granted is False
 
 
+def _revision_overlays(messages: list[dict[str, object]]) -> list[str]:
+    return [
+        str(message["content"])
+        for message in messages
+        if message.get("role") == "system"
+        and str(message.get("content") or "").startswith(PLAN_REVISION_OVERLAY_HEADING)
+    ]
+
+
+def test_rejection_carries_the_user_feedback_as_a_system_instruction() -> None:
+    # Gate C1 2026-09-24: the feedback arrived only inside the untrusted tool
+    # result, and the model called it an injected redirect and ignored it.
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": f"{PLAN_MODE_OVERLAY_HEADING}\nPlan only."},
+        {"role": "user", "content": "Plan to add the word 'kiwi' to the readme."},
+    ]
+    context = replace(_context(), plan_feedback="instead of kiwi, plan to add 'strawberry'")
+    rejected = transition_after_exit_outcome(
+        request_context=context,
+        outcomes=[_outcome("rejected", cleared=False)],
+        working_messages=messages,
+    )
+    overlays = _revision_overlays(messages)
+    assert len(overlays) == 1
+    assert "User feedback: instead of kiwi, plan to add 'strawberry'" in overlays[0]
+    assert "user's own instruction" in overlays[0]
+    assert "exit_plan_mode" in overlays[0]
+    assert rejected.plan_feedback == ""
+    # Leading system run, so providers keep it at system authority.
+    assert [message["role"] for message in messages] == ["system", "system", "user"]
+    assert PLAN_REVISION_OVERLAY_HEADING in RUNTIME_SYSTEM_MESSAGE_HEADINGS
+
+
+def test_second_rejection_replaces_and_approval_drops_the_revision_overlay() -> None:
+    messages: list[dict[str, object]] = [{"role": "user", "content": "Plan it."}]
+    for feedback in ("use banana", "<no feedback given>"):
+        transition_after_exit_outcome(
+            request_context=replace(_context(), plan_feedback=feedback),
+            outcomes=[_outcome("rejected", cleared=False)],
+            working_messages=messages,
+        )
+    overlays = _revision_overlays(messages)
+    assert len(overlays) == 1
+    assert "User feedback" not in overlays[0]
+    assert "no written feedback" in overlays[0]
+    transition_after_exit_outcome(
+        request_context=_context(), outcomes=[_outcome("approved")], working_messages=messages
+    )
+    assert _revision_overlays(messages) == []
+
+
 def test_tool_loop_transition_updates_live_run_before_schema_reassembly() -> None:
     run = _ToolCallPhasesMixin()
     run.request_context = _context()
@@ -307,3 +396,77 @@ def test_tool_loop_transition_reports_false_without_plan_exit() -> None:
     run.approvals_pre_granted = True
 
     assert run._apply_plan_mode_transition([]) is False
+
+
+def test_accepted_transition_keeps_plan_mode_and_requests_one_toolless_reply() -> None:
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": f"{PLAN_MODE_OVERLAY_HEADING}\nplan"},
+    ]
+    context = transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[_outcome("accepted", cleared=False)],
+        working_messages=messages,
+    )
+    assert context.plan_mode is True
+    assert context.read_only is True
+    assert context.final_toolless_reply is True
+    assert context.plan_decision == ""
+    assert str(messages[0]["content"]).startswith(PLAN_MODE_OVERLAY_HEADING)
+
+
+def test_accepted_that_claims_plan_mode_cleared_is_declined_unchanged() -> None:
+    original = _context()
+    context = transition_after_exit_outcome(
+        request_context=original,
+        outcomes=[_outcome("accepted", cleared=True)],
+        working_messages=[],
+    )
+    assert context is original
+    assert context.final_toolless_reply is False
+
+
+def test_exit_transition_is_a_no_op_once_plan_mode_is_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Owner gate 2026-09-20 (scenario C): the transition applied repeatedly.
+
+    After the first approved exit the context has plan_mode=False. A later call
+    that still sees the exit outcome must not strip the overlay again, insert a
+    second approved-plan overlay, or log a second "applied".
+    """
+    working_messages: list[dict[str, object]] = [
+        {"role": "system", "content": f"{PLAN_MODE_OVERLAY_HEADING}\nplanning"},
+        {"role": "user", "content": "Build it."},
+    ]
+    outcome = _outcome("approved")
+    caplog.set_level(logging.INFO, logger="sidecar.ai.routing.plan_mode_transition")
+    first = transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[outcome],
+        working_messages=working_messages,
+    )
+    assert first.plan_mode is False
+    overlays_after_first = [
+        message
+        for message in working_messages
+        if str(message.get("content") or "").startswith(APPROVED_PLAN_OVERLAY_HEADING)
+    ]
+    assert len(overlays_after_first) == 1
+
+    caplog.clear()
+    snapshot = [dict(message) for message in working_messages]
+    second = transition_after_exit_outcome(
+        request_context=first,
+        outcomes=[outcome],
+        working_messages=working_messages,
+    )
+    assert second is first, "an already-off context is returned as-is"
+    assert working_messages == snapshot, "no overlay churn on the repeat"
+    assert not any("exit_transition_applied" in record.getMessage() or getattr(record, "event", "") == "plan_mode.exit_transition_applied" for record in caplog.records)
+
+    never_in_plan_mode = replace(_context(), plan_mode=False, read_only=False)
+    assert transition_after_exit_outcome(
+        request_context=never_in_plan_mode,
+        outcomes=[outcome],
+        working_messages=working_messages,
+    ) is never_in_plan_mode

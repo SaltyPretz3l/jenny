@@ -94,10 +94,17 @@
     const segments = [];
     let currentGroup = null;
     let groupIndex = 0;
+    let finalAnswerSortKey = null;
+    let latestSortKey = null;
     for (const segment of segmentEvents) {
       const payload = segment.payload && typeof segment.payload === 'object' ? segment.payload : {};
       const segmentPrimaryId = normalizeId(segment.primary_message_id);
       const segmentPhase = normalizeId(segment.assistant_phase);
+      // Empty carry segments are not activity: they must not outrank a tool outcome.
+      if (Array.isArray(segment.sort_key) && String(payload.text || '').trim()) latestSortKey = segment.sort_key.slice();
+      if (segmentPhase === 'final_answer' && Array.isArray(segment.sort_key) && String(payload.text || '').trim()) {
+        finalAnswerSortKey = segment.sort_key.slice();
+      }
       if (
         !currentGroup
         || currentGroup._primaryMessageId !== segmentPrimaryId
@@ -134,6 +141,8 @@
       totalText,
       finalAnswerText: finalSegment ? finalSegment.text : '',
       hasFinalAnswer: Boolean(finalSegment),
+      finalAnswerSortKey,
+      latestSortKey,
     };
   }
 
@@ -155,12 +164,18 @@
           entries: [],
           sourceMessageIds: [],
           sortKey: Array.isArray(event.sort_key) ? event.sort_key.slice() : [0, 0, 0],
+          lastSortKey: null,
         };
         groups.push(currentGroup);
       }
       const entries = Array.isArray(payload.entries) ? payload.entries : [];
       for (const entry of entries) {
         if (entry) currentGroup.entries.push({ ...entry });
+      }
+      // Latest contentful event of the group (a reused phase id resumes the
+      // group); the opening sortKey stays the ordering key.
+      if (entries.some((entry) => entry && String(entry.text || '').trim()) && Array.isArray(event.sort_key)) {
+        currentGroup.lastSortKey = event.sort_key.slice();
       }
       currentGroup.renderCollapsed = currentGroup.renderCollapsed || Boolean(payload.render_collapsed);
       if (!currentGroup.toolCallId) {
@@ -200,6 +215,20 @@
     // Conservative summary of current-turn tool and assistant state; downstream
     // lifecycle derivation consumes phaseHint without re-walking events.
     const toolCalls = Array.isArray(viewModel.toolCalls) ? viewModel.toolCalls : [];
+    const assistant = viewModel.assistant;
+    const reasoning = Array.isArray(viewModel.reasoning) ? viewModel.reasoning : [];
+    const notices = Array.isArray(viewModel.notices) ? viewModel.notices : [];
+    const assistantErrors = notices.filter((notice) => notice && notice.eventKind === 'assistant_error');
+    let latestActivitySortKey = assistant && assistant.latestSortKey;
+    for (const activity of reasoning.concat(toolCalls, assistantErrors)) {
+      const sortKey = activity && (activity.lastEventSortKey || activity.lastSortKey || activity.sortKey);
+      if (sortKey && (!latestActivitySortKey || sortKeyCompare(sortKey, latestActivitySortKey) > 0)) {
+        latestActivitySortKey = sortKey;
+      }
+    }
+    // A turn-level assistant failure after the last activity is terminal even
+    // when an earlier tool outcome is not the latest event.
+    if (assistantErrors.some((notice) => sortKeyCompare(notice.sortKey, latestActivitySortKey) >= 0)) return 'errored';
     let hasErrored = false;
     let hasRunning = false;
     let hasAwaitingApproval = false;
@@ -209,23 +238,35 @@
     let hasAbandoned = false;
     for (const toolCall of toolCalls) {
       const state = toolCall && toolCall.state;
-      if (state === 'errored') hasErrored = true;
+      const isLatestActivity = toolCall && sortKeyCompare(toolCall.lastEventSortKey, latestActivitySortKey) >= 0;
+      if (state === 'errored' && isLatestActivity) hasErrored = true;
       else if (state === 'running' || state === 'interrupted') hasRunning = true;
       else if (state === 'awaiting_approval') hasAwaitingApproval = true;
-      else if (state === 'denied') hasDenied = true;
-      else if (state === 'cancelled' || state === 'timed_out') hasCancelledOrTimedOut = true;
-      else if (state === 'completed') hasCompletedTool = true;
-      else if (state === 'abandoned') hasAbandoned = true;
+      else if (state === 'denied' && isLatestActivity) hasDenied = true;
+      else if ((state === 'cancelled' || state === 'timed_out') && isLatestActivity) hasCancelledOrTimedOut = true;
+      else if (state === 'completed' && isLatestActivity) hasCompletedTool = true;
+      else if (state === 'abandoned' && isLatestActivity) hasAbandoned = true;
     }
     if (hasErrored) return 'errored';
     if (hasAwaitingApproval) return 'awaiting_approval';
     if (hasRunning) return 'tool_running';
     if (hasDenied) return 'denied';
     if (hasCancelledOrTimedOut) return 'cancelled';
-    const assistant = viewModel.assistant;
-    if (assistant && assistant.hasFinalAnswer) return 'final_answer';
+    if (assistant && assistant.hasFinalAnswer) {
+      // Live segments default to final_answer, so an agent loop's preamble
+      // before each tool call reads as the answer. Reasoning that opened after
+      // the latest answer text is the live step: calling the turn 'final_answer'
+      // (phase done) there renders that step as a settled "Thought" row.
+      // Compare the group's latest contentful event (a resumed phase id keeps
+      // its opening sortKey); an answer with only empty carries has no sort key.
+      const latestReasoning = reasoning[reasoning.length - 1];
+      if (latestReasoning && (!assistant.finalAnswerSortKey
+        || sortKeyCompare(latestReasoning.lastSortKey || latestReasoning.sortKey, assistant.finalAnswerSortKey) > 0)) {
+        return 'reasoning';
+      }
+      return 'final_answer';
+    }
     if (assistant && assistant.segments && assistant.segments.length > 0) return 'streaming_assistant';
-    const reasoning = Array.isArray(viewModel.reasoning) ? viewModel.reasoning : [];
     if (reasoning.length > 0) return 'reasoning';
     if (hasCompletedTool || hasAbandoned) return 'tool_settled';
     if (viewModel.user) return 'awaiting_assistant';
@@ -247,6 +288,16 @@
       toolCalls.map((toolCall) => normalizeId(toolCall.toolCallId)).filter(Boolean)
     );
     const notices = buildNoticeSections(events, anchoredToolCallIds);
+    // A4 F7: a turn failure recorded after a call's last event means nothing
+    // waits on that call's approval any more, as the sealed fold also says.
+    const failureSortKeys = notices.filter((notice) => notice && notice.eventKind === 'assistant_error')
+      .map((notice) => notice.sortKey);
+    for (const toolCall of toolCalls) {
+      if (toolCall.state === 'awaiting_approval'
+        && failureSortKeys.some((sortKey) => sortKeyCompare(sortKey, toolCall.lastEventSortKey) > 0)) {
+        toolCall.state = 'interrupted';
+      }
+    }
     const attachments = buildAttachmentSection(events);
     const interactive = buildInteractiveSection(events);
     const suggestions = buildSuggestionSection(events);

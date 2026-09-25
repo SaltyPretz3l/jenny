@@ -1,4 +1,5 @@
 const { API_VERSION } = require('./sidecar-client');
+const { requestRuntimeInference } = require('./backend-runtime-inference');
 
 // Backstop against a misbehaving/compromised renderer so a huge payload never
 // crosses IPC+stdio before the sidecar's own clamp. prefix/suffix caps match
@@ -72,7 +73,7 @@ async function generateInlineCompletion(service, payload) {
   // active chat engine has no FIM path — or when no chat model is loaded at all.
 
   try {
-    const result = await service.sidecarClient.request('inline.complete', {
+    const result = await requestRuntimeInference(service, 'inline.complete', {
       accept_version: API_VERSION,
       prefix,
       suffix,

@@ -15,11 +15,19 @@ function createPipelineHarness(options = {}) {
   const rolloutSignals = [];
   const logs = [];
   global.rendererMessageIndexUtils = messageIndexUtils;
-  const uiRuntime = {
-    projectionContextBySession: new Map(),
-    toolRowProjectionFallbacksBySession: new Map(),
-    toolRowProjectionFailuresBySession: new Map(),
-  };
+  // Split view W0-6: a caller may hand in the render-memo bag
+  // (`createPipelineHarness({ uiRuntime })`), so two harnesses can be driven
+  // with two pane runtimes over one shared session store -- or, for a negative
+  // control, with the one object the renderer used before that slice. Omitted,
+  // it is the private bag with the three session-keyed Maps this harness has
+  // always built, unchanged.
+  const uiRuntime = settings.uiRuntime && typeof settings.uiRuntime === 'object'
+    ? settings.uiRuntime
+    : {
+      projectionContextBySession: new Map(),
+      toolRowProjectionFallbacksBySession: new Map(),
+      toolRowProjectionFailuresBySession: new Map(),
+    };
   const state = {
     currentSessionId: settings.currentSessionId || 'session-source',
     streamThinkingStatusByStream: new Map(),

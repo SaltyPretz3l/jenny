@@ -19,6 +19,17 @@
     || function missingRendererSurfaceDom() { return { status: {}, settings: {}, chat: {} }; };
   const settingsNavUtils = globalRoot?.rendererSettingsNavUtils
     || (typeof require === 'function' ? require('./renderer-settings-nav-utils') : null);
+  // Split view W0-2: the pane layout the boot state is seeded with. Resolved
+  // the same optional way as the siblings above; without it the seed still
+  // produces the one blank pane and the empty current session it always had.
+  const paneModel = globalRoot?.rendererPaneModel
+    || (typeof require === 'function' ? require('./renderer-pane-model') : null);
+  const normalizePaneLayout = paneModel?.normalizePaneLayout
+    || function missingPaneLayout() {
+      return Object.freeze({ panes: Object.freeze([Object.freeze({ paneId: 0, sessionId: '' })]), focusedPaneId: 0, splitRatio: 0.5 });
+    };
+  const deriveCurrentSessionId = paneModel?.deriveCurrentSessionId
+    || function missingCurrentSessionId(layout) { return String(layout?.panes?.[0]?.sessionId || ''); };
   const inventoryActionButton = globalRoot?.inventoryActionButton
     || (typeof require === 'function' ? require('../inventory/action-button') : null);
   const inventorySelectField = globalRoot?.inventorySelectField
@@ -30,6 +41,7 @@
   const normalizeUiLanguageTag = settingsSupport.normalizeUiLanguageTag;
   const normalizeSafetyMode = settingsSupport.normalizeSafetyMode;
   const normalizeUnattendedGuardMinutes = settingsSupport.normalizeUnattendedGuardMinutes;
+  const normalizeAutoApproveStreakCap = settingsSupport.normalizeAutoApproveStreakCap;
 
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
@@ -82,6 +94,7 @@
       logs: 'shell.logs', memory: 'shell.memory', settings: 'shell.settings',
       backend: 'shell.backend',
     };
+    const initialPaneLayout = normalizePaneLayout(null);
     const state = {
       authMode: 'login',
       auth: { authenticated: false, user: null },
@@ -89,9 +102,17 @@
       use24HourTime: false,
       safetyMode: 'normal',
       unattendedGuardMinutes: 0,
+      autoApproveStreakCap: 50,
       backend: { phase: 'starting', detail: jt('shell.bootstrap.connectingToBackend', 'Connecting to backend...') },
       sessions: [],
-      currentSessionId: '',
+      // Split view W0-2: one blank pane, and the current session DERIVED from
+      // it, so `currentSessionId` means "the focused pane's session" from the
+      // seed onward and every existing reader of the field stays valid. The
+      // panes are not yet the WRITER: session activation still assigns
+      // `state.currentSessionId` directly until W1 moves that behind the
+      // focused pane (see docs/manifests/electron-wiring.md, split view W0-2).
+      currentSessionId: deriveCurrentSessionId(initialPaneLayout),
+      panes: initialPaneLayout,
       workspace: { activeSessionId: '', openSessionIds: [] },
       workspaceRoot: {
         path: '',
@@ -171,6 +192,8 @@
         statusLoaded: false,
         statusUnavailable: false,
         filter: 'all',
+        projectFilter: 'all',
+        projects: [],
         searchQuery: '',
         editingMemoryId: null,
         draftsById: new Map(),
@@ -408,6 +431,10 @@
         composerStatusNoticeBadgeText: '',
         interactiveFocusRequest: null,
         interactiveRecapExpandedBySession: new Map(),
+        /* Message ids whose context-compacted notice body is open. Keyed by
+           message id alone: the row is live-only (it never enters a persisted
+           message record), so it cannot outlive its session's messages. */
+        contextCompactionExpanded: new Set(),
         reasoningPhaseExpansionBySession: new Map(),
         threadBranchesCollapsedBySession: new Map(),
         chatSendLifecycleBySession: new Map(),
@@ -431,6 +458,7 @@
       globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
       state.safetyMode = normalizeSafetyMode(config?.safetyMode);
       state.unattendedGuardMinutes = normalizeUnattendedGuardMinutes(config?.unattendedGuardMinutes);
+      state.autoApproveStreakCap = normalizeAutoApproveStreakCap(config?.autoApproveStreakCap);
       if (!state.currentSessionId) state.runtimeDraft.runMode = defaultRunMode;
     }).catch(() => {});
 
@@ -487,6 +515,12 @@
         usageRecordWarning: 'usageRecordWarning',
         usageActions: 'usageActions',
         usageActionStatus: 'usageActionStatus',
+      },
+      runtime: {
+        sessionRuntimeSettingsMount: 'sessionRuntimeSettingsMount',
+      },
+      runtimeLimits: {
+        sessionOrchestrationMount: 'sessionOrchestrationMount',
       },
     });
     const getHomeDom = createLazyDomResolver(document, {
@@ -600,10 +634,12 @@
       TOAST_SOURCE,
       state,
       dom,
+      // The third argument (split view W0-4) is what the chat group's
+      // resolvePane seam resolves pane 0 against; nothing else reads it.
       surfaceDom: createRendererSurfaceDom(dom, {
         getSettingsSectionDom,
         getIdeDom,
-      }),
+      }, document),
       lazyDom: {
         getHomeDom: function getLazyHomeDom() {
           return getHomeDom('home');

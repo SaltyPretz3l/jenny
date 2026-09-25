@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const {
   parseSpecTypeValues,
   parseServerBuild,
+  peekCapabilities,
   probeCapabilities,
+  probeCapabilitiesAsync,
 } = require('../services/backend/llama-server-capabilities');
 
 const REAL_HELP = `--spec-type [none|ngram-cache|ngram-simple|ngram-map-k|ngram-map-k4v|ngram-mod]
@@ -256,4 +258,88 @@ test('parseSpecTypeValues rejects a single token followed by same-line prose', (
   // text on the flag line must not become an advertised spec type.
   assert.deepEqual(parseSpecTypeValues('  --spec-type draft-mtp support requires a compatible model\n'), []);
   assert.deepEqual(parseSpecTypeValues('  --spec-type none,draft-mtp   \n  comma-separated list\n'), ['none', 'draft-mtp']);
+});
+
+// Verbatim PrismML fork prism-b10683-d8f26ee --version (STDERR, exit 0, CRLF).
+const FORK_VERSION = 'ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\r\n'
+  + 'version: 0.2.0-dev (build 10683, commit d8f26eec7)\r\n'
+  + 'built with MSVC 19.44.35228.0 for Windows AMD64\r\n';
+
+function fakeExecFile(outputs, calls) {
+  return (binaryPath, args, options, callback) => {
+    calls.push({ binaryPath, args, options });
+    const output = outputs[args[0]] || {};
+    setImmediate(() => callback(output.error || null, output.stdout || '', output.stderr || ''));
+  };
+}
+
+test('probeCapabilitiesAsync reads help and the stderr banner and shares the synchronous cache', async () => {
+  const calls = [];
+  const fsImpl = { statSync: () => ({ mtimeMs: 11, size: 12 }) };
+  const binaryPath = 'async-fork-llama-server.exe';
+  const result = await probeCapabilitiesAsync({
+    binaryPath,
+    execFileImpl: fakeExecFile({ '--help': { stdout: B10749_HELP }, '--version': { stderr: FORK_VERSION } }, calls),
+    fsImpl,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.build, 10683);
+  assert.equal(result.commit, 'd8f26eec7');
+  assert.equal(result.supportsMtp, true);
+  assert.deepEqual(calls.map((call) => call.args), [['--help'], ['--version']]);
+  const { env, ...execOptions } = calls[0].options;
+  assert.deepEqual(execOptions, { timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: 'utf8' });
+  assert.equal(typeof env, 'object');
+  const mustNotSpawn = () => { throw new Error('the launch-time probe must reuse the picker probe'); };
+  assert.equal(probeCapabilities({ binaryPath, execFileSyncImpl: mustNotSpawn, spawnSyncImpl: mustNotSpawn, fsImpl }), result);
+  assert.equal(peekCapabilities(binaryPath, { fsImpl }), result);
+  assert.equal(peekCapabilities(binaryPath, { fsImpl: { statSync: () => ({ mtimeMs: 99, size: 12 }) } }), null,
+    'a replaced binary is not peeked');
+  assert.equal(peekCapabilities(binaryPath, { fsImpl: { statSync: () => { throw new Error('ENOENT'); } } }), null);
+  assert.equal(peekCapabilities('never-probed-llama-server.exe', { fsImpl }), null);
+  assert.equal(peekCapabilities('', { fsImpl }), null);
+});
+
+test('probeCapabilitiesAsync caches a failing help run and retries only cached failures on request', async () => {
+  let helpRuns = 0;
+  let failing = true;
+  const execFileImpl = (binaryPath, args, options, callback) => {
+    if (args[0] === '--help') helpRuns += 1;
+    setImmediate(() => {
+      if (args[0] === '--help' && failing) callback(Object.assign(new Error('exit 1'), { code: 1 }), '', '');
+      else callback(null, args[0] === '--help' ? B10749_HELP : '', args[0] === '--version' ? FORK_VERSION : '');
+    });
+  };
+  const options = {
+    binaryPath: 'flaky-llama-server.exe',
+    execFileImpl,
+    fsImpl: { statSync: () => ({ mtimeMs: 13, size: 14 }) },
+  };
+  const failed = await probeCapabilitiesAsync(options);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.reason, 'probe_failed:exec_error');
+  failing = false;
+  assert.equal(await probeCapabilitiesAsync(options), failed, 'a cached failure stands without retryFailed');
+  assert.equal(helpRuns, 1);
+  const retried = await probeCapabilitiesAsync({ ...options, retryFailed: true });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.build, 10683);
+  assert.equal(helpRuns, 2);
+  assert.equal(await probeCapabilitiesAsync({ ...options, retryFailed: true }), retried, 'a cached success is never re-probed');
+  assert.equal(helpRuns, 2);
+});
+
+test('probeCapabilitiesAsync fails closed without a binary and when execFile throws', async () => {
+  assert.equal((await probeCapabilitiesAsync({})).reason, 'probe_failed:no_binary');
+  assert.equal((await probeCapabilitiesAsync({
+    binaryPath: 'gone-llama-server.exe',
+    fsImpl: { statSync: () => { throw new Error('ENOENT'); } },
+  })).reason, 'probe_failed:no_binary');
+  const thrown = await probeCapabilitiesAsync({
+    binaryPath: 'throwing-async-llama-server.exe',
+    execFileImpl: () => { throw new Error('EACCES'); },
+    fsImpl: { statSync: () => ({ mtimeMs: 15, size: 16 }) },
+  });
+  assert.equal(thrown.ok, false);
+  assert.equal(thrown.reason, 'probe_failed:exec_error');
 });

@@ -281,15 +281,23 @@ test('real RemoteControlService pairs and routes commands, events, and denial', 
   const { room } = shim.makeRoom(route.route_id, Date.now());
 
   class RelaySocket {
-    constructor(url) {
+    constructor(url, protocols = []) {
       this.url = url;
+      this.protocols = Array.isArray(protocols) ? protocols : [protocols];
       this.readyState = 0;
       this.listeners = new Map();
       queueMicrotask(async () => {
         const parsed = new URL(url);
+        // The desktop authenticates at the upgrade with its subprotocols
+        // (jenny-relay-v1 plus rt.<route_token>), exactly like the real socket.
         const response = await room.fetch(new Request(
           `https://${parsed.host}${parsed.pathname}${parsed.search}`,
-          { headers: { Upgrade: 'websocket' } }
+          {
+            headers: {
+              Upgrade: 'websocket',
+              ...(this.protocols.length ? { 'Sec-WebSocket-Protocol': this.protocols.join(', ') } : {}),
+            },
+          }
         ));
         this.server = response.webSocket.peer;
         this.server.send = (text) => this.emit('message', { data: text });

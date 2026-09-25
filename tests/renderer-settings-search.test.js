@@ -52,6 +52,15 @@ test('searchSettingsIndex is a case-insensitive substring match over label + des
 
   const bySectionLabel = searchSettingsIndex(index, 'usage');
   assert.ok(bySectionLabel.some((hit) => hit.kind === 'section' && hit.sectionId === 'usage'));
+
+  // The Model library folded into Models (2026-09-21): its old name and the
+  // things people do there keep resolving to the Models card via keywords.
+  for (const query of ['model library', 'library', 'gguf']) {
+    assert.ok(
+      searchSettingsIndex(index, query).some((hit) => hit.kind === 'section' && hit.sectionId === 'models'),
+      `"${query}" must reach the Models section`
+    );
+  }
 });
 
 test('searchSettingsIndex exposes the local profile editor and retires sign-out search', () => {
@@ -73,6 +82,10 @@ test('field-copy index has entries for retained account and editor sections', ()
   const editorFields = fieldEntries.filter((entry) => entry.sectionId === 'editor');
   assert.ok(editorFields.length >= 1, 'editor section has at least one searchable field');
   assert.equal(fieldEntries.some((entry) => entry.sectionId === 'harness'), false);
+});
+
+test('startup model loading field copy resolves to Models', () => {
+  assert.equal(fieldCopy.getSettingsFieldCopy('modelStartupLoadToggle')?.sectionId, 'models');
 });
 
 test('searchSettingsIndex orders field hits before section hits and returns [] for empty query', () => {

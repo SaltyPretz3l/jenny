@@ -1,9 +1,11 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { normalizePlan } = require('../tools/builtin/exit-plan-mode-tool');
+const { normalizePlan, PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 
-const TERMINAL_STATES = new Set(['approved', 'approved_auto', 'rejected', 'abandoned', 'superseded']);
+const TERMINAL_STATES = new Set(['approved', 'approved_auto', 'accepted', 'rejected', 'abandoned', 'superseded']);
+// States that block a second proposal in the same stream.
+const ACTIVE_STATES = new Set(['pending', 'approved', 'approved_auto', 'accepted']);
 const INSPECTION_TOOLS = new Set([
   'read_file', 'list_dir', 'glob_files', 'grep_search',
 ]);
@@ -80,7 +82,7 @@ function notePlanEvent({ turnEventCollector, streamId, callId, planId, state, pl
   if (!turnEventCollector?.noteEvent) return null;
   return turnEventCollector.noteEvent({
     event_id: `${streamId}:plan_document:${planId}:${state}`,
-    turn_id: streamId,
+    turn_id: turnEventCollector.turnId || streamId,
     kind: 'plan_document',
     primary_message_id: `plan_document_${planId}`,
     source_message_ids: [`plan_document_${planId}`],
@@ -105,6 +107,7 @@ function notePlanEvent({ turnEventCollector, streamId, callId, planId, state, pl
 
 function appendTranscriptMessage(service, sessionId, entry) {
   const message = {
+    turn_id: entry.turnId || entry.streamId,
     id: `plan_document_${entry.planId}`,
     role: 'assistant',
     kind: 'plan_document',
@@ -157,12 +160,13 @@ function recordPendingPlanDocument({ service, sessionId, streamId, callId, input
       state: previous.state, plan: previous.plan, feedback: previous.feedback, filesRead: previous.filesRead,
       planEdited: previous.planEdited });
     updateTranscriptMessage(service, sessionId, previous);
-  } else if (previous?.state === 'pending' || previous?.state === 'approved' || previous?.state === 'approved_auto') {
+  } else if (ACTIVE_STATES.has(previous?.state)) {
     return null;
   }
   const preferredStore = service?.sessionStore || service?.shadowStore;
   const messages = preferredStore?.getSessionMessages?.(sessionId) || [];
   const entry = {
+    turnId: turnEventCollector?.turnId || streamId,
     planId: deterministicPlanId(streamId, callId), callId, streamId, plan, state: 'pending', feedback: '',
     planEdited: false,
     filesRead: deriveFilesRead(messages, streamId),
@@ -197,7 +201,7 @@ function preparePlanApproval({
 }) {
   if (toolName !== 'exit_plan_mode') return { messageFields: {} };
   const previous = stateMap(service).get(streamId);
-  const duplicate = ['pending', 'approved', 'approved_auto'].includes(String(previous?.state || ''));
+  const duplicate = ACTIVE_STATES.has(String(previous?.state || ''));
   const entry = duplicate ? null : recordPendingPlanDocument({
     service, sessionId, streamId, callId, input, turnEventCollector,
   });
@@ -245,22 +249,89 @@ function abandonPlanApproval({ toolName, service, sessionId, streamId, callId, t
   });
 }
 
+// Mirrors _EDITED_PLAN_MAX_BYTES in sidecar/runtime/approval.py: only a plain
+// object whose compact JSON fits the cap travels on the approval frame.
+const EDITED_PLAN_MAX_BYTES = 16 * 1024;
+function boundedEditedPlan(value) {
+  if (!value || typeof value !== 'object'
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8') <= EDITED_PLAN_MAX_BYTES ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function planApprovalWaiterResult({ toolName, approved, state, feedback, plan }) {
   if (!approved) return false;
-  if (toolName !== 'exit_plan_mode' || !['approved', 'approved_auto', 'rejected'].includes(state)) {
+  if (toolName !== 'exit_plan_mode' || !PLAN_DECISIONS.includes(state)) {
     return true;
   }
   return {
     approved: true,
     decision: state,
     feedback: String(feedback || '').trim().slice(0, 800),
-    ...(plan && typeof plan === 'object' && !Array.isArray(plan) ? { edited_plan: plan } : {}),
+    ...(boundedEditedPlan(plan) ? { edited_plan: plan } : {}),
   };
 }
 
 function resolvePlanApprovalState(approved, approvalState) {
   if (!approved) return String(approvalState || 'denied').trim() || 'denied';
-  return ['approved', 'approved_auto', 'rejected'].includes(approvalState) ? approvalState : 'approved';
+  // Fail closed: an approval carrying an unknown decision never resolves to execute.
+  return PLAN_DECISIONS.includes(approvalState) ? approvalState : 'denied';
+}
+
+// Build an accepted-not-built plan later: only the session's latest plan
+// document, only while it is still `accepted`, only with no active turn. It
+// becomes `approved`, so the next non-plan turn carries it as the approved plan.
+function markAcceptedPlanApproved({ service, sessionId, planId }) {
+  const store = service?.sessionStore;
+  const sid = String(sessionId || '').trim();
+  const pid = String(planId || '').trim();
+  if (!sid || !pid || typeof store?.getSessionMessages !== 'function') return { ok: false, reason: 'unavailable' };
+  if (store.getActiveTurn?.(sid)) return { ok: false, reason: 'busy' };
+  const messages = store.getSessionMessages(sid) || [];
+  let latestMessage = null;
+  for (const message of messages) {
+    if (message?.kind === 'plan_document' && message.plan_document) latestMessage = message;
+  }
+  const latest = latestMessage?.plan_document;
+  if (!latest || String(latest.plan_id || '') !== pid) return { ok: false, reason: 'not_latest' };
+  if (String(latest.state || '') !== 'accepted') return { ok: false, reason: 'not_accepted' };
+  const plan = normalizePlan(latest);
+  if (!plan) return { ok: false, reason: 'unrenderable' };
+  if (typeof store.appendTurnEvents !== 'function') return { ok: false, reason: 'unavailable' };
+  const entry = {
+    planId: pid, callId: latest.tool_call_id, streamId: String(latest.parent_stream_id || ''), plan,
+    state: 'approved', feedback: String(latest.feedback || ''),
+    filesRead: Array.isArray(latest.files_read) ? latest.files_read : [], planEdited: latest.plan_edited === true,
+  };
+  // The turn event is written first and must persist: a replay renders from
+  // the events, so a message that says approved over events that still say
+  // accepted would show the wrong receipt after a reload.
+  const events = store.getSessionTurnEvents?.(sid) || [];
+  const priorEvent = [...events].reverse().find((event) => event?.kind === 'plan_document'
+    && String(event?.payload?.plan_id || '') === pid);
+  let approvedEvent = null;
+  if (priorEvent) {
+    approvedEvent = {
+      ...priorEvent,
+      event_id: String(priorEvent.event_id || '').replace(/:accepted$/u, ':approved'),
+      event_seq: undefined, status: 'approved', completed_at: new Date().toISOString(),
+      payload: { ...(priorEvent.payload || {}), transition: 'approved', render_collapsed: true },
+    };
+  } else {
+    // Sessions whose accepted outcome predates turn-event capture still get
+    // an approved event, built exactly as a live transition would build it.
+    const turnId = String(latestMessage.turn_id || entry.streamId || '');
+    notePlanEvent({ turnEventCollector: { turnId, noteEvent: (event) => { approvedEvent = event; } },
+      streamId: entry.streamId || turnId, callId: entry.callId, planId: pid, state: 'approved', plan,
+      feedback: entry.feedback, filesRead: entry.filesRead, planEdited: entry.planEdited });
+  }
+  const commit = store.appendTurnEvents(sid, [approvedEvent], { durable: true });
+  if (commit?.ok !== true) return { ok: false, reason: 'persist_failed' };
+  updateTranscriptMessage(service, sid, entry);
+  return { ok: true };
 }
 
 function recordPlanToolOutcome({ toolName, ...context }) {
@@ -364,6 +435,8 @@ module.exports = {
   abandonPlanApproval,
   planApprovalWaiterResult,
   resolvePlanApprovalState,
+  boundedEditedPlan,
+  markAcceptedPlanApproved,
   recordPlanToolOutcome,
   settleStalePlanDocumentsOnRead,
   settleStalePendingPlanDocuments,

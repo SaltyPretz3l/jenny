@@ -27,7 +27,7 @@ function dispatchPastedImage(window, input, name = 'clipboard.png') {
 
 function setWorkspaceWidths(window, doc, workspaceWidth = 1600) {
   const workspace = doc.getElementById('workspace');
-  const sidebar = doc.querySelector('.sidebar');
+  const sidebar = doc.getElementById('viewPanel');
   const sidebarResizer = doc.getElementById('sidebarResizer');
   const height = 900;
   workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: workspaceWidth, bottom: height, width: workspaceWidth, height });

@@ -8,6 +8,11 @@
 
   function createSessionLifecycleController(deps) {
     const { state } = deps;
+    // F37: a sessions.list() response older than one already applied is stale.
+    // Only an applied (successful) newer list supersedes, so a failed newer
+    // refresh does not discard a good older one.
+    let sessionListSeq = 0;
+    let appliedSessionListSeq = 0;
     const sessionCacheController = deps.sessionCacheController || {};
     const thinkingController = deps.thinkingController || {};
     const jennyShell = deps.jennyShell || {};
@@ -90,6 +95,32 @@
         // stream. Restore that identity so current-turn attention can be read.
         const streamId = String(snapshot?.stream_id || snapshot?.request_id || '').trim();
         if (streamId) getMultiStreamController()?.registerStream?.(normalizedSessionId, streamId);
+        // A reload dropped the live user_questions_requested event; replay the
+        // questions main still waits on so their card comes back.
+        const pendingQuestions = streamId && Array.isArray(snapshot?.pending_user_questions)
+          ? snapshot.pending_user_questions : [];
+        const turnId = String(snapshot?.turn_id || streamId).trim();
+        if (pendingQuestions.length) {
+          rehydrateLiveTurnState(normalizedSessionId, {
+            // started first: main persists the turn's assistant rows only as they
+            // settle, so an early reload has no assistant row to hold the card (F16).
+            pendingPayloads: [{ type: 'started', streamId, turnId, sessionId: normalizedSessionId },
+              ...pendingQuestions.map((pending) => ({
+              type: 'user_questions_requested',
+              streamId,
+              turnId,
+              sessionId: normalizedSessionId,
+              callId: pending.call_id,
+              questionId: pending.question_id,
+              questionRef: pending.question_ref,
+              toolName: pending.tool_name || 'ask_user',
+              questions: Array.isArray(pending.questions) ? pending.questions : [],
+              input: { questions: Array.isArray(pending.questions) ? pending.questions : [] },
+              status: 'pending_user_input',
+              resultKind: 'user_questions',
+            }))],
+          });
+        }
         return snapshot;
       }
       const callId = String(pendingApproval.call_id || '').trim();
@@ -130,6 +161,7 @@
         || toolUseMessage.tool_call?.approval_id
         || ''
       ).trim() || callId;
+      const rehydratedReason = String(pendingApproval.reason || toolUseMessage.tool_call?.reason || '').trim();
       state.pendingToolApprovals.set(approvalId, {
         approvalId,
         callId,
@@ -141,6 +173,14 @@
         streamId,
         sessionId: normalizedSessionId,
         summary: String(pendingApproval.summary || toolUseMessage.tool_call?.summary || '').trim(),
+        // The same policy fields the live producer carries, read off the
+        // persisted approval and tool call, so a rehydrated approval renders
+        // (and withholds "Always allow") exactly like a live one.
+        policyScope: String(pendingApproval.policy_scope || toolUseMessage.tool_call?.policy_scope || '').trim(),
+        policyConsequence: String(pendingApproval.policy_consequence || toolUseMessage.tool_call?.policy_consequence || '').trim(),
+        ...(rehydratedReason ? { reason: rehydratedReason } : {}),
+        oneOffOnly: pendingApproval.one_off_only === true || pendingApproval.oneOffOnly === true
+          || toolUseMessage.tool_call?.one_off_only === true || toolUseMessage.tool_call?.oneOffOnly === true,
       });
       const multiStreamController = getMultiStreamController();
       if (streamId) {
@@ -244,7 +284,16 @@
         return { currentSessionId: String(state.currentSessionId || '').trim(), validSessionIds: new Set() };
       }
 
+      const listSeq = ++sessionListSeq;
+      const staleResult = () => ({
+        currentSessionId: String(state.currentSessionId || '').trim(),
+        validSessionIds: new Set(
+          state.sessions.map((session) => String(session?.id || '').trim()).filter(Boolean)
+        ),
+      });
       const payload = await jennyShell.sessions.list();
+      if (listSeq < appliedSessionListSeq) return staleResult();
+      appliedSessionListSeq = listSeq;
       const listedSessions = (Array.isArray(payload.data) ? payload.data : [])
         .filter((session) => !isRecentlyDeletedSession(String(session?.id || '').trim()));
       const preservedOptimisticSessions = state.sessions.filter((session) =>
@@ -256,6 +305,7 @@
       state.sessions = [...preservedOptimisticSessions, ...listedSessions];
       await reconcileSessionCaches();
       await sessionCacheController.evictColdSessionCaches();
+      if (listSeq < appliedSessionListSeq) return staleResult();
 
       const validSessionIds = new Set(
         state.sessions.map((session) => String(session?.id || '').trim()).filter(Boolean)

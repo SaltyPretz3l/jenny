@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from sidecar.ai.engines.base import EngineMessage
+from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.error_codes import CMP_STREAM_INCOMPLETE
 from sidecar.ai.exceptions import (
@@ -197,6 +197,13 @@ def _build_messages(
                 tool_calls = _build_openai_compatible_tool_calls(item.get("tool_calls"))
                 if not has_content and not tool_calls:
                     continue
+                # The empty-content backfill is a provider-API presentation
+                # concern, not text the model wrote. Sent as assistant content
+                # it becomes a few-shot pattern the model imitates as its own
+                # visible reply (the ChatGPT serializer drops it for the same
+                # reason), so a tool-call row ships with null content instead.
+                if tool_calls and content.strip() == EMPTY_ASSISTANT_CONTENT_PLACEHOLDER:
+                    has_content = False
                 assistant_message: dict[str, Any] = {
                     "role": "assistant",
                     "content": content if has_content else None,

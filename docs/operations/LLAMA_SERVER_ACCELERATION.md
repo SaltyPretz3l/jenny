@@ -53,7 +53,7 @@ profile) refuses acceleration because its allocation has zero slack.
 
 ## Configuration (per model, in the app)
 
-- Settings > Model library > a model's **Tune** drawer > **Engine** section
+- Settings > Models > a model's **Tune** drawer > **Engine** section
   (rendered only with the flag on, for Ollama / openai-compatible models, when
   the `engines` bridge exists): **Run with** `Ollama | llama-server` (the
   llama-server option is enabled once a GGUF is known for the tag - found under
@@ -65,8 +65,13 @@ profile) refuses acceleration because its allocation has zero slack.
   `engines.updateSettings({ managed: { enabled: true, perModel: { [key]: { engine, tag, modelPath, mtp: { mode } } } } })`
   BEFORE any model-tuning patch and treats the returned settings as
   authoritative (`key = managedModelKey(tag)`, size tag preserved:
-  `gemma4:12b -> gemma4-12b`). Nothing restarts on Apply: the choice is
-  launch-scoped and takes effect on the next **Use**.
+  `gemma4:12b -> gemma4-12b`). When llama-server is serving that model and
+  the saved engine settings changed (build, MTP or GGUF file) while it stays on
+  llama-server, Apply restarts the server once, after any tuning change, so
+  the new settings are live; it asks first only while a chat is streaming. If
+  the tuning change fails, the restart is owed and happens on the next
+  successful Apply for that model while it is served. Otherwise the choice
+  takes effect on the next **Use**.
 - The library row shows the choice: `llama-server` / `llama-server . MTP`
   pills, `Serving on :<port>` while the managed server is ready for that exact
   tag (alias match includes the size tag), and `MTP ready` for verified
@@ -92,7 +97,7 @@ profile) refuses acceleration because its allocation has zero slack.
 - Model files: `llamaServer.listLocalGgufs` (what the library and drawer
   scan) resolves a GGUF per tag from four sources, in this order:
   `{userData}/models/<sanitized-tag>/` and `.jenny/models/<sanitized-tag>/`
-  plus every folder added under Settings > Model library > **GGUF folders**
+  plus every folder added under Settings > Models > **GGUF folders**
   (`managed.libraryRoots`, one level deep, `source: root`); the directory of a
   persisted/picked `modelPath` (`persisted`, always listed even when a root
   shares the tag); and, for an Ollama-installed tag with no entry yet,
@@ -112,15 +117,54 @@ profile) refuses acceleration because its allocation has zero slack.
   `G:\llmmodels\gguf\gemma4-12b-qat-unsloth\`
   (`gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` + `mtp-gemma-4-12B-it-Q8_0.gguf`; the
   `mmproj-BF16.gguf` there is unused while the accel profile runs
-  `--no-mmproj`). Co-located `mtp-*` / `mmproj*` files are never picked as the
-  main model.
+  `--no-mmproj`). Co-located drafters and projectors are never picked as the
+  main model (`services/llama-server-gguf-files.js`). A drafter is
+  `mtp-*.gguf`. A projector either starts with `mmproj` (`mmproj-F16.gguf`,
+  `mmproj-<model>-<quant>.gguf`) or carries `mmproj` as a whole name token
+  (`<model>-mmproj-<quant>.gguf`, as in Bonsai 2's
+  `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf`; `x-mmprojector.gguf` is still a
+  model). A projector pairs with the model its name names. When none does, a
+  lone model owns a generic one, and so does a folder holding only quants or
+  shards of one model (an unsloth or bartowski snapshot). A projector naming
+  another model is never used: a mismatched projector fails the whole launch,
+  where none only loses vision. When several projectors name the model, the
+  one naming the most of its name wins, so a fine-tune or a `-Flash` sibling
+  beside its base pairs its own projector; then the smallest precision (Q8_0
+  before F16/BF16, before F32). Keep each model's files in a folder of its
+  own: in a shared folder, a model with no projector of its own can pair one
+  named for a model its name extends. For a fine-tune beside its base that is
+  usually right, but `GLM-4.6V-Flash` beside `GLM-4.6V` would pair the
+  larger model's projector and describe images wrongly. And a projector that
+  names more of the model's name beats the model's own when that one carries
+  only the base's name: `gemma-4-31B-it-uncensored-heretic` would pair another
+  fine-tune's `mmproj-gemma-4-31B-it-uncensored-F16.gguf` over its own
+  `gemma-4-31B-it-mmproj-BF16.gguf`.
+- Network paths: on Windows every path Jenny reads for llama-server is a
+  drive path (`C:\...`). A UNC (`\\host\share\...`), device (`\\?\`, `\\.\`)
+  or root-relative path is refused before any fs call, because a stat,
+  readdir or open of one connects to that host with the user's Windows
+  credentials. Settings drop such a `lastPickDir`, GGUF folder or `modelPath`
+  when saved and when loaded; the IPC launch spec drops such a `modelPath`;
+  the listing skips such a root, persisted model or Ollama blob; a saved
+  `runtimePath` is shape-checked before its launch-time stat; and the three
+  pickers answer `{ok:false,reason:'network_path'}` ("Jenny can't use network
+  locations here. Map the share to a drive letter, then choose it from that
+  drive."). The sidecar's Ollama blob lookup (`models.ollama_blob`) applies
+  the same rule before its own stat, and reads only the `FROM` lines Ollama
+  writes itself, never one inside a model's template, system prompt or
+  license. A NAS keeps working through a mapped drive letter, which reaches
+  only a host the user chose (File Explorer: This PC, then Map network drive;
+  `isLocalAbsolutePath` in `services/shell-config-engines.js`). WSL folders
+  (`\\wsl$\...`, `\\wsl.localhost\...`) are network paths too: map one to a
+  drive letter first, for example `net use W: \\wsl$\Ubuntu`.
 
 ## Runtime behavior of the managed server
 
 - **Ownership**: `services/main/llama-server-manager.js` is the single owner
   (states `stopped -> starting -> ready -> crashed | stopping`, one serialized
   operation chain, `getStatus()` -> `{state, pid, port, alias, modelPath,
-  profileId, accelerationMode, reused, lastError, changedAt}`). It stops only
+  profileId, accelerationMode, runtimeLabel, reused, lastError, changedAt}`;
+  `runtimeLabel` is below). It stops only
   the pid it spawned; a foreign server already on the port is reused, never
   killed, and reports `accelerationMode: 'unknown'` (the UI never claims MTP
   from a reused server).
@@ -139,12 +183,155 @@ profile) refuses acceleration because its allocation has zero slack.
   in `services/backend/managed-sidecar-chat-reconnect.js`; a launch that stays
   down surfaces the Ollama-preflight error shape).
 - **Boot**: autostart runs when `managed.enabled && preferredEngineType ===
-  'openai-compatible' && lastUsedTag` (env autostart still overrides). The
-  Diagnostics runtime facet carries `runtime.llama_server`.
-- IPC: `llamaServer.{getStatus,start,stop,restart,listLocalGgufs,chooseGguf,chooseLibraryFolder}`
+  'openai-compatible' && lastUsedTag` (env autostart still overrides).
+  `lastUsedTag` survives only while it names a saved model set to
+  llama-server: removing the model from the library, or moving it to Ollama in
+  Tune (even while its Use is still launching), clears it, so an earlier model
+  never starts in its place. The Diagnostics runtime facet carries
+  `runtime.llama_server`.
+- IPC: `llamaServer.{getStatus,start,stop,restart,listLocalGgufs,chooseGguf,chooseLibraryFolder,chooseRuntime}`
   (`services/main/llama-server-ipc-handlers.js`, fail-soft `{ok:false,
   reason}`; `start`/`restart` report `ok:false` when the launch resolves short
-  of ready).
+  of ready; `chooseRuntime` answers only a trusted sender, see below).
+
+## Per-model llama-server builds
+
+Each llama-server model can run on its own llama-server build; an unset build
+means the bundled one (`llama_server_extract/`, b10749). The first user is
+Bonsai 2, whose PQ2_0 quant type exists only in PrismML's fork; gemma4 stays on
+the bundled build, where its MTP speedup was measured.
+
+- **Saved shape**: `managed.perModel[key]` gains `runtimePath` and
+  `runtimeBuild`. Only the main process writes them, and both are omitted when
+  empty. A `runtimePath` must be an absolute, normalized drive path (no UNC, no
+  `..`, at most 1024 characters, no control characters) whose file name is
+  `llama-server.exe` (any case on Windows) or `llama-server`; `runtimeBuild` is
+  a positive integer kept only with its path
+  (`services/shell-config-engines.js`).
+- **Trust rules** (a renderer can never make main spawn an executable of its
+  choosing; `services/main/llama-server-runtime.js`):
+  - Only `llamaServer.chooseRuntime` introduces a path. It answers only a
+    trusted sender, opens a main-owned file dialog, checks the file name, then
+    probes the file (`--version` and `--help`, which must report a build above
+    0). A file that passes is recorded in the manager's in-memory pick list,
+    which holds the 8 newest picks. The dialog opens in the folder the drawer
+    suggests only when that is an existing local directory (on Windows, a drive
+    path; a network or device path is never touched). Results: `{ok:true,picked:false,path:''}`
+    on cancel, `{ok:true,picked:true,path,build,supportsMtp}` on a pick, or
+    `{ok:false,reason}` (`manager_unavailable`, `network_path`, `not_llama_server`,
+    `runtime_missing`, `runtime_probe_failed`, `runtime_pick_failed`).
+  - `engines.updateSettings` reconciles each entry's `runtimePath`: absent
+    keeps the saved one; `''` clears it; a path picked this session is
+    accepted once, with the build number its probe read, and its pick is spent
+    only when the build actually saved (so picking the saved build again after
+    copying new files over it refreshes the saved number); the saved value sent
+    back with no fresh pick keeps it and its saved number; anything else keeps
+    the saved value and logs WARN `engines.managed_runtime_rejected {keys}`. A
+    `runtimeBuild` sent by the renderer is always dropped; the build number
+    comes from the probe. Logs carry model keys, never paths.
+- **Launch precedence**: env `JENNY_LLAMA_SERVER_BINARY` > the model's saved
+  build > bundled. When the env var hides a saved build, the launch logs WARN
+  `llama.server.runtime_env_shadowed {model}`. The one resolved path feeds both
+  the spawn and the acceleration probe, so MTP eligibility is judged on the
+  build that actually runs.
+- **A missing saved build fails the launch**: nothing is spawned, the status
+  shows `lastError: llama_server_runtime_missing:<build>`, and the log shows
+  WARN `llama.server.runtime_missing`. It never falls back to the bundled build
+  silently. `<build>` is the llama.cpp build tag in the build's folder name
+  (`b10683` for `llama-prism-b10683-cuda13.3`), lowercased, or `runtime` when
+  the name carries none. The folder text itself never reaches the status or
+  Diagnostics, since it can carry a person's or a project's name. A build
+  deleted between planning and spawning gets the same error and is not retried.
+- **A build that cannot read the model** exits while loading. The lifecycle
+  checks the first 2,000 stderr lines for the loader's own error lines,
+  `gguf_*: tensor '<name>' has invalid ggml type <N>` (a quant type newer than
+  the build) or `llama_model_load: … unknown model architecture: '<arch>'`.
+  A line matches only when it starts with that function, after llama.cpp's
+  optional timestamp and level letter, so a path or a metadata value that
+  merely contains the phrase never does. The launch fails with
+  `llama_server_model_unsupported:bundled` or `:custom` (WARN
+  `llama.server.model_unsupported {runtime}`). An accelerated launch that
+  fails this way still gets the unaccelerated retry, because the file the build
+  cannot read may be the MTP drafter; when it is the model itself, the retry
+  fails the same way. A GGUF that is no language model at all (an image or
+  video model's `flux` or `wan` architecture) fails the same way, although no
+  llama-server build can serve it. Captured case: bundled b10749 on the Bonsai 2 PQ2_0 file
+  exits with code 1 in about 0.3 s, logging
+  `tensor 'output.weight' has invalid ggml type 142`.
+- **Status and logs**: `getStatus().runtimeLabel` is `bundled`, `env`,
+  `build <N>`, `custom` (no build number known), `unknown` (a reused server) or
+  `''` (stopped). The executable path never leaves the main process. The
+  Diagnostics runtime facet carries it as `runtime.llama_server.runtime_label`,
+  and the `llama.server.spawn` log line as `runtime: <label>`; a spawn error
+  logs only its code. The build's own output lines (`llama.server.output`,
+  such as `load_backend: loaded CUDA backend from <folder>\ggml-cuda.dll`)
+  are logged with `[llama-server folder]` in place of its folder.
+- **Relaunch**: a Use relaunches the server when the model's resolved build
+  differs from the running one. A restart with no model given (the health pill's
+  **Restart llama-server**, crash recovery, boot autostart) rebuilds the model's
+  saved settings (build, MTP, GGUF file) exactly as a Use does.
+- **Tune's Apply**: a context-window or engine change (build, MTP, GGUF file)
+  to the model being served, read from a fresh status at Apply, restarts
+  llama-server right away, asking first only while a chat streams. Otherwise
+  the change is saved and applies at the model's next start.
+- **Probe cache**: probes are memoized on the file's mtime and size. Choosing a
+  build re-probes a cached failure once (`retryFailed`), because a first run
+  slowed by antivirus scanning should not stick.
+
+## Bonsai 2 on PrismML's fork (owner recipe)
+
+Ternary-Bonsai-2-27B (`prism-ml/bonsai-2`) is a 1.72-bit ternary Qwen3.8-27B
+with vision. Jenny treats it as the `bonsai2` family: the Qwen3.8 chat
+contract, effort `None` / `Medium` / `Extra High` (default `Medium`; `minimal`
+and `low` run with thinking off), MTP off (`mtp: "no"` in the catalog).
+
+Pinned inputs (sha256-verified 2026-09-18):
+
+| File | Source | sha256 |
+| --- | --- | --- |
+| `llama-prism-b10683-d8f26ee-bin-win-cuda-13.3-x64.zip` | GitHub `PrismML-Eng/llama.cpp` release `prism-b10683-d8f26ee` | `31bbd608376473d42ac985069975134cc6638b8f51bdf065dac07e448399daa9` |
+| `cudart-llama-bin-win-cuda-13.3-x64.zip` | same release | `1462a050eb4c684921ba51dcc4cc488a036674c3e73e9945ee705b854808d03e` |
+| `Ternary-Bonsai-2-27B-PQ2_0.gguf` | HF `prism-ml/Ternary-Bonsai-2-27B-gguf` @ `6ed5e12b` | `3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1` |
+| `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (vision projector) | same revision | `6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903` |
+
+1. Extract both zips into one folder (the owner's is
+   `G:\llmmodels\runtimes\llama-prism-b10683-cuda13.3\`); the DLLs must sit
+   beside `llama-server.exe`. `llama-server.exe --version` reports build 10683.
+2. Put both GGUFs in one folder (the owner's is
+   `G:\llmmodels\gguf\ternary-bonsai-2-27b\`); the projector pairs by name.
+3. Settings > Models > GGUF folders > **Add GGUF model…** > the PQ2_0
+   file.
+4. On its card, **Tune** > Engine: pick the fork's `llama-server.exe` under
+   **llama-server build** > **Choose…**, then **Apply**.
+5. **Use**.
+
+Headless proof, 2026-09-18, RTX 5070 Ti 16 GB, with a game also holding VRAM:
+at `-c 32768` with the projector on the GPU the server used about 10.0 GiB;
+prefill 1,306 tok/s on a 4,752-token prompt, decode 53.8-58.8 tok/s. Thinking
+on and off, streamed reasoning, a tool call and an image description all
+worked. The 64K relaunch was not measured; at PrismML's 64 KiB of FP16 KV per
+token, 64K should need about 12 GiB and fit, while 131K needs about 16 GiB and
+does not fit without a quantized KV cache (not offered yet). Jenny launches at
+32K unless Tune sets a context.
+
+In-app checks (owner-run; PENDING):
+
+1. **Add GGUF model…** on the PQ2_0 file gives one card reading "Local GGUF ·
+   6.7 GB" (the library formats sizes in binary units).
+2. Tune > Engine: Ollama is greyed out with the reason. **Choose…** the
+   fork's `llama-server.exe`; the row reads
+   `llama-prism-b10683-cuda13.3 · build 10683`; **Apply**.
+3. **Use**, then a chat turn. The thinking row settles, and the effort options
+   are None / Medium / Extra High. A tool call completes, and an attached image
+   is described.
+4. `shell.log`: `llama.server.spawn` shows `runtime: build 10683` and no path;
+   `llama.server.acceleration_resolved` is off.
+5. **Use** gemma4 on llama-server: it relaunches on the bundled b10749 with
+   `mode:"mtp"`.
+6. **Remove from library**: the card goes away and the file stays on disk.
+7. Rename the fork's folder, then **Use**: the card says the build (b10683) is
+   missing (`lastError: llama_server_runtime_missing:b10683`), and nothing
+   falls back to the bundled build.
 
 ## Binary refresh procedure (owner-run; MTP needs it, ngram does not)
 
@@ -275,3 +462,22 @@ same model; record the recovery time.
   but the reason will be opaque — the fallback WARN carries only the failure
   message (e.g. `llama_server_exited:<code>`); the server's own error output
   is piped into shell.log as `llama.server.*` child-log lines just before it.
+- **A build replaced in place**: the label comes from the probe cache, then
+  from the saved `runtimeBuild`. If new files are copied over a chosen build's
+  folder, the label can show the old build number until the same file is
+  chosen again, which refreshes the saved number. If the copy lands while a
+  launch is starting with MTP, that launch can
+  fail and come up on the retry without MTP; the next restart applies MTP
+  again.
+- **A build is trusted by its path**: the probe runs when the build is chosen,
+  and later launches run whatever file is at that path then. Keep builds in a
+  folder only your account can write, such as one under your user profile. On
+  Windows, a folder created at the root of the system drive (like `C:\llama\`)
+  inherits write access for every signed-in account.
+- **A restart and background turns**: before Tune restarts llama-server to
+  apply a build, MTP or GGUF-file change, it asks only about chats this window
+  is streaming. A background turn on the same model, such as a scheduled
+  automation, is cut by the restart and has to run again.
+- **Unconfirmed stop**: if stopping a server cannot be confirmed, a later
+  launch may find it still on the port and reuse it (`runtimeLabel: unknown`)
+  instead of starting the chosen build. This predates per-model builds.

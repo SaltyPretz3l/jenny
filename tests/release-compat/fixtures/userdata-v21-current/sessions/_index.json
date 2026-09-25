@@ -1,0 +1,15 @@
+{
+  "schema_version": 21,
+  "sessions": {
+    "session_v21_current": {
+      "id": "session_v21_current",
+      "project_id": "project_general",
+      "title": "Failure retry reasoning v21",
+      "session_type": "chat",
+      "plugin_session": null,
+      "created_at": "2026-09-04T00:00:00.000Z",
+      "updated_at": "2026-09-04T00:00:00.000Z",
+      "message_count": 2
+    }
+  }
+}

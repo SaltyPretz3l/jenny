@@ -6,7 +6,7 @@ import logging
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterator, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
 
 from sidecar.ai.config import (
     RuntimeConfig,
@@ -32,7 +32,6 @@ from sidecar.ai.feature_flags import (
     is_feature_flag_enabled,
 )
 from sidecar.ai.host_policy import host_policy_from_config, host_policy_is_enforced
-from sidecar.ai.mcp.client import MCPClient
 from sidecar.ai.memory.service import MemoryService
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.memory.unavailable import UnavailableMemoryStore, open_memory_store
@@ -59,6 +58,20 @@ from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
 from sidecar.runtime.worker_secrets import merge_config_secrets, split_config_secrets
 
 logger = logging.getLogger(__name__)
+
+
+def _create_mcp_client(**kwargs: Any) -> Any:
+    # Transport implementations are needed at stack configuration, not import.
+    from sidecar.ai.mcp.client import MCPClient as client_type
+
+    return client_type(**kwargs)
+
+
+if TYPE_CHECKING:
+    from sidecar.ai.mcp.client import MCPClient
+else:
+    # Preserve the container's existing replaceable construction seam.
+    MCPClient = _create_mcp_client
 
 
 def _validate_desktop_execution_policy(config: RuntimeConfig) -> None:

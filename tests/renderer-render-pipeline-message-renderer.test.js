@@ -98,7 +98,9 @@ test('render pipeline message renderer clears stale DOM for empty transcripts', 
   assert.equal(uiRuntime.recapExpansionSignature, '');
   assert.equal(uiRuntime.threadBranchSignature, '');
   assert.deepEqual(calls, [
-    ['pruneToolRows', 'session-renderer'],
+    // Split view W0-5: the prune is handed the RETAINED SET, which with one
+    // pane is exactly the single current session it was handed before.
+    ['pruneToolRows', ['session-renderer']],
     ['pruneRecap', 'session-renderer', 0],
     ['updateTokenDisplay'],
     ['pruneBranches', 'session-renderer'],
@@ -242,6 +244,7 @@ function createCacheCountingHarness(initialMessages, options = {}) {
   });
   return {
     counts,
+    state,
     uiRuntime,
     renderOnce(renderOptions) { renderer.renderMessages(renderOptions); },
     setMessages(next) { sourceMessages = next; },
@@ -746,5 +749,31 @@ test('time format changes invalidate settled timestamp markup once in each direc
     assert.equal(cacheSizes.at(-1), 0);
   } finally {
     global.jennyI18n = previous;
+  }
+});
+
+// A4: an approval card turns Paused or inactive without any message changing,
+// so its state change must beat the no-op guard and the settled-root memo.
+test('an approval card state change repaints a settled transcript once', () => {
+  const previous = global.rendererApprovalBlock;
+  global.rendererApprovalBlock = require('../renderer/chat/renderer-approval-block');
+  const cacheSizes = [];
+  const harness = createCacheCountingHarness([
+    { id: 'a1', role: 'assistant', kind: '', status: 'complete', content: 'settled' },
+  ], { onFullRender({ uiRuntime }) { cacheSizes.push(uiRuntime.threadRootMarkupCache?.size ?? 0); } });
+  try {
+    harness.uiRuntime.threadRootMarkupCache = new Map([['a1', { html: 'Allow once' }]]);
+    harness.renderOnce();
+    const renders = cacheSizes.length;
+    harness.renderOnce();
+    assert.equal(cacheSizes.length, renders, 'nothing changed: the no-op guard holds');
+    harness.state.inactiveApprovalCallIds = new Set(['call_1']);
+    harness.renderOnce();
+    assert.equal(cacheSizes.length, renders + 1);
+    assert.equal(cacheSizes.at(-1), 0, 'the stale card markup is dropped');
+    harness.renderOnce();
+    assert.equal(cacheSizes.length, renders + 1, 'the new state is committed once');
+  } finally {
+    global.rendererApprovalBlock = previous;
   }
 });

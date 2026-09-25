@@ -499,6 +499,10 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         if name is None or target == str(self.model_name or "").strip():
             self._reset_loaded_state()
 
+    def get_inference_budget_context_length(self) -> int | None:
+        # Actual model metadata; output including reasoning is context-clamped.
+        return self.get_model_context_length()
+
     def get_model_context_length(self) -> int | None:
         return self._context_length
 

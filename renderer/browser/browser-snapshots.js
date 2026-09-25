@@ -48,7 +48,10 @@
       if (this.pending?.key === key) return this.pending.promise;
       this.reset();
       const pending = { key, generation: owner.getGeneration(), sessionId,
-        abort: new AbortController(), events: [], bytes: 0, overflow: false };
+        abort: new AbortController(), events: [], bytes: 0, overflow: false,
+        activeStreamId: owner.getState().activeStreamId,
+        liveProjection: owner.getState().liveProjection,
+        cursor: Math.max(owner.bridge?.cursor || 0, owner.getState().snapshot?.cursor || 0) };
       this.pending = pending;
       owner.getState().snapshotPending = true;
       pending.promise = this._load(pending, beforeMessageId, maxMessages);
@@ -93,6 +96,13 @@
         state.planMode = state.snapshot.session.plan_mode === true;
         state.liveProjection = snapshot.live_projection || null;
         state.activeStreamId = snapshot.active_turn?.stream_id || '';
+        // A snapshot at the same cursor can predate the already-applied start.
+        // Keep that stream identity so later buffered deltas and its terminal
+        // event are not discarded as notifications for a different stream.
+        if (pending.activeStreamId && snapshotCursor <= pending.cursor) {
+          state.activeStreamId = pending.activeStreamId;
+          state.liveProjection = pending.liveProjection;
+        }
         owner.syncControlFromSnapshot(snapshot);
         if (owner.bridge && (!snapshot.boot_epoch || snapshot.boot_epoch === owner.bridge.bootEpoch)) {
           owner.bridge.cursor = Math.max(owner.bridge.cursor || 0, snapshotCursor);

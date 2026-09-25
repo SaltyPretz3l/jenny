@@ -149,9 +149,8 @@
     const source = String(line || '');
     const proseSource = source.replace(TASK_CHECKBOX_RE, '');
     return REFERENCE_DEFINITION_RE.test(source)
-      || REFERENCE_LINK_RE.test(proseSource)
-      || (!plainHtml && hasUnbalancedRawTags(source))
-      || hasUnbalancedInlineCodeTicks(source);
+      || (!plainHtml && REFERENCE_LINK_RE.test(proseSource))
+      || (!plainHtml && hasUnbalancedRawTags(source));
   }
 
   function findStablePrefixEnd(source, dependencies) {
@@ -168,6 +167,7 @@
     let offset = 0;
     let lastNonblankWasContinuation = false;
     let lastNonblankLine = '';
+    let paragraphHasLocalDependency = false;
 
     for (const rawLine of text.split('\n')) {
       const line = rawLine.replace(/\r$/, '');
@@ -191,9 +191,21 @@
             previousWasContinuation: lastNonblankWasContinuation,
           };
         }
+        paragraphHasLocalDependency = false;
+        // A list item's lazy continuation lines keep the item open across the
+        // blank line, so the container flag is sticky for the whole paragraph.
+        lastNonblankWasContinuation = false;
         continue;
       }
-      if (!pendingBoundary && !wasInFence && fenceState?.marker && !wasInDisplayMath
+      // Reasoning streams use bracketed prose constantly and never carry reference definitions.
+      // Holding a plain-mode shortcut link to its paragraph avoids reparsing 30K per token;
+      // a later definition could at worst leave one working-surface bracket unlinked.
+      if (!wasInFence && !fenceState?.marker && (hasUnbalancedInlineCodeTicks(line)
+          || (dependencies.plainHtml && REFERENCE_LINK_RE.test(line.replace(TASK_CHECKBOX_RE, ''))))) {
+        paragraphHasLocalDependency = true;
+      }
+      if (!pendingBoundary && !paragraphHasLocalDependency
+          && !wasInFence && fenceState?.marker && !wasInDisplayMath
           && offset <= text.length && lastNonblankLine
           && !/^ {0,3}[<|]/.test(lastNonblankLine)
           && !isContinuationLine(lastNonblankLine) && !isContinuationLine(line)) {
@@ -206,7 +218,7 @@
         }
         pendingBoundary = null;
       }
-      lastNonblankWasContinuation = isContinuationLine(line);
+      lastNonblankWasContinuation = lastNonblankWasContinuation || isContinuationLine(line);
       lastNonblankLine = line;
     }
     return stableBoundary;

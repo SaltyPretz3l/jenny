@@ -106,6 +106,20 @@ button:disabled, textarea:disabled, input:disabled, select:disabled { cursor: no
 .browser-artifact-preview iframe { display: block; width: 100%; height: min(55vh, 460px); border: 1px solid var(--browser-border); background: white; }
 .browser-artifact-preview img { display: block; max-width: 100%; max-height: 460px; margin: auto; object-fit: contain; }
 .browser-auth-sessions { position: absolute; z-index: 2; top: 48px; right: 22px; width: min(360px, calc(100vw - 28px)); padding: 12px; border: 1px solid var(--browser-border); border-radius: 12px; background: var(--browser-panel); box-shadow: var(--browser-shadow); }
+.browser-projects { position: absolute; z-index: 3; top: 48px; right: 22px; width: min(680px, calc(100vw - 28px)); max-height: min(78vh, 760px); overflow: auto; padding: 16px; border: 1px solid var(--browser-border); border-radius: 14px; background: var(--browser-panel); box-shadow: var(--browser-shadow); }
+.browser-project-panel-heading { margin-bottom: 14px; font-size: .95rem; }
+.browser-project-create, .browser-permission-list { display: grid; gap: 9px; padding: 12px 0; border-top: 1px solid var(--browser-border); }
+.browser-project-create h2, .browser-permission-list h2 { margin: 0; font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; color: var(--browser-muted); }
+.browser-project-create .btn { justify-self: end; }
+.browser-project-list { display: grid; gap: 10px; padding: 4px 0 12px; }
+.browser-project-row, .browser-permission-review { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--browser-border); border-radius: 10px; background: var(--browser-surface); }
+.browser-project-row-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.browser-project-row-heading strong, .browser-permission-review strong { overflow-wrap: anywhere; font-size: .82rem; }
+.browser-project-row-heading span { color: var(--browser-accent); font-size: .68rem; }
+.browser-project-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.browser-project-note, .browser-project-error { margin: 0; color: var(--browser-muted); font-size: .74rem; line-height: 1.45; }
+.browser-project-error { color: var(--browser-danger); }
+.browser-permission-review small { overflow-wrap: anywhere; color: var(--browser-muted); font-size: .7rem; }
 .browser-top-actions { position: relative; }
 .browser-auth-sessions-heading { margin-bottom: 8px; color: var(--browser-muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .browser-auth-session-list { display: grid; gap: 7px; }
@@ -182,8 +196,16 @@ button:disabled, textarea:disabled, input:disabled, select:disabled { cursor: no
   .browser-session-actions { opacity: 1; }
   .browser-connection { display: none; }
   .browser-auth-sessions { top: 45px; right: 0; }
+  .browser-projects { top: 45px; right: 0; width: calc(100vw - 28px); max-height: calc(100vh - 72px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+
+.browser-runtime { padding: 1rem; max-height: 70vh; overflow: auto; border-bottom: 1px solid var(--border-color, #444); }
+.browser-runtime .settings-group { margin-block: 1rem; }
+.browser-runtime .settings-list { display: grid; gap: .5rem; padding-inline-start: 1.5rem; }
+.browser-runtime .inv-text-field { max-width: 44rem; margin-block: .5rem; }
+.browser-runtime button { margin-inline-end: .5rem; margin-block: .25rem; }

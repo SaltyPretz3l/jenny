@@ -1,314 +1,276 @@
 'use strict';
 
-const { createHash } = require('node:crypto');
+const fs = require('node:fs');
 const { FileJsonStore } = require('../backend/file-json-store');
 const { normalizePolicySnapshot } = require('./tool-policy-evaluator');
+const {
+  authoritiesMatch,
+  createEmptyPermissionDocument,
+  GLOBAL_DECISIONS,
+  MAX_MATCH_TEXT_CHARS,
+  MAX_REVIEW_HISTORY_COUNT,
+  MAX_RULE_COUNT,
+  MAX_SCOPED_GRANT_COUNT,
+  migratePermissionDocument,
+  normalizeAuthority,
+  normalizeToolName,
+  REVIEW_DECISIONS,
+  stableId,
+  splitCompositeToolName,
+  validateCompositeToolName,
+  validatePermissionDocument,
+} = require('./tool-permission-migrations');
 
-// Keep path grants within the evaluator's MAX_POLICY_MATCH_TEXT_CHARS bound.
-const MAX_ALWAYS_ALLOW_PATH_CHARS = 1_024;
-
-const TOOL_NAME_ALIASES = Object.freeze({
-  Read: 'read_file',
-  Write: 'write_file',
-  Edit: 'edit_file',
-  Glob: 'glob_files',
-  Grep: 'grep_search',
-  Bash: 'run_command',
-  CreateArtifact: 'create_artifact',
+const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode']));
+const MAX_PERMISSION_DOCUMENT_BYTES = 4 * 1024 * 1024;
+const DEFAULT_POLICIES = Object.freeze({
+  read_file: 'auto', glob_files: 'auto', grep_search: 'auto', write_file: 'ask',
+  edit_file: 'ask', run_command: 'ask', create_artifact: 'ask',
 });
-
-const DEFAULT_POLICIES = {
-  read_file: 'auto',
-  glob_files: 'auto',
-  grep_search: 'auto',
-  write_file: 'ask',
-  edit_file: 'ask',
-  run_command: 'ask',
-  create_artifact: 'ask',
-};
-
 const VALID_POLICIES = new Set(['auto', 'ask', 'deny']);
-
-const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set([
-  'exit_plan_mode',
-]));
-
-const RETIRED_TOOL_NAMES = Object.freeze(new Set([
-  'browser_click',
-  'browser_close',
-  'browser_eval',
-  'browser_open',
-  'browser_screenshot',
-  'browser_type',
-  'apply_patch',
-  'document_inspect',
-  'image_inspect',
-  'notebook_inspect',
-  'pdf_inspect',
-  'presentation_inspect',
-  'spreadsheet_inspect',
-]));
-
-const RETIRED_INSPECT_TOOL_NAMES = Object.freeze(new Set([
-  'document_inspect',
-  'image_inspect',
-  'notebook_inspect',
-  'pdf_inspect',
-  'presentation_inspect',
-  'spreadsheet_inspect',
-]));
-
-const TOOL_GRANT_NAME_MIGRATIONS = Object.freeze({
-  lsp_diagnostics: 'lsp:diagnostics',
-  lsp_symbols: 'lsp:symbols',
-  lsp_definition: 'lsp:definition',
-  lsp_references: 'lsp:references',
-});
-
-function migratedToolGrantName(toolName) {
-  if (
-    typeof toolName !== 'string'
-    || !Object.prototype.hasOwnProperty.call(TOOL_GRANT_NAME_MIGRATIONS, toolName)
-  ) {
-    return null;
-  }
-  return TOOL_GRANT_NAME_MIGRATIONS[toolName];
-}
-
-// Legacy rule id retained only for one-time removal and the inert
-// compatibility setter. New approval grants are transient per send.
-const BLANKET_AUTO_APPROVE_RULE_ID = 'blanket_auto_approve';
-
-// Synthetic rule-id prefix for legacy per-tool deny entries materialized into
-// the snapshot (see getSnapshot). Never persisted.
 const LEGACY_DENY_RULE_ID_PREFIX = 'legacy_deny:';
+const UNAVAILABLE_RULE_ID = 'permission-store-unavailable';
 
-function normalizeToolName(toolName) {
-  const token = String(toolName || '').trim();
-  if (!token) {
-    return '';
-  }
-  return Object.prototype.hasOwnProperty.call(TOOL_NAME_ALIASES, token)
-    ? TOOL_NAME_ALIASES[token]
-    : token;
-}
-
-function validateCompositeToolName(toolName) {
-  const separatorIndex = toolName.indexOf(':');
-  if (separatorIndex === -1) {
-    return;
-  }
-  const toolSegment = toolName.slice(0, separatorIndex);
-  const actionSegment = toolName.slice(separatorIndex + 1);
-  const actionCharacters = [...actionSegment];
-  const actionHasInvalidCharacter = actionCharacters.some((character) => (
-    /\s/.test(character)
-    || character.codePointAt(0) < 0x20
-    || character === '\x7f'
-  ));
-  if (
-    !toolSegment
-    || !actionSegment
-    || actionCharacters.length > 64
-    || actionSegment.includes(':')
-    || actionHasInvalidCharacter
-  ) {
-    throw new Error('Invalid composite tool name. Must match "tool:action" with a 1-64 character action.');
+class ToolPermissionStoreError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'ToolPermissionStoreError';
+    this.code = code;
   }
 }
 
-function canonicalizePolicies(policies) {
-  const normalized = {};
-  if (!policies || typeof policies !== 'object' || Array.isArray(policies)) {
-    return normalized;
+function copyRule(rule) {
+  return { ...rule, match: { ...rule.match } };
+}
+
+function cloneDocument(document) {
+  return JSON.parse(JSON.stringify(document));
+}
+
+function unavailableSnapshot() {
+  return normalizePolicySnapshot({
+    version: 1,
+    legacy_policies: {},
+    rules: [{
+      id: UNAVAILABLE_RULE_ID,
+      decision: 'deny',
+      match: {},
+      reason: 'Stored tool permissions are unavailable or incompatible',
+    }],
+  });
+}
+
+function materializeLegacyDenyRules(document) {
+  const denyRules = Object.entries(document.legacy_policies)
+    .filter(([, decision]) => decision === 'deny')
+    .map(([toolName]) => {
+      const match = splitCompositeToolName(toolName);
+      return {
+        id: `${LEGACY_DENY_RULE_ID_PREFIX}${toolName}`,
+        decision: 'deny',
+        match,
+        reason: `Per-tool deny for ${toolName}`,
+      };
+    });
+  return normalizePolicySnapshot({
+    version: document.version,
+    legacy_policies: document.legacy_policies,
+    rules: [...document.rules, ...denyRules],
+  });
+}
+
+function scopedGrantRule(grant) {
+  return {
+    id: grant.id,
+    decision: 'auto',
+    match: { ...grant.match },
+    reason: `Always allow ${grant.tool_name} in the captured project authority`,
+  };
+}
+
+function assertToolName(toolName) {
+  const normalizedName = normalizeToolName(toolName);
+  if (!normalizedName || normalizedName.length > 160) {
+    throw new ToolPermissionStoreError('permission_tool_invalid', 'Tool name is required.');
   }
-  for (const [toolName, policy] of Object.entries(policies)) {
-    const normalizedName = normalizeToolName(toolName);
-    if (!normalizedName || !VALID_POLICIES.has(policy)) {
-      continue;
-    }
-    normalized[normalizedName] = policy;
+  validateCompositeToolName(normalizedName);
+  return normalizedName;
+}
+
+function assertAuthority(authority) {
+  const normalized = normalizeAuthority(authority);
+  if (!normalized) {
+    throw new ToolPermissionStoreError(
+      'permission_scope_required',
+      'A valid captured project authority is required for an automatic grant.'
+    );
   }
   return normalized;
 }
 
-function isRuleListPolicyDocument(raw) {
-  return (
-    raw &&
-    typeof raw === 'object' &&
-    !Array.isArray(raw) &&
-    ('legacy_policies' in raw || 'rules' in raw)
-  );
+function normalizedPathPrefix(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const value = source.path ?? source.file_path ?? '';
+  const pathPrefix = typeof value === 'string' ? value.trim() : '';
+  if (pathPrefix.length > MAX_MATCH_TEXT_CHARS) {
+    throw new ToolPermissionStoreError(
+      'permission_path_too_long',
+      `Permission path must be at most ${MAX_MATCH_TEXT_CHARS} characters.`
+    );
+  }
+  return pathPrefix || null;
 }
 
-function normalizeStoredPolicyDocument(raw) {
-  if (!isRuleListPolicyDocument(raw)) {
-    return normalizePolicySnapshot({
-      version: 1,
-      legacy_policies: canonicalizePolicies(raw),
-      rules: [],
-    });
-  }
-
-  return normalizePolicySnapshot({
-    version: raw && raw.version,
-    legacy_policies: canonicalizePolicies(
-      raw && typeof raw === 'object' ? raw.legacy_policies : {}
-    ),
-    rules: Array.isArray(raw && raw.rules) ? raw.rules : [],
-  });
+function matchForToolGrant(toolName, pathPrefix) {
+  const match = toolName === '*' ? {} : splitCompositeToolName(toolName);
+  if (pathPrefix) match.path_prefix = pathPrefix;
+  return match;
 }
 
-/**
- * Materialize legacy per-tool `deny` entries as synthetic deny rules so they
- * keep winning against any rule-list auto decision (rule hits outrank the
- * legacy map in both evaluators, and deny rules outrank auto rules). Applied
- * only to the evaluated/serialized snapshot — never written back to disk, so
- * clearing the legacy entry clears the synthetic rule with it.
- */
-function materializeLegacyDenyRules(snapshot) {
-  const denyTools = Object.entries(snapshot.legacy_policies)
-    .filter(([, decision]) => decision === 'deny')
-    .map(([toolName]) => toolName);
-  if (!denyTools.length) {
-    return snapshot;
+function matchForReviewedGrant(record) {
+  if (record.original_kind === 'rule' || record.original_kind === 'scoped_grant') {
+    return { ...(record.original_record.match || {}) };
   }
-  return normalizePolicySnapshot({
-    version: snapshot.version,
-    legacy_policies: snapshot.legacy_policies,
-    rules: [
-      ...snapshot.rules,
-      // Deny rules win regardless of list position, so appending keeps the
-      // stored rules' indices stable for callers that inspect the snapshot.
-      ...denyTools.map((toolName) => ({
-        id: `${LEGACY_DENY_RULE_ID_PREFIX}${toolName}`,
-        decision: 'deny',
-        match: { tool_id: toolName },
-        reason: `Per-tool deny for ${toolName}`,
-      })),
-    ],
-  });
+  return matchForToolGrant(record.tool_name, record.path_prefix);
+}
+
+function buildScopedGrant(toolName, match, authority, now) {
+  const pathPrefix = match.path_prefix || null;
+  const scope = { tool_name: toolName, match, authority };
+  return {
+    id: stableId('grant', scope), tool_name: toolName, path_prefix: pathPrefix,
+    match: { ...match }, authority: { ...authority }, source: 'user', created_at: now,
+  };
+}
+
+function reviewRule(record, decision) {
+  if (record.original_kind === 'rule' || record.original_kind === 'scoped_grant') {
+    return {
+      id: stableId('reviewed', { pending_id: record.id, decision }),
+      decision,
+      match: { ...(record.original_record.match || {}) },
+      reason: `Reviewed ${decision} decision for ${record.tool_name}`,
+    };
+  }
+  const match = record.tool_name === '*' ? {} : { tool_id: record.tool_name };
+  if (record.path_prefix) match.path_prefix = record.path_prefix;
+  return {
+    id: stableId('reviewed', { pending_id: record.id, decision }), decision, match,
+    reason: `Reviewed ${decision} decision for ${record.tool_name}`,
+  };
+}
+
+function commitDocument(instance, document) {
+  if (instance._readOnlyReason) {
+    throw new ToolPermissionStoreError(
+      'permission_store_read_only',
+      `Tool permission store is read-only: ${instance._readOnlyReason}`
+    );
+  }
+  const validation = validatePermissionDocument(document);
+  if (!validation.ok) {
+    const capacityFailure = validation.reason === 'aggregate_rule_capacity_exceeded'
+      || validation.reason === 'invalid_policies'
+      || validation.reason === 'invalid_rules'
+      || validation.reason === 'invalid_scoped_grants'
+      || validation.reason === 'invalid_pending_review'
+      || validation.reason === 'invalid_review_history';
+    throw new ToolPermissionStoreError(
+      capacityFailure ? 'permission_capacity_exceeded' : 'permission_document_invalid',
+      `Tool permission update is invalid: ${validation.reason}`
+    );
+  }
+  const validatedDocument = validation.document;
+  if (Buffer.byteLength(JSON.stringify(validatedDocument), 'utf8') > MAX_PERMISSION_DOCUMENT_BYTES) {
+    throw new ToolPermissionStoreError(
+      'permission_capacity_exceeded',
+      'Tool permission document exceeds its durable storage bound.'
+    );
+  }
+  const result = instance._store.write(validatedDocument);
+  if (!result || result.durable !== true) {
+    throw new ToolPermissionStoreError(
+      'permission_store_not_durable',
+      'Tool permission update did not reach durable storage.'
+    );
+  }
+  instance._document = validatedDocument;
+  instance._snapshotCache = null;
+}
+
+function markReadOnly(instance, reason, details = {}) {
+  instance._readOnlyReason = reason;
+  if (!instance._logger) return;
+  try {
+    instance._logger('WARN', 'permission_store.read_only', { reason, ...details });
+  } catch (_error) {
+    // Logging must not weaken the fail-closed state.
+  }
+}
+
+function permissionFileStatus(filePath) {
+  try {
+    return {
+      oversized: fs.statSync(filePath).size > MAX_PERMISSION_DOCUMENT_BYTES,
+      error: null,
+    };
+  } catch (error) {
+    return error && error.code === 'ENOENT'
+      ? { oversized: false, error: null }
+      : { oversized: false, error };
+  }
 }
 
 class ToolPermissionStore {
   constructor(filePath, options = {}) {
-    this._store = new FileJsonStore(filePath, {
-      logger: typeof options.logger === 'function' ? options.logger : null,
-    });
-    // Cache the normalized snapshot because policy is evaluated twice per tool
-    // call. This store is the sole writer, so mutations invalidate it below.
+    this._logger = typeof options.logger === 'function' ? options.logger : null;
+    this._store = new FileJsonStore(filePath, { logger: this._logger });
+    this._document = createEmptyPermissionDocument();
     this._snapshotCache = null;
+    this._readOnlyReason = null;
     this._blanketRuleRetired = false;
     this._retiredInspectDenySeen = false;
-    this._retirePersistedBlanketRule();
-    this._pruneRetiredToolGrants();
-    this._migrateToolGrantNames();
-  }
-
-  _retirePersistedBlanketRule() {
-    const raw = this._store.read({});
-    if (!isRuleListPolicyDocument(raw) || !Array.isArray(raw.rules)) {
+    const fileStatus = permissionFileStatus(filePath);
+    if (fileStatus.oversized) {
+      markReadOnly(this, 'document_too_large');
       return;
     }
-    const rules = raw.rules.filter((rule) => rule?.id !== BLANKET_AUTO_APPROVE_RULE_ID);
-    if (rules.length === raw.rules.length) {
+    if (fileStatus.error) {
+      markReadOnly(this, 'file_status_unavailable', { errorMessage: fileStatus.error.message });
       return;
     }
-    const snapshot = normalizeStoredPolicyDocument({ ...raw, rules });
-    this._store.write({
-      version: snapshot.version,
-      legacy_policies: { ...snapshot.legacy_policies },
-      rules: [...snapshot.rules],
-    });
-    this._blanketRuleRetired = true;
-  }
-
-  _pruneRetiredToolGrants() {
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    const legacyPolicies = {};
-    let dropped = false;
-    let retiredInspectDenySeen = false;
-
-    for (const [toolName, decision] of Object.entries(snapshot.legacy_policies)) {
-      if (!RETIRED_TOOL_NAMES.has(toolName)) {
-        legacyPolicies[toolName] = decision;
-        continue;
-      }
-      dropped = true;
-      if (decision === 'deny' && RETIRED_INSPECT_TOOL_NAMES.has(toolName)) {
-        retiredInspectDenySeen = true;
-      }
-    }
-
-    const rules = snapshot.rules.filter((rule) => {
-      const toolName = rule?.match?.tool_id;
-      if (!RETIRED_TOOL_NAMES.has(toolName)) {
-        return true;
-      }
-      dropped = true;
-      if (rule.decision === 'deny' && RETIRED_INSPECT_TOOL_NAMES.has(toolName)) {
-        retiredInspectDenySeen = true;
-      }
-      return false;
-    });
-
-    if (!dropped) {
+    const read = this._store.readWithStatus(null);
+    if (read.corrupted) {
+      markReadOnly(this, 'unreadable_or_corrupt', {
+        errorCode: read.errorCode, errorMessage: read.errorMessage,
+      });
       return;
     }
-    this._store.write({
-      version: snapshot.version,
-      legacy_policies: legacyPolicies,
-      rules,
-    });
-    this._snapshotCache = null;
-    this._retiredInspectDenySeen = retiredInspectDenySeen;
-  }
-
-  _migrateToolGrantNames() {
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    const legacyPolicies = {};
-    let changed = false;
-
-    for (const [toolName, decision] of Object.entries(snapshot.legacy_policies)) {
-      const mappedName = migratedToolGrantName(toolName);
-      const migratedName = mappedName || toolName;
-      if (mappedName) {
-        validateCompositeToolName(migratedName);
-        changed = true;
+    if (read.missing) {
+      try {
+        commitDocument(this, this._document);
+      } catch (error) {
+        markReadOnly(this, 'initial_write_failed', { errorMessage: error.message });
       }
-      const existingDecision = legacyPolicies[migratedName];
-      if (
-        existingDecision === undefined
-        || decision === 'deny'
-        || (decision === 'ask' && existingDecision === 'auto')
-      ) {
-        legacyPolicies[migratedName] = decision;
-      }
-    }
-
-    const rules = snapshot.rules.map((rule) => {
-      const toolName = rule?.match?.tool_id;
-      const migratedName = migratedToolGrantName(toolName);
-      if (!migratedName) {
-        return rule;
-      }
-      validateCompositeToolName(migratedName);
-      changed = true;
-      return {
-        ...rule,
-        match: { ...rule.match, tool_id: migratedName },
-      };
-    });
-
-    if (!changed) {
       return;
     }
-    this._store.write({
-      version: snapshot.version,
-      legacy_policies: legacyPolicies,
-      rules,
-    });
-    this._snapshotCache = null;
+    const migrated = migratePermissionDocument(read.value);
+    if (!migrated.ok) {
+      markReadOnly(this, migrated.reason || 'incompatible_document');
+      return;
+    }
+    if (migrated.changed) {
+      try {
+        commitDocument(this, migrated.document);
+      } catch (error) {
+        markReadOnly(this, 'migration_write_failed', { errorMessage: error.message });
+        return;
+      }
+      this._blanketRuleRetired = Boolean(migrated.notices?.blanket_rule_retired);
+      this._retiredInspectDenySeen = Boolean(migrated.notices?.retired_inspect_deny_seen);
+    } else {
+      this._document = migrated.document;
+    }
   }
 
   getDefaults() {
@@ -317,147 +279,163 @@ class ToolPermissionStore {
 
   getPolicy(toolName) {
     const normalizedName = normalizeToolName(toolName);
-    if (!normalizedName) {
-      return undefined;
-    }
-    return this.getSnapshot().legacy_policies[normalizedName];
+    if (!normalizedName || this._readOnlyReason) return undefined;
+    return this._document.legacy_policies[normalizedName];
   }
 
-  setPolicy(toolName, policy) {
+  setPolicy(toolName, policy, authority) {
     if (!VALID_POLICIES.has(policy)) {
-      throw new Error(`Invalid tool policy "${policy}". Must be one of: ${[...VALID_POLICIES].join(', ')}`);
+      throw new ToolPermissionStoreError(
+        'permission_decision_invalid',
+        `Invalid tool policy "${policy}". Must be one of: ${[...VALID_POLICIES].join(', ')}`
+      );
     }
-    const normalizedName = normalizeToolName(toolName);
-    if (!normalizedName) {
-      throw new Error('Tool name is required.');
-    }
-    validateCompositeToolName(normalizedName);
-    const raw = this._store.read({});
-    if (isRuleListPolicyDocument(raw)) {
-      const snapshot = normalizeStoredPolicyDocument(raw);
-      this._store.write({
-        version: snapshot.version,
-        legacy_policies: {
-          ...snapshot.legacy_policies,
-          [normalizedName]: policy,
-        },
-        rules: Array.isArray(snapshot.rules) ? snapshot.rules : [],
-      });
-      this._snapshotCache = null;
-      return;
-    }
-
-    const data = canonicalizePolicies(raw);
-    data[normalizedName] = policy;
-    this._store.write(data);
-    this._snapshotCache = null;
+    const normalizedName = assertToolName(toolName);
+    if (policy === 'auto') return this.grantAlwaysAllow(normalizedName, {}, authority);
+    const next = cloneDocument(this._document);
+    next.legacy_policies[normalizedName] = policy;
+    commitDocument(this, next);
+    return { decision: policy, toolName: normalizedName, scope: 'global' };
   }
 
-  grantAlwaysAllow(toolName, input) {
-    const normalizedName = normalizeToolName(toolName);
-    if (!normalizedName) {
-      throw new Error('Tool name is required.');
-    }
-    validateCompositeToolName(normalizedName);
-
-    const toolInput = input && typeof input === 'object' ? input : {};
-    const pathPrefix = String(toolInput.path ?? toolInput.file_path ?? '')
-      .trim()
-      .slice(0, MAX_ALWAYS_ALLOW_PATH_CHARS);
-    if (!pathPrefix) {
-      this.setPolicy(normalizedName, 'auto');
-      return { scope: 'tool', toolName: normalizedName };
-    }
-
-    const pathHash = createHash('sha256').update(pathPrefix).digest('hex').slice(0, 12);
-    const rule = {
-      id: `always-allow:${normalizedName}:${pathHash}`,
-      decision: 'auto',
-      match: { tool_id: normalizedName, path_prefix: pathPrefix },
-      reason: `Always allow ${normalizedName} for ${pathPrefix} (approved in chat)`,
-    };
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    if (!snapshot.rules.some((storedRule) => storedRule.id === rule.id)) {
-      this._store.write({
-        version: snapshot.version,
-        legacy_policies: { ...snapshot.legacy_policies },
-        rules: [...snapshot.rules, rule],
-      });
-      this._snapshotCache = null;
+  grantAlwaysAllow(toolName, input, authority) {
+    const normalizedName = assertToolName(toolName);
+    const normalizedAuthority = assertAuthority(authority);
+    const pathPrefix = normalizedPathPrefix(input);
+    const match = matchForToolGrant(normalizedName, pathPrefix);
+    const grant = buildScopedGrant(
+      normalizedName, match, normalizedAuthority, new Date().toISOString()
+    );
+    const existing = this._document.scoped_grants.find((item) => item.id === grant.id);
+    if (!existing) {
+      if (this._document.scoped_grants.length >= MAX_SCOPED_GRANT_COUNT) {
+        throw new ToolPermissionStoreError(
+          'permission_capacity_exceeded', 'Scoped permission grant capacity has been reached.'
+        );
+      }
+      const next = cloneDocument(this._document);
+      next.scoped_grants.push(grant);
+      commitDocument(this, next);
     }
     return {
-      scope: 'path',
-      toolName: normalizedName,
-      pathPrefix,
-      ruleId: rule.id,
+      scope: pathPrefix ? 'path' : 'tool', toolName: normalizedName,
+      ...(pathPrefix ? { pathPrefix } : {}), ruleId: grant.id,
     };
   }
 
   getAllPolicies() {
-    return {
-      ...DEFAULT_POLICIES,
-      ...this.getSnapshot().legacy_policies,
-    };
-  }
-
-  /**
-   * The user's own saved decisions, for Settings > Tools > Approval rules:
-   * the stored per-tool policies (NOT merged with defaults) and the stored
-   * rule list. Reads the stored document rather than getSnapshot() because
-   * the synthetic legacy-deny rules are a presentation of the per-tool map,
-   * not rows of their own.
-   */
-  listStoredDecisions() {
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    return {
-      policies: { ...snapshot.legacy_policies },
-      rules: snapshot.rules.map((rule) => ({
-        id: rule.id,
-        decision: rule.decision,
-        reason: rule.reason,
-        match: { ...rule.match },
-      })),
-    };
-  }
-
-  // Drop a stored per-tool policy so the tool falls back to its default (the
-  // manifest's side-effect metadata decides when DEFAULT_POLICIES has no entry).
-  clearPolicy(toolName) {
-    const normalizedName = normalizeToolName(toolName);
-    if (!normalizedName) {
-      throw new Error('Tool name is required.');
+    if (this._readOnlyReason) {
+      return Object.fromEntries(Object.keys(DEFAULT_POLICIES).map((toolName) => [toolName, 'deny']));
     }
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    if (!Object.prototype.hasOwnProperty.call(snapshot.legacy_policies, normalizedName)) {
+    return { ...DEFAULT_POLICIES, ...this._document.legacy_policies };
+  }
+
+  listStoredDecisions() {
+    return {
+      policies: { ...this._document.legacy_policies },
+      rules: this._document.rules.map(copyRule),
+      scoped_grants: cloneDocument(this._document.scoped_grants),
+      pending_review: cloneDocument(this._document.pending_review),
+      review_history: cloneDocument(this._document.review_history),
+      read_only_reason: this._readOnlyReason,
+    };
+  }
+
+  getReviewState() {
+    return {
+      read_only: Boolean(this._readOnlyReason), read_only_reason: this._readOnlyReason,
+      pending_count: this._document.pending_review.length,
+      pending: cloneDocument(this._document.pending_review),
+      history: cloneDocument(this._document.review_history),
+    };
+  }
+
+  resolvePendingReview(id, { decision, authority } = {}) {
+    const pendingId = typeof id === 'string' ? id.trim() : '';
+    if (!pendingId) {
+      throw new ToolPermissionStoreError('permission_review_id_invalid', 'Review id is required.');
+    }
+    if (!REVIEW_DECISIONS.has(decision)) {
+      throw new ToolPermissionStoreError(
+        'permission_review_decision_invalid',
+        'Review decision must be auto, ask, deny, or dismiss.'
+      );
+    }
+    const record = this._document.pending_review.find((item) => item.id === pendingId);
+    if (!record) {
+      const history = this._document.review_history.find((item) => item.pending_id === pendingId);
+      return history
+        ? { resolved: false, reason: 'already_resolved', review: cloneDocument(history) }
+        : { resolved: false, reason: 'not_found' };
+    }
+    if (this._document.review_history.length >= MAX_REVIEW_HISTORY_COUNT) {
+      throw new ToolPermissionStoreError(
+        'permission_capacity_exceeded', 'Permission review history capacity has been reached.'
+      );
+    }
+    const next = cloneDocument(this._document);
+    next.pending_review = next.pending_review.filter((item) => item.id !== pendingId);
+    let scopedGrantId = null;
+    if (decision === 'auto') {
+      const normalizedAuthority = assertAuthority(authority);
+      const match = matchForReviewedGrant(record);
+      const grant = buildScopedGrant(
+        record.tool_name, match, normalizedAuthority, new Date().toISOString()
+      );
+      scopedGrantId = grant.id;
+      if (!next.scoped_grants.some((item) => item.id === grant.id)) {
+        if (next.scoped_grants.length >= MAX_SCOPED_GRANT_COUNT) {
+          throw new ToolPermissionStoreError(
+            'permission_capacity_exceeded', 'Scoped permission grant capacity has been reached.'
+          );
+        }
+        next.scoped_grants.push(grant);
+      }
+    } else if (GLOBAL_DECISIONS.has(decision)) {
+      const rule = reviewRule(record, decision);
+      if (Object.keys(rule.match).length === 1 && rule.match.tool_id && !record.path_prefix
+        && record.original_kind === 'policy') {
+        next.legacy_policies[record.tool_name] = decision;
+      } else {
+        if (next.rules.length >= MAX_RULE_COUNT) {
+          throw new ToolPermissionStoreError(
+            'permission_capacity_exceeded', 'Permission rule capacity has been reached.'
+          );
+        }
+        next.rules.push(rule);
+      }
+    }
+    const review = {
+      pending_id: pendingId, decision, reviewed_at: new Date().toISOString(),
+      scoped_grant_id: scopedGrantId, original_record: cloneDocument(record.original_record),
+    };
+    next.review_history.push(review);
+    commitDocument(this, next);
+    return { resolved: true, review: cloneDocument(review) };
+  }
+
+  clearPolicy(toolName) {
+    const normalizedName = assertToolName(toolName);
+    if (!Object.hasOwn(this._document.legacy_policies, normalizedName)) {
       return { cleared: false, toolName: normalizedName };
     }
-    const legacyPolicies = { ...snapshot.legacy_policies };
-    delete legacyPolicies[normalizedName];
-    this._store.write({
-      version: snapshot.version,
-      legacy_policies: legacyPolicies,
-      rules: [...snapshot.rules],
-    });
-    this._snapshotCache = null;
+    const next = cloneDocument(this._document);
+    delete next.legacy_policies[normalizedName];
+    commitDocument(this, next);
     return { cleared: true, toolName: normalizedName };
   }
 
   removeRule(ruleId) {
-    const id = String(ruleId || '').trim();
-    if (!id) {
-      throw new Error('Rule id is required.');
-    }
-    const snapshot = normalizeStoredPolicyDocument(this._store.read({}));
-    const rules = snapshot.rules.filter((rule) => rule.id !== id);
-    if (rules.length === snapshot.rules.length) {
+    const id = typeof ruleId === 'string' ? ruleId.trim() : '';
+    if (!id) throw new ToolPermissionStoreError('permission_rule_id_invalid', 'Rule id is required.');
+    const next = cloneDocument(this._document);
+    const before = next.rules.length + next.scoped_grants.length;
+    next.rules = next.rules.filter((rule) => rule.id !== id);
+    next.scoped_grants = next.scoped_grants.filter((grant) => grant.id !== id);
+    if (next.rules.length + next.scoped_grants.length === before) {
       return { removed: false, ruleId: id };
     }
-    this._store.write({
-      version: snapshot.version,
-      legacy_policies: { ...snapshot.legacy_policies },
-      rules,
-    });
-    this._snapshotCache = null;
+    commitDocument(this, next);
     return { removed: true, ruleId: id };
   }
 
@@ -473,26 +451,33 @@ class ToolPermissionStore {
     return denySeen;
   }
 
-  /**
-   * Return an immutable snapshot suitable for the pure policy evaluator and
-   * for serializing into the sidecar RuntimeConfig. Accepts both the legacy
-   * flat-map persistence format and the future {legacy_policies, rules,
-   * version} shape so a single store file works during the transition.
-   */
-  getSnapshot() {
-    if (this._snapshotCache) {
-      return this._snapshotCache;
+  getSnapshot(authority) {
+    if (this._readOnlyReason) return unavailableSnapshot();
+    const hasAuthorityArgument = arguments.length > 0;
+    const normalizedAuthority = hasAuthorityArgument ? normalizeAuthority(authority) : null;
+    if (hasAuthorityArgument && !normalizedAuthority) return unavailableSnapshot();
+    if (!normalizedAuthority && this._snapshotCache) return this._snapshotCache;
+    const base = materializeLegacyDenyRules(this._document);
+    if (!normalizedAuthority) {
+      this._snapshotCache = base;
+      return base;
     }
-    const snapshot = materializeLegacyDenyRules(
-      normalizeStoredPolicyDocument(this._store.read({}))
-    );
-    this._snapshotCache = snapshot;
-    return snapshot;
+    return normalizePolicySnapshot({
+      version: base.version,
+      legacy_policies: base.legacy_policies,
+      rules: [
+        ...base.rules,
+        ...this._document.scoped_grants
+          .filter((grant) => authoritiesMatch(grant.authority, normalizedAuthority))
+          .map(scopedGrantRule),
+      ],
+    });
   }
 }
 
 module.exports = {
   NEVER_PERSIST_ALWAYS_ALLOW,
   ToolPermissionStore,
+  ToolPermissionStoreError,
   normalizeToolName,
 };

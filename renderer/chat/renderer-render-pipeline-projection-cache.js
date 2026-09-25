@@ -62,10 +62,54 @@
     pinned.delete('');
     return pinned;
   }
-  // Enforce the per-session LRU cap on creation so caches remain bounded even when renderMessages does not run; never evict the current session.
+  // Split view W0-5: the pane layout decides which sessions are RETAINED. The
+  // module loads before this one in index.html (it seeds the boot state), and
+  // resolves through require() in Node; absent, the retained set collapses to
+  // the single current session, which is the pre-W0-5 policy exactly.
+  const paneModelUtils = (typeof globalThis !== 'undefined' && globalThis.rendererPaneModel)
+    || (typeof require === 'function' ? require('../shell/renderer-pane-model') : null)
+    || {};
+
+  /* A retained set from either shape: a single session id (the old contract,
+   * answer for answer) or an array/Set of them. Blanks are dropped, so an
+   * empty id and an empty array both mean "retain nothing" -- which is what
+   * made the old `pruneToolRowProjectionSessionCaches('')` clear every cache. */
+  function toRetainedSet(retained) {
+    const sessionIds = new Set();
+    const add = (value) => {
+      const sessionId = String(value == null ? '' : value).trim();
+      if (sessionId) sessionIds.add(sessionId);
+    };
+    if (typeof retained === 'string') add(retained);
+    else if (Array.isArray(retained) || retained instanceof Set) retained.forEach(add);
+    // Any other non-null shape coerces the way the old single-id contract did
+    // (String(x).trim()), so an unexpected argument retains ONE session rather
+    // than clearing every cache (the independent review's finding).
+    else if (retained != null) add(retained);
+    return sessionIds;
+  }
+
+  /**
+   * The sessions whose projection caches must survive: every pane's session
+   * once a pane holds one, the current session otherwise. The fallback is not
+   * a nicety -- W0-2 seeds `state.panes` without moving the writers of
+   * `state.currentSessionId`, so a blank layout means "ask currentSessionId".
+   * With one pane this is `[currentSessionId]`, the pre-W0-5 answer.
+   * @returns {Array<string>} at least one entry, possibly the empty string
+   */
+  function resolveRetainedSessionIds(state) {
+    const layout = state && state.panes;
+    if (layout && typeof paneModelUtils.listPaneSessionIds === 'function') {
+      const paneSessionIds = paneModelUtils.listPaneSessionIds(layout);
+      if (Array.isArray(paneSessionIds) && paneSessionIds.length) return paneSessionIds;
+    }
+    return [String((state && state.currentSessionId) || '').trim()];
+  }
+
+  // Enforce the per-session LRU cap on creation so caches remain bounded even when renderMessages does not run; never evict a retained session.
   const PROJECTION_CACHE_SESSION_CAP = LONG_THREAD_BUDGETS.projectionCacheSessions;
 
-  function enforceProjectionCacheBound(cacheMap, currentSessionId) {
+  function enforceProjectionCacheBound(cacheMap, retained) {
     if (!cacheMap
       || typeof cacheMap.size !== 'number'
       || typeof cacheMap.keys !== 'function'
@@ -73,10 +117,11 @@
     ) {
       return;
     }
+    const retainedSessionIds = toRetainedSet(retained);
     while (cacheMap.size > PROJECTION_CACHE_SESSION_CAP) {
       let evicted = false;
       for (const key of cacheMap.keys()) {
-        if (key === currentSessionId) continue;
+        if (retainedSessionIds.has(key)) continue;
         cacheMap.delete(key);
         evicted = true;
         break;
@@ -297,7 +342,7 @@
       } else if (options && options.create) {
         fallbackSet = new Set();
         cache.set(normalizedSessionId, fallbackSet);
-        enforceProjectionCacheBound(cache, String(state.currentSessionId || '').trim());
+        enforceProjectionCacheBound(cache, resolveRetainedSessionIds(state));
       }
       return fallbackSet || null;
     }
@@ -317,13 +362,13 @@
       } else if (options && options.create) {
         failureSet = new Set();
         cache.set(normalizedSessionId, failureSet);
-        enforceProjectionCacheBound(cache, String(state.currentSessionId || '').trim());
+        enforceProjectionCacheBound(cache, resolveRetainedSessionIds(state));
       }
       return failureSet || null;
     }
 
-    function pruneToolRowProjectionSessionCaches(sessionId) {
-      const normalizedSessionId = String(sessionId || '').trim();
+    function pruneToolRowProjectionSessionCaches(retained) {
+      const retainedSessionIds = toRetainedSet(retained);
       const uiRuntimeCaches = [
         'projectionContextBySession',
         'toolRowProjectionFallbacksBySession',
@@ -334,12 +379,12 @@
         if (!cache || typeof cache.forEach !== 'function' || typeof cache.delete !== 'function') {
           continue;
         }
-        if (!normalizedSessionId) {
+        if (!retainedSessionIds.size) {
           cache.clear();
           continue;
         }
         cache.forEach(function removeInactiveSession(_value, cachedSessionId) {
-          if (String(cachedSessionId || '').trim() !== normalizedSessionId) {
+          if (!retainedSessionIds.has(String(cachedSessionId || '').trim())) {
             cache.delete(cachedSessionId);
           }
         });
@@ -351,11 +396,11 @@
       // closed or the cache it pairs with has been pruned above.
       const metaStore = state.ui && state.ui.chatTimelineRowModelMetaBySession;
       if (metaStore && typeof metaStore.forEach === 'function' && typeof metaStore.delete === 'function') {
-        if (!normalizedSessionId) {
+        if (!retainedSessionIds.size) {
           metaStore.clear?.();
         } else {
           metaStore.forEach(function removeInactiveMeta(_value, cachedSessionId) {
-            if (String(cachedSessionId || '').trim() !== normalizedSessionId) {
+            if (!retainedSessionIds.has(String(cachedSessionId || '').trim())) {
               metaStore.delete(cachedSessionId);
             }
           });
@@ -429,7 +474,7 @@
       } else if (options && options.create) {
         cache = {};
         projectionCache.set(normalizedSessionId, cache);
-        enforceProjectionCacheBound(projectionCache, String(state.currentSessionId || '').trim());
+        enforceProjectionCacheBound(projectionCache, resolveRetainedSessionIds(state));
       }
       return cache || null;
     }
@@ -465,7 +510,12 @@
       if (typeof target.matches === 'function' && target.matches('.chat-entry')) {
         return target;
       }
-      return (typeof target.closest === 'function' && target.closest('.chat-entry')) || target;
+      // A match outside every .chat-entry is an envelope sibling's
+      // thread-compat row (or something written into one): no article shows
+      // this message. Returning the row let patchVisibleStreamingArticle write
+      // the segment's whole legacy markup into it, a second "Reasoning · N
+      // steps" beside the turn article (F29). Null sends callers to a full render.
+      return (typeof target.closest === 'function' && target.closest('.chat-entry')) || null;
     }
 
     function recordTurnArticleRolloutSignal(signal, details) {
@@ -585,7 +635,7 @@
           enabled: getChatTimelineRowModelEnabled(normalizedSessionId) === true,
         };
         metaStore.set(normalizedSessionId, meta);
-        enforceProjectionCacheBound(metaStore, String(state.currentSessionId || '').trim());
+        enforceProjectionCacheBound(metaStore, resolveRetainedSessionIds(state));
       }
       return meta;
     }
@@ -624,6 +674,7 @@
     createProjectionCachePipeline,
     BUDGETS: LONG_THREAD_BUDGETS,
     PROJECTION_CACHE_SESSION_CAP,
+    resolveRetainedSessionIds,
     buildMessageIdIndex,
     collectPinnedTurnIds,
     isLongThreadBoundsEnabled,

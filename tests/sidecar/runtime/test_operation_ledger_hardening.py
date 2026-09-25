@@ -15,6 +15,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from sidecar.runtime import operation_ledger as ledger_module
 from sidecar.runtime.operation_ledger import LEDGER_OPERATIONS_DIR, OperationLedger
 
 NOW = "2026-08-28T12:00:00Z"
@@ -46,6 +49,34 @@ class TestLockReleaseOwnership:
         with ledger._locked():  # noqa: SLF001
             assert lock_path.exists()
         assert not lock_path.exists()
+
+
+    def test_a_lock_file_pending_deletion_is_waited_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Windows refuses O_EXCL creation of a file another process is still
+        # deleting with PermissionError, not FileExistsError. That is the
+        # previous holder releasing the lock, so the writer must retry instead
+        # of reporting the ledger unavailable (seen under contention in CI).
+        ledger = _ledger(tmp_path)
+        real_open = ledger_module.os.open
+        refusals = []
+
+        def open_once_pending_delete(path, flags, *args, **kwargs):
+            if str(path).endswith(".lock") and not refusals:
+                refusals.append(path)
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(ledger_module.os, "open", open_once_pending_delete)
+        created = ledger.create_pending(
+            operation_id="idem_eeeeeeeeeeeeeeeeeeeeeeee",
+            request_fingerprint="fp_pending_delete",
+            generation_id="gen_live",
+            now_iso=NOW,
+        )
+        assert refusals, "the pending-delete refusal was exercised"
+        assert created["ok"] is True, created
 
 
 class TestCorruptReceiptsNeverAuthorize:

@@ -1,8 +1,8 @@
 'use strict';
 
 // `llamaServer.*` IPC namespace: renderer control of the single managed
-// llama-server (status / start / stop / restart) plus local GGUF discovery and
-// a native .gguf picker. The manager itself stays main-process-owned and is
+// llama-server (status / start / stop / restart) plus local GGUF discovery, a
+// native .gguf picker and the llama-server build picker. The manager itself stays main-process-owned and is
 // reached only through the injected getter, so the handlers register even when
 // no manager exists and every failure comes back as `{ ok:false, reason }`
 // rather than a rejection across the preload bridge.
@@ -12,9 +12,10 @@ const path = require('path');
 
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { t } = require('../i18n-main');
-const { splitGgufFiles } = require('../llama-server-lifecycle');
-const { isManagedModelPath, managedModelKey } = require('../shell-config-engines');
+const { pairProjector, splitGgufFiles } = require('../llama-server-gguf-files');
+const { isLocalAbsolutePath, isManagedModelPath, managedModelKey } = require('../shell-config-engines');
 const { normalizeSpec } = require('./llama-server-manager');
+const { validateRuntimeExecutable } = require('./llama-server-runtime');
 
 const MAX_LOCAL_GGUF_ENTRIES = 256;
 const MAX_OLLAMA_SOURCE_TAGS = 64;
@@ -24,6 +25,8 @@ const OLLAMA_SOURCE_TTL_MS = 30_000;
 const OLLAMA_SOURCE_BATCH = 4;
 const OLLAMA_SOURCE_BUDGET_MS = 5_000;
 const OLLAMA_BLOB_BASENAME = /^sha256-[0-9a-f]{64}$/i;
+// One part of a split model: its set's name, then the part count.
+const SHARD_PART = /^(.+)-\d{5}-of-(\d{5})\.gguf$/i;
 
 function registerLlamaServerIpcHandlers(ipcMainLike, {
   getManager,
@@ -40,6 +43,11 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   getOllamaTags = async () => [],
   getOllamaBlob = async () => null,
   nowMs = Date.now,
+  // {authorize, unauthorizedResult} for llamaServer.chooseRuntime, the one
+  // handler that hands main an executable path. Missing trusts no sender.
+  authorization = null,
+  platform = process.platform,
+  validateRuntimeExecutableImpl = validateRuntimeExecutable,
 } = {}) {
   if (typeof getManager !== 'function') {
     return [];
@@ -74,6 +82,69 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     }
   };
 
+  // A dialog's defaultPath: an existing local directory, or nothing. Never a
+  // network or device path: stat on one would reach the host it names, with
+  // the user's credentials, before any dialog opens.
+  const existingDirectory = (value) => {
+    const candidate = String(value || '').trim();
+    if (!isLocalAbsolutePath(candidate, { platform })) {
+      return '';
+    }
+    try {
+      return fsImpl.statSync(candidate).isDirectory() ? candidate : '';
+    } catch (_error) {
+      return '';
+    }
+  };
+
+  // A pick the user browsed to on another machine. The dialog reached it at
+  // the user's hand, but main never reads a network path and settings would
+  // not keep it, so it is refused before any fs call, with a reason the
+  // renderer can explain (map the share to a drive letter).
+  const refuseNetworkPick = (action, selected) => (selected && !isLocalAbsolutePath(selected, { platform })
+    ? finish(action, { ok: false, reason: 'network_path' })
+    : null);
+
+  // A build is an executable main will spawn, so its path enters only here:
+  // a main-owned dialog, the name check and the probe, then the manager's pick
+  // registry. engines.updateSettings saves no runtime path it did not record.
+  const chooseRuntime = async (_event, payload) => {
+    try {
+      const picks = getManager()?.runtimePicks;
+      if (!picks || typeof picks.record !== 'function') {
+        return finish('choose_runtime', { ok: false, reason: 'manager_unavailable' });
+      }
+      const defaultPath = existingDirectory(payload?.defaultPath);
+      const picked = await dialogImpl.showOpenDialog(getMainWindow(), {
+        title: t('main.dialog.llamaServer.selectRuntime', 'Select a llama-server build'),
+        ...(defaultPath ? { defaultPath } : {}),
+        properties: ['openFile'],
+        ...(platform === 'win32' ? { filters: [{ name: 'llama-server', extensions: ['exe'] }] } : {}),
+      });
+      if (picked.canceled) {
+        return finish('choose_runtime', { ok: true, picked: false, path: '' });
+      }
+      const selected = String(picked.filePaths?.[0] || '');
+      const refused = refuseNetworkPick('choose_runtime', selected);
+      if (refused) return refused;
+      const verdict = await validateRuntimeExecutableImpl(selected, { fsImpl, platform });
+      if (!verdict.ok) {
+        return finish('choose_runtime', { ok: false, reason: verdict.reason });
+      }
+      picks.record(selected, { build: verdict.build, supportsMtp: verdict.supportsMtp });
+      return finish('choose_runtime', {
+        ok: true,
+        picked: true,
+        path: selected,
+        build: verdict.build,
+        supportsMtp: verdict.supportsMtp,
+      });
+    } catch (_error) {
+      // A dialog or probe error message can carry the path; report a code.
+      return finish('choose_runtime', { ok: false, reason: 'runtime_pick_failed' });
+    }
+  };
+
   // The manager resolves a failed launch as a status, never a rejection.
   const launched = (status) => ({
     ...status,
@@ -104,6 +175,16 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       return null;
     }
   };
+  // A split model ("<name>-00001-of-00003.gguf") is as big as its whole set.
+  const modelBytes = (dir, main, mains) => {
+    const shard = SHARD_PART.exec(main);
+    const parts = shard ? mains.filter((name) => {
+      const other = SHARD_PART.exec(name);
+      return Boolean(other) && other[1].toLowerCase() === shard[1].toLowerCase() && other[2] === shard[2];
+    }) : [];
+    return (parts.length > 0 ? parts : [main])
+      .reduce((total, name) => total + (fileSize(path.join(dir, name)) ?? 0), 0);
+  };
   const describeGgufDir = (tag, dir, source, mainGguf = '') => {
     const files = readGgufs(dir);
     const resolvedMain = mainGguf || files.main[0] || '';
@@ -112,33 +193,51 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       dir,
       mainGguf: resolvedMain,
       drafterGguf: files.drafters[0] || '',
-      mmproj: files.projectors.length > 0,
-      sizeBytes: resolvedMain ? fileSize(path.join(dir, resolvedMain)) ?? 0 : 0,
+      // Per model, exactly as the launch pairs it, never "the folder has one".
+      mmproj: Boolean(resolvedMain && pairProjector(dir, resolvedMain, files)),
+      sizeBytes: resolvedMain ? modelBytes(dir, resolvedMain, files.main) : 0,
       source,
     };
   };
   let ollamaSourceCache = { key: null, expiresAt: 0, results: [] };
-  const queryOllamaSources = async (tags) => {
-    const key = [...tags].sort().join('\n');
-    const startedMs = nowMs();
-    if (ollamaSourceCache.key === key && startedMs < ollamaSourceCache.expiresAt) {
-      return ollamaSourceCache.results;
-    }
+  // Overlapping scans (model library + tuning drawer) share one query: two
+  // concurrent batches of OLLAMA_SOURCE_BATCH overran the sidecar's blob
+  // worker cap, which refused the second scan's lookups outright.
+  let ollamaSourceInflight = null;
+  const runOllamaSourceQuery = async (key, tags, startedMs) => {
     // Tags left unqueried when the budget runs out are picked up once the
     // cache expires.
     const results = [];
+    let transient = false;
     for (let index = 0; index < tags.length; index += OLLAMA_SOURCE_BATCH) {
       if (nowMs() - startedMs > OLLAMA_SOURCE_BUDGET_MS) break;
       results.push(...await Promise.all(tags.slice(index, index + OLLAMA_SOURCE_BATCH).map(async (tag) => {
         try {
           return { tag, blob: await getOllamaBlob(tag) };
         } catch (_error) {
+          transient = true;
           return { tag, blob: null };
         }
       })));
     }
-    ollamaSourceCache = { key, expiresAt: nowMs() + OLLAMA_SOURCE_TTL_MS, results };
+    // A refused lookup says nothing about the model; retry it next scan.
+    if (!transient) ollamaSourceCache = { key, expiresAt: nowMs() + OLLAMA_SOURCE_TTL_MS, results };
     return results;
+  };
+  const queryOllamaSources = async (tags) => {
+    const key = [...tags].sort().join('\n');
+    const startedMs = nowMs();
+    if (ollamaSourceCache.key === key && startedMs < ollamaSourceCache.expiresAt) {
+      return ollamaSourceCache.results;
+    }
+    if (ollamaSourceInflight?.key === key) return ollamaSourceInflight.promise;
+    const inflight = { key, promise: runOllamaSourceQuery(key, tags, startedMs) };
+    ollamaSourceInflight = inflight;
+    try {
+      return await inflight.promise;
+    } finally {
+      if (ollamaSourceInflight === inflight) ollamaSourceInflight = null;
+    }
   };
 
   // `{userData}/models/<tag>/` and `{repoRoot}/.jenny/models/<tag>/` — one
@@ -175,7 +274,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     const scannedRoots = new Set(builtInRoots.map((root) => path.resolve(root).toLowerCase()));
     libraryRoots = (Array.isArray(libraryRoots) ? libraryRoots : [])
       .map((root) => String(root || '').trim())
-      .filter((root) => root && path.isAbsolute(root))
+      .filter((root) => isLocalAbsolutePath(root, { platform }))
       .filter((root) => {
         const resolved = path.resolve(root).toLowerCase();
         if (scannedRoots.has(resolved)) return false;
@@ -216,7 +315,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     for (const item of Array.isArray(persisted) ? persisted : []) {
       const tag = String(item?.tag || '').trim();
       const modelPath = String(item?.modelPath || '').trim();
-      if (!tag || !isManagedModelPath(modelPath)) continue;
+      if (!tag || !isManagedModelPath(modelPath, { platform })) continue;
       const dir = path.dirname(modelPath);
       const isBlobPath = OLLAMA_BLOB_BASENAME.test(path.basename(modelPath));
       // Ollama's blob store holds thousands of extensionless files and no .gguf,
@@ -251,7 +350,9 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     for (const { tag, blob } of await queryOllamaSources(tags)) {
       const blobPath = String(blob?.blobPath || '').trim();
       const key = managedModelKey(tag);
-      if (!blobPath || entryKeys.has(key)) continue;
+      // Ollama names the path, but a network one is still never read here, and
+      // Tune could not save it.
+      if (!isLocalAbsolutePath(blobPath, { platform }) || entryKeys.has(key)) continue;
       const sizeBytes = fileSize(blobPath) ?? 0;
       const match = sizeBytes ? sizeIndex.get(sizeBytes) : null;
       // A size match re-homes the tag onto the library directory (so its
@@ -277,14 +378,14 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       .slice(0, MAX_LOCAL_GGUF_ENTRIES);
   };
 
-  return registerIpcInvokeHandlers(ipcMainLike, {
+  const channels = registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.getStatus': manage('get_status', (manager) => manager.getStatus()),
     'llamaServer.start': manage('start', async (manager, payload) => launched(
-      await manager.start(normalizeSpec(payload))
+      await manager.start(normalizeSpec(payload, { platform }))
     )),
     'llamaServer.stop': manage('stop', (manager) => manager.stop()),
     'llamaServer.restart': manage('restart', async (manager, payload) => launched(
-      await manager.restart(normalizeSpec(payload))
+      await manager.restart(normalizeSpec(payload, { platform }))
     )),
     'llamaServer.listLocalGgufs': async () => {
       try {
@@ -295,16 +396,10 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     },
     'llamaServer.chooseGguf': async (_event, payload) => {
       try {
-        const defaultPath = String(payload?.defaultPath || '').trim();
-        let validDefaultPath = false;
-        if (defaultPath && path.isAbsolute(defaultPath) && !/[\r\n\0]/.test(defaultPath)) {
-          try {
-            validDefaultPath = fsImpl.statSync(defaultPath).isDirectory();
-          } catch (_error) { /* invalid default path is omitted */ }
-        }
+        const defaultPath = existingDirectory(payload?.defaultPath);
         const picked = await dialogImpl.showOpenDialog(getMainWindow(), {
           title: t('main.dialog.llamaServer.selectModel', 'Select a GGUF model'),
-          ...(validDefaultPath ? { defaultPath } : {}),
+          ...(defaultPath ? { defaultPath } : {}),
           properties: ['openFile'],
           filters: [{ name: t('main.dialog.llamaServer.ggufModels', 'GGUF models'), extensions: ['gguf'] }],
         });
@@ -312,6 +407,8 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
           return finish('choose_gguf', { ok: true, picked: false, path: '' });
         }
         const selected = String(picked.filePaths?.[0] || '');
+        const refused = refuseNetworkPick('choose_gguf', selected);
+        if (refused) return refused;
         if (!/\.gguf$/i.test(selected)) {
           return finish('choose_gguf', { ok: false, reason: 'not_gguf' });
         }
@@ -336,16 +433,20 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
         if (picked.canceled) {
           return finish('choose_library_folder', { ok: true, picked: false, path: '' });
         }
-        return finish('choose_library_folder', {
+        const selected = String(picked.filePaths?.[0] || '');
+        return refuseNetworkPick('choose_library_folder', selected) || finish('choose_library_folder', {
           ok: true,
           picked: true,
-          path: String(picked.filePaths?.[0] || ''),
+          path: selected,
         });
       } catch (error) {
         return finish('choose_library_folder', { ok: false, reason: reasonFor(error) });
       }
     },
   });
+  return channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
+    'llamaServer.chooseRuntime': chooseRuntime,
+  }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false }));
 }
 
 module.exports = {

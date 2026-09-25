@@ -53,6 +53,16 @@
   }
 }
 
+@keyframes turn-activity-fold-left {
+  0%, 15%, 100% { transform: translateX(0); opacity: 0.9; }
+  55%, 70% { transform: translateX(calc(var(--tl-dot-size) * 1.6)); opacity: 0.25; }
+}
+
+@keyframes turn-activity-fold-right {
+  0%, 15%, 100% { transform: translateX(0); opacity: 0.9; }
+  55%, 70% { transform: translateX(calc(var(--tl-dot-size) * -1.6)); opacity: 0.25; }
+}
+
 @keyframes hero-exit {
   from {
     opacity: 1;

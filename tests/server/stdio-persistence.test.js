@@ -78,6 +78,13 @@ test('two clients share a framed replay turn and canonical history survives host
     assert.equal(observed.snapshot.messages.filter((row) => row.role === 'user').length, 1);
     assert.ok(observed.snapshot.messages.some((row) => row.role === 'assistant' && row.content));
     const savedMessages = observed.snapshot.messages;
+    assert.equal(admitted.durable, true); assert.equal(Object.hasOwn(admitted, 'stream_id'), false);
+    const queuedSession = (await host.backend.createSession({ title: 'Resume explicitly' })).data.id;
+    const queued = await host.backend.runtimeApplicationService.submit({ session_id: queuedSession,
+      idempotency_key: 'restart_paused_browser', prompt: 'Run only after resume.', preferred_model: 'replay-model' });
+    assert.equal(queued.ok, true, JSON.stringify(queued));
+    assert.equal(host.backend.runtimeApplicationService.pause({ work_id: queued.work_id, expected_revision: queued.revision }).ok, true);
+    assert.equal(host.backend.sessionStore.getSessionMessages(queuedSession).length, 0);
     router.dispose(); events.dispose();
     const stopped = await host.stop();
     assert.equal(stopped.exitConfirmed, true);
@@ -92,6 +99,32 @@ test('two clients share a framed replay turn and canonical history survives host
     assert.deepEqual(recovered.messages, savedMessages);
     assert.equal(recovered.boot_epoch, 'boot_two');
     assert.equal(recovered.control, null);
+    const paused = host.backend.runtimeApplicationService.getWork({ work_id: queued.work_id });
+    assert.equal(paused.work.status, 'paused'); assert.equal(paused.work.turn_id, queued.turn_id);
+    const resumedEvents = [];
+    host.backend.on('chat-stream', event => resumedEvents.push(event));
+    await host.start();
+    host.backend.sessionRuntime.setEnabled(true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(resumedEvents.length, 0, 'opening/reconstruction/ON cannot resume paused work');
+    const resumeClients = new ClientRegistry(); const resumeClient = resumeClients.register('owner-login-a');
+    router.dispose();
+    router = createCommandRouter({ backend: host.backend, clients: resumeClients, leases: new ControlLeases(),
+      receipts: recoveredReceipts, bootEpoch: 'boot_two', eventStream: events });
+    const resumeContext = context(resumeClient, 'owner-login-a');
+    const resumeCommand = (operation, params, extra = {}) => ({ api_version: 1, boot_epoch: 'boot_two',
+      client_id: resumeClient.client_id, request_id: `resume_${++sequence}`, session_id: queuedSession, operation, params, ...extra });
+    const lease = await router.dispatch(resumeCommand('control.acquire', {}), resumeContext);
+    let resolveResumed;
+    const resumedTerminal = new Promise(resolve => { resolveResumed = resolve; });
+    host.backend.on('chat-stream', event => { if (event.sessionId === queuedSession && ['complete', 'error'].includes(event.type)) resolveResumed(event); });
+    const resumed = await router.dispatch(resumeCommand('sessionRuntime.resume', {
+      work_id: queued.work_id, expected_revision: paused.work.revision }, { control_generation: lease.lease.generation,
+      expected_revision: router.snapshot(queuedSession).session.revision }), resumeContext);
+    assert.equal(resumed.ok, true, JSON.stringify(resumed));
+    assert.equal((await resumedTerminal).type, 'complete');
+    assert.equal(resumedEvents.find(event => event.type === 'started').turnId, queued.turn_id);
+    assert.equal(host.backend.sessionStore.getSessionMessages(queuedSession).filter(row => row.role === 'user').length, 1);
     assert.equal(fs.existsSync(runtimeHome), true);
     assert.equal(fs.existsSync(path.join(root, 'runtime-home')), false);
   } finally {

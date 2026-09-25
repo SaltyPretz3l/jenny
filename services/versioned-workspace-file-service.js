@@ -16,9 +16,16 @@ const {
   createFileVersion,
   getMatchingImageDescriptor, hasUnpairedSurrogate, imageBytesMatchDescriptor,
   readStableFileBytes,
-  sameFileIdentity, sameReadSnapshot,
+  sameFileIdentity,
 } = require('./versioned-workspace-file-bytes');
 const { UTF8_BOM, decodeWorkspaceText } = require('./versioned-workspace-file-encoding');
+const { assertAdmittedResourceTarget, createVersionedWorkspaceFileResources, markResourceCleanupUncertain } = require('./versioned-workspace-file-resources');
+const {
+  DEFAULT_MAX_DOCUMENT_BYTES,
+  readDocument,
+  writeDocument,
+} = require('./versioned-workspace-file-documents');
+const { buildPathHint, replaceFileBytes } = require('./versioned-workspace-file-replace');
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_PENDING_WRITES = 256;
@@ -37,6 +44,8 @@ const VERSIONED_WORKSPACE_FILE_ERROR_CODES = Object.freeze({
   INVALID_UTF8: WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING,
   IMAGE_TOO_LARGE: WORKSPACE_FS_ERROR_CODES.IMAGE_TOO_LARGE,
   IMAGE_UNSUPPORTED: WORKSPACE_FS_ERROR_CODES.IMAGE_UNSUPPORTED,
+  DOCUMENT_UNSUPPORTED: WORKSPACE_FS_ERROR_CODES.DOCUMENT_UNSUPPORTED,
+  DOCUMENT_TOO_LARGE: WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE,
   TOO_LARGE: WORKSPACE_FS_ERROR_CODES.TOO_LARGE,
   WRITE_CONFLICT: WORKSPACE_FS_ERROR_CODES.WRITE_CONFLICT,
   ATOMIC_WRITE_FAILED: WORKSPACE_FS_ERROR_CODES.ATOMIC_WRITE_FAILED,
@@ -44,14 +53,6 @@ const VERSIONED_WORKSPACE_FILE_ERROR_CODES = Object.freeze({
   WRITE_QUEUE_FULL: WORKSPACE_FS_ERROR_CODES.WRITE_QUEUE_FULL,
   CONTENT_INVALID: WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING,
 });
-
-function buildPathHint(relPath) {
-  const normalized = String(relPath || '');
-  return {
-    file_name: normalized.split('/').pop() || '',
-    path_hash: crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 12),
-  };
-}
 
 class VersionedWorkspaceFileService {
   constructor({
@@ -64,8 +65,10 @@ class VersionedWorkspaceFileService {
     writeObserver = null,
     maxReadBytes = DEFAULT_MAX_BYTES,
     maxImageBytes = DEFAULT_MAX_IMAGE_BYTES,
+    maxDocumentBytes = DEFAULT_MAX_DOCUMENT_BYTES,
     maxWriteBytes = DEFAULT_MAX_BYTES,
     maxPendingWrites = DEFAULT_MAX_PENDING_WRITES,
+    resourceAdmissionProvider = null,
   } = {}) {
     if (!rootContext
       || typeof rootContext.captureContext !== 'function'
@@ -82,8 +85,12 @@ class VersionedWorkspaceFileService {
     this._writeObserver = writeObserver && typeof writeObserver === 'object' ? writeObserver : null;
     this._maxReadBytes = this._positiveInteger(maxReadBytes, 'maxReadBytes');
     this._maxImageBytes = this._positiveInteger(maxImageBytes, 'maxImageBytes');
+    this._maxDocumentBytes = Number.isSafeInteger(maxDocumentBytes) && maxDocumentBytes > 0
+      ? maxDocumentBytes
+      : DEFAULT_MAX_DOCUMENT_BYTES;
     this._maxWriteBytes = this._positiveInteger(maxWriteBytes, 'maxWriteBytes');
     this._maxPendingWrites = this._positiveInteger(maxPendingWrites, 'maxPendingWrites');
+    this._resources = createVersionedWorkspaceFileResources({ resourceAdmissionProvider, pathImpl: path });
     this._pathWriteTails = new Map();
     this._pendingWrites = 0;
   }
@@ -199,6 +206,11 @@ class VersionedWorkspaceFileService {
     return lease;
   }
 
+  async _withResourceLease(kind, relPath, capturedContext, operation) {
+    const rootLease = await this._acquireLease(kind, capturedContext);
+    return this._resources.run({ relPath, capturedContext, rootLease }, () => operation(rootLease));
+  }
+
   _assertCurrent(lease) {
     let current;
     try {
@@ -228,6 +240,7 @@ class VersionedWorkspaceFileService {
       try {
         await handle.close();
       } catch (closeError) {
+        markResourceCleanupUncertain();
         this._log('WARN', 'workspace_file.cancelled_handle_close_failed', {
           os_code: String(closeError?.code || ''),
         });
@@ -454,6 +467,7 @@ class VersionedWorkspaceFileService {
     let state = null;
     let operationError = null;
     try {
+      if (stage !== 'write-result') assertAdmittedResourceTarget(target.realPath);
       handle = await this._openCancellableHandle(lease, () => this._fs.open(target.realPath, 'r'));
       await this._runHook('afterTargetOpen', {
         operationId: lease.operationId,
@@ -461,6 +475,7 @@ class VersionedWorkspaceFileService {
         path: target.displayPath,
       }, lease);
       const initialStats = await this._step(lease, () => handle.stat());
+      if (stage !== 'write-result') assertAdmittedResourceTarget(target.realPath);
       await this._revalidateTarget(root, target, initialStats, lease);
       const read = readOptions.statsOnly === true
         ? { stats: initialStats }
@@ -489,7 +504,7 @@ class VersionedWorkspaceFileService {
       try {
         await handle.close();
       } catch (error) {
-        closeError = error;
+        closeError = markResourceCleanupUncertain(error);
       }
     }
     if (operationError) throw operationError;
@@ -632,7 +647,7 @@ class VersionedWorkspaceFileService {
       await this._revalidateParent(root, { realPath, handle, stats }, lease);
       return { realPath, handle, stats };
     } catch (error) {
-      if (handle) await handle.close().catch(() => {});
+      if (handle) await handle.close().catch(() => markResourceCleanupUncertain());
       if (this._structured(error)) throw error;
       throw this._ioError('open_parent', target.requestedPath, error);
     }
@@ -662,6 +677,7 @@ class VersionedWorkspaceFileService {
       await this._fs.unlink(tempPath);
     } catch (error) {
       if (error?.code === 'ENOENT') return;
+      markResourceCleanupUncertain();
       this._log('WARN', 'workspace_file.temp_cleanup_failed', {
         ...buildPathHint(relPath),
         os_code: String(error?.code || ''),
@@ -696,7 +712,7 @@ class VersionedWorkspaceFileService {
         return { path: tempPath, handle, stats };
       } catch (error) {
         const ownsTemp = Boolean(handle);
-        if (handle) await handle.close().catch(() => {});
+        if (handle) await handle.close().catch(() => markResourceCleanupUncertain());
         // `wx` can fail because another process already owns this random name.
         // Never unlink a path unless this attempt successfully created it.
         if (ownsTemp) await this._cleanupTemp(tempPath, target.requestedPath);
@@ -728,7 +744,7 @@ class VersionedWorkspaceFileService {
     try {
       await temp.handle.close();
     } catch (error) {
-      closeError = error;
+      closeError = markResourceCleanupUncertain(error);
     }
     temp.handle = null;
     if (operationError) throw operationError;
@@ -810,19 +826,17 @@ class VersionedWorkspaceFileService {
     const intent = payload.intent === 'preview' ? 'preview' : 'edit';
     const maxBytes = this._previewReadLimit(payload, intent);
     const capturedContext = this._captureContext();
-    let lease = null;
     try {
-      lease = await this._acquireLease('read', capturedContext);
-      const root = await this._prepareRoot(lease);
-      const target = await this._resolveTarget(root, relPath, lease);
-      const state = await this._openStableText(root, target, lease, 'read', intent, maxBytes);
-      this._assertCurrent(lease);
-      return this._metadata(state, lease.context, true);
+      return await this._withResourceLease('read', relPath, capturedContext, async (lease) => {
+        const root = await this._prepareRoot(lease);
+        const target = await this._resolveTarget(root, relPath, lease);
+        const state = await this._openStableText(root, target, lease, 'read', intent, maxBytes);
+        this._assertCurrent(lease);
+        return this._metadata(state, lease.context, true);
+      });
     } catch (error) {
       if (this._structured(error)) throw error;
       throw this._ioError('read_text', relPath, error);
-    } finally {
-      try { lease?.release(); } catch (_error) { /* idempotent coordinator seam */ }
     }
   }
 
@@ -830,51 +844,49 @@ class VersionedWorkspaceFileService {
     const relPath = this._normalizeRelPath(payload.path);
     this._imageDescriptor(relPath);
     const capturedContext = this._captureContext();
-    let lease = null;
     try {
-      lease = await this._acquireLease('read', capturedContext);
-      const root = await this._prepareRoot(lease);
-      const target = await this._resolveTarget(root, relPath, lease);
-      const descriptor = this._imageDescriptor(relPath, target.displayPath);
-      const state = await this._openStableBytes(root, target, lease, 'read-image', {
-        maxBytes: this._maxImageBytes,
-        tooLargeCode: VERSIONED_WORKSPACE_FILE_ERROR_CODES.IMAGE_TOO_LARGE,
-        tooLargeMessage: 'Image is too large to preview.',
+      return await this._withResourceLease('read', relPath, capturedContext, async (lease) => {
+        const root = await this._prepareRoot(lease);
+        const target = await this._resolveTarget(root, relPath, lease);
+        const descriptor = this._imageDescriptor(relPath, target.displayPath);
+        const state = await this._openStableBytes(root, target, lease, 'read-image', {
+          maxBytes: this._maxImageBytes,
+          tooLargeCode: VERSIONED_WORKSPACE_FILE_ERROR_CODES.IMAGE_TOO_LARGE,
+          tooLargeMessage: 'Image is too large to preview.',
+        });
+        if (!imageBytesMatchDescriptor(state.bytes, descriptor)) {
+          throw workspaceFsError(
+            VERSIONED_WORKSPACE_FILE_ERROR_CODES.IMAGE_UNSUPPORTED,
+            'Only supported workspace image files can be opened as images.',
+            buildPathHint(relPath));
+        }
+        this._assertCurrent(lease);
+        return buildImageMetadata(
+          state, lease.context, this._pathKey(state.requestedPath), descriptor
+        );
       });
-      if (!imageBytesMatchDescriptor(state.bytes, descriptor)) {
-        throw workspaceFsError(
-          VERSIONED_WORKSPACE_FILE_ERROR_CODES.IMAGE_UNSUPPORTED,
-          'Only supported workspace image files can be opened as images.',
-          buildPathHint(relPath));
-      }
-      this._assertCurrent(lease);
-      return buildImageMetadata(
-        state,
-        lease.context,
-        this._pathKey(state.requestedPath),
-        descriptor
-      );
     } catch (error) {
       if (this._structured(error)) throw error;
       throw this._ioError('read_image', relPath, error);
-    } finally {
-      try { lease?.release(); } catch (_error) { /* idempotent coordinator seam */ }
     }
+  }
+
+  async readDocument(payload = {}) {
+    return readDocument(this, payload);
   }
 
   async writeText(payload = {}) {
     const { relPath, bodyBytes } = this._validateWritePayload(payload);
     const capturedContext = this._captureContext(payload.expectedGeneration);
-    let lease = null;
     try {
-      lease = await this._acquireLease('mutation', capturedContext);
-      const root = await this._prepareRoot(lease);
-      const initialTarget = await this._resolveTarget(root, relPath, lease);
-      const lockKey = `${lease.context.rootId}:${lease.context.generation}:${initialTarget.pathKey}`;
-      return await this._withPathLock(lockKey, lease, {
-        operationId: lease.operationId,
-        path: initialTarget.displayPath,
-      }, async () => {
+      return await this._withResourceLease('mutation', relPath, capturedContext, async (lease) => {
+        const root = await this._prepareRoot(lease);
+        const initialTarget = await this._resolveTarget(root, relPath, lease);
+        const lockKey = `${lease.context.rootId}:${lease.context.generation}:${initialTarget.pathKey}`;
+        return await this._withPathLock(lockKey, lease, {
+          operationId: lease.operationId,
+          path: initialTarget.displayPath,
+        }, async () => {
         const target = await this._resolveTarget(root, relPath, lease);
         if (target.pathKey !== initialTarget.pathKey) {
           throw workspaceFsError(
@@ -906,108 +918,35 @@ class VersionedWorkspaceFileService {
         }
         if (bytes.equals(current.bytes)) return this._metadata(current, lease.context);
 
-        const parent = await this._openParent(root, target, lease);
-        let temp = null;
-        let replaced = false;
-        let writeTicket = null;
-        let writeObserved = false;
-        try {
-          const mode = current.stats.mode & 0o7777;
-          temp = await this._createTemp(root, parent, target, mode, lease);
-          await this._writeAndCloseTemp(temp, bytes, mode, target, lease);
-          await this._runHook('beforeReplace', {
-            operationId: lease.operationId,
-            path: target.displayPath,
-            mode,
-          }, lease);
-
-          const beforeReplaceTarget = await this._resolveTarget(root, relPath, lease);
-          if (beforeReplaceTarget.pathKey !== target.pathKey) {
-            throw workspaceFsError(
-              VERSIONED_WORKSPACE_FILE_ERROR_CODES.WRITE_CONFLICT,
-              'The file path identity changed before replacement.',
-              buildPathHint(relPath)
-            );
-          }
-          const beforeReplace = await this._openStableBytes(
-            root, beforeReplaceTarget, lease, 'pre-replace', { statsOnly: true }
-          );
-          if (!sameReadSnapshot(current.stats, beforeReplace.stats)) {
-            throw workspaceFsError(
-              VERSIONED_WORKSPACE_FILE_ERROR_CODES.WRITE_CONFLICT,
-              'File changed on disk before replacement.',
-              buildPathHint(relPath)
-            );
-          }
-          await this._revalidateParent(root, parent, lease);
-          await this._revalidateTemp(root, temp, target, lease);
-          writeTicket = this._observeWrite('begin', {
-            path: target.displayPath,
-            pathKey: target.pathKey,
-            rootId: lease.context.rootId,
-            generation: lease.context.generation,
-          });
-          try {
-            await this._step(lease, () => this._fs.rename(temp.path, target.realPath));
-          } catch (error) {
-            if (this._structured(error)) throw error;
-            throw this._ioError(
-              'atomic_replace',
-              relPath,
-              error,
-              VERSIONED_WORKSPACE_FILE_ERROR_CODES.ATOMIC_WRITE_FAILED
-            );
-          }
-          replaced = true;
-          await this._syncParent(parent, target, lease);
-
-          const landedTarget = await this._resolveTarget(root, relPath, lease);
-          const landedSnapshot = await this._openStableBytes(
-            root, landedTarget, lease, 'write-result', { statsOnly: true }
-          );
-          if (!sameFileIdentity(temp.stats, landedSnapshot.stats)
-            || Number(landedSnapshot.stats.size) !== bytes.length) {
-            throw this._ioError('verify_replace', relPath, { code: 'IDENTITY_CHANGED' });
-          }
-          const landed = {
-            ...landedSnapshot, bytes,
-            fileVersion: createFileVersion(landedSnapshot.stats, bytes),
+        const landed = await replaceFileBytes(this, {
+          root,
+          target,
+          relPath,
+          current,
+          bytes,
+          lease,
+          buildLanded: (snapshot, bytes) => ({
+            ...snapshot,
+            bytes,
+            fileVersion: createFileVersion(snapshot.stats, bytes),
             ...decodeWorkspaceText(bytes, { details: buildPathHint(relPath) }),
-          };
-          this._assertCurrent(lease);
-          if (writeTicket) writeObserved = this._observeWrite('commit', writeTicket, landed.stats) === true;
-          this._log('INFO', 'workspace_file.write', {
-            ...buildPathHint(relPath),
-            size: landed.bytes.length,
-            root_id: lease.context.rootId,
-            generation: lease.context.generation,
-          });
-          this._assertCurrent(lease);
-          return this._metadata(landed, lease.context);
-        } finally {
-          if (writeTicket && !writeObserved) this._observeWrite('abort', writeTicket);
-          if (temp?.handle) await temp.handle.close().catch(() => {});
-          if (temp && !replaced) await this._cleanupTemp(temp.path, relPath);
-          try {
-            await parent.handle.close();
-          } catch (error) {
-            this._log('WARN', 'workspace_file.parent_close_failed', {
-              ...buildPathHint(relPath),
-              os_code: String(error?.code || ''),
-            });
-          }
-        }
+          }),
+        });
+        return this._metadata(landed, lease.context);
+        });
       });
     } catch (error) {
       if (this._structured(error)) throw error;
       throw this._ioError('write_text', relPath, error);
-    } finally {
-      try { lease?.release(); } catch (_error) { /* idempotent coordinator seam */ }
     }
   }
-}
 
+  async writeDocument(payload = {}) {
+    return writeDocument(this, payload);
+  }
+}
 module.exports = {
+  DEFAULT_MAX_DOCUMENT_BYTES,
   DEFAULT_MAX_IMAGE_BYTES,
   VERSIONED_WORKSPACE_FILE_ERROR_CODES,
   VersionedWorkspaceFileService,

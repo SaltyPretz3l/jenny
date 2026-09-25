@@ -3,7 +3,7 @@
 /*
 Relay wire protocol v1 (JSON text messages on the WebSocket; all ids match `/^[A-Za-z0-9_-]{8,64}$/`)
 Endpoints: desktop `wss://<host>/r/<route_id>?role=desktop`, phone `wss://<host>/r/<route_id>?role=phone`.
-- Desktop → relay first message: `{ v:1, kind:'claim', route_id, route_token, epoch }` (`route_token`/`route_id` from `crypto.deriveRouteCredentials(desktopSecret)`). Relay answers `{ v:1, kind:'claimed', route_id }` or `{ v:1, kind:'relay_error', code }` then closes. A later claim with a valid token for the same route displaces the previous desktop connection (the relay closes it with `relay_error code:'displaced'`).
+- Desktop upgrade protocols: `jenny-relay-v1`, `rt.<route_token>`; the relay authenticates the route before accepting and echoes `jenny-relay-v1`. Desktop → relay first message remains `{ v:1, kind:'claim', route_id, route_token, epoch }` (`route_token`/`route_id` from `crypto.deriveRouteCredentials(desktopSecret)`). Relay answers `{ v:1, kind:'claimed', route_id }` or `{ v:1, kind:'relay_error', code }` then closes. A later claim with a valid token for the same route displaces the previous desktop connection (the relay closes it with `relay_error code:'displaced'`).
 - Phone → relay first message: `{ v:1, kind:'join', route_id }`; relay answers `{ v:1, kind:'joined', connection_id }` or closes (no desktop online → `relay_error code:'no_desktop'`).
 - Relay → desktop: `{ v:1, kind:'peer_open', connection_id }`, `{ v:1, kind:'peer_close', connection_id }`, `{ v:1, kind:'hs1', connection_id, eph_pub, credential }` (forwarded from the phone; the relay STAMPS `connection_id`), frames `{ v:1, route_id, connection_id, epoch, seq, ciphertext }` (relay stamps `connection_id`; the desktop rejects frames whose `epoch` ≠ current epoch), `{ v:1, kind:'pong', t }`.
 - Desktop → relay: `{ v:1, kind:'hs2', connection_id, eph_pub, epoch }` (relayed to that phone), frames (relayed to `connection_id`), `{ v:1, kind:'close_peer', connection_id }`, `{ v:1, kind:'ping', t }` every `HEARTBEAT_MS`.
@@ -290,7 +290,7 @@ function createRelayClient(options = {}) {
     const endpoint = `${configuredUrl.href.replace(/\/+$/g, '')}/r/${routeId}?role=desktop`;
     let target;
     try {
-      target = new Ctor(endpoint);
+      target = new Ctor(endpoint, ['jenny-relay-v1', `rt.${routeToken}`]);
     } catch (_error) {
       scheduleReconnect('connect_failed');
       return false;

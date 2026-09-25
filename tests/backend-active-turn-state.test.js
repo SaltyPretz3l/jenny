@@ -117,6 +117,34 @@ test('managed active-turn state enriches the matching live Electron approval', (
   });
 });
 
+test('managed active-turn state carries the waiting ask_user questions of its live stream', () => {
+  const questions = [{ id: 'season', prompt: 'Which season?', options: ['summer', 'winter'] }];
+  const { service } = serviceFixture();
+  service.activeStreams.set('stream-live', new AbortController());
+  service.pendingUserQuestions = new Map([
+    ['question_ref_live', {
+      questionId: 'question_live', questionRef: 'question_ref_live', sessionId: 'session-live',
+      streamId: 'stream-live', callId: 'call-ask', toolName: 'ask_user', questions, resolve() {},
+    }],
+    ['question_ref_other', {
+      questionId: 'question_other', questionRef: 'question_ref_other', sessionId: 'session-live',
+      streamId: 'stream-older', callId: 'call-old', toolName: 'ask_user', questions, resolve() {},
+    }],
+  ]);
+
+  const snapshot = getManagedActiveTurnState(service, 'session-live');
+
+  assert.deepEqual(snapshot.pending_user_questions, [{
+    question_id: 'question_live',
+    question_ref: 'question_ref_live',
+    call_id: 'call-ask',
+    tool_name: 'ask_user',
+    questions,
+  }]);
+  service.pendingUserQuestions.clear();
+  assert.equal(Object.hasOwn(getManagedActiveTurnState(service, 'session-live'), 'pending_user_questions'), false);
+});
+
 test('active-turn state fails closed for malformed or unavailable owners', () => {
   const { service } = serviceFixture();
   service.activeStreams.set('stream-live', new AbortController());

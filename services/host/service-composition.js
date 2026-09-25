@@ -10,7 +10,9 @@ const { createAttachmentContentStore } = require('./attachment-content-store');
 const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { BackendService } = require('../backend/backend-service');
 const { ShellConfigService } = require('../shell-config-service');
+const { buildFeatureFlags } = require('../feature-flags');
 const { createConversationToolExecutor } = require('./conversation-tool-executor');
+const { ToolPermissionStore } = require('../tools/tool-permission-store');
 const {
   HOST_MODE_SERVER,
   createHostPorts,
@@ -173,13 +175,16 @@ function createHostedBackend(options = {}) {
     env: { ...(options.env || process.env), JENNY_TOOLS_WORKSPACE_ROOT: '' },
   });
   configureWorkspaceRoot(configService, options);
+  const configuredWorkspaceRoot = configService.getToolsWorkspaceRoot();
 
   const attachmentAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
     nativeImage: null,
   });
   let backend;
+  const toolPermissionStore = new ToolPermissionStore(path.join(userDataPath, 'tool-permissions.json'));
   const toolExecutor = createConversationToolExecutor({ configService,
+    permissionStore: toolPermissionStore,
     logger: (level, event, fields) => backend?._emitServiceLog(level, event, fields) });
   backend = new BackendService({
     appVersion: String(options.appVersion || 'hosted').trim() || 'hosted',
@@ -198,9 +203,13 @@ function createHostedBackend(options = {}) {
     attachmentAssetStore,
     historyAttachmentHydrator: createAttachmentContentStore(userDataPath).hydrateHistory,
     toolExecutor,
+    toolPermissionStore,
+    projectRootBoundary: configuredWorkspaceRoot,
     // Streaming and cancellation are required host transport contracts. The
     // desktop feature service is absent in this composition; pin these here.
-    featureFlags: { ...options.featureFlags, multiplexer: true, chat_cancel: true },
+    featureFlags: { ...options.featureFlags,
+      session_runtime: buildFeatureFlags(process.env, options.featureFlags).session_runtime,
+      multiplexer: true, chat_cancel: true },
     ...(options.sidecarManager ? { sidecarManager: options.sidecarManager } : {}),
     ...(options.ollamaManager ? { ollamaManager: options.ollamaManager } : {}),
     ...(options.vllmManager ? { vllmManager: options.vllmManager } : {}),

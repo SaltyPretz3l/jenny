@@ -23,6 +23,13 @@ const { validate: validatePluginContract } = require('../plugins/contracts/gener
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
+function getSessionSummary(store, sessionId) {
+  if (typeof store?.getSessionSummary === 'function') {
+    return store.getSessionSummary(sessionId);
+  }
+  return store?.getSession?.(sessionId) || null;
+}
+
 function resolveSkillInvocation(service, invocation) {
   if (invocation == null) return null;
   const id = invocation && typeof invocation === 'object' && !Array.isArray(invocation)
@@ -49,7 +56,7 @@ function resolveSkillInvocation(service, invocation) {
   return { id, name: String(entry.name), scope: String(entry.scope), command: String(entry.command) };
 }
 
-async function startLocalEngineChatStream(service, {
+async function prepareLocalEngineChatRequest(service, {
   sessionId,
   prompt,
   visiblePrompt,
@@ -109,7 +116,7 @@ async function startLocalEngineChatStream(service, {
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
       ? contextPreferences
-      : service.sessionStore.getSession(sessionKey)?.context_preferences
+      : getSessionSummary(service.sessionStore, sessionKey)?.context_preferences
   );
   const normalizedPreferences = {
     preferred_model: String(preferredModel || '').trim(),
@@ -131,79 +138,99 @@ async function startLocalEngineChatStream(service, {
   let runtimePreferredModel = normalizedPreferences.preferred_model;
   let runtimePreferredEngineType = '';
   throwIfStartCancelled();
-  const actorRegistry = ensureSessionTurnActorRegistry(service);
-  let turnLease = sessionKey
-    ? actorRegistry.reserveStart({
-        sessionId: sessionKey,
-        store: service.sessionStore,
-        activeStreams: service.activeStreams,
-        interactiveResponse: normalizedInteractiveResponse,
-        editedMessageId,
-        deferEditValidation: false,
-        prompt: typeof visiblePrompt === 'string' ? visiblePrompt : prompt,
-        path: 'managed',
-        traceId,
-      })
-    : null;
-
-  try {
-    if (
-      service.offlineIntelligenceService
-      && typeof service.offlineIntelligenceService.getState === 'function'
-    ) {
-      const offlineState = await service.offlineIntelligenceService.getState();
-      if (offlineState.mode === 'local_only') {
-        if (!offlineState.preferredLocalModel) {
-          throw new Error('Force local inference requires a model selected in Model Library.');
-        }
-        if (offlineState.localCatalog?.available !== true || !offlineState.localChatReady) {
-          throw new Error(
-            String(offlineState.unavailableReason || 'Forced local inference is unavailable right now.')
-          );
-        }
-        if (hasImageAttachments && !offlineState.localVisionReady) {
-          throw new Error(
-            String(
-              offlineState.visionUnavailableReason
-              || 'Offline local vision is unavailable for the selected local model.'
-            )
-          );
-        }
-        runtimePreferredModel = String(offlineState.preferredLocalModel || '').trim();
-        const forcedEngineType = String(offlineState.selectedLocalEngineType || '').trim().toLowerCase();
-        if (!LOCAL_INFERENCE_ENGINE_TYPES.has(forcedEngineType)) {
-          throw new Error('Force local inference blocked a model without a verified local inference provider.');
-        }
-        runtimePreferredEngineType = forcedEngineType;
+  if (
+    service.offlineIntelligenceService
+    && typeof service.offlineIntelligenceService.getState === 'function'
+  ) {
+    const offlineState = await service.offlineIntelligenceService.getState();
+    if (offlineState.mode === 'local_only') {
+      if (!offlineState.preferredLocalModel) {
+        throw new Error('Force local inference requires a model selected in Model Library.');
       }
+      if (offlineState.localCatalog?.available !== true || !offlineState.localChatReady) {
+        throw new Error(
+          String(offlineState.unavailableReason || 'Forced local inference is unavailable right now.')
+        );
+      }
+      if (hasImageAttachments && !offlineState.localVisionReady) {
+        throw new Error(
+          String(
+            offlineState.visionUnavailableReason
+            || 'Offline local vision is unavailable for the selected local model.'
+          )
+        );
+      }
+      runtimePreferredModel = String(offlineState.preferredLocalModel || '').trim();
+      const forcedEngineType = String(offlineState.selectedLocalEngineType || '').trim().toLowerCase();
+      if (!LOCAL_INFERENCE_ENGINE_TYPES.has(forcedEngineType)) {
+        throw new Error('Force local inference blocked a model without a verified local inference provider.');
+      }
+      runtimePreferredEngineType = forcedEngineType;
     }
+  }
 
-    throwIfStartCancelled();
+  throwIfStartCancelled();
+  return {
+    sessionId,
+    prompt,
+    visiblePrompt,
+    traceId,
+    attachments,
+    runtimePreferredModel,
+    runtimePreferredEngineType,
+    normalizedInteractiveResponse,
+    normalizedPreferences,
+    activeFileContext,
+    mentionContents,
+    toolPreferences,
+    approvalMode,
+    debugOptions,
+    clientTiming,
+    pluginCommandInvocation: normalizedPluginCommandInvocation,
+    skillInvocation: normalizedSkillInvocation,
+    editedMessageId,
+    failureRetry,
+  };
+}
+
+async function startLocalEngineChatStream(service, request, options = {}) {
+  const managedRequest = await prepareLocalEngineChatRequest(service, request, options);
+  const { sessionId, normalizedInteractiveResponse, editedMessageId, visiblePrompt, prompt, traceId,
+    failureRetry } = managedRequest;
+  const sessionKey = String(sessionId || '').trim();
+  const cancellation = options?.cancellation;
+  if (cancellation?.signal?.aborted) {
+    throw Object.assign(new Error('chat_start_cancelled'), { code: 'chat_start_cancelled', retryable: false });
+  }
+  let actorRegistry = null;
+  let turnLease = null;
+  try {
+    if (service.sessionRuntime) {
+      return await service.sessionRuntime.startImmediate(managedRequest, { cancellation });
+    }
+    actorRegistry = ensureSessionTurnActorRegistry(service);
+    turnLease = sessionKey
+      ? actorRegistry.reserveStart({
+          sessionId: sessionKey,
+          store: service.sessionStore,
+          activeStreams: service.activeStreams,
+          interactiveResponse: normalizedInteractiveResponse,
+          editedMessageId,
+          failureRetry: failureRetry === true,
+          failureRetryReasoningCarry: service.featureFlags?.failure_retry_reasoning_carry === true,
+          deferEditValidation: false,
+          prompt: typeof visiblePrompt === 'string' ? visiblePrompt : prompt,
+          path: 'managed',
+          traceId,
+        })
+      : null;
     if (turnLease?.identity?.streamId) cancellation?.bindStream?.(turnLease.identity.streamId);
     return await service._startManagedSidecarChatStream({
-      sessionId,
-      prompt,
-      visiblePrompt,
-      traceId,
-      attachments,
-      runtimePreferredModel,
-      runtimePreferredEngineType,
-      normalizedInteractiveResponse,
-      normalizedPreferences,
-      activeFileContext,
-      mentionContents,
-      toolPreferences,
-      approvalMode,
-      debugOptions,
-      clientTiming,
-      pluginCommandInvocation: normalizedPluginCommandInvocation,
-      skillInvocation: normalizedSkillInvocation,
-      editedMessageId,
-      failureRetry,
+      ...managedRequest,
       turnLease,
     });
   } catch (error) {
-    if (turnLease) {
+    if (turnLease && actorRegistry) {
       actorRegistry.release(turnLease, { status: 'preflight_failed' });
     }
     throw error;
@@ -211,5 +238,6 @@ async function startLocalEngineChatStream(service, {
 }
 
 module.exports = {
+  prepareLocalEngineChatRequest,
   startLocalEngineChatStream,
 };

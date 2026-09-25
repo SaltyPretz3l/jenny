@@ -214,7 +214,7 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
   // Derived from the manifest and the policy defaults so a new approval-gated
   // tool cannot ship without the field: an approval card with no stated
   // intent shows only the derived prompt. A side-effecting tool whose default
-  // policy is 'auto' (verify) never shows a card; fetch_url is read-only but
+  // policy is 'auto' (verify, todo_write) never shows a card; fetch_url is read-only but
   // reaches the network.
   const { DEFAULT_TOOL_DEFAULTS } = require('../services/tools/tool-policy-evaluator');
   const manifestPath = path.join(__dirname, '..', 'services', 'tools', 'tool-manifest.json');
@@ -225,14 +225,16 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
       .map((tool) => tool.name),
     'fetch_url',
   ])].sort();
-  assert.equal(expectedNames.length, 15, expectedNames.join(','));
+  assert.equal(expectedNames.length, 14, expectedNames.join(','));
   assert.equal(expectedNames.includes('exit_plan_mode'), false, 'the plan card is not an intent card');
   const withPurpose = manifest.tools
     .filter((tool) => tool.parameters?.properties?.purpose)
     .map((tool) => tool.name)
     .sort();
 
-  assert.deepEqual(withPurpose, expectedNames);
+  // todo_write defaults to auto but keeps its purpose: a user's own Ask rule
+  // can still put it on an approval card.
+  assert.deepEqual(withPurpose, [...expectedNames, 'todo_write'].sort());
   for (const toolName of expectedNames) {
     const tool = manifest.tools.find((candidate) => candidate.name === toolName);
     assert.deepEqual(tool.parameters.properties.purpose, {
@@ -334,4 +336,45 @@ test('tool approval facts exposes the extracted factory and preserves toolCallUt
     extracted.getApprovalFacts('read_file', { path: 'a.txt' }),
     toolCallUtils.getApprovalFacts('read_file', { path: 'a.txt' })
   );
+});
+
+test('every tool-call status label resolves through the i18n catalog', (t) => {
+  const MODULE_PATH = require.resolve('../renderer/chat/tool-call-utils');
+  const englishUtils = require('../renderer/chat/tool-call-utils');
+  assert.equal(englishUtils.getStatusLabel('completed'), 'Success', 'English default text is unchanged');
+  assert.equal(englishUtils.getStatusLabel('interrupted'), 'Interrupted', 'English default text is unchanged');
+
+  const hadI18n = Object.prototype.hasOwnProperty.call(globalThis, 'jennyI18n');
+  const previousI18n = globalThis.jennyI18n;
+  t.after(() => {
+    if (hadI18n) globalThis.jennyI18n = previousI18n;
+    else delete globalThis.jennyI18n;
+    delete require.cache[MODULE_PATH];
+  });
+
+  globalThis.jennyI18n = { t: (key, fallback) => '[' + key + '|' + fallback + ']' };
+  delete require.cache[MODULE_PATH];
+  const { getStatusLabel } = require('../renderer/chat/tool-call-utils');
+
+  const expected = [
+    ['requested', '[chat.toolCall.requested|Requested]'],
+    ['awaiting_approval', '[chat.toolCall.awaitingApproval|Awaiting approval]'],
+    ['pending_approval', '[chat.toolCall.awaitingApproval|Awaiting approval]'],
+    ['approved', '[chat.toolCall.approved|Approved]'],
+    ['running', '[chat.toolCall.running|Running]'],
+    ['completed', '[chat.toolCall.success|Success]'],
+    ['errored', '[chat.toolCall.error|Error]'],
+    ['error', '[chat.toolCall.error|Error]'],
+    ['denied', '[chat.toolCall.denied|Denied]'],
+    ['blocked', '[chat.toolCall.blocked|Blocked]'],
+    ['timed_out', '[chat.toolCall.timedOut|Timed out]'],
+    ['cancelled', '[chat.toolCall.cancelled|Cancelled]'],
+    ['abandoned', '[chat.toolCall.noResult|No result]'],
+    ['interrupted', '[chat.toolCall.interrupted|Interrupted]'],
+    ['zzz', 'zzz'],
+    ['', '[chat.toolCall.unknown|Unknown]'],
+  ];
+  for (const [status, label] of expected) {
+    assert.equal(getStatusLabel(status), label, 'status ' + (status || '(empty)') + ' must resolve through the catalog');
+  }
 });

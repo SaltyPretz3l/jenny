@@ -21,6 +21,12 @@ const {
 const {
   startLocalEngineChatStream,
 } = require('../services/backend/local-engine-requests');
+const {
+  startManagedSidecarChatStream,
+} = require('../services/backend/managed-sidecar-chat');
+const {
+  SessionTurnActorRegistry,
+} = require('../services/backend/session-turn-actor');
 
 test('retry recovery is the only renderer action that originates failureRetry', async () => {
   const controller = createShellRuntimeController({ state: {}, callbacks: {} });
@@ -262,4 +268,178 @@ test('the local-engine request shape carries failureRetry to the managed call', 
     'the retry intent must survive the fixed request shape'
   );
   assert.equal((await captureManagedArgs({ failureRetry: false })).failureRetry, false);
+});
+
+function reservationLease() {
+  return {
+    identity: {
+      sessionId: 'session_1',
+      sessionIncarnation: 'inc_1',
+      generation: 1,
+      turnId: 'stream_1',
+      streamId: 'stream_1',
+      userMessageId: 'user_1',
+    },
+    editedMessageId: 'user_1',
+  };
+}
+
+async function captureLocalReservation(failureRetry) {
+  const calls = [];
+  const registry = new SessionTurnActorRegistry();
+  registry.reserveStart = (args) => {
+    calls.push(args);
+    return reservationLease();
+  };
+  const service = {
+    sessionStore: {},
+    activeStreams: new Map(),
+    sessionTurnActorRegistry: registry,
+    _startManagedSidecarChatStream: async () => ({ streamId: 'stream_1' }),
+  };
+  await startLocalEngineChatStream(service, {
+    sessionId: 'session_1',
+    prompt: 'Prompt',
+    visiblePrompt: 'Prompt',
+    attachments: [],
+    editedMessageId: 'user_1',
+    failureRetry,
+  });
+  return calls[0];
+}
+
+async function captureManagedFallbackReservation(failureRetry) {
+  const calls = [];
+  const registry = new SessionTurnActorRegistry();
+  registry.reserveStart = (args) => {
+    calls.push(args);
+    return reservationLease();
+  };
+  registry.attachController = () => false;
+  const service = {
+    sessionStore: {
+      getSession: () => ({
+        id: 'session_1',
+        title: 'Existing',
+        created_at: '2026-09-04T00:00:00.000Z',
+        session_start_date: '2026-09-04',
+        messages: [{ id: 'user_1', role: 'user', content: 'Prompt' }],
+      }),
+    },
+    activeStreams: new Map(),
+    sessionTurnActorRegistry: registry,
+    featureFlags: {},
+  };
+  await assert.rejects(
+    startManagedSidecarChatStream(service, {
+      sessionId: 'session_1',
+      prompt: 'Prompt',
+      visiblePrompt: 'Prompt',
+      attachments: [],
+      normalizedInteractiveResponse: null,
+      normalizedPreferences: {
+        plan_mode: false,
+        interactive_round_count: 0,
+      },
+      editedMessageId: 'user_1',
+      failureRetry,
+    }),
+    /deleted before the stream could start/i
+  );
+  return calls[0];
+}
+
+test('both actor reservation call sites forward only strict boolean failureRetry', async () => {
+  for (const capture of [captureLocalReservation, captureManagedFallbackReservation]) {
+    assert.equal((await capture(true)).failureRetry, true);
+    assert.equal((await capture(false)).failureRetry, false);
+    assert.equal((await capture('yes')).failureRetry, false);
+    assert.equal((await capture(undefined)).failureRetry, false);
+  }
+});
+
+test('snapshot capture precedes truncation and capture failure warns once without blocking retry', () => {
+  const order = [];
+  const logs = [];
+  const session = {
+    id: 'session_1',
+    session_incarnation: 'inc_1',
+    turn_generation: 0,
+    active_turn: null,
+    messages: [
+      { id: 'user_1', role: 'user', content: 'Prompt', turn_id: 'old_turn' },
+      {
+        id: 'assistant_old',
+        role: 'assistant',
+        content: 'Failed',
+        status: 'runtime_error',
+        parent_stream_id: 'old_turn',
+      },
+    ],
+  };
+  const store = {
+    getSession: () => session,
+    getSessionMessages: () => session.messages,
+    getActiveTurn: () => session.active_turn,
+    setTurnIdentity(_sessionId, identity) {
+      session.session_incarnation = identity.session_incarnation;
+      session.turn_generation = identity.turn_generation;
+      return session;
+    },
+    setActiveTurn(_sessionId, activeTurn) {
+      session.active_turn = activeTurn;
+      return session;
+    },
+    clearActiveTurn() {
+      session.active_turn = null;
+      return session;
+    },
+    flushSession: () => true,
+    captureFailureRetryReasoning() {
+      order.push('capture');
+      throw new Error('secret reasoning payload must stay redacted');
+    },
+    truncateAfterMessage() {
+      order.push('truncate');
+      return { id: 'session_1' };
+    },
+  };
+  const registry = new SessionTurnActorRegistry({
+    logger(level, event, details) {
+      logs.push({ level, event, details });
+    },
+  });
+  const lease = registry.reserveStart({
+    sessionId: 'session_1',
+    store,
+    activeStreams: new Map(),
+    editedMessageId: 'user_1',
+    failureRetry: true,
+    failureRetryReasoningCarry: true,
+  });
+  const runtime = createManagedChatStreamRuntime({
+    service: { sessionStore: store, sessionTurnActors: registry, _emitServiceLog() {} },
+    resolvedSessionId: 'session_1',
+    streamId: lease.identity.streamId,
+    normalizedPreferences: { conversation_mode: 'chat', interactive_round_count: 0 },
+    normalizedInteractiveResponse: null,
+    normalizedAttachments: [],
+    transcriptPrompt: 'Prompt',
+    userMessageId: 'user_1',
+    reuseExistingUserMessage: true,
+    failureRetry: true,
+    turnLease: lease,
+  });
+
+  assert.equal(runtime.persistUserMessage(), true, 'retry must continue after snapshot failure');
+  assert.deepEqual(order, ['capture', 'truncate']);
+  const warnings = logs.filter((entry) => (
+    entry.event === 'chat.failure_retry_reasoning_snapshot_failed'
+  ));
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].level, 'WARN');
+  assert.equal(warnings[0].details.sessionId, 'session_1');
+  assert.equal(warnings[0].details.streamId, lease.identity.streamId);
+  assert.equal(warnings[0].details.reason, 'snapshot_capture_exception');
+  assert.equal(JSON.stringify(warnings).includes('secret reasoning payload'), false);
 });

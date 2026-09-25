@@ -7,7 +7,9 @@ import logging
 from datetime import date
 from typing import Any
 
-from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
+from sidecar.runtime.chat_helpers import mode_from_params
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.vision_attachments import normalize_vision_attachments  # noqa: F401
 
@@ -21,7 +23,9 @@ _REASONING_EFFORT_ALIASES = {
     "extra high": "xhigh",
 }
 _SESSION_START_DATE_ISO_ERROR = "chat.send params.session_start_date must be an ISO date string"
-_MEMORY_POLICY_KEYS = frozenset({"enabled", "include_response_style"})
+_MEMORY_POLICY_KEYS = frozenset(
+    {"enabled", "include_response_style", "project_id"}
+)
 _APPROVED_PLAN_KEYS = frozenset({"plan_id", "title", "summary", "steps", "notes", "verification"})
 
 
@@ -112,6 +116,7 @@ def memory_policy_from_params(params: Any) -> MemoryPolicy | None:
     return MemoryPolicy(
         enabled=enabled,
         include_response_style=include_response_style,
+        project_id=value.get("project_id", GENERAL_PROJECT_ID),
     )
 
 
@@ -337,3 +342,39 @@ def normalize_debug_options(value: Any) -> dict[str, bool] | None:
         "plain_chat_mode": value.get("plain_chat_mode") is True,
     }
     return normalized if any(normalized.values()) else None
+
+
+def inference_budget_from_params(params, execution_context, config, streaming) -> bool:
+    required = params.get("inference_budget_required", False)
+    if not isinstance(required, bool):
+        raise ValueError("inference_budget_required must be a boolean")
+    if required and execution_context is None:
+        raise ValueError("inference budget requires execution context")
+    if (required and streaming and mode_from_params(params, config.mode) == "chat"
+            and not is_feature_flag_enabled(config.feature_flags or {}, FEATURE_AGENT_EXECUTOR)):
+        raise ValueError("budgeted chat requires the admitted router")
+    return required
+
+
+def runtime_children_from_params(params, execution_context, continuation_context, budget_required):
+    """Accept only the trusted admitted request capability, never preferences."""
+    enabled = params.get("runtime_children_enabled", False)
+    read_only = params.get("runtime_child_read_only", False)
+    if not isinstance(enabled, bool) or not isinstance(read_only, bool):
+        raise ValueError("runtime child flags must be booleans")
+    if enabled and (execution_context is None or continuation_context is None
+                    or not budget_required):
+        raise ValueError("runtime children require admitted continuation and budget authority")
+    if read_only and (execution_context is None or not budget_required):
+        raise ValueError("runtime child read-only requires execution and budget authority")
+    return enabled, read_only
+
+
+def runtime_policy_flags_from_params(params, execution, continuation, config, streaming):
+    """Validate request-only runtime flags together; none mutate shared config."""
+    budget = inference_budget_from_params(params, execution, config, streaming)
+    children, read_only = runtime_children_from_params(params, execution, continuation, budget)
+    offline = params.get("session_offline_lockdown", False)
+    if not isinstance(offline, bool):
+        raise ValueError("session_offline_lockdown must be a boolean")
+    return budget, children, read_only, offline

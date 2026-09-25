@@ -100,3 +100,80 @@
 .send-outbox-badge.send-outbox-badge--failed { color: var(--status-error, #ff8a8a); }
 .send-outbox-badge { margin-inline-start: 6px; color: var(--text-secondary); font-size: 11px; }
 /* No entrance/height animation: queue changes must not animate the timeline viewport. */
+
+/* The durable queue strip: the visible half of runtime Send. Mirrors
+   .send-outbox so both composer accessories read as one quiet band. */
+.runtime-queue {
+  min-width: 0;
+  margin: 0 0 6px;
+  padding: 0 4px;
+  color: var(--text-primary);
+}
+.runtime-queue[hidden], .runtime-queue__list[hidden] { display: none; }
+.runtime-queue__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.runtime-queue__list {
+  max-height: min(220px, 28vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.runtime-queue__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px;
+  min-width: 0;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  padding: 2px 0;
+}
+.runtime-queue__position {
+  min-width: 56px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: start;
+  padding-top: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.runtime-queue__content { min-width: 0; }
+.runtime-queue__preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-top: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.runtime-queue__status { color: var(--text-secondary); font-size: 11px; padding: 0 0 4px; }
+.runtime-queue__row--paused .runtime-queue__status { color: var(--status-warning, #ffd08a); }
+.runtime-queue .runtime-queue__action {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.runtime-queue .runtime-queue__action:hover:not(:disabled) {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+.runtime-queue .runtime-queue__action:focus-visible {
+  outline: 2px solid var(--accent-primary, #a9baff);
+  outline-offset: -2px;
+}
+.runtime-queue .runtime-queue__action:disabled { cursor: default; opacity: 0.55; }
+.runtime-queue .runtime-queue__action--withdraw:hover:not(:disabled) { color: var(--status-error, #ff8a8a); }
+.runtime-queue .runtime-queue__action--resume { color: var(--text-primary); }
+/* No entrance/height animation: queue changes must not animate the timeline viewport. */

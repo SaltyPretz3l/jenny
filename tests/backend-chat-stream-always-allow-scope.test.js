@@ -52,3 +52,30 @@ test('backend always allow grants the pending tool input and logs path scope', (
     },
   }]);
 });
+
+test('backend one-off-only approval ignores a forged always-allow action', () => {
+  const grants = [];
+  const resolutions = [];
+  const service = {
+    toolPermissionStore: {
+      grantAlwaysAllow(toolName, input) {
+        grants.push({ toolName, input });
+      },
+    },
+    pendingToolApprovals: new Map([[
+      'approval-streak-cap',
+      {
+        approvalId: 'approval-streak-cap',
+        callId: 'call-streak-cap',
+        toolName: 'write_file',
+        toolInput: { path: 'notes.md' },
+        oneOffOnly: true,
+        resolve(...args) { resolutions.push(args); },
+      },
+    ]]),
+  };
+
+  assert.equal(approveToolCall(service, 'approval-streak-cap', { alwaysAllow: true }), true);
+  assert.deepEqual(resolutions, [[true, 'approved', '', undefined]]);
+  assert.deepEqual(grants, []);
+});

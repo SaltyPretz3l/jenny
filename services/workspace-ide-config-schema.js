@@ -64,7 +64,7 @@ const WORKSPACE_IDE_SECONDARY_WIDTH_MAX = 600;
 // wider floor). Mirrored in renderer/features/renderer-ide-state.js (the
 // renderer UMD can't import services — same precedent as secondaryWidth).
 const WORKSPACE_IDE_CHAT_DOCK_WIDTH_DEFAULT = 380;
-const WORKSPACE_IDE_CHAT_DOCK_WIDTH_MIN = 280;
+const WORKSPACE_IDE_CHAT_DOCK_WIDTH_MIN = 320;
 const WORKSPACE_IDE_CHAT_DOCK_WIDTH_MAX = 2400;
 const WORKSPACE_IDE_CHAT_DOCK_SIDES = Object.freeze(['left', 'right']);
 // Inline autocomplete (CONFIG_VERSION 29): a quick on/off toggle (default on,

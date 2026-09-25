@@ -16,6 +16,16 @@ function normalizeModelEngineType(value) {
   return normalizePreferredEngineType(value);
 }
 
+function refreshSetupReadinessAfterModelLoad(service) {
+  if (service.setupService && typeof service.setupService.refreshReadiness === 'function') {
+    Promise.resolve().then(() => service.setupService.refreshReadiness()).catch((error) => {
+      service._emitServiceLog?.('WARN', 'setup.readiness_refresh_after_model_load_failed', {
+        message: String(error?.message || error),
+      });
+    });
+  }
+}
+
 function normalizeModelListEntry(entry) {
   if (typeof entry === 'string') {
     const id = String(entry || '').trim();
@@ -193,7 +203,6 @@ function resolveManagedModelListEngineType(service) {
 async function refreshStatusSnapshot(service) {
   service.currentStatus = service.currentStatus || service._buildManagedStatusSnapshot();
   service.reasoningEffortSupport = String(service.currentStatus?.reasoning_effort_support || 'unknown');
-  service._normalizeManagedReasoningEfforts();
   return service.currentStatus;
 }
 
@@ -507,11 +516,24 @@ async function loadModel(service, model, options = {}) {
     }
     // Persist only a switch that actually took (pin + autostart/preflight tag).
     if (managedLoad) {
-      service.configService?.updatePreferredEngineType?.('openai-compatible');
-      service.configService?.updateManagedLlamaServer?.({
-        lastUsedTag: token,
-        perModel: { [token]: { ...perModel, tag: requestedModelName } },
-      });
+      // Re-read the entry: the launch takes seconds, and Tune can change it (a
+      // build picked or cleared, the engine moved to Ollama) or remove the model
+      // meanwhile. Writing the snapshot back would undo that, or bring a removed
+      // model back as the boot autostart target.
+      const latest = service.configService?.getLocalEngines?.()?.openaiCompatible?.managed?.perModel?.[token];
+      if (latest?.engine === 'llama-server') {
+        service.configService?.updatePreferredEngineType?.('openai-compatible');
+        service.configService?.updateManagedLlamaServer?.({
+          lastUsedTag: token,
+          perModel: { [token]: { ...latest, tag: requestedModelName } },
+        });
+      } else if (service.configService?.getLocalEngines?.()?.openaiCompatible?.managed?.lastUsedTag
+        === managed.lastUsedTag) {
+        // No boot target at all: an earlier model must not start in its place.
+        // A Use that finished meanwhile (a chat send can load a model while this
+        // one initialized) recorded its own target, and keeps it.
+        service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
+      }
     } else if (manager && managed) {
       if (managed.lastUsedTag) {
         // Forget the boot autostart target so the next launch cannot reverse this.
@@ -523,6 +545,7 @@ async function loadModel(service, model, options = {}) {
       }
     }
 
+    refreshSetupReadinessAfterModelLoad(service);
     return { status: 'ok', model: service.currentModel };
 }
 
@@ -558,6 +581,7 @@ function autoLoadDefaultModel(service) {
       model: activeModel,
       engine: activeEngine,
     });
+    refreshSetupReadinessAfterModelLoad(service);
     return;
   }
   const configuredDefaultModel = String(service.defaultModel || '').trim();
@@ -569,6 +593,21 @@ function autoLoadDefaultModel(service) {
     || inferEngineTypeFromModel(service.currentModel || configuredDefaultModel)
     || 'mock'
   ).trim().toLowerCase() || 'mock';
+  const startupModelLoad = service.configService?.getLocalEngines?.()?.startupModelLoad !== false;
+  if (startupModelLoad && requestedEngine === 'ollama') {
+    service._emitServiceLog('INFO', 'backend.default_model_startup_load', {
+      model: configuredDefaultModel,
+      engine: requestedEngine,
+    });
+    service.loadModel(configuredDefaultModel).catch((error) => {
+      service._emitServiceLog('WARN', 'backend.default_model_startup_load_failed', {
+        model: configuredDefaultModel,
+        engine: requestedEngine,
+        message: String(error?.message || error),
+      });
+    });
+    return;
+  }
   service._emitServiceLog('INFO', 'backend.default_model_deferred', {
     model: configuredDefaultModel,
     engine: requestedEngine,
@@ -611,7 +650,6 @@ async function unloadModel(service) {
       updated_at: new Date().toISOString(),
       ready_at: null,
     };
-    service._normalizeManagedReasoningEfforts();
     return { status: 'ok', model: '' };
 }
 

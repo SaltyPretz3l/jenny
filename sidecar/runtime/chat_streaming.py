@@ -10,6 +10,7 @@ from typing import Any, Callable, cast
 
 from sidecar.ai.config_models import uses_minimal_system_prompt
 from sidecar.ai.container import BrainContainer
+from sidecar.ai.context.builder import request_workspace_root_kwargs
 from sidecar.ai.context.history_reframe import reframe_tool_history_messages
 from sidecar.ai.context.messages import (
     build_context_block_system_messages,
@@ -138,22 +139,28 @@ def _build_live_stream_messages(
     backend: Any | None = None,
     reasoning_effort: str | None = None,
     image_token_surcharge: int = 0,
+    execution_context: Any | None = None,
 ) -> list[EngineMessage]:
     stack = brain_container.stack
+    feature_flags = stack.config.feature_flags or {}
+    # The request authority's root (None = explicitly unbound) governs every
+    # workspace-derived prompt block, exactly as on the tool-loop path.
+    prompt_kwargs = request_workspace_root_kwargs(stack.config, execution_context)
     system_prompt = stack.context_builder.build_system_prompt(
         stack.config.system_prompt,
         learned_lessons=learned_lessons,
         include_reasoning_status_markers=engine_supports_live_reasoning_stream(
             brain_container.stack.engine
         ),
+        reasoning_status_v2=is_feature_flag_enabled(feature_flags, "reasoning_status_v2"),
         include_skills=False,
         include_bootstrap=not uses_minimal_system_prompt(stack.config),
         workspace_manifest_enabled=getattr(stack.config, "tools_workspace_manifest_enabled", False),
         task_capsule_enabled=getattr(stack.config, "tools_task_capsule_enabled", False),
         latest_user_content=latest_user_content,
         current_date=str(current_date or "").strip() or resolve_current_date(),
+        **prompt_kwargs,
     )
-    feature_flags = stack.config.feature_flags or {}
     include_personality_block = not uses_minimal_system_prompt(stack.config)
     # Structural, not textual: exactly one ``## Personality`` row per
     # non-minimal turn -- the typed context block when Electron sent one,
@@ -311,9 +318,11 @@ def build_live_streaming_chat_response(
     skill_invocation: dict[str, str] | None = None,
     vision_images: Sequence[VisionImage] = (),
     vision_anchor_text: str = "",
+    execution_context: Any | None = None,
 ) -> ChatResponse:
     stack = brain_container.stack
     engine = stack.engine
+    feature_flags = stack.config.feature_flags or {}
     # Built BEFORE the message assembly that budgets against it: the budget
     # check inside _build_live_stream_messages must count with the same backend
     # the ring below reports with, otherwise the advisory the model sees and the
@@ -334,6 +343,7 @@ def build_live_streaming_chat_response(
         backend=_context_backend,
         reasoning_effort=reasoning_effort,
         image_token_surcharge=image_token_surcharge,
+        execution_context=execution_context,
     )
     stream_messages = attach_vision_images(
         stream_messages,
@@ -358,20 +368,28 @@ def build_live_streaming_chat_response(
             tool_schema_count=0,
         )
     prompt_cache_enabled = is_feature_flag_enabled(
-        stack.config.feature_flags or {},
+        feature_flags,
         FEATURE_PROMPT_CACHE,
     )
     notifications: list[dict[str, Any]] = []
     response_parts: list[str] = []
     thinking_parts: list[str] = []
     thinking_id = f"think_{request_id}"
+    reasoning_status_v2_enabled = is_feature_flag_enabled(feature_flags, "reasoning_status_v2")
     phase_events_enabled = is_feature_flag_enabled(
-        stack.config.feature_flags or {},
+        feature_flags,
         FEATURE_PHASE_EVENTS,
     )
     canonical_turn_events_enabled = is_feature_flag_enabled(
-        stack.config.feature_flags or {},
+        feature_flags,
         FEATURE_CANONICAL_TURN_EVENTS,
+    )
+    canonical_text_primary_enabled = (
+        canonical_turn_events_enabled
+        and is_feature_flag_enabled(
+            stack.config.feature_flags or {},
+            "canonical_text_primary",
+        )
     )
     current_phase: dict[str, Any] | None = None
     phase_index = 0
@@ -382,8 +400,9 @@ def build_live_streaming_chat_response(
     checkpoint_cycles = 0
     last_checkpoint_carry: str | None = None
     thinking_guard = ThinkingRepetitionGuard(max_chars=thinking_budget_chars)
-    status_extractor = ReasoningStatusExtractor()
-    status_synthesizer = ReasoningStatusSynthesizer()
+    status_extractor = ReasoningStatusExtractor(v2_enabled=reasoning_status_v2_enabled)
+    status_synthesizer = ReasoningStatusSynthesizer(v2_enabled=reasoning_status_v2_enabled)
+    reasoning_chars_since_status = 0
     thinking_suppression_logged = False
     thinking_has_content = False
     debounced_writer: DebouncedNotificationWriter | None = None
@@ -419,6 +438,60 @@ def build_live_streaming_chat_response(
             tool_call_id=tool_call_id,
         )
         emit(notification(TURN_EVENT_METHOD, event.to_payload()))
+
+    def emit_reasoning_status(status: str, source: str, tokens_per_second: float | None) -> None:
+        nonlocal reasoning_chars_since_status
+        emit(
+            thinking_notification(
+                request_id,
+                trace_id=trace_id,
+                session_id=session_id,
+                delta=status,
+                thinking_id=thinking_id,
+                kind=CHAT_THINKING_KIND_STATUS,
+                persist=False,
+                tokens_per_second=tokens_per_second,
+            )
+        )
+        emit_canonical(
+            "status_part",
+            {
+                "status_text": status,
+                "thinking_id": thinking_id,
+                "kind": CHAT_THINKING_KIND_STATUS,
+                "persist": False,
+                **(
+                    {"tokens_per_second": tokens_per_second}
+                    if tokens_per_second is not None
+                    else {}
+                ),
+            },
+        )
+        if reasoning_status_v2_enabled:
+            logger.info(
+                "Reasoning status emitted.",
+                extra={
+                    "event": "runtime.chat_streaming.reasoning_status_emitted",
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "provider": stack.config.engine_type,
+                    "model": stack.config.model,
+                    "thinking_id": thinking_id,
+                    "phase_index": (
+                        phase_index
+                        + int(
+                            current_phase is None
+                            or current_phase.get("phase_kind") != "reasoning"
+                        )
+                        if phase_events_enabled
+                        else checkpoint_cycles + 1
+                    ),
+                    "source": source,
+                    "status_word_count": len(status.split()),
+                    "reasoning_chars_since_previous_status": reasoning_chars_since_status,
+                },
+            )
+        reasoning_chars_since_status = 0
 
     last_emitted_summary = ""
 
@@ -603,62 +676,18 @@ def build_live_streaming_chat_response(
                     # Whitespace goes through the extractor too: a buffered partial
                     # status marker must flush ahead of it, in order.
                     cleaned, status = status_extractor.feed(chunk_text)
+                    reasoning_chars_since_status += len(cleaned)
+                    synthesis_text = cleaned if reasoning_status_v2_enabled else chunk_text
                     if status:
                         status_synthesizer.mark_organic()
-                        emit(
-                            thinking_notification(
-                                request_id,
-                                trace_id=trace_id,
-                                session_id=session_id,
-                                delta=status,
-                                thinking_id=thinking_id,
-                                kind=CHAT_THINKING_KIND_STATUS,
-                                persist=False,
-                                tokens_per_second=chunk_tokens_per_second,
-                            )
-                        )
-                        emit_canonical(
-                            "status_part",
-                            {
-                                "status_text": status,
-                                "thinking_id": thinking_id,
-                                "kind": CHAT_THINKING_KIND_STATUS,
-                                "persist": False,
-                                **(
-                                    {"tokens_per_second": chunk_tokens_per_second}
-                                    if chunk_tokens_per_second is not None
-                                    else {}
-                                ),
-                            },
-                        )
-                    elif chunk_text.strip():
-                        synth_status = status_synthesizer.feed(chunk_text)
+                        emit_reasoning_status(status, "organic", chunk_tokens_per_second)
+                    elif synthesis_text.strip():
+                        synth_status = status_synthesizer.feed(synthesis_text)
                         if synth_status:
-                            emit(
-                                thinking_notification(
-                                    request_id,
-                                    trace_id=trace_id,
-                                    session_id=session_id,
-                                    delta=synth_status,
-                                    thinking_id=thinking_id,
-                                    kind=CHAT_THINKING_KIND_STATUS,
-                                    persist=False,
-                                    tokens_per_second=chunk_tokens_per_second,
-                                )
-                            )
-                            emit_canonical(
-                                "status_part",
-                                {
-                                    "status_text": synth_status,
-                                    "thinking_id": thinking_id,
-                                    "kind": CHAT_THINKING_KIND_STATUS,
-                                    "persist": False,
-                                    **(
-                                        {"tokens_per_second": chunk_tokens_per_second}
-                                        if chunk_tokens_per_second is not None
-                                        else {}
-                                    ),
-                                },
+                            emit_reasoning_status(
+                                synth_status,
+                                "synthesized",
+                                chunk_tokens_per_second,
                             )
                     if cleaned and (cleaned.strip() or thinking_has_content):
                         thinking_parts.append(cleaned)
@@ -704,18 +733,19 @@ def build_live_streaming_chat_response(
             if current_phase is None or current_phase.get("phase_kind") != "text":
                 transition_phase("text")
             response_parts.append(chunk_text)
-            emit(
-                notification(
-                    CHAT_TOKEN_METHOD,
-                    {
-                        **notification_context(
-                            request_id, trace_id=trace_id, session_id=session_id
-                        ),
-                        "delta": chunk_text,
-                        "role": "assistant",
-                    },
+            if not canonical_text_primary_enabled:
+                emit(
+                    notification(
+                        CHAT_TOKEN_METHOD,
+                        {
+                            **notification_context(
+                                request_id, trace_id=trace_id, session_id=session_id
+                            ),
+                            "delta": chunk_text,
+                            "role": "assistant",
+                        },
+                    )
                 )
-            )
             # sequence must be 1-based to match legacyTextSequence in managed runtime dedup
             emit_canonical(
                 "text_delta",
@@ -784,7 +814,7 @@ def build_live_streaming_chat_response(
         usage_payload, context_tokens_estimate=context_tokens_estimate
     )
     attach_context_window(usage_payload, engine)
-    _flags = stack.config.feature_flags or {}
+    _flags = feature_flags
     attach_plan_usage(
         usage_payload,
         engine,

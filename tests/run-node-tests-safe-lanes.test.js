@@ -34,7 +34,69 @@ test('Electron startup exits are classified separately from assertion failures',
     ),
     true
   );
-  assert.equal(safeRunner.hasTapTestEvents('TAP version 13\n# Subtest: real assertion'), true);
+  assert.equal(safeRunner.hasTestEvents('TAP version 13\n# Subtest: real assertion'), true);
+});
+
+// Node 24's default reporter is spec even when piped. Glyphs are built from
+// code points so this file stays ASCII.
+const SPEC_FAIL = String.fromCodePoint(0x2716);
+const SPEC_INFO = String.fromCodePoint(0x2139);
+const SPEC_FAILING_OUTPUT = [
+  `${SPEC_FAIL} incremental Markdown update cost stays within the measured growth baseline (6012.3ms)`,
+  `${SPEC_INFO} tests 1`,
+  `${SPEC_INFO} pass 0`,
+  `${SPEC_INFO} fail 1`,
+  '',
+  `${SPEC_FAIL} failing tests:`,
+  '  AssertionError [ERR_ASSERTION]: Markdown update cost grew >2.25x.',
+].join('\n');
+
+test('spec-reporter assertion failures in sequential load tests are not infrastructure failures', () => {
+  for (const platform of ['win32', 'linux']) {
+    assert.equal(
+      safeRunner.isInfrastructureFailure(
+        'tests/streaming-markdown-cost.load.test.js',
+        { code: 1, output: SPEC_FAILING_OUTPUT, timedOut: false, collateralKilled: false },
+        platform
+      ),
+      false,
+      platform
+    );
+  }
+  // Output capture drops from the head, so the tail summary alone must count.
+  assert.equal(safeRunner.hasTestEvents(`${SPEC_INFO} tests 3\n${SPEC_INFO} fail 1`), true);
+  assert.equal(safeRunner.hasTestEvents('Error: spawn electron ENOENT'), false);
+  assert.equal(
+    safeRunner.isInfrastructureFailure(
+      'tests/electron-shell-smoke.test.js',
+      { code: 1, output: '', timedOut: false, collateralKilled: false },
+      'win32'
+    ),
+    true,
+    'an Electron-backed sequential test that produced no test events is still infrastructure'
+  );
+});
+
+test('a failing load test is reported as FAIL without an infrastructure retry', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-load-assertion-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const fixture = path.join(dir, 'ratio-assertion.load.test.js');
+  fs.writeFileSync(
+    fixture,
+    [
+      "const test = require('node:test');",
+      "const assert = require('node:assert/strict');",
+      "test('growth ratio stays within the ratchet', () => assert.ok(3.4 <= 2.25, 'grew >2.25x'));",
+      '',
+    ].join('\n')
+  );
+
+  const result = runRunner([fixture]);
+
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /\bFAIL .*ratio-assertion\.load\.test\.js/);
+  assert.doesNotMatch(result.stderr, /INFRASTRUCTURE_FAILURE|RETRY /);
+  assert.match(result.stdout + result.stderr, /summary: 0 passed, 1 failed, 0 infrastructure failed/);
 });
 
 test('summary reports infrastructure failures outside assertion failure count', () => {

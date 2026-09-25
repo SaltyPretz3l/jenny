@@ -1,5 +1,6 @@
 /* Pre-send workspace-root nudge, mounted when file tools are unavailable
  * because no root is configured. */
+@import url("./project-menu.css");
 
 .workspace-root-nudge {
   display: flex;
@@ -40,6 +41,17 @@
   background: color-mix(in srgb, var(--state-warning) 12%, transparent);
 }
 
+/* "Use <folder>" waits for an idle chat; the disabled button keeps its
+ * place so the chip does not reflow when the turn ends. */
+.workspace-root-nudge-action[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.workspace-root-nudge-action[disabled]:hover {
+  background: none;
+}
+
 .workspace-root-nudge-dismiss {
   transition: color var(--transition-fast);
   flex: 0 0 auto;
@@ -53,4 +65,30 @@
 
 .workspace-root-nudge-dismiss:hover {
   color: var(--text-secondary);
+}
+
+/* Projects v2: the composer's project pill, beside the run-mode and model
+ * pills (same .composer-rail .inv-chip look). The label is the chat's project;
+ * clicking it opens the shared project menu to move this chat. */
+.composer-project-pill-slot {
+  position: relative;
+  display: inline-flex;
+}
+
+.composer-project-pill .inv-chip-label {
+  display: inline-block;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.composer-project-pill--general {
+  color: var(--text-muted);
+}
+
+.composer-project-pill .inv-chip-icon svg {
+  width: 13px;
+  height: 13px;
 }

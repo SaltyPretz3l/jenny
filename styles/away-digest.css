@@ -1,0 +1,86 @@
+/* Home owns the card chrome; this widget is only a quiet, readable list. */
+.away-digest__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.away-digest__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.away-digest__title:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.away-digest__title--gone {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.away-digest__meta {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.away-digest__outcome--failed {
+  color: var(--text-danger-emphasis);
+}
+
+.away-digest__progress,
+.away-digest__note,
+.away-digest__error {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.away-digest__error {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  color: var(--text-danger-emphasis);
+}
+
+.away-digest__show-all,
+.away-digest__seen,
+.away-digest__retry {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.away-digest__show-all:hover,
+.away-digest__seen:hover,
+.away-digest__retry:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.away-digest__seen:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  text-decoration: none;
+}

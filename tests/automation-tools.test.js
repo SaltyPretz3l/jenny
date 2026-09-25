@@ -378,6 +378,42 @@ describe('AutomationService read-only projection', () => {
     assert.equal(result.recent_failure_count, 10);
     assert.equal(result.omitted_failure_count, 2);
   });
+
+  // The prefix redaction leaves the relative tail behind it; collapsing that
+  // tail used to stop at the first space and leak the rest of the path.
+  test('collapses known-prefix path tails with spaces out of failure summaries', async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-automation-spaced-tail-'));
+    trackDirectory(workspaceRoot);
+    const summaries = [
+      [`Sidecar failed at ${workspaceRoot}\\AI Tools\\My Models\\model.gguf ENOENT`, 'Sidecar failed at [redacted] ENOENT'],
+      [`Could not load ${workspaceRoot}\\AI Tools\\My Models\\My Model Q4.gguf, retrying`, 'Could not load [redacted], retrying'],
+      [`Model folder ${workspaceRoot}\\GGUF Models\\Local GGUF`, 'Model folder [redacted]'],
+      [`spawn ${workspaceRoot}\\AI Tools\\llama-server.exe ENOENT and/or EACCES`, 'spawn [redacted] ENOENT and/or EACCES'],
+      [`read token: ${workspaceRoot}\\My Keys\\key.pem`, 'read token: [redacted]'],
+      [`copy to ${workspaceRoot}-backup\\Secret Folder\\file.txt failed`, 'copy to [redacted] failed'],
+    ];
+    writeScheduledTasks(workspaceRoot, [
+      createAutomationRecord({
+        automation_runs: summaries.map(([summary], index) => ({
+          run_id: `run_failed_${index}`,
+          status: 'failed',
+          reason: 'test_failure',
+          started_at: `2026-05-19T1${index}:00:00.000Z`,
+          completed_at: `2026-05-19T1${index}:00:01.000Z`,
+          summary,
+        })),
+        retention: { max_runs: 20, max_log_bytes: 8_000 },
+      }),
+    ]);
+
+    const result = await makeAutomationService(workspaceRoot).getStatusSummary();
+
+    // recent_failures is newest first.
+    assert.deepEqual(
+      result.recent_failures.map((entry) => entry.summary),
+      summaries.map(([, expected]) => expected).reverse()
+    );
+  });
 });
 
 describe('automation tool registry', () => {

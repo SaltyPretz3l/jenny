@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import struct
+import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -370,12 +371,21 @@ def _directory_frame(name: bytes, signature: PathSignature) -> bytes:
     )
 
 
-def load_journal_schema() -> dict[str, Any]:
-    schema_path = (
+def _journal_schema_path() -> Path:
+    # The packaged sidecar has no source tree: read the copy PyInstaller
+    # bundles (BUNDLED_DATA_FILES), like catalog.py reads the tool manifest.
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        return Path(bundled_root) / "config" / "workspace-mutation-journal-v1.schema.json"
+    return (
         Path(__file__).resolve().parents[3]
         / "config"
         / "workspace-mutation-journal-v1.schema.json"
     )
+
+
+def load_journal_schema() -> dict[str, Any]:
+    schema_path = _journal_schema_path()
     parsed = json.loads(schema_path.read_text(encoding="utf-8"))
     if not isinstance(parsed, dict):
         raise RuntimeError("workspace mutation journal schema root is not an object")

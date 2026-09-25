@@ -27,6 +27,7 @@ function settleDeniedTerminal({
   clearActiveTurn,
   adapter,
   streamId,
+  turnId = streamId,
   sidecarError,
   sidecarErrorCode,
   emitChatStream,
@@ -36,7 +37,7 @@ function settleDeniedTerminal({
   // second (duplicate) call from a caller that failed to guard is still a
   // harmless no-op at the store layer.
   clearActiveTurn(adapter, {
-    requestId: streamId,
+    requestId: turnId,
     streamId,
   });
   const deniedErrorPayload = buildTerminalErrorPayload(

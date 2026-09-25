@@ -1,4 +1,5 @@
 'use strict';
+const { projectToolResourceWait } = require('../tool-resource-execution');
 
 /* services/tools/builtin/verify-tool.js — `verify`
  *
@@ -382,6 +383,7 @@ function createVerifyTool() {
       try {
         return await runConfiguration(service, configId);
       } catch (error) {
+        if (projectToolResourceWait(error)) throw error;
         // A runner rejection must not strand the turn: report it and let the
         // model finish with an honest "unverified".
         return skipped({

@@ -500,8 +500,9 @@ def test_build_approval_plan_parent_hash_changes_security_fingerprint() -> None:
     class _MockEngine:
         pass
 
-    def _build(parent_hash: str) -> ApprovalPlan:
+    def _build(parent_hash: str, quota: bytes | None = None) -> ApprovalPlan:
         return build_approval_plan(
+            quota_state_json=quota,
             approved_call_id="call-write-1",
             request_context=SimpleNamespace(
                 request_id="req-parent-hash",
@@ -566,3 +567,14 @@ def test_build_approval_plan_parent_hash_changes_security_fingerprint() -> None:
     assert root.parent_approval_plan_hash == ""
     assert child.parent_approval_plan_hash == "parent-anchor"
     assert root.approval_plan_hash != child.approval_plan_hash
+    from sidecar.ai.routing.tool_quota_state import encode_quota_state
+    from sidecar.ai.routing.tool_quotas import ToolQuotaRegistry
+    quota = ToolQuotaRegistry()
+    quota.filter_calls(root.tool_calls, tool_contract=None)
+    snapshot = encode_quota_state(quota.snapshot())
+    protected = _build("", snapshot)
+    assert protected.quota_state_json == snapshot
+    assert protected.approval_plan_hash != root.approval_plan_hash
+    changed = quota.snapshot()
+    changed["session_baseline"] = 1
+    assert _build("", encode_quota_state(changed)).approval_plan_hash != protected.approval_plan_hash

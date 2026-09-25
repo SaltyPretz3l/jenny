@@ -33,7 +33,7 @@ def test_plugin_boundary_resolves_relative_core_imports(tmp_path, monkeypatch) -
     module = _load_script_module("check_plugin_boundary.py")
     _write_text(
         tmp_path / "services" / "backend" / "unexpected-core-seam.js",
-        "const plugin = require('../plugins/example');\n",
+        "const inode = 0n;\nconst plugin = require('../plugins/example');\n",
     )
     _write_text(
         tmp_path / "services" / "plugins" / "example.js",
@@ -47,6 +47,31 @@ def test_plugin_boundary_resolves_relative_core_imports(tmp_path, monkeypatch) -
         "services/backend/unexpected-core-seam.js references services/plugins/ "
         "(core seam not allowlisted; see JS_CORE_ALLOWLIST)"
     ]
+
+
+def test_plugin_ast_preserves_bigint_values_without_coercing_budget_numbers(tmp_path) -> None:
+    module = _load_script_module("check_plugin_boundary.py")
+    source = tmp_path / "bigint.js"
+    _write_text(source, """
+const inode = 9007199254740993n;
+const limits = Object.freeze({ numeric: 64, bigint: 64n, nested: [0n, '64'] });
+inspect(9007199254740993n, 64, { nested: [0n] });
+""")
+
+    facts = module.inspect_javascript(tmp_path, [source])[str(source.resolve())]
+    large = {"$bigint": "9007199254740993"}
+    zero = {"$bigint": "0"}
+    assert facts["declarations"]["inode"] == large
+    assert facts["declarations"]["limits"] == {
+        "numeric": 64, "bigint": {"$bigint": "64"}, "nested": [zero, "64"],
+    }
+    call = next(item for item in facts["calls"] if item["callee"] == "inspect")
+    assert call["args"] == [large, 64, {"nested": [zero]}]
+    assert {"function": None, "value": large} in facts["literals"]
+    assert {"function": None, "key": "bigint", "value": {"$bigint": "64"}} in facts["properties"]
+    budgets = _load_script_module("check_plugin_stage5_budgets.py")
+    assert budgets._contains_expected(facts["declarations"]["limits"], {"numeric": 64})
+    assert not budgets._contains_expected(facts["declarations"]["limits"], {"bigint": 64})
 
 
 def test_plugin_boundary_python_reference_self_test_is_non_vacuous(monkeypatch) -> None:
@@ -850,9 +875,12 @@ def test_run_all_includes_every_active_policy_check() -> None:
     #   check:python-runtime-bundle before SBOM emission and Electron Builder);
     #   it fails closed unless the gitignored vendor/python-embed bundle has
     #   been built, so a normal dev checkout can never pass it per-commit.
+    # - check_media_site.py: packaging lane too (check:media-site); it fails
+    #   closed unless the gitignored vendor/sidecar-media-site has been built.
     lane_scoped_checks = {
         "check_coverage_ratchet.py",
         "check_python_runtime_bundle.py",
+        "check_media_site.py",
         # Composed by check_plugin_stage_boundary.py; it has no standalone main.
         "check_plugin_stage8_boundary.py",
     }

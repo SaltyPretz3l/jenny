@@ -8,6 +8,8 @@ hardware-profile worker responsiveness suite for the compact worker.
 
 from __future__ import annotations
 
+import logging
+import queue
 import threading
 import time
 from typing import Any
@@ -15,6 +17,7 @@ from typing import Any
 from sidecar import server
 from sidecar.protocol import CHAT_COMPACT_METHOD, SHUTDOWN_METHOD
 from sidecar.runtime import server_auxiliary_workers
+from sidecar.runtime.multiplexer import StdioTransportMultiplexer
 from sidecar.runtime.outcomes import ProcessOutcome
 
 
@@ -71,7 +74,7 @@ def test_chat_compact_worker_keeps_control_dispatch_responsive(monkeypatch) -> N
         direct_transport=transport,  # type: ignore[arg-type]
         hardware_worker_threads=set(),
         compact_worker_threads=worker_threads,
-        request_runner=lambda m, i: server.process_message(m, i),
+        request_runner=server.process_message,
         send_outcome=lambda outcome, **_kwargs: transport.send_control(outcome.response),
         write_outcome_direct=lambda outcome: transport.send_control(outcome.response),
         logger=server.logger,
@@ -234,14 +237,50 @@ def test_chat_compact_worker_shutdown_gate_suppresses_late_outcome() -> None:
     assert transport.controls == []
 
 
+def test_chat_compact_worker_forwards_inference_response_ports() -> None:
+    class _MultiplexedTransport(_FakeTransport):
+        approval_reader_factory = object()
+
+    transport = _MultiplexedTransport()
+    worker_threads: set[Any] = set()
+    captured: dict[str, Any] = {}
+
+    def request_runner(
+        _message: dict[str, Any], initialized: bool, **kwargs: Any
+    ) -> ProcessOutcome:
+        captured.update(initialized=initialized, kwargs=kwargs)
+        return ProcessOutcome(True, False, {"id": 67, "result": {}}, [])
+
+    assert server_auxiliary_workers.start_compact_worker_if_allowed(
+        message={
+            "id": 67,
+            "method": CHAT_COMPACT_METHOD,
+            "params": {"inference_context": {"schema_version": 1}},
+        },
+        transport=transport,
+        worker_threads=worker_threads,
+        request_runner=request_runner,
+        outcome_sender=lambda *_args, **_kwargs: None,
+        logger=server.logger,
+    )
+    server_auxiliary_workers.join_auxiliary_workers(
+        worker_threads=worker_threads,
+        timeout_seconds=1.0,
+        logger=server.logger,
+    )
+
+    assert captured == {
+        "initialized": True,
+        "kwargs": {
+            "write_frame": transport.send_control,
+            "response_reader_factory": transport.approval_reader_factory,
+        },
+    }
+
+
 def test_has_active_session_turn_guards_only_the_live_session() -> None:
     """JCA-004 active-session guard probe: true only while the session's turn
     is registered, never for other sessions or a blank session id."""
-    import logging
-    import queue
-
-    from sidecar.runtime.multiplexer import StdioTransportMultiplexer
-
     incoming: "queue.Queue[dict[str, Any]]" = queue.Queue()
     multiplexer = StdioTransportMultiplexer(
         reader=lambda: incoming.get(timeout=1.0),

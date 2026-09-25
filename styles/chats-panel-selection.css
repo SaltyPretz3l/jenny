@@ -137,7 +137,7 @@
   max-width: 100%;
 }
 
-/* Dedicated checkbox affordance: runtime status dots remain independent. */
+/* Dedicated checkbox affordance: dots yield the leading edge to selection. */
 .session-row__selection {
   display: none;
   position: relative;
@@ -157,6 +157,7 @@
 .sidebar-bulk-selecting .session-row__open {
   gap: var(--space-4);
 }
+.sidebar-bulk-selecting .session-row__dot { display: none; }
 .session-row.sidebar-bulk-selecting { grid-template-columns: minmax(0, 1fr); }
 .sidebar-bulk-selecting .session-row__menu { display: none; }
 
@@ -192,4 +193,69 @@
   inset-inline: 3px;
   height: 2px;
   background: currentColor;
+}
+
+/* Projects v2: the project filter is a plain button + listbox on its own quiet
+ * row between the search box and the Recent / Archived tabs (#chatsProjectRow).
+ * Lives here because chats-panel.css sits at the 600-line ratchet. */
+.chats-project-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--space-2);
+}
+
+.chats-project-row:empty {
+  display: none;
+}
+
+.chats-project-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  margin-inline-start: calc(-1 * var(--space-2));
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.chats-project-filter:hover,
+.chats-project-filter[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: var(--surface-popover-row);
+}
+
+.chats-project-filter--set {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chats-project-filter:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.chats-project-filter-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chats-project-filter svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.chats-project-filter .chats-project-filter-icon {
+  width: 14px;
+  height: 14px;
 }

@@ -444,3 +444,27 @@ test('registerFeatureIpcHandlers registers the web search secret handlers only w
   assert.ok('features:get-state' in registeredWithoutDeps);
   assert.ok('features:update-settings' in registeredWithoutDeps);
 });
+
+test('registerFeatureIpcHandlers applies authorization before settings writes', async () => {
+  const registered = new Map();
+  const updates = [];
+  registerFeatureIpcHandlers({
+    ipcMainLike: { handle: (channel, handler) => registered.set(channel, handler) },
+    getState: () => ({}),
+    updateSettings: (patch) => { updates.push(patch); return { updated: patch }; },
+    authorization: {
+      authorize: (event) => event?.trusted === true,
+      unauthorizedResult: () => ({ ok: false, authorized: false, code: 'ipc_sender_unauthorized' }),
+    },
+  });
+
+  const handler = registered.get('features:update-settings');
+  assert.deepEqual(await handler({ trusted: false }, { tools: { web: false } }), {
+    ok: false, authorized: false, code: 'ipc_sender_unauthorized',
+  });
+  assert.deepEqual(updates, []);
+  assert.deepEqual(await handler({ trusted: true }, { tools: { web: true } }), {
+    updated: { tools: { web: true } },
+  });
+  assert.deepEqual(updates, [{ tools: { web: true } }]);
+});

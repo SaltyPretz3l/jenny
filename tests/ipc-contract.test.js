@@ -30,6 +30,18 @@ test('ipc contract descriptors use unique invoke/send/subscribe channels', () =>
   }
 });
 
+test('reminder descriptors pin the fired, open, and snooze channels', () => {
+  const expected = {
+    'reminders.onFired': ['subscribe', 'reminders:fired'],
+    'reminders.onOpen': ['subscribe', 'reminders:open'],
+    'reminders.snooze': ['invoke', 'reminders:snooze'],
+  };
+  for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
+    assert.equal(getBridgeChannel(methodPath, kind), channel);
+  }
+});
+
 test('workspaceRecovery invoke descriptors use the five canonical unique channels', () => {
   const expected = {
     'workspaceRecovery.listChangeSets': 'workspace-recovery:list-change-sets',
@@ -72,7 +84,7 @@ test('the preload bridge materializes all five workspaceRecovery methods', async
   ]);
 });
 
-test('llamaServer invoke descriptors use the seven canonical unique channels', () => {
+test('llamaServer invoke descriptors use the eight canonical unique channels', () => {
   const expected = {
     'llamaServer.getStatus': 'llama-server:status',
     'llamaServer.start': 'llama-server:start',
@@ -81,6 +93,7 @@ test('llamaServer invoke descriptors use the seven canonical unique channels', (
     'llamaServer.listLocalGgufs': 'llama-server:list-local-ggufs',
     'llamaServer.chooseGguf': 'llama-server:choose-gguf',
     'llamaServer.chooseLibraryFolder': 'llama-server:choose-library-folder',
+    'llamaServer.chooseRuntime': 'llama-server:choose-runtime',
   };
   const channels = Object.entries(expected).map(([methodPath, channel]) => {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel });
@@ -200,6 +213,7 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   for (const methodPath of [
     'llamaServer.chooseGguf',
     'llamaServer.chooseLibraryFolder',
+    'llamaServer.chooseRuntime',
     'llamaServer.getStatus',
     'llamaServer.listLocalGgufs',
     'llamaServer.restart',
@@ -263,6 +277,9 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('workspaceGit.undoLastCommit'));
   assert.ok(invokePaths.includes('workspaceFileMap.getGraph'));
   assert.ok(invokePaths.includes('workspaceFileMap.refresh'));
+  assert.ok(invokePaths.includes('projects.adoptWorkspace'));
+  assert.ok(invokePaths.includes('projects.delete'));
+  assert.ok(invokePaths.includes('workspaceRoot.prepareProject'));
   assert.deepEqual([...invokePaths].sort(), invokePaths);
   assert.equal(getBridgeChannel('models.delete', 'invoke'), 'models:delete');
   assert.equal(getBridgeChannel('sessions.setMeta', 'invoke'), 'sessions:set-meta');

@@ -8,6 +8,8 @@ from typing import Any
 
 from sidecar.ai.mcp.builtin_server_ledger import current_operation_ledger
 from sidecar.ai.tools.builtins.shell_background import active_job_ids
+from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
@@ -20,11 +22,30 @@ class ToolRuntimeLiveness:
     has_pending_operations: bool = False
 
 
-def snapshot_tool_runtime_liveness(kernel: Any) -> ToolRuntimeLiveness:
+def _workspace_store_key(kernel: Any, request_context: Any | None) -> str | None:
+    """Identity of the request's workspace store, or None without a workspace."""
+    execution = getattr(request_context, "execution_context", None)
+    root = getattr(execution, "root_path", None) if execution is not None else None
+    if not root:
+        root = getattr(getattr(kernel, "_config", None), "tools_workspace_root", None)
+    if not str(root or "").strip():
+        return None
+    try:
+        return GuardedWorkspaceStore(str(root)).cache_key
+    except ToolExecutionFailure:
+        return None
+
+
+def snapshot_tool_runtime_liveness(
+    kernel: Any, request_context: Any | None = None
+) -> ToolRuntimeLiveness:
     """Capture bounded runtime state without coupling the budget filter to the kernel."""
 
     try:
-        background_jobs = bool(active_job_ids())
+        # Jobs are registered per workspace store (B3S-4): another workspace's
+        # job must not keep the status tools in this turn's schema.
+        store_key = _workspace_store_key(kernel, request_context)
+        background_jobs = bool(active_job_ids(store_key=store_key)) if store_key else False
         monitor_manager = getattr(kernel, "_monitor_manager", None)
         monitor_probe = getattr(monitor_manager, "has_active_monitors", None)
         active_monitors = bool(monitor_probe()) if callable(monitor_probe) else False

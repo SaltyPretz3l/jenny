@@ -1,5 +1,6 @@
 """Shared limits for model-facing LSP payloads."""
 
+LSP_MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_LSP_ITEMS = 500
 DEFAULT_MAX_DIAGNOSTICS = 100
 DEFAULT_MAX_SYMBOLS = 200

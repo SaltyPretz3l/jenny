@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REQUIREMENTS_LOCK = ROOT / "requirements-lock.txt"
 DEFAULT_BUILD_REQUIREMENTS_LOCK = ROOT / "requirements-build-lock.txt"
 DEFAULT_MANAGED_RUNTIME_LOCK = ROOT / "requirements-python-runtime-lock.txt"
+DEFAULT_MEDIA_SITE_LOCK = ROOT / "requirements-media-site-lock.txt"
 DEFAULT_EMBED_MANIFEST = ROOT / "vendor" / "python-embed" / "python-embed-manifest.json"
 DEFAULT_WHEELHOUSE_MANIFEST = (
     ROOT / "vendor" / "python-runtime-wheels" / "wheelhouse-manifest.json"
@@ -129,6 +130,7 @@ def _release_lock_specs(
     specs = [(lock_path, "sidecar-runtime")]
     if lock_path.resolve() == DEFAULT_REQUIREMENTS_LOCK.resolve():
         specs.append((DEFAULT_BUILD_REQUIREMENTS_LOCK, "sidecar-build"))
+        specs.append((DEFAULT_MEDIA_SITE_LOCK, "sidecar-media-site"))
         if include_managed_runtime:
             specs.append((DEFAULT_MANAGED_RUNTIME_LOCK, "managed-python-runtime"))
     return specs

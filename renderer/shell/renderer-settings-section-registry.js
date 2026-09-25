@@ -16,7 +16,11 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SETTINGS_STORAGE_KEY = 'jenny.settings.activeSection';
   const DEFAULT_SETTINGS_SECTION = 'models';
-  const SETTINGS_SECTION_ALIASES = Object.freeze({ cost: 'usage' });
+  const SETTINGS_SECTION_ALIASES = Object.freeze({
+    cost: 'usage',
+    // 2026-09-21: the Model library was folded into Models; stored deep links still name it.
+    modelLibrary: 'models',
+  });
 
   /* Top-level nav groups, in render order. `disclosure: true` renders the group
    * behind the collapsible "Developer" chevron instead of as an always-visible block. */
@@ -49,14 +53,9 @@
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
       default: true,
-    },
-    {
-      id: 'modelLibrary',
-      group: 'session',
-      label: jt('settings.sections.modelLibrary.title', 'Model library'),
-      domKey: 'modelLibrary',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
+      // The Model library grid lives in this card since 2026-09-21; keep its
+      // old name (and what people pull/add there) reachable from search.
+      keywords: [jt('settings.sections.models.keywords.modelLibrary', 'model library'), 'library', 'pull', 'gguf'],
     },
     {
       id: 'context',
@@ -153,6 +152,17 @@
       diagnosticsLifecycle: 'none',
     },
     {
+      // Owner-approved 2026-09-20 (Projects v2): this section is the project list.
+      // The id stays `runtime` so persisted/deep-linked section ids keep resolving.
+      id: 'runtime',
+      group: 'app',
+      label: jt('settings.sections.projects.title', 'Projects'),
+      domKey: 'runtime',
+      lazy: true,
+      refreshPolicy: 'render',
+      diagnosticsLifecycle: 'none',
+    },
+    {
       // Plugin Manager (Stage 3B, owner-approved 2026-07-31): body group mounts
       // dynamically from renderer-plugins-settings.js. The nav item is
       // feature-gated at runtime (featureFlags.plugins,
@@ -222,6 +232,19 @@
       refreshPolicy: 'advanced',
       diagnosticsLifecycle: 'none',
     },
+    {
+      // Runtime limits + work ledger (moved out of the Projects page 2026-09-20).
+      // The orchestration view/controller scripts load lazily on first bind, so
+      // this section spends no startup script slot.
+      id: 'runtimeLimits',
+      group: 'developer',
+      label: jt('settings.sections.runtimeLimits.title', 'Runtime limits'),
+      domKey: 'runtimeLimits',
+      lazy: true,
+      advanced: true,
+      refreshPolicy: 'render',
+      diagnosticsLifecycle: 'none',
+    },
   ].map((definition) => Object.freeze(definition)));
 
   function normalizeOrder(rawValue, fallback) {
@@ -250,6 +273,11 @@
       refreshPolicy: String(definition.refreshPolicy || 'render'),
       diagnosticsLifecycle: String(definition.diagnosticsLifecycle || 'none'),
       order: normalizeOrder(definition.order, index),
+      // Extra search terms for renderer-settings-search.js (a folded-in
+      // section's old name, what people do in the card). Plain strings.
+      keywords: Object.freeze(Array.isArray(definition.keywords)
+        ? definition.keywords.map((keyword) => String(keyword)).filter(Boolean)
+        : []),
     });
   }
 

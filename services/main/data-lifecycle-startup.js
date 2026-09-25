@@ -28,7 +28,7 @@ async function promotePendingRestore(app, nativeImage, log = () => {}) {
 
 async function finalizeSuccessfulRestoredBoot(app, log = () => {}) {
   try {
-    return await finalizeRestoredBoot(app.getPath('userData'));
+    return await finalizeRestoredBoot(app.getPath('userData'), { runtimePath: runtimePath() });
   } catch (error) {
     log('WARN', 'data_lifecycle.restore_finalize_failed', {
       reason: String(error?.reason || 'finalize_failed'),

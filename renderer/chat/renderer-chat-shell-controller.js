@@ -261,6 +261,7 @@
         ),
         appendClientLog: callbacks.appendClientLog,
         showComposerActionError: callbacks.showComposerActionError,
+        sessionCallbacks: callbacks,
       });
     }
 
@@ -683,7 +684,7 @@
         refreshSessionSummaries: (...args) => callbacks.refreshSessionSummaries(...args),
         refreshSnapshots: (...args) => callbacks.refreshSnapshots(...args),
         refreshObservability: (...args) => callbacks.refreshObservability?.(...args) ?? Promise.resolve(null),
-        showToastMessage: (...args) => callbacks.showToastMessage(...args),
+        showToastMessage: (...args) => callbacks.showToastMessage(...args), dismissToast: (...args) => callbacks.dismissToast?.(...args),
         dismissStreamErrors: (...args) => callbacks.dismissStreamErrors(...args),
         maybeSuggestMemoryCapture: (...args) => callbacks.maybeSuggestMemoryCapture(...args),
         getInteractiveComposerStatusNotice: (...args) => slashDependencies.getInteractiveComposerStatusNotice(...args),
@@ -819,6 +820,7 @@
         handleInteractiveSkipAll,
         handleInteractiveOtherInputChange,
         toggleInteractiveRoundRecap: (...args) => callbacks.toggleInteractiveRoundRecap(...args),
+        toggleContextCompactionDetails: (...args) => callbacks.toggleContextCompactionDetails(...args),
         toggleThreadBranch: (...args) => callbacks.toggleThreadBranch?.(...args),
         handleCopyMessage,
         handleElaborateMessage,

@@ -38,8 +38,9 @@ function socketClass() {
   class FakeSocket {
     static instances = [];
 
-    constructor(url) {
+    constructor(url, protocols) {
       this.url = url;
+      this.protocols = protocols;
       this.bufferedAmount = 0;
       this.sent = [];
       this.closed = false;
@@ -108,6 +109,15 @@ test('claims the configured route before becoming ready', () => {
   assert.equal(fix.client.getState(), 'claimed');
   assert.equal(fix.client.send({ v: 1, kind: 'ping', t: 0 }), true);
   assert.equal(socket.sent.length, 2);
+});
+
+test('connect offers the route token as the rt subprotocol and never puts it in the URL', () => {
+  const fix = fixture();
+  fix.client.connect();
+  const socket = fix.WebSocketCtor.instances[0];
+  assert.deepEqual(socket.protocols, ['jenny-relay-v1', 'rt.route-token-secret']);
+  assert.equal(socket.url, 'wss://relay.example/r/route_id1?role=desktop');
+  assert.doesNotMatch(socket.url, /route-token-secret/);
 });
 
 test('wrong first relay message closes permanently', () => {

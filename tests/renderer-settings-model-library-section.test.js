@@ -28,13 +28,9 @@ function makeDom() {
   return new JSDOM(`<!doctype html><body>
     <nav class="settings-nav">
       <button data-settings-section="models">Models</button>
-      <button data-settings-section="modelLibrary">Model library</button>
     </nav>
-    <section class="settings-card" data-settings-section="models">
-      <div id="modelLibraryGroup">legacy rows</div>
-    </section>
-    <section class="settings-card settings-section-active" data-settings-section="modelLibrary">
-      <div class="settings-card-header"><h3>Model library</h3></div>
+    <section class="settings-card settings-section-active" data-settings-section="models">
+      <div class="settings-card-header"><h3>Models</h3></div>
       <div id="modelLibrarySectionToolbarHost"></div>
       <div class="settings-note model-library-section-status" aria-live="polite"></div>
       <div id="modelLibrarySectionHost"></div>
@@ -77,13 +73,12 @@ function state(enabled = true) {
   return {
     features: {
       featureFlags: {
-        model_management_ui: true,
-        model_library_section: enabled,
+        model_management_ui: enabled,
       },
     },
     status: { model: '' },
     offline: { preferredLocalModel: '' },
-    ui: { activeSettingsSection: enabled ? 'models' : 'modelLibrary' },
+    ui: { activeSettingsSection: 'models' },
   };
 }
 
@@ -191,7 +186,6 @@ function harness(t, options = {}) {
       currentState.status = Object.assign({}, currentState.status, { model: engine.loadedModel });
     },
     openModelTuning: (...args) => calls.push(['tune', ...args]),
-    openSettingsSection: (section) => calls.push(['section', section]),
     setupService,
     inventoryContextMenu,
   };
@@ -207,8 +201,8 @@ function harness(t, options = {}) {
     calls,
     engine,
     state: currentState,
-    card: windowRef.document.querySelector('.settings-card[data-settings-section="modelLibrary"]'),
-    nav: windowRef.document.querySelector('.settings-nav [data-settings-section="modelLibrary"]'),
+    card: windowRef.document.querySelector('.settings-card[data-settings-section="models"]'),
+    nav: windowRef.document.querySelector('.settings-nav [data-settings-section="models"]'),
     featureChanged: () => featureChanged,
     progressListener: () => progressListener,
   };
@@ -228,17 +222,17 @@ test('controller exposes state and engine-settings sync methods', (t) => {
   assert.equal(typeof h.controller.syncEngineSettings, 'function');
 });
 
-test('flag off hides the new section, falls back from an active section, makes no bridge calls, and leaves legacy markup untouched', async (t) => {
+test('model management off clears the library hosts without hiding Models or making bridge calls', async (t) => {
   const h = harness(t, { state: state(false) });
   h.controller.bind();
   await flush();
 
-  assert.equal(h.nav.hidden, true);
-  assert.equal(h.nav.getAttribute('data-feature-gated'), 'model_library_section');
-  assert.equal(h.card.hidden, true);
-  assert.equal(h.card.classList.contains('settings-section-active'), false);
-  assert.deepEqual(h.calls, [['section', 'models']]);
-  assert.equal(h.document.getElementById('modelLibraryGroup').textContent, 'legacy rows');
+  assert.equal(h.nav.hidden, false);
+  assert.equal(h.nav.hasAttribute('data-feature-gated'), false);
+  assert.equal(h.card.hidden, false);
+  assert.equal(h.card.classList.contains('settings-section-active'), true);
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.document.getElementById('modelLibrarySectionToolbarHost').textContent, '');
   assert.equal(h.document.getElementById('modelLibrarySectionHost').textContent, '');
 });
 
@@ -715,22 +709,23 @@ test('controller without a toast dependency completes activation through the liv
   );
 });
 
-test('runtime feature changes flip visibility in both directions', async (t) => {
+test('runtime model-management changes populate and clear hosts without hiding Models', async (t) => {
   const h = harness(t, { state: state(false) });
   h.state.ui.activeSettingsSection = 'models';
   h.controller.bind();
   await flush();
 
-  h.state.features.featureFlags.model_library_section = true;
+  h.state.features.featureFlags.model_management_ui = true;
   await h.featureChanged()();
   assert.equal(h.nav.hidden, false);
   assert.equal(h.card.hidden, false);
   assert.equal(h.document.querySelectorAll('.model-row').length, 2);
 
-  h.state.features.featureFlags.model_library_section = false;
+  h.state.features.featureFlags.model_management_ui = false;
   await h.featureChanged()();
-  assert.equal(h.nav.hidden, true);
-  assert.equal(h.card.hidden, true);
+  assert.equal(h.nav.hidden, false);
+  assert.equal(h.card.hidden, false);
+  assert.equal(h.document.getElementById('modelLibrarySectionToolbarHost').textContent, '');
   assert.equal(h.document.getElementById('modelLibrarySectionHost').textContent, '');
 });
 
@@ -782,6 +777,44 @@ test('document-level Escape dismisses the section delete modal', async (t) => {
   );
 });
 
+test('a backdrop click dismisses the section delete modal; a click inside the panel keeps it', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  const modalSelector = '[data-step-modal="model-library-section-confirm-delete"]';
+  const openModal = () => {
+    click(h.windowRef, h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="menu"]'));
+    contextMenuItem(h, 'Remove…').action();
+    const modal = h.card.querySelector(modalSelector);
+    assert.ok(modal, 'modal opens');
+    return modal;
+  };
+  click(h.windowRef, openModal());
+  assert.equal(h.card.querySelector(modalSelector), null, 'backdrop click dismisses');
+  click(h.windowRef, openModal().querySelector('.inv-step-modal'));
+  assert.ok(h.card.querySelector(modalSelector), 'panel click keeps the modal');
+});
+
+test('disabling model management clears the status line, including a write that lands afterwards', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  click(h.windowRef, h.card.querySelector('[data-model-library-section-action="pull-tag"]'));
+  const status = h.card.querySelector('.model-library-section-status');
+  assert.match(status.textContent, /tag/i, 'an empty pull tag reports on the status line');
+
+  click(h.windowRef, h.card.querySelector('[data-model-key="recommended:3b"] [data-model-card-action="pull"]'));
+  const startCall = h.calls.find((entry) => entry[0] === 'startOllamaPull');
+  assert.ok(startCall, 'a pull is in flight');
+
+  h.state.features.featureFlags.model_management_ui = false;
+  await h.featureChanged()();
+  assert.equal(status.textContent, '', 'flag off clears the status line');
+  h.progressListener()({ requestId: startCall[1].requestId, status: 'completed', percent: 100 });
+  await flush();
+  assert.equal(status.textContent, '', 'a pull settling after the flag flipped stays off the status line');
+});
+
 test('pull completion performs no stale-card repaint before the terminal refresh', async (t) => {
   const h = harness(t);
   h.controller.bind();
@@ -801,6 +834,8 @@ test('pull completion performs no stale-card repaint before the terminal refresh
   assert.equal(h.card.querySelector('[data-model-key="recommended:3b"]'), pulledCard);
   assert.match(h.card.querySelector('.model-library-section-status').textContent, /Pull complete/);
   await flush();
+  // The Composer's model pickers learn about the new tag through the terminal refresh.
+  assert.ok(h.calls.some((entry) => entry[0] === 'refreshModelPickers'), 'pull completion refreshes the model pickers');
 });
 
 test('unthrottled pull progress for an off-list tag never rebuilds the whole row list', async (t) => {
@@ -863,4 +898,22 @@ test('in-flight activation and deletion latches surface bounded status instead o
     deletion.card.querySelector('.model-library-section-status').textContent,
     'Still removing the previous model.'
   );
+});
+
+test('a feature broadcast with unchanged flags does not reload the sources', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  const before = h.calls.length;
+  assert.ok(before > 0, 'the bind refresh loaded the sources');
+
+  // shell-config re-broadcasts feature state on every config change (root
+  // probe, workspace state); none of the flags this section reads moved.
+  await h.featureChanged()();
+  await h.featureChanged()();
+  assert.equal(h.calls.length, before, 'no bridge call for an unchanged-flag broadcast');
+
+  h.state.features.featureFlags.llama_server_acceleration = !h.state.features.featureFlags.llama_server_acceleration;
+  await h.featureChanged()();
+  assert.ok(h.calls.length > before, 'a flag this section reads flipping reloads the sources');
 });

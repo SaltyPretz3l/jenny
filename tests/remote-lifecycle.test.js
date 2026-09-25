@@ -67,6 +67,7 @@ function fixture(options = {}) {
   const peerInstances = [];
   const emitted = [];
   const flagState = { remote_control: options.flag !== false, ...(options.featureFlags || {}) };
+  let pluginActive = options.plugin !== false;
   let cancellationRegistry;
   let activeLeases;
   let projectionEmit;
@@ -154,7 +155,7 @@ function fixture(options = {}) {
     backendService,
     secureStore: options.secureStore || secureStore(),
     featureFlags: () => ({ ...flagState }),
-    isPluginActive: () => options.plugin !== false,
+    isPluginActive: () => pluginActive,
     isWindowAlive: () => options.window !== false,
     now: clock.now,
     setTimer: clock.setTimer,
@@ -166,6 +167,7 @@ function fixture(options = {}) {
   return {
     service, clock, backendService, relayInstances, peerInstances, sessions, emitted,
     flagState,
+    setPluginActive(next) { pluginActive = next; },
     leases: () => activeLeases,
     cancellations: () => cancellationRegistry,
     projectionEmit: () => projectionEmit,
@@ -299,20 +301,106 @@ test('setRelay is refused while live and sharing enforces chat visibility', asyn
   await fix.service.dispose();
 });
 
-test('takeControl revokes a phone lease and dispose is safe from off and ready', async () => {
+test('takeControl revokes a phone lease, cancels its pending start, and disposes safely', async () => {
   const fix = fixture();
   await fix.service.setRelay('wss://relay.example');
   await fix.service.shareSession('chat-1');
   await fix.service.enable();
   fix.leases().request('chat-1', 'device_id1');
+  const pendingStart = fix.cancellations().create({ sessionId: 'chat-1', deviceId: 'device_id1' });
   assert.equal(fix.leases().holderOf('chat-1'), 'device_id1');
   assert.equal(fix.service.takeControl('chat-1').ok, true);
   assert.equal(fix.leases().holderOf('chat-1'), null);
+  assert.equal(pendingStart.signal.aborted, true);
   await fix.service.dispose();
   assert.equal(fix.service.status().state, 'off');
   const off = fixture();
   await off.service.dispose();
   assert.equal(off.service.status().state, 'off');
+});
+
+test('projected events are fenced while plugin authority is inactive and resume when active', async () => {
+  const fix = fixture();
+  await fix.service.setRelay('wss://relay.example');
+  await fix.service.shareSession('chat-1');
+  await fix.service.enable();
+  fix.relayInstances[0].emitMessage({
+    v: 1, kind: 'peer_open', connection_id: 'connect_plugin_fence',
+  });
+  const delivered = [];
+  fix.peerInstances[0].sendPlaintext = async (event) => {
+    delivered.push(event.payload?.text);
+    return true;
+  };
+  fix.peerInstances[0].makeReady();
+
+  fix.setPluginActive(false);
+  fix.projectionEmit()(contracts.buildEvent({
+    eventSeq: 1,
+    type: 'delta',
+    sessionId: 'chat-1',
+    streamId: 'stream_plugin_fence',
+    payload: { text: 'uncertain' },
+  }));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(delivered, []);
+
+  fix.setPluginActive(true);
+  fix.projectionEmit()(contracts.buildEvent({
+    eventSeq: 2,
+    type: 'delta',
+    sessionId: 'chat-1',
+    streamId: 'stream_plugin_fence',
+    payload: { text: 'active' },
+  }));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(delivered, ['active']);
+  await fix.service.dispose();
+});
+
+test('initial snapshot authorization is rechecked after plugin authority withdrawal', async () => {
+  const record = {
+    relay_url: 'wss://relay.example',
+    shared_sessions: ['chat-1'],
+    devices: [{ device_id: 'device_id1', label: 'Phone', paired_at: 1, last_seen_at: 1 }],
+  };
+  const fix = fixture({
+    factories: {
+      createDeviceStore: () => ({
+        load: async () => ({ ok: true }),
+        getRecord: () => record,
+        desktopSecret: () => crypto.randomSecret(),
+        isDeviceTrusted: (deviceId) => deviceId === 'device_id1',
+        addDevice: async () => ({ ok: true }),
+        revokeDevice: async () => ({ ok: true }),
+        unshareSession: async () => ({ ok: true }),
+      }),
+    },
+  });
+  await fix.service.enable();
+  fix.relayInstances[0].emitMessage({
+    v: 1, kind: 'peer_open', connection_id: 'connect_snapshot_fence',
+  });
+  const delivered = [];
+  let releaseSend;
+  fix.peerInstances[0].sendPlaintext = (event, { authorized }) => new Promise((resolve) => {
+    releaseSend = () => {
+      if (authorized()) delivered.push(event);
+      resolve(true);
+    };
+  });
+  fix.peerInstances[0].makeReady();
+  while (!releaseSend) await Promise.resolve();
+
+  fix.setPluginActive(false);
+  releaseSend();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(delivered, []);
+  await fix.service.dispose();
 });
 
 test('failed forget-all remains a sticky enable denial until deletion succeeds', async () => {

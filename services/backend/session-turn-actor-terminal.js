@@ -5,6 +5,10 @@ const {
   terminalIdentityMatches,
   validateTerminalIdentity,
 } = require('./chat-lifecycle-contracts');
+const {
+  resolveCheckpointRecoveryFence,
+  resolveCheckpointResumeIdentity,
+} = require('./session-turn-actor-resume');
 const { normalizeId } = require('../shared/normalize');
 
 const KEEP_TOKEN_CONSUMED_STATUSES = new Set([
@@ -334,6 +338,135 @@ function finalizeTerminal(registry, lease, commitResult, { status = '' } = {}) {
   return result;
 }
 
+// A checkpoint pause preserves ownership until both durable owners settle.
+function pauseForCheckpoint(registry, lease, { settleJournal } = {}) {
+  const reason = registry._leaseReason(lease);
+  if (reason || lease.consumedContinuation || typeof settleJournal !== 'function') {
+    return { released: false, reason: reason || 'checkpoint_pause_invalid' };
+  }
+  const actor = registry._actors.get(lease.identity.sessionId);
+  if (!registry._clearActiveTurnDurably(lease)) {
+    actor.recoveryBlocked = 'checkpoint_pause_clear_failed';
+    return { released: false, preserved: true, reason: actor.recoveryBlocked };
+  }
+  let journalSettled = false;
+  try { journalSettled = settleJournal() === true; } catch (_error) { /* Retain the actor below. */ }
+  if (!journalSettled) {
+    const restored = registry._ensureActiveTurnDurably(lease);
+    actor.recoveryBlocked = restored ? 'checkpoint_pause_journal_failed' : 'active_turn_preserve_failed';
+    return { released: false, preserved: true, reason: actor.recoveryBlocked };
+  }
+  markProviderQuiesced(registry, lease);
+  registry._removeController(lease, actor);
+  actor.lease = null;
+  actor.recoveryBlocked = '';
+  lease.released = true;
+  lease.settleLease();
+  registry._touch(actor);
+  return { released: true, preserved: false, status: 'paused' };
+}
+
+function blockCheckpointOrphan(registry, { sessionId, store, turnId, streamId, reason,
+  checkpointResume = null, recoveryFence = null } = {}) {
+  const id = normalizeId(sessionId);
+  const turn = normalizeId(turnId);
+  const stream = normalizeId(streamId);
+  const blockedReason = normalizeId(reason) || 'checkpoint_recovery_uncertain';
+  const actor = id && registry._getActor(id, store);
+  const active = actor && store?.getActiveTurn?.(id);
+  let trustedAbsentActive = false;
+  if (actor && !active && checkpointResume && recoveryFence) {
+    try {
+      const fence = resolveCheckpointRecoveryFence(recoveryFence);
+      const resume = resolveCheckpointResumeIdentity(checkpointResume, { sessionId: fence.sessionId,
+        store, interactiveResponse: null, editedMessageId: '', deferEditValidation: false });
+      trustedAbsentActive = fence.sessionId === id && fence.turnId === turn
+        && fence.streamId === stream && resume.turnId === turn
+        && resume.userMessageId === fence.userMessageId
+        && actor.sessionIncarnation === fence.sessionIncarnation
+        && actor.generation === fence.generation;
+    } catch (_error) { trustedAbsentActive = false; }
+  }
+  const exactActive = active && normalizeId(active.request_id) === turn
+    && normalizeId(active.turn_id) === turn && normalizeId(active.stream_id) === stream;
+  if (!actor || actor.lease || (!exactActive && !trustedAbsentActive)) {
+    return { blocked: false, reason: 'checkpoint_orphan_fence_mismatch' };
+  }
+  actor.checkpointRecoveryBarrier = Object.freeze({ turnId: turn, streamId: stream,
+    reason: blockedReason, validatedCheckpoint: trustedAbsentActive });
+  registry._touch(actor);
+  return { blocked: true, reason: blockedReason };
+}
+
+function settleCheckpointOrphan(registry, { store, checkpointResume, recoveryFence } = {}) {
+  let fence;
+  let resume;
+  try {
+    fence = resolveCheckpointRecoveryFence(recoveryFence);
+    resume = resolveCheckpointResumeIdentity(checkpointResume, { sessionId: fence.sessionId,
+      store, interactiveResponse: null, editedMessageId: '', deferEditValidation: false });
+  } catch (error) { return { settled: false, reason: error?.reason || 'checkpoint_recovery_invalid' }; }
+  const actor = registry._getActor(fence.sessionId, store);
+  const barrier = actor.checkpointRecoveryBarrier;
+  if (actor.lease || actor.tombstoned || actor.deleting || store.getActiveTurn(fence.sessionId)
+    || actor.sessionIncarnation !== fence.sessionIncarnation || actor.generation !== fence.generation
+    || resume.turnId !== fence.turnId || resume.userMessageId !== fence.userMessageId) {
+    return { settled: false, reason: 'checkpoint_recovery_fence_mismatch' };
+  }
+  if (barrier && (barrier.validatedCheckpoint !== true || barrier.turnId !== fence.turnId
+    || barrier.streamId !== fence.streamId)) {
+    return { settled: false, reason: 'checkpoint_recovery_barrier_mismatch' };
+  }
+  actor.checkpointRecoveryBarrier = null;
+  registry._touch(actor);
+  return { settled: true, cleared: Boolean(barrier) };
+}
+
+function pauseRecoveredCheckpoint(registry, { store, activeStreams, checkpointResume,
+  recoveryFence, settleJournal } = {}) {
+  let fence;
+  let resume;
+  try {
+    fence = resolveCheckpointRecoveryFence(recoveryFence);
+    resume = resolveCheckpointResumeIdentity(checkpointResume, { sessionId: fence.sessionId,
+      store, interactiveResponse: null, editedMessageId: '', deferEditValidation: false });
+  } catch (error) { return { released: false, reason: error?.reason || 'checkpoint_recovery_invalid' }; }
+  if (resume.turnId !== fence.turnId || resume.userMessageId !== fence.userMessageId
+    || !activeStreams || typeof activeStreams.get !== 'function'
+    || typeof settleJournal !== 'function') {
+    return { released: false, reason: 'checkpoint_recovery_fence_mismatch' };
+  }
+  const actor = registry._getActor(fence.sessionId, store);
+  let lease = actor.lease;
+  if (lease) {
+    if (lease.checkpointRecovery !== true
+      || !terminalIdentityMatches(lease.identity, fence)) {
+      return { released: false, reason: 'checkpoint_recovery_lease_conflict' };
+    }
+  } else {
+    const activeTurn = store.getActiveTurn(fence.sessionId);
+    const identity = Object.freeze({ sessionId: fence.sessionId,
+      sessionIncarnation: fence.sessionIncarnation, generation: fence.generation,
+      turnId: fence.turnId, streamId: fence.streamId, userMessageId: fence.userMessageId,
+      sessionRevision: null });
+    if (actor.tombstoned || actor.deleting || actor.sessionIncarnation !== identity.sessionIncarnation
+      || actor.generation !== identity.generation || activeStreams.get(identity.streamId)
+      || !registry._activeTurnMatches(activeTurn, identity)) {
+      return { released: false, reason: 'checkpoint_recovery_fence_mismatch' };
+    }
+    lease = { identity, store, activeStreams, prompt: '', editedMessageId: null,
+      consumedContinuation: null, reuseExistingUserMessage: true, editValidationDeferred: false,
+      continuationReplaced: false, controller: null, released: false,
+      activeTurnClaim: { ...activeTurn },
+      checkpointRecovery: true, ...createLeaseLifecycle(true) };
+    actor.lease = lease;
+    actor.store = store;
+    actor.checkpointRecoveryBarrier = null;
+    registry._touch(actor);
+  }
+  return pauseForCheckpoint(registry, lease, { settleJournal });
+}
+
 // Compatibility path for entrypoints not yet routed through TerminalCoordinator.
 // L4 callers use finalizeTerminal(), whose refused path retains actor ownership.
 function releaseLease(registry, lease, { status = '', preserveActiveTurn = false } = {}) {
@@ -395,11 +528,15 @@ function releaseLease(registry, lease, { status = '', preserveActiveTurn = false
 
 module.exports = {
   adoptPendingTerminalRepair,
+  blockCheckpointOrphan,
   createLeaseLifecycle,
   finalizeTerminal,
   markProviderQuiesced,
+  pauseRecoveredCheckpoint,
   pendingRepairForActiveTurn,
+  pauseForCheckpoint,
   prepareTerminalTransition,
   releaseLease,
   runTerminalMutation,
+  settleCheckpointOrphan,
 };

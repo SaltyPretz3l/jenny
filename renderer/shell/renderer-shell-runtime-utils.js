@@ -815,6 +815,10 @@
         openSettingsSection('models', { source: 'error_recovery' });
         return;
       }
+      if (action === 'open_pdf_addon_settings') {
+        openSettingsSection('tools', { source: 'pdf_addon_tool_row', focusId: 'toolsPdfAddonHost' });
+        return;
+      }
       if (isNewSessionRecoveryAction(action)) {
         await handleCreateSessionWithWorkspace();
         return;
@@ -934,13 +938,18 @@
       return result;
     }
 
+    // F37: the latest New chat wins. An older create's tab activation still in
+    // flight must not reclaim the current session from a newer create.
+    let createSessionGeneration = 0;
     async function handleCreateSessionWithWorkspace() {
+      const generation = ++createSessionGeneration;
+      const navigationGuard = { isCurrent: () => generation === createSessionGeneration };
       const createdSessionId = String(await handleCreateSession(...arguments) || '').trim();
-      if (createdSessionId) {
+      if (createdSessionId && navigationGuard.isCurrent()) {
         state.currentSessionId = createdSessionId;
         // A brand-new chat always opens in its own tab, regardless of the
         // open-in-new-tab preference (which only governs existing sessions).
-        await activateWorkspaceSession(createdSessionId, { silent: true, mode: 'new-tab' });
+        await activateWorkspaceSession(createdSessionId, { silent: true, mode: 'new-tab', navigationGuard });
         renderWorkspaceChrome();
       }
       return createdSessionId;

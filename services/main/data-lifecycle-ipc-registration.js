@@ -222,6 +222,7 @@ function registerDataLifecycleRuntime(ipcMainLike, {
     attachmentStore,
     shellConfigService,
     workspaceRootCoordinator,
+    runtimeArchivePort: backendService.sessionRuntime,
     logger: log,
     prepareForRemoval: createRemovalPreparation({
       flush: () => backendService.sessionStore?.flushAsync?.(),

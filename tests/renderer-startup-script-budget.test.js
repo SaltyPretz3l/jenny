@@ -115,7 +115,49 @@ const ROOT = path.resolve(__dirname, '..');
 // +3 on 2026-09-07 (merge of wt/i18n-safety-101): eager i18n-utils and i18n-bootstrap head scripts, and scene-acknowledgement.js in setup scene order.
 // +1 on 2026-09-07 (M11): i18n-backend-strings.js translates closed backend vocabularies at renderer sinks.
 // +2 on 2026-09-08: calendar chat markup and interaction owners.
-const MAX_TOTAL_SCRIPT_COUNT = 667; // measured 665 on 2026-09-08 after merge-review fixes; +2 scripts of headroom.
+// +2 on 2026-09-09: approved session-runtime settings controller and knowledge
+// scope helper, both deferred. Measured 667; preserve two scripts of headroom.
+// Approved session-runtime program: +2 lazy inspector owners and +1 durable Send
+// owner; five of the six approved additions are now used (665 -> 670).
+// +6 on 2026-09-16 (Runtime UX program, approved 2026-09-16, NEXT_STEPS.md
+// "Post-runtime program plan"): pre-paid for renderer-runtime-refusals.js and
+// renderer-runtime-queue-view.js (A1), renderer-turn-pause-affordance.js and
+// renderer-turn-pause-interaction.js (A2), and the attention-inbox model +
+// controller (A3); the away digest (A4) reuses the inbox owners. Measured 670
+// at the time; A4 re-bases this to measured + 1 when the program lands.
+// +2 on 2026-09-16 (Runtime UX A1-A4 landed; re-based 2026-09-16): the digest
+// (JEN-059) needed two owners of its own rather than reusing the inbox's, so
+// the pre-paid six became seven of eight. Measured 678 with A1-A4 in the tree;
+// re-based to that + the 1 script of headroom this note planned for.
+// +1 on 2026-09-16 (split view W0-1, approved 2026-09-16, NEXT_STEPS.md "Post-runtime
+// program plan"): renderer-chat-pane-surface-controllers.js, the per-pane scroll
+// coordinator + viewport + pin-to-top cluster lifted out of the lifecycle composition,
+// which sat at the 1015-line hard cap and had to be relieved before any split-view slice
+// could touch it. W0-1 spent the single script of headroom the note above left (measured
+// 679, exactly at that ceiling); re-based to measured + the same 1 script of headroom.
+// +2 on 2026-09-16 (split view W0-2/W0-3, approved 2026-09-16, NEXT_STEPS.md "Post-runtime
+// program plan"): renderer-pane-model.js (the pane layout the boot state is seeded with,
+// loaded immediately before renderer-bootstrap-utils.js) and renderer-pane-visibility-utils.js
+// (the per-pane render gate, loaded between the predicate it composes and the stream handler
+// that resolves it). W0-1 left one script of headroom and these need two; measured 681,
+// re-based to measured + the same 1 script of headroom.
+// +1 on 2026-09-16 (split view W0-6, approved 2026-09-16, NEXT_STEPS.md "Post-runtime
+// program plan"): renderer-pane-runtime.js, the per-pane render-memo bag and the shared
+// session-cache store, loaded immediately before renderer/app.js, which reads the global
+// at factory time. W0-2/W0-3 left one script of headroom and W0-6 spends it (measured 682,
+// exactly at that ceiling); re-based to measured + the same 1 script of headroom. W0-4, the
+// last Wave 0 slice, adds no script.
+// +2 on 2026-09-20 (Projects v2, po-review, owner-approved; NEXT_STEPS.md "Projects v2"):
+// renderer/features/renderer-project-menu.js and renderer-project-switcher.js are LAZY
+// (STAGE4B_LAZY_MODULES, loaded on first open by renderer-shell-ide-root-service.js through
+// scriptLoaderUtils.ensureScript); they are counted here only so their bytes stay inside the
+// byte ceiling, exactly like the orchestration pair. index.html gains no <script> tag: the
+// eager-boot slot the split-view work left is untouched. Measured 684 (682 tags + 4 lazy);
+// re-based to measured + the same 1 script of headroom.
+// +1 on 2026-09-22 (PDF reading add-on for 1.2.0, po-review, owner-approved): the deferred
+// renderer/shell/renderer-settings-pdf-addon.js owns Settings > Tools > PDF reading add-on; no
+// vendor payload, no eager tag. Measured 685 (exactly at the ceiling); re-based to measured + 1.
+const MAX_TOTAL_SCRIPT_COUNT = 686;
 // +1 on 2026-09-01 (merge of wt/motion-css into main): this budget is a SECOND, independent
 // ceiling from the complexity ratchets, so the same merge arithmetic applies to it - both
 // parents counted their own scripts off a shared base and the file auto-merged clean. Main
@@ -270,10 +312,69 @@ const MAX_TOTAL_SCRIPT_COUNT = 667; // measured 665 on 2026-09-08 after merge-re
 // 2026-09-08: combine hosted/chat/calendar/artifact growth with upstream translations.
 // 2026-09-09 integration: sandbox settings, Remote Control setup, time formatting,
 // and their translations. Independent review found no new vendor payload or eager loader.
-const MAX_TOTAL_SCRIPT_BYTES = 10156491; // measured 10136491 LF bytes; existing 20,000-byte headroom.
+// 2026-09-09 session-runtime M1: scoped UI controls and translated catalogs;
+// measured 10,174,460 LF bytes, preserving the existing 20,000-byte headroom.
+// 2026-09-10 approved runtime desktop integration: measured 10,215,713 LF bytes,
+// including both lazy inspector owners; retain existing 20,000-byte headroom.
+// 2026-09-15 Codex burn-day integration (wt/burn-landing merging fifteen wt/burn-* branches:
+// JEN-039 copy table, JEN-008 reminder notifications, the 1.1 safety nets with the streak-cap
+// Settings field, Astra review fix-ups, weight-aware virtualization, Reasoning Status V2,
+// updater latch copy, Mermaid fail-closed, their translations): every branch stayed under the
+// ceiling on its own; the merged tree measures 10,240,425 LF bytes (+4,712 over), with no
+// vendor payload or eager loader. Re-based to that + the established 20,000-byte review headroom.
+// 2026-09-16 Runtime UX program (approved 2026-09-16, NEXT_STEPS.md "Post-runtime program
+// plan"): measured 10,247,073 LF bytes before Wave A1; pre-paid ~132,927 bytes for the six
+// modules named at MAX_TOTAL_SCRIPT_COUNT plus their catalog growth, on top of the established
+// 20,000-byte review headroom. A4 re-bases this to measured + 20,000 when the program lands.
+// 2026-09-16 Runtime UX A1-A4 landed; re-based 2026-09-16: the program cost less than it
+// pre-paid. The tree with A1-A4 and their 19 catalogs measures 10,376,704 LF bytes, under the
+// pre-paid ceiling; re-based DOWN to that + the established 20,000-byte review headroom.
+// 2026-09-16 split view W0-1/W0-2/W0-3 (approved 2026-09-16, NEXT_STEPS.md "Post-runtime
+// program plan"): W0-1 (the pane surface cluster) landed inside the headroom above without
+// re-basing; W0-2/W0-3 add 15,106 LF bytes (the two pane modules at 6,862 and 4,161, plus the
+// retained-set policy, the boot seed and the rewired render gate in four existing files), which
+// takes the measured total past it. No vendor payload and no eager loader: every byte is
+// deferred renderer module source. Measured 10,409,001 LF bytes; re-based to that + the
+// established 20,000-byte review headroom.
+// 2026-09-18 local GGUF W4 (owner-directed, NEXT_STEPS.md "Owner-directed local GGUF models
+// and per-model llama-server builds"; the plan allowed this re-base): the Model library's
+// Local GGUF cards, Add GGUF model… / Remove from library, the Tune build row with its
+// restart rules and the custom-build pill suffix, in ten existing modules, plus their catalog
+// strings, add 62,933 LF bytes. No new script, no vendor payload, no eager loader. Measured
+// 10,471,934 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-18 landing merge of main into local GGUF: main's workspace-folder project,
+// global-root prompt and log path-redaction commits grew renderer and catalog source by
+// 31,518 LF bytes, and the UNC path-trust fix adds its one string to every catalog; together
+// they pass the W4 headroom. No new script, no vendor payload, no eager loader. Measured
+// 10,492,744 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-20 Projects v2 (po-review, owner-approved; NEXT_STEPS.md "Projects v2"): the Settings ›
+// Projects rewrite, the Runtime limits move, the Explorer header switcher, the welcome page rows,
+// the composer project line, the Chats panel filter and their catalog strings across 19 locales
+// grow existing renderer modules and catalogs by 77,044 LF bytes, of which the two lazily
+// loaded modules (renderer-project-menu.js 12,717 and renderer-project-switcher.js 14,653,
+// listed in STAGE4B_LAZY_MODULES below, no eager tag) are 27,370; no vendor payload.
+// Measured 10,569,788 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-22 PDF reading add-on (1.2.0, po-review, owner-approved): the new deferred Settings
+// module renderer-settings-pdf-addon.js (18,027) plus the tool-row link, failure summary,
+// recovery action, add-on notes and CMP-TOOL-0047 string in existing modules; no vendor payload.
+// Measured 10,608,728 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-23 1.2.0 gate fixes (A4 paused approval card, F5 effort, F9 reload question replay,
+// DOCX section breaks, and the other landings since): growth inside existing deferred modules
+// only; script count, eager count and vendor loading unchanged.
+// Measured 10,634,272 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-24 1.2.0 gate fixes (F18, F25, F27, F36, F37 and their review follow-ups, the
+// Markdown jsdom reuse): growth inside existing deferred modules only; script count, eager
+// count and vendor loading unchanged.
+// Measured 10,657,358 LF bytes; re-based to that + the established 20,000-byte review headroom.
+const MAX_TOTAL_SCRIPT_BYTES = 10677358;
 const MAX_EAGER_SCRIPT_COUNT = 16; // headroom above the measured 8 non-defer local scripts
 const MAX_EAGER_SCRIPT_BYTES = 300_000; // repo-LOCAL eager bytes only; vendor re-adds are caught by the eagerVendorPattern assertion below, not this budget (measureLocalScripts skips node_modules/ + vendor/)
 const STAGE4B_LAZY_MODULES = Object.freeze([
+  'renderer/shell/renderer-orchestration-view.js',
+  'renderer/shell/renderer-orchestration-controller.js',
+  // Projects v2 (2026-09-20): the shared project menu + switcher glue load on first open.
+  'renderer/features/renderer-project-menu.js',
+  'renderer/features/renderer-project-switcher.js',
 ]);
 
 function readIndexHtml() {

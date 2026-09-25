@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 import threading
@@ -105,7 +106,7 @@ def test_posix_spawn_restores_frozen_library_path(
     }
 
 
-def test_posix_spawn_shutdown_race_terminates_unregistered_process_group(
+def test_posix_spawn_shutdown_race_terminates_but_quarantines_without_tree_proof(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -171,4 +172,98 @@ def test_posix_spawn_shutdown_race_terminates_unregistered_process_group(
         (leader_pid, sigkill),
     ]
     assert group_members == set(), "the descendant must not survive the shutdown race"
+    assert service.snapshot().active == 1
+
+
+def test_popen_failure_publishes_no_child_proof_and_releases_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Job:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    job = _Job()
+    observed = []
+    service = OwnedProcessService(max_active=1, max_queued=0)
+    monkeypatch.setattr(owned_process_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(owned_process_module, "WindowsJobObject", lambda: job)
+    monkeypatch.setattr(
+        owned_process_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+
+    with pytest.raises(OSError, match="spawn failed"):
+        service.spawn(["fake"], cwd=tmp_path, allow_queue=False, on_cleanup=observed.append)
+
+    assert job.closed is True
     assert service.snapshot().active == 0
+    assert len(observed) == 1
+    assert observed[0].cleanup == "confirmed"
+    assert observed[0].reason == "no_child_started"
+
+
+@pytest.mark.parametrize("failure_phase", ["assign", "release"])
+def test_post_launch_failure_quarantines_when_kill_cannot_be_proven(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_phase: str,
+) -> None:
+    class _Job:
+        def assign_pid(self, _pid: int) -> None:
+            if failure_phase == "assign":
+                raise OSError("assignment failed")
+
+        @staticmethod
+        def terminate_tree() -> bool:
+            return False
+
+        @staticmethod
+        def assigned_process_ids() -> tuple[int, ...]:
+            raise OSError("tree query failed")
+
+        @staticmethod
+        def close() -> None:
+            return
+
+    class _Process:
+        pid = 42_000
+        stdin = io.BytesIO()
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+        returncode = None
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+        @staticmethod
+        def terminate() -> None:
+            raise OSError("termination failed")
+
+    process = _Process()
+    observed = []
+    service = OwnedProcessService(max_active=1, max_queued=0)
+    monkeypatch.setattr(owned_process_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(owned_process_module, "WindowsJobObject", _Job)
+    monkeypatch.setattr(owned_process_module.subprocess, "Popen", lambda *_a, **_kw: process)
+    monkeypatch.setattr(service, "_kill_windows_process_tree", lambda _pid: None)
+    if failure_phase == "release":
+        monkeypatch.setattr(
+            owned_process_module,
+            "release_windows_bootstrap_target",
+            lambda *_args: (_ for _ in ()).throw(OSError("release failed")),
+        )
+
+    with pytest.raises(OSError, match=f"{failure_phase}.*failed"):
+        service.spawn(["fake"], cwd=tmp_path, allow_queue=False, on_cleanup=observed.append)
+
+    assert service.snapshot().active == 1
+    assert len(observed) == 1
+    assert observed[0].cleanup == "uncertain"
+    assert observed[0].process_tree_terminated is False
+    assert service.retry_quarantined_cleanup()[0].cleanup == "uncertain"
+    assert observed == [observed[0]], "uncertain cleanup notification is idempotent"

@@ -159,6 +159,12 @@
   overflow-wrap: anywhere;
 }
 
+.model-tuning-row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .model-tuning-row-control .inv-number-input,
 .model-tuning-row-control .inv-number-input-control,
 .model-tuning-row-control .inv-number-input input,
@@ -262,6 +268,11 @@
 /* .model-tuning-row is display:grid, which outranks the UA [hidden] rule —
    the MTP row is toggled with the attribute, so restore the intent here. */
 .model-tuning-row[hidden] {
+  display: none;
+}
+
+/* The same for the build row's "Use bundled" (.btn is display:inline-flex). */
+.model-tuning-row-actions > [hidden] {
   display: none;
 }
 

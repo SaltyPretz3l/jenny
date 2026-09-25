@@ -465,10 +465,10 @@ def test_recall_scores_at_most_bounded_sql_candidates(
 
         plan = store._connection.execute(  # noqa: SLF001
             "EXPLAIN QUERY PLAN SELECT id FROM memories "
-            "ORDER BY updated_at DESC, id DESC LIMIT ?",
-            (MAX_ALL_MEMORIES_LIMIT,),
+            "WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+            ("project_general", MAX_ALL_MEMORIES_LIMIT),
         ).fetchall()
-        assert any("idx_memories_updated_id" in str(row) for row in plan)
+        assert any("idx_memories_project_updated" in str(row) for row in plan)
     finally:
         store.close()
 
@@ -607,7 +607,7 @@ def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) 
 
         assert [memory.id for memory in store.get_all_memories()] == [valid.id]
         status = store.status_snapshot()
-        assert status["counts"]["quarantined"] == 1
+        assert status["operational_counts"]["quarantined"] == 1
         payload = store._connection.execute(  # noqa: SLF001
             "SELECT raw_payload FROM memory_quarantine LIMIT 1"
         ).fetchone()[0]
@@ -645,7 +645,7 @@ def test_recall_quarantines_malformed_candidate_and_returns_valid_match(tmp_path
         store._connection.commit()  # noqa: SLF001
 
         assert [memory.id for memory in store.recall_memories("tea")] == [valid.id]
-        assert store.status_snapshot()["counts"]["quarantined"] == 1
+        assert store.status_snapshot()["operational_counts"]["quarantined"] == 1
     finally:
         store.close()
 

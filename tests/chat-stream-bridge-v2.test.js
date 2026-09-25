@@ -490,7 +490,7 @@ test('chat stream bridge coalesces V2 deltas per stream channel and phase', () =
   assert.equal(reasoning.channelSequenceEnd, 2);
 });
 
-test('chat stream bridge coalesces split V2 deltas without claiming interleaved sequence ranges', () => {
+test('chat stream bridge preserves every interleaved V2 sequence when channels split', () => {
   const sent = [];
   const logs = [];
   let pendingFn = null;
@@ -538,17 +538,16 @@ test('chat stream bridge coalesces split V2 deltas without claiming interleaved 
   assert.ok(response);
   assert.ok(reasoning);
   assert.equal(logs.some((entry) => entry.event === 'chat.stream_envelope_sequence_regression'), false);
-  assert.equal(response.payload.delta, 'AB');
-  assert.equal(response.payload.aggregate, 'AB');
-  assert.deepEqual(reasoning.payload.entriesDelta, [{ text: 'r1' }, { text: 'r2' }]);
-  assert.equal(response.sequence, 10);
-  assert.equal(response.sequenceEnd, 10);
+  assert.deepEqual(envelopes.map(row => [row.sequence, row.sequenceEnd]), [[10, 10], [11, 11], [12, 12], [13, 13]]);
+  assert.equal(envelopes.filter(row => row.channel === 'response').map(row => row.payload.delta).join(''), 'AB');
+  assert.equal(envelopes.filter(row => row.channel === 'response').at(-1).payload.aggregate, 'AB');
+  assert.deepEqual(envelopes.filter(row => row.channel === 'reasoning').flatMap(row => row.payload.entriesDelta), [{ text: 'r1' }, { text: 'r2' }]);
   assert.equal(reasoning.sequence, 11);
   assert.equal(reasoning.sequenceEnd, 11);
   assert.equal(response.channelSequence, 1);
-  assert.equal(response.channelSequenceEnd, 2);
+  assert.equal(response.channelSequenceEnd, 1);
   assert.equal(reasoning.channelSequence, 1);
-  assert.equal(reasoning.channelSequenceEnd, 2);
+  assert.equal(reasoning.channelSequenceEnd, 1);
 });
 
 test('chat stream bridge filters phase metadata to the matching V2 channel when a payload splits', () => {

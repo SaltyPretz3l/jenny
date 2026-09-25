@@ -3,6 +3,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 const selectField = require('../renderer/inventory/select-field.js');
@@ -38,6 +40,10 @@ test('chat UI field builders render inventory controls, current values, titles, 
       markup: support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput, selectField }),
       id: 'unattendedGuardMinutesInput', value: '45', hint: 'Off by default',
     },
+    {
+      markup: support.buildAutoApproveStreakCapFieldMarkup({ value: 75, numberInput }),
+      id: 'autoApproveStreakCapInput', value: '75', hint: '0 turns the cap off.',
+    },
   ];
   for (const entry of cases) {
     const document = parse(entry.markup);
@@ -59,19 +65,41 @@ test('language options exactly match supported tags and endonym labels', () => {
   document.defaultView.close();
 });
 
+test('streak cap normalizer defaults, clamps, and preserves off', () => {
+  assert.equal(support.normalizeAutoApproveStreakCap(undefined), 50);
+  assert.equal(support.normalizeAutoApproveStreakCap('nope'), 50);
+  assert.equal(support.normalizeAutoApproveStreakCap(0), 0);
+  assert.equal(support.normalizeAutoApproveStreakCap(999), 500);
+});
+
+test('renderer bootstrap, hydration, and settings composition thread the streak cap', () => {
+  const root = path.join(__dirname, '..', 'renderer');
+  const bootstrap = fs.readFileSync(path.join(root, 'shell', 'renderer-bootstrap-utils.js'), 'utf8');
+  const lifecycle = fs.readFileSync(path.join(root, 'app', 'renderer-app-lifecycle-composition.js'), 'utf8');
+  const settings = fs.readFileSync(path.join(root, 'shell', 'renderer-settings-utils.js'), 'utf8');
+  assert.match(bootstrap, /autoApproveStreakCap:\s*50/);
+  assert.match(bootstrap, /normalizeAutoApproveStreakCap\(config\?\.autoApproveStreakCap\)/);
+  assert.match(lifecycle, /normalizeAutoApproveStreakCap\?\.\(persistedChatZoomState\?\.autoApproveStreakCap\)/);
+  assert.ok(settings.lastIndexOf('buildAutoApproveStreakCapFieldMarkup') > settings.lastIndexOf('buildUnattendedGuardFieldMarkup'));
+  assert.match(settings, /value:\s*state\.autoApproveStreakCap/);
+});
+
 test('chat UI change resolvers accept only their own controls', () => {
   const document = parse(
     support.buildUiLanguageFieldMarkup({ value: 'ja', selectField })
       + support.buildSafetyModeFieldMarkup({ value: 'paranoid', selectField })
       + support.buildUnattendedGuardFieldMarkup({ value: 45, numberInput, selectField })
+      + support.buildAutoApproveStreakCapFieldMarkup({ value: 75, numberInput })
       + support.buildDefaultRunModeFieldMarkup({ value: 'auto', selectField })
   );
   const language = document.getElementById('uiLanguageSelect');
   const safety = document.getElementById('safetyModeSelect');
   const unattended = document.getElementById('unattendedGuardMinutesInput');
+  const streakCap = document.getElementById('autoApproveStreakCapInput');
   assert.deepEqual(support.resolveUiLanguageChangeEvent({ target: language }), { value: 'ja' });
   assert.deepEqual(support.resolveSafetyModeChangeEvent({ target: safety }), { value: 'paranoid' });
   assert.deepEqual(support.resolveUnattendedGuardChangeEvent({ target: unattended }), { value: 45 });
+  assert.deepEqual(support.resolveAutoApproveStreakCapChangeEvent({ target: streakCap }), { value: 75 });
   assert.equal(support.resolveUiLanguageChangeEvent({ target: safety }), null);
   assert.equal(support.resolveSafetyModeChangeEvent({ target: unattended }), null);
   assert.equal(support.resolveUnattendedGuardChangeEvent({ target: language }), null);
@@ -85,6 +113,7 @@ function createBindingHarness() {
     + '<div id="toolsConfigFieldList">'
     + '<select id="safetyModeSelect" data-safety-mode="true"><option value="paranoid">paranoid</option></select>'
     + '<input id="unattendedGuardMinutesInput" data-unattended-guard-minutes="true">'
+    + '<input id="autoApproveStreakCapInput" data-auto-approve-streak-cap="true">'
     + '<select id="defaultRunModeSelect" data-default-run-mode="true"><option value="auto">auto</option></select>'
     + '</div></div></body>', { url: 'http://localhost/' });
   const previous = { window: global.window, document: global.document, AbortController: global.AbortController };
@@ -97,7 +126,7 @@ function createBindingHarness() {
   let snapshotForPatch = (patch) => patch;
   window.jennyShell = { chatUi: { async updateSettings(patch) { patches.push(patch); return snapshotForPatch(patch); } } };
   const state = {
-    defaultRunMode: 'ask', uiLanguage: 'en', safetyMode: 'normal', unattendedGuardMinutes: 10,
+    defaultRunMode: 'ask', uiLanguage: 'en', safetyMode: 'normal', unattendedGuardMinutes: 10, autoApproveStreakCap: 50,
     currentSessionId: '', runtimeDraft: { runMode: 'ask' }, features: { featureFlags: {} }, ui: {},
   };
   const controller = createSettingsEventBindings({
@@ -160,6 +189,20 @@ test('chat UI settings bindings persist normalized values and confirm snapshots'
     assert.deepEqual(harness.patches.pop(), { unattendedGuardMinutes: 120 });
     assert.equal(harness.state.unattendedGuardMinutes, 120);
 
+    await change(harness, 'autoApproveStreakCapInput', '75.8');
+    assert.deepEqual(harness.patches.pop(), { autoApproveStreakCap: 75 });
+    assert.equal(harness.state.autoApproveStreakCap, 75);
+    await change(harness, 'autoApproveStreakCapInput', '-1');
+    assert.deepEqual(harness.patches.pop(), { autoApproveStreakCap: 0 });
+    await change(harness, 'autoApproveStreakCapInput', '0.5');
+    assert.deepEqual(harness.patches.pop(), { autoApproveStreakCap: 0 });
+    await change(harness, 'autoApproveStreakCapInput', '999');
+    assert.deepEqual(harness.patches.pop(), { autoApproveStreakCap: 500 });
+    harness.setSnapshot(() => ({ autoApproveStreakCap: 50 }));
+    await change(harness, 'autoApproveStreakCapInput', '75');
+    assert.equal(harness.errors.at(-1).title, 'Auto-approval Streak Cap Update Failed');
+
+    harness.setSnapshot((patch) => patch);
     await change(harness, 'uiLanguageSelect', 'ja');
     assert.deepEqual(harness.patches.pop(), { uiLanguage: 'ja' });
     assert.equal(harness.state.uiLanguage, 'ja');
@@ -176,7 +219,7 @@ test('chat UI settings bindings persist normalized values and confirm snapshots'
 });
 
 test('chat UI field copy entries remain searchable and section-owned', () => {
-  for (const [id, sectionId] of [['uiLanguageSelect', 'appearance'], ['safetyModeSelect', 'tools'], ['unattendedGuardMinutesInput', 'tools']]) {
+  for (const [id, sectionId] of [['uiLanguageSelect', 'appearance'], ['safetyModeSelect', 'tools'], ['unattendedGuardMinutesInput', 'tools'], ['autoApproveStreakCapInput', 'tools']]) {
     const copy = fieldCopy.getSettingsFieldCopy(id);
     assert.ok(copy);
     assert.ok(copy.description.length >= 10);

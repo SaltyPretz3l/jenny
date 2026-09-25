@@ -89,7 +89,7 @@ def _install_budget(monkeypatch: pytest.MonkeyPatch, tracker: BudgetTracker) -> 
     """Hand the routing lane a deterministic budget instead of a real tokenizer."""
     monkeypatch.setattr(
         "sidecar.ai.routing.chat_decision.apply_budget_check",
-        lambda messages, _config, _engine, *, num_tools=0, reasoning_effort=None: (
+        lambda messages, _config, _engine, **_kwargs: (
             messages,
             tracker.budget,
             tracker,
@@ -170,7 +170,15 @@ def test_three_iteration_loop_emits_one_snapshot_per_iteration(
     snapshots = _usage_events(events)
     iterations = [event for event in snapshots if event.phase == "iteration"]
     assert [event.iteration for event in iterations] == [1, 2, 3]
-    assert [event.context_used_tokens for event in iterations] == [9_000, 12_000, 15_000]
+    # Whole-prompt units: the message-only estimate plus the tool reserve the
+    # published threshold also includes (both sides of the meter count tools).
+    tool_overhead = tracker.budget.tool_overhead(tracker.num_tools)
+    assert tool_overhead > 0
+    assert [event.context_used_tokens for event in iterations] == [
+        9_000 + tool_overhead,
+        12_000 + tool_overhead,
+        15_000 + tool_overhead,
+    ]
     assert [event.context_tokens_estimate for event in iterations] == [
         9_000,
         12_000,
@@ -182,9 +190,12 @@ def test_three_iteration_loop_emits_one_snapshot_per_iteration(
         3_300,
     ]
     assert {event.context_used_source for event in iterations} == {"estimate"}
-    # The denominator is the exact auto-compaction trigger for this budget --
-    # the same quantity the terminal usage payload publishes.
-    expected_threshold = tracker.budget.auto_compact_threshold(tracker.num_tools)
+    # The denominator is the exact auto-compaction trigger for this budget in
+    # whole-prompt tokens -- the same quantity the terminal usage payload publishes.
+    expected_threshold = tracker.budget.meter_compact_threshold(tracker.num_tools)
+    assert expected_threshold == (
+        tracker.budget.auto_compact_threshold(tracker.num_tools) + tool_overhead
+    )
     assert expected_threshold > 0
     assert {event.compact_threshold_tokens for event in iterations} == {
         expected_threshold

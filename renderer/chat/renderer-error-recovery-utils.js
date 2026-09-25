@@ -120,19 +120,35 @@
     return String(value || '').trim().toLowerCase();
   }
 
+  /* Runtime admission refusals that are a WAIT, not a fault: the session is
+   * still replying, a lane or the runtime is at its turn limit, or the runtime
+   * is closing. Kept in step with renderer-runtime-refusals.js. */
+  var CALM_RUNTIME_WAIT_CLASSES = {
+    session_busy: true,
+    runtime_closing: true,
+    lane_capacity: true,
+    downstream_capacity: true,
+  };
+
   /**
    * Resolve the card severity for a message-shaped error.
    * 'calm' covers user-initiated terminations (cancelled / denied /
-   * aborted) — these render muted with role=status instead of a danger
-   * alert. Derives from recovery_class when the backend enriched the
-   * payload, with terminal status as the pre-enrichment fallback.
+   * aborted, or a run-mode change the user made mid-request) and runtime
+   * WAITS (the session is still replying, a lane or the runtime is at its
+   * turn limit, the runtime is closing) — these render muted with
+   * role=status instead of a danger alert. Derives from recovery_class when
+   * the backend enriched the payload, with terminal status as the
+   * pre-enrichment fallback. Mirrors the composer refusal map in
+   * renderer-runtime-refusals.js, which reports the same severities.
    * @param {Object} message
    * @returns {'danger'|'calm'}
    */
   function resolveErrorSeverity(message) {
     var m = message && typeof message === 'object' ? message : {};
     var recoveryClass = normalizeToken(m.recoveryClass || m.recovery_class);
-    if (recoveryClass === 'cancelled' || recoveryClass === 'denied') return 'calm';
+    if (recoveryClass === 'cancelled' || recoveryClass === 'denied'
+      || recoveryClass === 'run_mode_changed'
+      || CALM_RUNTIME_WAIT_CLASSES[recoveryClass] === true) return 'calm';
     var status = normalizeToken(m.terminalStatus || m.terminal_status || m.status);
     if (status === 'cancelled' || status === 'aborted' || status === 'denied') return 'calm';
     return 'danger';
@@ -179,6 +195,13 @@
     transport: 'transport',
     retryable: 'transport',
     runtime: 'loop',
+    run_mode_changed: 'loop',
+    /* Runtime waits derive their buttons from the loop taxonomy, matching the
+     * classId renderer-runtime-refusals.js reports for the same reasons. */
+    session_busy: 'loop',
+    runtime_closing: 'loop',
+    lane_capacity: 'loop',
+    downstream_capacity: 'loop',
     provider: 'provider',
     provider_rate_limited: 'provider',
     tool: 'tool',
@@ -813,6 +836,8 @@
     buildActionButton: buildActionButton,
     buildErrorCodeChip: buildErrorCodeChip,
     resolveErrorStreamId: resolveErrorStreamId,
+    BACKEND_ACTIONS: BACKEND_ACTIONS,
+    BACKEND_CLASS_TO_LOCAL_CLASS: BACKEND_CLASS_TO_LOCAL_CLASS,
     LOGS_LINK_TITLE: LOGS_LINK_TITLE,
   };
 });

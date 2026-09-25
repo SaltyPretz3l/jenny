@@ -229,7 +229,7 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
     )
     monkeypatch.setattr(
         "sidecar.ai.routing.chat_decision.apply_budget_check",
-        lambda messages, _config, _engine, *, num_tools=0, reasoning_effort=None: (
+        lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
             tracker,
@@ -418,7 +418,7 @@ def test_context_budget_stop_uses_deterministic_summary_without_regeneration(
     )
     monkeypatch.setattr(
         "sidecar.ai.routing.chat_decision.apply_budget_check",
-        lambda messages, _config, _engine, *, num_tools=0, reasoning_effort=None: (
+        lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
             tracker,

@@ -9,7 +9,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sidecar.ai import config_models, personality
 from sidecar.ai.context import (
@@ -17,8 +17,12 @@ from sidecar.ai.context import (
     request_fingerprint,
     runtime_message_markers,
 )
+from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.service import MemoryService
 from sidecar.runtime.diagnostics import log_event
+
+if TYPE_CHECKING:
+    from sidecar.runtime.execution_context import ExecutionContext
 
 PROMPT_MEMORY_RECALL_LIMIT = 5
 
@@ -309,11 +313,19 @@ def _render_session_environment_block(
     context_builder: ContextBuilder,
     tool_schemas: Any,
     session_id: str | None,
+    execution_context: ExecutionContext | None,
 ) -> str:
     """Render authoritative machine, workspace, and tool-surface facts."""
     from sidecar.ai.tools.builtins import git_ops, shell
 
-    workspace_root = context_builder.workspace_status().root
+    # Hosted context deliberately hides physical workspace paths. Otherwise the
+    # captured request authority wins, including an explicitly unbound root.
+    if host_policy_is_enforced(config):
+        workspace_root = None
+    elif execution_context is not None:
+        workspace_root = execution_context.root_path
+    else:
+        workspace_root = context_builder.workspace_status().root
     root = Path(workspace_root) if workspace_root is not None else None
     if root is None:
         workspace_line = (
@@ -380,6 +392,7 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
     tool_schemas: Any,
     session_id: str | None,
     log_context: RuntimeOverlayLogContext,
+    execution_context: ExecutionContext | None = None,
 ) -> None:
     """Append the authoritative ``## Session Environment`` request overlay.
 
@@ -410,6 +423,7 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
             context_builder=context_builder,
             tool_schemas=tool_schemas,
             session_id=session_id,
+            execution_context=execution_context,
         )
     except Exception as error:  # noqa: BLE001
         log_event(

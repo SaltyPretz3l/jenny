@@ -80,6 +80,22 @@ test('managed completion persists and emits a resumable stop when present', asyn
 
   assert.equal(captured[0].messages[0].resumable_stop, 'context_budget');
   assert.equal(captured[0].terminal.rendererPayload.resumableStop, 'context_budget');
+  assert.equal('context_compactions' in captured[0].messages[0], false, 'no compaction keys unless one happened');
+});
+
+test('managed completion persists the collected context compactions on the assistant message', async () => {
+  const { captured, ctx, slice } = context();
+  slice.contextCompactions = [
+    { strategy: 'macro', phase: 'preflight', tokensBefore: 9000, tokensAfter: 3000, summaryExcerpt: 'first' },
+    { strategy: 'micro', phase: 'tool_loop', tokensBefore: 8000, tokensAfter: 5000, summaryExcerpt: 'second' },
+  ];
+
+  await settleManagedAssistantCompletion(ctx);
+
+  const message = captured[0].messages[0];
+  assert.deepEqual(message.context_compactions, slice.contextCompactions);
+  assert.deepEqual(message.context_compacted, slice.contextCompactions[1]);
+  assert.notEqual(message.context_compactions, slice.contextCompactions, 'cloned, not shared');
 });
 
 test('managed completion omits resumable stop fields when absent', async () => {
@@ -385,4 +401,32 @@ test('managed failure terminals preserve provider usage for history recording', 
   });
 
   assert.deepEqual(captured[0].terminal.rendererPayload.usage, ctx.turnUsage);
+});
+
+test('a failed turn still names the chat from the prompt-derived title', async () => {
+  // Owner session 2026-09-19: an engine stall left a 25-message chat titled
+  // "New Chat" because only a successful completion carried the title.
+  const persisted = context();
+  persisted.ctx.exchangeTitle = 'Badge primitive for the game';
+  await settleManagedFailureTerminal(persisted.ctx, { message: 'engine stalled' }, {
+    status: 'runtime_error', terminalSubcode: 'CMP-LOOP-0015', persistAssistantFailure: true,
+  });
+  assert.equal(persisted.captured[0].title, 'Badge primitive for the game');
+  assert.equal(persisted.captured[0].messages.length, 1);
+
+  // ...and when there is nothing to persist, the title still applies.
+  const bare = context();
+  bare.ctx.exchangeTitle = 'Badge primitive for the game';
+  await settleManagedFailureTerminal(bare.ctx, { message: 'denied' }, {
+    status: 'denied', terminalSubcode: '', persistAssistantFailure: false,
+  });
+  assert.equal(bare.captured[0].title, 'Badge primitive for the game');
+  assert.deepEqual(bare.captured[0].messages, []);
+
+  // No candidate (the session was already titled) stays a no-op, not ''.
+  const untitled = context();
+  await settleManagedFailureTerminal(untitled.ctx, { message: 'engine stalled' }, {
+    status: 'runtime_error', terminalSubcode: '', persistAssistantFailure: true,
+  });
+  assert.equal(untitled.captured[0].title, null);
 });

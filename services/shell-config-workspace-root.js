@@ -69,6 +69,11 @@ function createWorkspaceRootStatusController({
   const safeTimeoutMs = Math.max(1, Math.trunc(Number(probeTimeoutMs)) || ROOT_STATUS_PROBE_TIMEOUT_MS);
   let generation = 0;
   let entry = null;
+  // The last status handed to onChange. A revalidation that lands on the same
+  // verdict is not a change: shell config re-broadcasts feature state on every
+  // 'changed' event, and each broadcast made the model-library section reload
+  // its five sources (owner gate 2026-09-20: a full fan-out every 8 s).
+  let lastPublished = null;
 
   function logTimeout() {
     try { logger?.('WARN', 'workspace_root.probe_timeout', { timeout_ms: safeTimeoutMs }); } catch (_error) { /* noop */ }
@@ -83,7 +88,13 @@ function createWorkspaceRootStatusController({
     entry.status = cloneStatus(status);
     entry.updatedAt = now();
     entry.promise = null;
-    try { onChange?.(cloneStatus(entry.status)); } catch (_error) { /* listener isolation */ }
+    // Keyed by root: a new root's first verdict is a change even when it
+    // matches the previous root's last published one.
+    const serialized = JSON.stringify([entry.root, entry.status]);
+    if (serialized !== lastPublished) {
+      lastPublished = serialized;
+      try { onChange?.(cloneStatus(entry.status)); } catch (_error) { /* listener isolation */ }
+    }
     return cloneStatus(entry.status);
   }
 
@@ -164,6 +175,9 @@ function createWorkspaceRootStatusController({
   function invalidate(workspaceRoot) {
     const root = normalizeWorkspaceRoot(workspaceRoot);
     generation += 1;
+    // A configured-root change restarts the dedupe: clear-then-reselect the
+    // same root must publish its fresh verdict.
+    lastPublished = null;
     entry = {
       root: root || '',
       generation,

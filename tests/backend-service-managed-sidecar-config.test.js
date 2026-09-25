@@ -42,16 +42,21 @@ test('managed sidecar config forwards normalized safety mode and UI language', (
 
   const defaults = buildManagedSidecarConfig(service);
   assert.equal(defaults.safety_mode, 'normal');
+  assert.equal(defaults.auto_approve_streak_cap, 50);
   assert.equal(defaults.ui_language, 'en');
   assert.equal(defaults.use_24_hour_time, false);
 
   service.configService = {
-    getChatUiState: () => ({ safetyMode: 'paranoid', uiLanguage: 'ja', use24HourTime: true }),
+    getChatUiState: () => ({ safetyMode: 'paranoid', autoApproveStreakCap: 75, uiLanguage: 'ja', use24HourTime: true }),
   };
   const configured = buildManagedSidecarConfig(service);
   assert.equal(configured.safety_mode, 'paranoid');
+  assert.equal(configured.auto_approve_streak_cap, 75);
   assert.equal(configured.ui_language, 'ja');
   assert.equal(configured.use_24_hour_time, true);
+
+  service.configService = { getChatUiState: () => ({ autoApproveStreakCap: 0 }) };
+  assert.equal(buildManagedSidecarConfig(service).auto_approve_streak_cap, 0);
 });
 
 test('managed sidecar startup vllm fallback switches catalog lookups to ollama', async () => {

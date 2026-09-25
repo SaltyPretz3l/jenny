@@ -113,8 +113,10 @@ test('the shell subscribes to trusted external-transition requests and responds 
     },
   }]);
 
-  assert.equal(cleanups.length, 1);
-  cleanups[0]();
+  // Two cleanups: the lazy project-switcher disposal fence (registered at
+  // creation, Projects v2) and the external-request unsubscribe.
+  assert.equal(cleanups.length, 2);
+  cleanups.forEach((cleanup) => cleanup());
   assert.equal(unsubscribed, 1);
 });
 
@@ -187,6 +189,71 @@ test('root service surfaces a specific .jenny-state-directory explanation instea
   assert.equal(toasts.length, 1, 'the state-dir explanation replaces the generic blocked toast');
   assert.match(toasts[0][0], /internal state directory/i);
   assert.equal(toasts[0][1].dedupeKey, 'workspace-root:state-dir-rejected');
+});
+
+// F33: a folder picked on a surface other than the switcher (welcome page,
+// Settings > Tools, the composer nudge) syncs the lazy switcher after the
+// commit. The "is it new?" baseline must be read before the dialog opens.
+function createFacadeWithSwitcher(t, { listed, choose }) {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+  const win = dom.window;
+  win.rendererProjectMenu = require('../renderer/features/renderer-project-menu');
+  win.rendererProjectSwitcher = require('../renderer/features/renderer-project-switcher');
+  win.jennyShell = { workspaceRoot: {}, projects: { async list() { return { ok: true, projects: listed.slice() }; } } };
+  const toasts = [];
+  const cleanups = [];
+  const state = { ui: { ide: { openTabs: [] } }, workspaceRoot: { path: 'D:\\Projects\\Sandbox' }, sessions: [] };
+  const root = createIdeRootService({
+    state,
+    windowRef: win,
+    registerCleanup: (cleanup) => cleanups.push(cleanup),
+    callbacks: { showToastMessage: (message) => toasts.push(message), appendClientLog: () => {} },
+    ideControllerUtils: { createIdeController: () => ({ getCloseOrchestrator: () => ({}) }) },
+    transitionUtils: { createWorkspaceRootTransitionController: () => ({ choose: () => choose({ state, root }) }) },
+  });
+  t.after(() => cleanups.forEach((cleanup) => cleanup()));
+  return { root, toasts, state };
+}
+
+const SANDBOX = { id: 'project_sandbox', name: 'Sandbox', root_path: 'D:\\Projects\\Sandbox', authority_key: 's:1' };
+const FIXTURE = { id: 'project_fixture', name: 'a2-fixture-project', root_path: 'D:\\Projects\\a2-fixture-project', authority_key: 'f:1' };
+const GENERAL = { id: 'project_general', name: 'General', root_path: null, authority_key: 'g:0' };
+
+test('F33: a folder picked elsewhere provisions a project that the switcher lists and announces once, even when the switcher first loads during the commit', async (t) => {
+  const listed = [GENERAL, SANDBOX];
+  const { root, toasts } = createFacadeWithSwitcher(t, {
+    listed,
+    async choose({ state, root: facade }) {
+      listed.push(FIXTURE); // main provisions the folder's project inside the commit
+      state.workspaceRoot.path = FIXTURE.root_path;
+      // The commit's UI work paints the Explorer header, whose first paint
+      // kicks the lazy switcher load plus a list read (renderer-ide-explorer-wiring.js).
+      const switcher = await facade.workspaceRootService.getProjectSwitcher();
+      await switcher.refresh();
+      return { committed: true, changed: true, mode: 'choose' };
+    },
+  });
+  const outcome = await root.workspaceRootService.choose();
+  assert.equal(outcome.committed, true);
+  const switcher = root.workspaceRootService.peekProjectSwitcher();
+  assert.equal(switcher.currentProject().id, 'project_fixture');
+  assert.ok(switcher.switcherRows().some((row) => row.id === 'project_fixture'), 'the switcher lists the new project');
+  assert.deepEqual(toasts, ['New project "a2-fixture-project" from D:\\Projects\\a2-fixture-project. New chats start here.']);
+});
+
+test('F33: a folder picked elsewhere whose project already exists is not announced as new, even when the switcher was never loaded', async (t) => {
+  const listed = [GENERAL, SANDBOX, FIXTURE];
+  const { root, toasts } = createFacadeWithSwitcher(t, {
+    listed,
+    async choose({ state }) {
+      state.workspaceRoot.path = FIXTURE.root_path;
+      return { committed: true, changed: true, mode: 'choose' };
+    },
+  });
+  await root.workspaceRootService.choose();
+  assert.equal(root.workspaceRootService.peekProjectSwitcher().currentProject().id, 'project_fixture');
+  assert.deepEqual(toasts, []);
 });
 
 test('root service fails closed and reports controller initialization errors', async () => {

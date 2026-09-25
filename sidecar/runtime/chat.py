@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
@@ -20,11 +19,9 @@ from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.context.runtime_overlays import build_dynamic_system_messages  # noqa: F401
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.feature_flags import (
-    FEATURE_AGENT_EXECUTOR,
     is_chatgpt_plan_meter_enabled,
-    is_feature_flag_enabled,
 )
-from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
 from sidecar.ai.routing import vision_turn as _vision_turn
 from sidecar.ai.routing.agent_executor import AgentExecutor  # noqa: F401
 from sidecar.ai.routing.iteration_limits import effective_sub_agent_concurrency_budget
@@ -33,9 +30,11 @@ from sidecar.ai.tools.tool_call_healing import (
     reset_tool_call_healing,
 )
 from sidecar.runtime.approval_plan import describe_approval_plan_changes  # noqa: F401
+from sidecar.runtime.chat_continuation_input import continuation_request_state_from_params
 from sidecar.runtime.chat_helpers import (  # noqa: F401
     CHAT_INVALID_PARAMS,
     _decision_usage_payload,
+    _executor_runtime_enabled,
     _fallback_usage_payload,
     attach_context_window,
     build_vision_prompt,
@@ -59,6 +58,7 @@ from sidecar.runtime.chat_models import (  # noqa: F401
     ChatRequestError,
     ChatResponse,
     TerminalChatStateError,
+    continuation_identity_from_params,
 )
 from sidecar.runtime.chat_normalization import (  # noqa: F401
     approved_plan_from_params,
@@ -71,6 +71,7 @@ from sidecar.runtime.chat_normalization import (  # noqa: F401
     normalize_vision_attachments,
     plan_mode_from_params,
     reasoning_effort_from_params,
+    runtime_policy_flags_from_params,
     session_start_date_from_params,
     tool_preferences_require_sub_agent_fail_closed,
 )
@@ -86,12 +87,16 @@ from sidecar.runtime.chat_vision import (  # noqa: F401
     build_vision_chat_response,
 )
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.inference_admission import build_inference_admission_callback
 from sidecar.runtime.local_engine.request_context import (
     bind_chat_request_context,
     clear_chat_request_context,
 )
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.plan_usage_snapshot import attach_plan_usage, bind_live_plan_usage
+from sidecar.runtime.vision_attachments import (
+    managed_image_attachment_root as _managed_image_attachment_root,
+)
 
 logger = logging.getLogger(__name__)
 SKILL_INVOCATION_ID_PATTERN = re.compile(
@@ -147,19 +152,6 @@ from sidecar.runtime.chat_resume import (  # noqa: E402,F401
 from sidecar.runtime.chat_router import (  # noqa: E402,F401
     _build_router_response,
 )
-
-
-def _executor_runtime_enabled(feature_flags: dict[str, bool] | None) -> bool:
-    flags = feature_flags or {}
-    return is_feature_flag_enabled(flags, FEATURE_AGENT_EXECUTOR)
-
-
-def _managed_image_attachment_root(config: Any) -> Path | None:
-    raw_root = getattr(config, "electron_state_root", None)
-    if not raw_root:
-        return None
-    return Path(str(raw_root)).expanduser() / "attachments" / "images"
-
 
 # ── Orchestrator ────────────────────────────────────────────────────
 
@@ -269,9 +261,14 @@ def build_chat_send_response(
         reasoning_effort = reasoning_effort_from_params(params)
         session_start_date = session_start_date_from_params(params)
         memory_policy = memory_policy_from_params(params)
-        raw_session_offline_lockdown = params.get("session_offline_lockdown", False)
-        if not isinstance(raw_session_offline_lockdown, bool):
-            raise ValueError("session_offline_lockdown must be a boolean")
+        (
+            execution_context, logical_turn_id, continuation_context,
+            runtime_continuation_resume,
+        ) = continuation_request_state_from_params(
+            params, request_id=request_id, session_id=session_id)
+        (inference_budget_required, runtime_children_enabled, runtime_child_read_only,
+         raw_session_offline_lockdown) = runtime_policy_flags_from_params(
+            params, execution_context, continuation_context, stack.config, stream_notifications)
     except ValueError as error:
         raise ChatRequestError(
             request_id=request_id,
@@ -359,6 +356,11 @@ def build_chat_send_response(
             include_response_style=(
                 memory_policy.include_response_style if memory_policy is not None else True
             ),
+            project_id=(
+                memory_policy.project_id
+                if memory_policy is not None
+                else GENERAL_PROJECT_ID
+            ),
             recall_query="\n".join(
                 str(message.get("content") or "").strip()
                 for message in messages
@@ -377,12 +379,18 @@ def build_chat_send_response(
         session_id=session_id,
         mode=mode,
         approvals_pre_granted=approvals_pre_granted,
+        logical_turn_id=logical_turn_id,
+        continuation_context=continuation_context,
+        runtime_continuation_resume=runtime_continuation_resume,
+        execution_context=execution_context,
+        inference_budget_required=inference_budget_required,
+        runtime_children_enabled=runtime_children_enabled,
         memory_policy=effective_memory_policy,
         reasoning_effort=reasoning_effort,
         session_start_date=session_start_date,
         current_date=resolve_current_date(),
         plan_mode=plan_mode,
-        read_only=plan_mode or agent_surface != "main",
+        read_only=plan_mode or runtime_child_read_only or agent_surface != "main",
         approved_plan=approved_plan,
         tool_preferences=tool_preferences,
         approval_mode=approval_mode,
@@ -390,7 +398,11 @@ def build_chat_send_response(
         sub_agent_tool_preferences_fail_closed=(
             tool_preferences_require_sub_agent_fail_closed(raw_tool_preferences)
         ),
-        workspace_root_present=workspace_root_present,
+        workspace_root_present=(
+            execution_context.workspace_root_present
+            if execution_context is not None
+            else workspace_root_present
+        ),
         workspace_instruction_present=workspace_status.instruction_file_present,
         debug_options=debug_options,
         interrupted_turn_receipts=interrupted_turn_receipts,
@@ -474,6 +486,16 @@ def build_chat_send_response(
                     image_attachments=image_attachments,
                     brain_container=brain_container,
                     invalid_params_code=invalid_params_code,
+                    inference_admission=build_inference_admission_callback(
+                        request_id=request_id,
+                        session_id=session_id,
+                        execution_context=execution_context,
+                        require_budget=inference_budget_required,
+                        engine_type=stack.config.engine_type,
+                        write_message=approval_writer,
+                        response_reader_factory=approval_reader_factory,
+                        cancel_handle=cancel_handle,
+                    ),
                     post_response_callback=lambda _response_text: _maybe_run_post_response_tasks(
                         session_id=session_id,
                         brain_container=brain_container,
@@ -507,6 +529,7 @@ def build_chat_send_response(
                     skill_invocation=skill_invocation,
                     vision_images=vision_images,
                     vision_anchor_text=vision_anchor_text,
+                    execution_context=execution_context,
                     max_tokens=resolve_effective_max_tokens(
                         stack.config.max_tokens,
                         stack.engine.get_model_max_output_tokens(),

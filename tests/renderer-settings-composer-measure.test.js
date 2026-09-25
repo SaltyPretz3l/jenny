@@ -48,7 +48,7 @@ test('pretext branch keeps the composer scrollable when multi-line content excee
   assert.equal(chatInput.style.overflowY, 'auto', 'tall content stays scrollable');
 });
 
-test('pretext branch hides overflow for short content', (t) => {
+test('pretext branch lets the browser determine overflow for short content', (t) => {
   const previous = global.rendererPretextUtils;
   t.after(() => {
     global.rendererPretextUtils = previous;
@@ -72,10 +72,10 @@ test('pretext branch hides overflow for short content', (t) => {
   syncComposerInputHeight();
 
   assert.equal(chatInput.style.height, '40px');
-  assert.equal(chatInput.style.overflowY, 'hidden');
+  assert.equal(chatInput.style.overflowY, 'auto');
 });
 
-test('fallback branch bases overflow on the pre-clamp scrollHeight', (t) => {
+test('fallback branch leaves scrolling available at every measured height', (t) => {
   const previous = global.rendererPretextUtils;
   t.after(() => {
     global.rendererPretextUtils = previous;
@@ -96,5 +96,28 @@ test('fallback branch bases overflow on the pre-clamp scrollHeight', (t) => {
   const short = createChatInput(50, 'hi');
   createComposerMeasure({ state: {}, chatInput: short }).syncComposerInputHeight();
   assert.equal(short.style.height, '50px');
-  assert.equal(short.style.overflowY, 'hidden');
+  assert.equal(short.style.overflowY, 'auto');
+});
+
+test('CSS-capped and underestimated drafts remain scrollable below the JS height cap', (t) => {
+  const previous = global.rendererPretextUtils;
+  t.after(() => { global.rendererPretextUtils = previous; });
+
+  for (const pretextEnabled of [false, true]) {
+    global.rendererPretextUtils = {
+      isEnabled: () => pretextEnabled,
+      resolveFontString: () => 'normal normal 400 15px sans-serif',
+      predictTextHeight: () => ({ height: 130 }),
+    };
+    // The dock's CSS caps the actual box at 120px, below the 144px JS cap.
+    // A prediction can also underestimate the real content height.
+    const input = createChatInput(pretextEnabled ? 200 : 130, MULTILINE);
+    input.clientHeight = 120;
+    const measure = createComposerMeasure({ state: {}, chatInput: input });
+    measure.syncComposerInputHeight();
+
+    assert.equal(input.style.height, '130px');
+    assert.ok(input.scrollHeight > input.clientHeight);
+    assert.equal(input.style.overflowY, 'auto', `scrolling available with pretext=${pretextEnabled}`);
+  }
 });

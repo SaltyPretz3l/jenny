@@ -355,6 +355,15 @@ def _redacted_value_for_key(normalized_key: str) -> str | None:
     return None
 
 
+def _redacted_tool_input_value_for_key(normalized_key: str) -> str | None:
+    # A tool call's own arguments are model-authored content (an ask_user
+    # question's prompt, an image prompt), not engine prompt payloads; only
+    # secrets and paths are redacted inside them (gate A7 F10).
+    if _SECRET_KEY_RE.search(normalized_key):
+        return "[redacted:secret]"
+    return None
+
+
 # Display-only fields get a visible truncation marker inside the byte cap.
 # The fields named here stay unmarked: delta/text chunks concatenate (or
 # round-trip) downstream and an injected marker would corrupt the
@@ -449,6 +458,16 @@ def _cap_payload(
         )
     if not isinstance(sanitized, dict):
         sanitized = {}
+    if structure_reason is None and "tool_input" in payload:
+        tool_input, tool_input_reason = sanitize_structure(
+            payload["tool_input"],
+            sanitize_string=_sanitize_string,
+            redact_key=lambda key: _redacted_tool_input_value_for_key(
+                _normalize_token(key, limit=80, lower=True).replace("-", "_")
+            ),
+        )
+        if tool_input_reason is None:
+            sanitized["tool_input"] = tool_input
 
     _cap_payload_by_event_type(event_type, sanitized, diagnostics)
     _cap_payload_named_fields(sanitized, diagnostics)

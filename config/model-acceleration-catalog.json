@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updatedAt": "2026-09-01",
+  "updatedAt": "2026-09-18",
   "_comment": "Per-family speculative-decoding eligibility for the managed llama-server. matchPrefixes use the canonical token form of sidecar/ai/app_profiles canonicalize_model_name (lowercase, non-alnum runs -> '-'). Families must stay in sync with sidecar/ai/app_profiles/__init__.py::_REGISTRY; tests/sidecar/ai/app_profiles/test_acceleration_catalog_parity.py enforces it. mtp is a tri-state claim: 'yes' = verified, 'unverified' = selectable only with allow_unverified (benchmark profiles), 'no' = never. mtpShape 'separate' means the drafter ships as its own GGUF matched by drafterPattern in the model directory. vramHeadroomMb is the extra GPU residency the mode costs.",
   "defaults": { "draftNMax": 4, "draftNMaxMin": 1, "draftNMaxMax": 6, "vramHeadroomMb": 2048 },
   "families": [
@@ -40,6 +40,15 @@
       "ngram": true,
       "vramHeadroomMb": 2048,
       "evidence": "MoE variants show no net MTP speedup on consumer GPUs"
+    },
+    {
+      "family": "bonsai2",
+      "matchPrefixes": ["ternary-bonsai-2-27b", "bonsai-2-27b", "ternary-bonsai2-27b", "bonsai2-27b"],
+      "mtp": "no",
+      "mtpShape": "native",
+      "ngram": true,
+      "vramHeadroomMb": 2048,
+      "evidence": "PrismML Ternary-Bonsai-2-27B GGUF ships no MTP head; served only by PrismML's llama.cpp fork"
     }
   ]
 }

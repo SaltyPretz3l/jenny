@@ -59,7 +59,11 @@ async function createPlainArchive(root, createdAt = new Date('2026-08-03T00:00:0
       {
         logicalPath: 'preferences/shell-config.json',
         category: 'preferences',
-        data: Buffer.from(JSON.stringify({ chatUi: { zoomPercent: 115 } })),
+        data: Buffer.from(JSON.stringify({
+          version: 54,
+          session_runtime: { cloud: { runnable_turns: 3 } },
+          chatUi: { zoomPercent: 115 },
+        })),
       },
     ],
   });
@@ -90,6 +94,10 @@ describe('restore service', () => {
       ));
       assert.equal(preferences.appearance.paletteId, 'luma');
       const shellConfig = JSON.parse(fs.readFileSync(path.join(userDataPath, 'shell-config.json'), 'utf8'));
+      assert.equal(shellConfig.version, 54);
+      assert.equal(shellConfig.session_runtime.local.runnable_turns, 1);
+      assert.equal(shellConfig.session_runtime.cloud.runnable_turns, 3);
+      assert.equal(shellConfig.session_runtime.cloud.inference_requests, 4);
       assert.equal(shellConfig.chatUi.zoomPercent, 115);
 
       assert.equal(await finalizeRestoredBoot(userDataPath), true);
@@ -222,10 +230,12 @@ describe('restore service', () => {
       const { archivePath } = await createPlainArchive(root);
       await stageRestore({ archivePath, userDataPath });
       const pointer = JSON.parse(fs.readFileSync(restorePointerPath(userDataPath), 'utf8'));
-      fs.writeFileSync(
-        path.join(pointer.stage_path, 'data', 'preferences', 'shell-config.json'),
-        JSON.stringify({ chatUi: { zoomPercent: 999 } })
+      const stagedShellConfig = path.join(
+        pointer.stage_path, 'data', 'preferences', 'shell-config.json'
       );
+      const changedBytes = fs.readFileSync(stagedShellConfig);
+      changedBytes[changedBytes.length - 1] ^= 1;
+      fs.writeFileSync(stagedShellConfig, changedBytes);
 
       await assert.rejects(promotePendingRestore({ userDataPath }), {
         code: 'CMP-DATA-0007',

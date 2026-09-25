@@ -49,8 +49,8 @@ function officialPluginSession(state = IMAGE_CONFIG) {
   return createOfficialImagePluginSession(state);
 }
 
-test('store schema version is 19 and only chat/plugin types remain live', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 20);
+test('store schema version is 22 and only chat/plugin types remain live', () => {
+  assert.equal(STORE_SCHEMA_VERSION, 22);
   assert.equal(normalizeSessionType('chat'), CHAT_SESSION_TYPE);
   assert.equal(normalizeSessionType('plugin'), PLUGIN_SESSION_TYPE);
   assert.equal(normalizeSessionType('image'), PLUGIN_SESSION_TYPE);
@@ -140,7 +140,7 @@ test('v17 store migration is idempotent and preserves chat rows while adopting i
     },
   };
   const migrated = migrateStorePayload(payload, { normalizeMessage: (message) => message });
-  assert.equal(migrated.schema_version, 20);
+  assert.equal(migrated.schema_version, 22);
   assert.equal(migrated.sessions.chat.session_type, CHAT_SESSION_TYPE);
   assert.deepEqual(migrated.sessions.chat.messages, payload.sessions.chat.messages);
   assert.equal(migrated.sessions.chat.plugin_session, null);

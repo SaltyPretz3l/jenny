@@ -2,34 +2,40 @@
 
 from __future__ import annotations
 
+import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from sidecar.ai.error_codes import CMP_TOOL_RICH_FILES_UNSUPPORTED
-from sidecar.ai.tools.builtins import filesystem_content
+from sidecar.ai.tools.builtins import filesystem_content, pdf_text
 from sidecar.ai.tools.builtins.artifacts import BinaryArtifactSpec, create_binary_artifact
 from sidecar.ai.tools.builtins.rich_files.base import (
+    MAX_RICH_INSPECT_OUTPUT_CHARS,
+    MAX_RICH_INSPECT_STRING_CHARS,
     RichFileSource,
     RichInspectResult,
     RichPreviewResult,
-    build_dependency_missing_result,
     build_unsupported_result,
     preview_artifact_metadata,
+    rich_inspect_result_payload,
     rich_inspect_result_to_tool_result,
     string_argument,
     validate_rich_file_source,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
-from sidecar.ai.tools.sanitization import (
-    sanitize_tool_output,
-    sanitize_tool_output_no_truncate,
-)
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 PDF_PREVIEW_SCALE = 1.25
 MAX_PDF_PREVIEW_PIXELS = 4_000_000
+# The rich-inspect serializer clips every summary string at
+# MAX_RICH_INSPECT_STRING_CHARS, so the per-page excerpt cap is the smaller of
+# the two: anything above it would be marked complete and then cut anyway.
+PDF_INSPECT_PAGE_TEXT_CHARS = min(
+    filesystem_content.MAX_PDF_PAGE_TEXT_CHARS, MAX_RICH_INSPECT_STRING_CHARS
+)
 
 
 @dataclass(frozen=True)
@@ -52,17 +58,10 @@ def pdf_inspect_tool(
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
         expected_mime_prefix="application/pdf",
     )
-    try:
-        fitz = filesystem_content._load_pymupdf()
-    except (ModuleNotFoundError, ToolExecutionFailure):
-        return rich_inspect_result_to_tool_result(
-            build_dependency_missing_result(
-                adapter="pdf",
-                source=source,
-                dependency="PyMuPDF",
-                install_hint="Install the optional media extra to enable PDF inspection.",
-            )
-        )
+    # A missing or unloadable PDF reading add-on fails the call with
+    # CMP-TOOL-0047, so read_file and pdf_inspect tell the model and the chat
+    # row the same thing (the row offers "Set up PDF reading").
+    fitz = filesystem_content._load_pymupdf()
 
     try:
         return _inspect_pdf_with_fitz(
@@ -96,15 +95,18 @@ def _inspect_pdf_with_fitz(
     previews: list[dict[str, object]] = []
     generated_artifacts: list[dict[str, object]] = []
 
-    with fitz.open(source.absolute_path) as document:
+    raw_pdf = source.absolute_path.read_bytes()
+    digest = pdf_text.document_digest(raw_pdf)
+    with fitz.open(stream=raw_pdf, filetype="pdf") as document:
         page_count = int(document.page_count)
         if page_count <= 0:
             raise ValueError("PDF has no pages")
-        selected_pages = filesystem_content._parse_pages_argument(
-            arguments.get("pages"),
+        selected_pages, starts, cursor, unread_pages = pdf_text.resolve_selection(
+            cursor_argument=arguments.get("cursor"),
+            pages_argument=arguments.get("pages"),
+            digest=digest,
             page_count=page_count,
         )
-        pages_payload: list[dict[str, object]] = []
         source_path = Path(source.workspace_path)
         preview_context = PdfPreviewContext(
             workspace=workspace,
@@ -115,30 +117,35 @@ def _inspect_pdf_with_fitz(
         if preview_requested and not session_id:
             warnings_out.append("preview skipped: session context unavailable")
 
+        # Lazy: keeps pdf_ocr out of the sidecar.server import graph.
+        from sidecar.ai.tools.builtins import pdf_ocr  # noqa: PLC0415
+
+        ocr_session = pdf_ocr.PdfOcrSession()
+        text_less_pages: list[int] = []
+        page_lines: list[list[pdf_text.PdfTextLine]] = []
+        page_details: list[dict[str, object]] = []
         for page_number in selected_pages:
             page = document.load_page(page_number - 1)
-            sanitized_text = sanitize_tool_output_no_truncate(
-                page.get_text("text"), tool_name="pdf_inspect"
+            lines, text_layer, ocr_info = pdf_text.page_lines(
+                page,
+                page_number=page_number,
+                ocr_session=ocr_session,
+                text_less_pages=text_less_pages,
+                tool_name="pdf_inspect",
             )
-            text_truncated = (
-                len(sanitized_text) > filesystem_content.MAX_PDF_PAGE_TEXT_CHARS
-            )
-            text_excerpt = (
-                sanitize_tool_output(
-                    sanitized_text,
-                    max_chars=filesystem_content.MAX_PDF_PAGE_TEXT_CHARS,
-                    tool_name="pdf_inspect",
-                )
-                if text_truncated
-                else sanitized_text
-            )
-            page_payload: dict[str, object] = {
+            if cursor is not None:
+                pdf_text.check_cursor_line(cursor, lines, page_number=page_number)
+            page_lines.append(lines)
+            page_detail: dict[str, object] = {
                 "page": page_number,
-                "text_excerpt": text_excerpt,
+                "text_layer": text_layer,
+                **pdf_ocr.ocr_page_fields(
+                    ocr_info,
+                    text_layer=text_layer,
+                    session=ocr_session,
+                ),
             }
-            if text_truncated:
-                page_payload["text_truncated"] = True
-            pages_payload.append(page_payload)
+            page_details.append(page_detail)
 
             if preview_requested and session_id:
                 preview_result = _create_pdf_page_preview(
@@ -150,19 +157,58 @@ def _inspect_pdf_with_fitz(
                 warnings_out.extend(preview_result.warnings)
                 generated_artifacts.extend(preview_result.generated_artifacts)
 
-    result = RichInspectResult(
-        status="inspected",
-        adapter="pdf",
-        source=source,
-        summary={
+    ocr_note = ocr_session.note(text_less_pages=text_less_pages)
+
+    def build_result(excerpts: Sequence[str]) -> RichInspectResult:
+        pages = [
+            {
+                **page_details[index],
+                **pdf_text.excerpt_fields(
+                    page_lines[index],
+                    start=starts[index],
+                    excerpt=excerpt,
+                    page=selected_pages[index],
+                    digest=digest,
+                ),
+            }
+            for index, excerpt in enumerate(excerpts)
+        ]
+        continuation = pdf_text.continuation_summary(pages)
+        summary: dict[str, object] = {
             "page_count": page_count,
             "selected_pages": selected_pages,
-            "pages": pages_payload,
-            "truncated": page_count > len(selected_pages),
-        },
-        previews=tuple(previews),
-        warnings=tuple(warnings_out),
+            "pages": pages,
+            **continuation,
+            "truncated": page_count > len(selected_pages) or "cursor" in continuation,
+        }
+        if unread_pages:
+            summary["unread_pages"] = unread_pages
+        summary["note"] = pdf_text.read_note(ocr_note, unread_pages=unread_pages)
+        return RichInspectResult(
+            status="inspected",
+            adapter="pdf",
+            source=source,
+            summary=summary,
+            previews=tuple(previews),
+            warnings=tuple(warnings_out),
+        )
+
+    # Pre-fit whole lines against the serializer's exact budget so base.py's
+    # 320-char excerpt fallback never runs for PDF pages.
+    fitted_excerpts = pdf_text.fit_excerpts(
+        page_lines,
+        starts=starts,
+        page_max_chars=PDF_INSPECT_PAGE_TEXT_CHARS,
+        total_max_chars=MAX_RICH_INSPECT_OUTPUT_CHARS,
+        serialized_length=lambda excerpts: len(
+            json.dumps(
+                rich_inspect_result_payload(build_result(excerpts)),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        ),
     )
+    result = build_result([text for text, _next in fitted_excerpts])
     return rich_inspect_result_to_tool_result(
         result,
         generated_artifacts=tuple(generated_artifacts),

@@ -13,9 +13,12 @@ test('ask_user alone suspends and resumes the stream idle watchdog around execut
   const askUserWait = new Promise((resolve) => { releaseAskUser = resolve; });
   const service = {
     toolExecutor: {
-      async executePreApproved({ toolName }) {
+      async executePreApproved({ toolName }, context) {
         events.push(`execute:${toolName}`);
-        if (toolName === 'ask_user') return askUserWait;
+        if (toolName === 'ask_user') {
+          assert.equal(context.logicalTurnId, 'turn-ask-user');
+          return askUserWait;
+        }
         return { content: 'status', isError: false, metadata: {} };
       },
     },
@@ -31,7 +34,7 @@ test('ask_user alone suspends and resumes the stream idle watchdog around execut
     toolContext: {},
     handleToolNotification() {},
     waitForToolApproval() {},
-    turnEventCollector: {},
+    turnEventCollector: { turnId: 'turn-ask-user' },
     normalizedPreferences: {},
     timeoutMs: 1_000,
     noteStreamActivity() { events.push('activity'); },

@@ -4,6 +4,10 @@
 
    Text-editing surfaces own Ctrl+1..5/N/B. The Ctrl+Shift+Space capture chord
    is exempt by design and may fire from anywhere, including editors.
+   Every chord here stands down while the shared overlay manager reports an
+   open overlay, with one exception: over a launcher-style overlay listed in
+   deps.captureYieldingOverlayIds (the command palette) the capture chord
+   dismisses it through the owner's close path and proceeds.
    After a view switch lands, focus moves to the destination toprail tab
    via window.rendererTopNavShellController. */
 (function (root, factory) {
@@ -41,18 +45,52 @@
       openCapture,
       appendClientLog,
     } = deps.callbacks || {};
+    const isOverlayOpen = typeof deps.isOverlayOpen === 'function'
+      ? deps.isOverlayOpen
+      : function () { return false; };
     const rootRef = typeof globalThis !== 'undefined' ? globalThis : {};
     // Single source of truth shared with the rail; never re-declare the order.
     const viewOrder = (rootRef.rendererTopRailUtils || {}).VIEW_TAB_ORDER
       || ['home', 'chat', 'ide', 'logs', 'settings'];
+    // A launcher-style overlay (the command palette) yields to the capture
+    // chord: the chord dismisses it through the owner's close path -- the same
+    // one Escape runs -- and proceeds. A modal, or anything stacked on the
+    // launcher, still stands every chord down.
+    const overlayManager = deps.overlayManager || null;
+    const captureYieldingOverlayIds = Array.isArray(deps.captureYieldingOverlayIds)
+      ? deps.captureYieldingOverlayIds.filter(Boolean) : [];
+
+    function isCaptureChord(event) {
+      return Boolean(event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey
+        && !event.defaultPrevented && !event.isComposing
+        && (event.key === ' ' || event.code === 'Space'));
+    }
+
+    function dismissCaptureYieldingOverlay() {
+      if (!overlayManager || typeof overlayManager.getDepth !== 'function'
+        || typeof overlayManager.requestClose !== 'function') return false;
+      let depth;
+      try { depth = overlayManager.getDepth(); } catch (_err) { return false; }
+      if (depth !== 1) return false;
+      const id = captureYieldingOverlayIds.find((candidate) => overlayManager.isOpen?.(candidate) === true);
+      return Boolean(id) && overlayManager.requestClose(id, 'capture_chord') === true;
+    }
 
     function handleKeydown(event) {
+      // A managed overlay (quick settings, a confirm dialog) owns the keyboard
+      // while it is up: switching views or creating a chat behind a modal --
+      // and handing focus to a rail tab the overlay just marked inert -- is
+      // never what the chord meant. The capture chord stands down too, unless
+      // the only open overlay is a launcher it may dismiss (the palette).
+      let overlayOpen = false;
+      try { overlayOpen = isOverlayOpen() === true; } catch (_err) { /* noop */ }
+      if (overlayOpen && !(isCaptureChord(event) && dismissCaptureYieldingOverlay())) {
+        return;
+      }
       // Ctrl+Shift+Space → scratchpad quick-capture, handled before the no-shift
       // guard below (this is the one shifted chord we own). Fires from any view
       // and even from inside editors — it is the dedicated capture trigger.
-      if (event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey
-        && !event.defaultPrevented && !event.isComposing
-        && (event.key === ' ' || event.code === 'Space')) {
+      if (isCaptureChord(event)) {
         if (typeof openCapture === 'function') {
           event.preventDefault();
           openCapture();

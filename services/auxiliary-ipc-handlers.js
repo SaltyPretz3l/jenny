@@ -1,4 +1,4 @@
-const { createRejectedEntry } = require('./attachment-service');
+const { createAttachmentIpcHandlers } = require('./main/attachment-ipc-handlers');
 const { createEmptyCalendarSnapshot } = require('./calendar-service');
 const path = require('path');
 
@@ -12,18 +12,20 @@ const {
   normalizeRuntimeToolStatusMap,
 } = require('./ipc-validation-helpers');
 const { normalizeToolName } = require('./tools/tool-permission-store');
-const { readToolResultAttachment } = require('./backend/tool-result-attachments');
+
 const { getWindowStateSnapshot } = require('./window-state-service');
 const {
   validateChatStartPayload,
 } = require('./backend/generated-chat-lifecycle-contract');
 const { CHAT_PROTOCOL_ERROR_CODES, SETUP_ERROR_CODES } = require('./backend/error-codes');
 const { loadAccelerationCatalog } = require('./backend/llama-server-acceleration');
+const { writeManagedPatch } = require('./main/llama-server-runtime');
 const { buildFeatureFlags } = require('./feature-flags');
 const { normalizePreferredEngineType } = require('./shell-config-state');
 const { defaultOllamaFallbackUrl } = require('./ollama-install-service');
 const { CONTEXT_LENGTH_STEPS } = require('./shell-config-compaction-tuning');
 const { buildNextTurnContextSummary } = require('./backend/next-turn-context-summary');
+const { markAcceptedPlanApproved } = require('./backend/plan-document-events');
 const {
   createChatGptAuthServiceDefault,
   ensureChatgptAuthService,
@@ -35,7 +37,7 @@ const TOOL_STATUS_MISSING_REASON = 'Tool availability has not been reported yet.
 const MAX_INTERACTIVE_USAGE_ROWS = 200;
 const MAX_EXPORT_USAGE_ROWS = 500;
 const USAGE_EXPORT_SCOPES = new Set(['session', 'today', 'all']);
-const IMAGE_DROP_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+
 
 function cloneJsonSafe(value, fallback) {
   try {
@@ -350,12 +352,15 @@ function registerAuxiliaryIpcHandlers({
       backendService.saveMemoryForSession(sessionId, candidate),
     'memory.listApproved': () => backendService.listApprovedMemories(),
     'memory.listPending': () => backendService.listPendingMemories(),
-    'memory.update': (_, memoryId, patch) =>
-      backendService.updateApprovedMemory(memoryId, patch),
-    'memory.delete': (_, memoryId) => backendService.deleteApprovedMemory(memoryId),
+    'memory.update': (_, memoryId, patch, projectId) =>
+      backendService.updateApprovedMemory(memoryId, patch, projectId),
+    'memory.delete': (_, memoryId, projectId) =>
+      backendService.deleteApprovedMemory(memoryId, projectId),
     'memory.deletePending': (_, sessionId, contentFingerprint) =>
       backendService.deletePendingMemory(sessionId, contentFingerprint),
-    'memory.dismiss': (_, fingerprint) => backendService.dismissMemorySuggestion(fingerprint),
+    'memory.dismiss': (_, sessionIdOrFingerprint, fingerprint) => (
+      backendService.dismissMemorySuggestion(sessionIdOrFingerprint, fingerprint)
+    ),
     'harness.inspect': (_, options) => backendService.inspectHarness(options),
     'diagnostics.getJennyStatus': (_, options) => backendService.getJennyStatus(options),
     'diagnostics.phasePercentiles.get': () => backendService.getPhasePercentilesSnapshot(),
@@ -609,6 +614,11 @@ function registerAuxiliaryIpcHandlers({
           }
         }
       }
+      if (Object.prototype.hasOwnProperty.call(payload || {}, 'startupModelLoad')) {
+        const enabled = Boolean(payload.startupModelLoad);
+        shellConfigService?.updateStartupModelLoad?.(enabled);
+        log?.('INFO', 'engines.startup_model_load_updated', { enabled });
+      }
       const hasAcceleration = Object.prototype.hasOwnProperty.call(payload || {}, 'acceleration');
       const hasManaged = Object.prototype.hasOwnProperty.call(payload || {}, 'managed');
       const keys = hasManaged ? Object.keys(payload.managed?.perModel || {})
@@ -625,7 +635,13 @@ function registerAuxiliaryIpcHandlers({
             shellConfigService?.updateLocalEngineAcceleration?.(payload.acceleration);
           }
           if (hasManaged) {
-            shellConfigService?.updateManagedLlamaServer?.(payload.managed);
+            // Per-model runtime paths only land when this session's picker recorded them.
+            writeManagedPatch({
+              shellConfigService,
+              patch: payload.managed,
+              picks: backendService?.options?.getLlamaServerManager?.()?.runtimePicks || null,
+              log: (level, event, details) => log?.(level, event, details),
+            });
             log?.('INFO', 'engines.managed_updated', { keys, roots });
           }
         } else if (hasManaged) {
@@ -730,112 +746,8 @@ function registerAuxiliaryIpcHandlers({
         rehydrate_required: true,
       };
     },
-    'attachments.pick': async () => {
-      const result = await dialog.showOpenDialog(getMainWindow(), {
-        title: t('main.dialog.attachments.title', 'Select attachments'),
-        properties: ['openFile', 'multiSelections'],
-        filters: [
-          {
-            name: t('main.dialog.attachments.supportedFiles', 'Supported attachments'),
-            extensions: [
-              'txt', 'md', 'markdown', 'js', 'cjs', 'mjs', 'ts', 'tsx', 'jsx', 'json', 'css', 'html',
-              'htm', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'py', 'rb', 'go', 'rs', 'java', 'kt',
-              'c', 'cc', 'cpp', 'h', 'hpp', 'cs', 'php', 'sh', 'ps1', 'sql', 'csv', 'log',
-              'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
-            ],
-          },
-          { name: t('main.dialog.attachments.allFiles', 'All files'), extensions: ['*'] },
-        ],
-      });
-      if (result.canceled) {
-        return { accepted: [], rejected: [] };
-      }
-      return prepareAttachmentEntries(result.filePaths, {
-        cwd: processRef.cwd(),
-        assetStore: attachmentAssetStore,
-      });
-    },
-    'attachments.prepare': (_, filePaths) => {
-      const allowedRoots = [];
-      const workspaceRoot = shellConfigService.getState().toolsWorkspaceRoot;
-      if (workspaceRoot) {
-        allowedRoots.push(workspaceRoot);
-      }
-      const safePaths = [];
-      const rejectedOutsideRoots = [];
-      for (const filePath of Array.isArray(filePaths) ? filePaths : []) {
-        if (
-          IMAGE_DROP_EXTENSIONS.has(path.extname(String(filePath || '')).toLowerCase())
-          || allowedRoots.some((root) => isChildPath(root, filePath))
-        ) {
-          safePaths.push(filePath);
-          continue;
-        }
-        // Filtered paths must still produce a rejected entry: dropping them
-        // silently makes the whole drag-drop surface look like a no-op.
-        rejectedOutsideRoots.push(createRejectedEntry(
-          filePath,
-          workspaceRoot
-            ? 'File is outside the tools workspace root, so it cannot be attached.'
-            : 'Set a tools workspace root in Settings before attaching dropped files.'
-        ));
-      }
-      const prepared = prepareAttachmentEntries(safePaths, {
-        cwd: processRef.cwd(),
-        assetStore: attachmentAssetStore,
-      });
-      return {
-        ...prepared,
-        rejected: [...rejectedOutsideRoots, ...(prepared.rejected || [])],
-      };
-    },
-    'attachments.saveImageAsset': (_, payload) => {
-      const byteLength = payload?.bytes?.byteLength ?? payload?.bytes?.length ?? null;
-      const bytesKind = payload?.bytes == null ? 'missing' : (Buffer.isBuffer(payload.bytes) ? 'buffer' : (ArrayBuffer.isView(payload.bytes) ? 'view' : (payload.bytes instanceof ArrayBuffer ? 'arraybuffer' : (Array.isArray(payload.bytes) ? 'array' : typeof payload.bytes))));
-      if (!attachmentAssetStore) {
-        if (typeof log === 'function') { log('WARN', 'attachments.save_image_asset', { ok: false, reason: 'store_unavailable', bytesKind, byteLength, mimeType: payload?.mimeType || '', sourceKind: payload?.sourceKind || '' }); }
-        throw new Error('Image attachments are unavailable.');
-      }
-      try {
-        const result = attachmentAssetStore.saveImageBuffer(payload?.bytes, {
-          mimeType: payload?.mimeType, displayName: payload?.displayName,
-          sourceKind: payload?.sourceKind, captureMeta: payload?.captureMeta,
-        });
-        if (typeof log === 'function') { log('INFO', 'attachments.save_image_asset', { ok: true, bytesKind, byteLength, mimeType: payload?.mimeType || '', sourceKind: payload?.sourceKind || '', id: result?.id || '' }); }
-        return result;
-      } catch (error) {
-        if (typeof log === 'function') { log('WARN', 'attachments.save_image_asset', { ok: false, bytesKind, byteLength, mimeType: payload?.mimeType || '', sourceKind: payload?.sourceKind || '', message: error?.message || String(error) }); }
-        throw error;
-      }
-    },
-    'attachments.saveAudioAsset': (_, payload) => {
-      if (!attachmentAssetStore) {
-        throw new Error('Audio attachments are unavailable.');
-      }
-      return attachmentAssetStore.saveAudioBuffer(payload?.bytes, {
-        mimeType: payload?.mimeType,
-        displayName: payload?.displayName,
-        sourceKind: payload?.sourceKind,
-        durationMs: payload?.durationMs,
-        transcriptText: payload?.transcriptText,
-        transcriptStatus: payload?.transcriptStatus,
-        transcriptLanguage: payload?.transcriptLanguage,
-      });
-    },
-    'attachments.releaseAssets': (_, assetPaths) => {
-      if (!attachmentAssetStore) {
-        return { deletedCount: 0, deletedPaths: [] };
-      }
-      return attachmentAssetStore.deleteAssets(assetPaths);
-    },
-    // Bounded ID-based read of a tool-result attachment previously
-    // ingested into the managed asset store from a live sidecar tool.result.
-    'attachments.readToolResultAsset': (_, attachmentId) => {
-      if (!backendService) {
-      return { ok: false, reason: t('main.backend.serviceUnavailable', 'backend service unavailable') };
-      }
-      return readToolResultAttachment(backendService, attachmentId);
-    },
+    ...createAttachmentIpcHandlers({ backendService, shellConfigService, dialog, getMainWindow,
+      prepareAttachmentEntries, attachmentAssetStore, processRef, isChildPath, log }),
     'clipboard.writeText': (_, text) => {
       clipboard.writeText(String(text || ''));
       return { ok: true };
@@ -937,6 +849,11 @@ function registerAuxiliaryIpcHandlers({
       }
       return toolExecutor.approve(callId, options);
     },
+    // Accepted-not-built plan -> approved, so the renderer's follow-up send
+    // carries it as the approved plan. Refuses unless latest, accepted, idle.
+    'tools.buildAcceptedPlan': (_, sessionId, planId) => (backendService
+      ? markAcceptedPlanApproved({ service: backendService, sessionId, planId })
+      : { ok: false, reason: 'unavailable' }),
     'tools.deny': (_, callId) => {
       const deniedByBackend = backendService && backendService.denyToolCall(callId);
       if (deniedByBackend) {

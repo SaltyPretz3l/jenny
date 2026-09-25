@@ -74,7 +74,9 @@ async function waitForServiceLog(service, event, timeoutMs = 1000) {
 }
 
 test('managed chat sends the committed plugin runtime authority', async () => {
-  const service = createManagedChatServiceStub();
+  const service = createManagedChatServiceStub({
+    resolvePluginToolAuthority: (expected) => adapter.captureExecutionToolAuthority(expected),
+  });
   let capturedAuthority = null;
   const adapter = attachManagedPluginRuntime(service, {
     requestApply: async () => ({ ok: true, attestation: {} }),
@@ -303,6 +305,11 @@ test('image attachment against a codex-cli engine reaches chat.send (sidecar own
       return realImagePath;
     },
   };
+  service.sessionStore.createSessionWithId('session_codex_image_reject', { title: 'Image test', project_id: 'project_general', created_at: '2026-09-15T00:00:00.000Z' });
+  const { ensureSessionAttachmentAuthority } = require('../services/projects/session-attachment-authority');
+  const attachmentAuthority = ensureSessionAttachmentAuthority(service);
+  attachmentAuthority.registerImportedImages(attachmentAuthority.captureImportScope('session_codex_image_reject'),
+    [{ id: 'att_codex_img', kind: 'image', assetPath: path.join(tempDir, 'logical.png') }]);
   service._resolveModel = async () => 'codex-cli/gpt-x';
   let chatSendCount = 0;
   service.sidecarClient = {

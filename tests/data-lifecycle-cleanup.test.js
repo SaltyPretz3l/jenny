@@ -23,6 +23,10 @@ describe('cleanupJennyData', () => {
       const workspaceRoot = path.join(root, 'workspace');
       fs.mkdirSync(userDataPath, { recursive: true });
       fs.writeFileSync(path.join(userDataPath, 'sessions.json'), '{}');
+      for (const name of ['session-runtime', 'session-runtime-budgets', 'session-runtime-checkpoints']) {
+        fs.mkdirSync(path.join(userDataPath, name));
+        fs.writeFileSync(path.join(userDataPath, name, 'record.json'), '{}');
+      }
       fs.writeFileSync(path.join(userDataPath, 'unknown-profile.txt'), 'retain');
       fs.mkdirSync(runtimePath, { recursive: true });
       fs.writeFileSync(path.join(runtimePath, 'jenny_memory.db'), 'memory');
@@ -34,6 +38,9 @@ describe('cleanupJennyData', () => {
       const result = await cleanupJennyData({ userDataPath, runtimePath, workspaceRoot });
       assert.equal(result.ok, true);
       assert.equal(fs.existsSync(path.join(userDataPath, 'sessions.json')), false);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'session-runtime')), false);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'session-runtime-budgets')), false);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'session-runtime-checkpoints')), false);
       assert.equal(fs.existsSync(path.join(userDataPath, 'unknown-profile.txt')), true);
       assert.equal(fs.existsSync(path.join(runtimePath, 'jenny_memory.db')), false);
       assert.equal(fs.existsSync(path.join(runtimePath, 'unknown.txt')), true);

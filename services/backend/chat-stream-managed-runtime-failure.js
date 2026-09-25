@@ -53,7 +53,7 @@ function persistFailureMessage(ctx, errorPayload) {
   });
   ctx.transcriptCollector.resetSlice();
   clearActiveTurn(ctx.adapter, {
-    requestId: ctx.streamId,
+    requestId: ctx.turnId || ctx.streamId,
     streamId: ctx.streamId,
   });
   return persisted;
@@ -61,7 +61,7 @@ function persistFailureMessage(ctx, errorPayload) {
 
 function clearReconnectStateOnFailure(ctx) {
   clearActiveTurn(ctx.adapter, {
-    requestId: ctx.streamId,
+    requestId: ctx.turnId || ctx.streamId,
     streamId: ctx.streamId,
   });
 }
@@ -125,6 +125,14 @@ function settleUnfinishedToolRows(ctx, reason) {
     return 0;
   }
   const settlements = plan.repairs;
+  const suspended = ctx.getSuspendedDecision?.();
+  if (coordinated && suspended?.kind === 'user_questions') {
+    for (const repair of settlements) {
+      if (repair.callId === suspended.call_id && repair.patch?.tool_call?.tool_name === 'ask_user') {
+        repair.synthesizeResult = false;
+      }
+    }
+  }
   ctx.unfinishedToolRepairs = coordinated ? settlements : [];
   ctx.unfinishedToolsSettled = true;
   if (
@@ -138,6 +146,7 @@ function settleUnfinishedToolRows(ctx, reason) {
     ctx.publishCanonicalMetricsSnapshot();
   }
   for (const settlement of settlements) {
+    if (settlement.synthesizeResult === false) continue;
     const source = messages.find((message) => String(message?.id || '') === settlement.messageId);
     const toolName = String(settlement.toolName || source?.tool_call?.tool_name || 'tool');
     noteDiagnosticToolEvent(ctx, {

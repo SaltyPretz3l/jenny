@@ -236,7 +236,7 @@
       refreshSessionMetadata: refreshSessionMetadataOverride,
       refreshSnapshots,
       refreshObservability = async () => {},
-      showToastMessage,
+      showToastMessage, dismissToast,
       dismissStreamErrors,
       maybeSuggestMemoryCapture,
       appendClientLog,
@@ -370,17 +370,17 @@
       reconcileLiveTurnWithHydratedRows,
     } = reducerWiring;
     function isCurrentSession(sessionId) { return normalizeId(sessionId) === normalizeId(state.currentSessionId); }
-    // Widened render gate (ide_chat_dock): the chat subtree is live when EITHER
-    // the Chat view or the open Workspace dock is showing it. This predicate is
-    // passed by reference into the 6 DI submodules (session-helpers, runtime,
-    // live-events, terminal, reasoning-phase-status, tool-patch-utils), so
-    // widening it here widens all six. Falls back to the pre-dock
-    // `activeView === 'chat'` when the helper script is absent (flag-off-safe).
+    // Widened render gate: the chat subtree is live when EITHER the Chat view or
+    // the open Workspace dock is showing it (ide_chat_dock), and split view W0-3
+    // widens the other axis -- which session, in which pane. Both are passed by
+    // reference into the 6 DI submodules (session-helpers, runtime, live-events,
+    // terminal, reasoning-phase-status, tool-patch-utils), so widening here widens
+    // all six; each falls back to exactly the pre-W0-3 expression, script absent.
     function isChatSurfaceLive(current) {
       return (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(current)
         ?? (current?.ui?.activeView === 'chat');
     }
-    function isVisibleChatSession(sessionId) { return isCurrentSession(sessionId) && isChatSurfaceLive(state); }
+    function isVisibleChatSession(sessionId) { return (globalThis.rendererPaneVisibilityUtils || {}).isSessionVisibleInAnyPane?.(state, sessionId) ?? (isCurrentSession(sessionId) && isChatSurfaceLive(state)); }
     const timelineVisibilityTracker = getTimelineVisibilityTracker(state, { appendClientLog });
     const sessionHelpers = createStreamSessionHelpers({
       state,
@@ -400,7 +400,7 @@
       setTurnStatusPill,
       clearTurnStatusPill,
       clearTurnStatusPillSources,
-      showToastMessage,
+      showToastMessage, dismissToast,
       toastSource: TOAST_SOURCE,
       approvalToastSessionIds,
     });
@@ -421,7 +421,7 @@
       setSessionTurnStatusPill,
       clearSessionTurnStatusPill,
       clearSessionTurnStatusPillSources,
-      showApprovalToast,
+      showApprovalToast, dismissApprovalToast,
     } = sessionHelpers;
 
     const runtime = createStreamHandlerRuntime({
@@ -451,7 +451,7 @@
       clearChatSendLifecycle,
       isCurrentSession,
       isVisibleChatSession,
-      markHiddenRenderableEvent: markHiddenRenderableRender,
+      markHiddenRenderableEvent: markHiddenRenderableRender, dismissApprovalToast,
       publishCompleteImpulse,
     });
     const syncThinkingIndicatorMode = runtime.syncThinkingIndicatorMode || function noopSyncThinkingIndicatorMode() {};

@@ -61,7 +61,12 @@ function forceKillProcessTreeSync(pid, {
       timeout: 2000,
     });
   }
-  process.kill(pid, 'SIGKILL');
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    // ESRCH: the process is already gone, which is what a kill is for.
+    if (!error || error.code !== 'ESRCH') throw error;
+  }
   return { status: 0 };
 }
 

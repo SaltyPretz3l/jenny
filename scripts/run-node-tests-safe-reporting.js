@@ -54,8 +54,12 @@ function reportFileResult(record, verbose) {
   if (verbose) emitCapturedOutput(record);
 }
 
-function hasTapTestEvents(output) {
-  return /^(?:# Subtest:|(?:ok|not ok)\s+\d+)/m.test(String(output || ''));
+// A child that ran at all reports test events. Node 24's default reporter is
+// spec even when piped (U+2714/U+2716 result lines, a U+2139 "tests N"
+// summary), so a real assertion failure must not read as "Electron/Chromium
+// startup produced nothing". TAP (`# Subtest:`, `ok N`, `not ok N`) still counts.
+function hasTestEvents(output) {
+  return /^(?:# Subtest:|(?:ok|not ok)\s+\d+|\s*[\u2714\u2716] |\u2139 tests \d+)/m.test(String(output || ''));
 }
 
 function isInfrastructureFailure(file, result, platform = process.platform) {
@@ -64,7 +68,7 @@ function isInfrastructureFailure(file, result, platform = process.platform) {
   const crashpad = /crashpad|0xffffffff|crashpad[^\n]*not connected/i.test(output);
   const minusOne = result.code === -1 || result.code === 0xFFFFFFFF;
   const electronBacked = isSequentialTestPath(file, { platform });
-  return minusOne || crashpad || (electronBacked && !hasTapTestEvents(output));
+  return minusOne || crashpad || (electronBacked && !hasTestEvents(output));
 }
 
 async function retryInfrastructureFailures(parsed, state, runCapturedChild) {
@@ -164,7 +168,7 @@ function formatRunSummary({ results = [], notRun = [], inFlight = [], elapsedMs 
 
 module.exports = {
   formatRunSummary,
-  hasTapTestEvents,
+  hasTestEvents,
   isInfrastructureFailure,
   reportFileResult,
   retryInfrastructureFailures,

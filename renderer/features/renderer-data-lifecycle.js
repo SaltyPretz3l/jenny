@@ -3,6 +3,16 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+  function normalizeCount(value) {
+    return Math.max(0, Math.floor(Number(value) || 0));
+  }
+  function countParams(count) {
+    return { count: count.toLocaleString(globalThis.jennyI18n?.tag?.()) };
+  }
+  function itemCount(value) {
+    var count = normalizeCount(value);
+    return jtn('dataLifecycle.itemCount', count, countParams(count), '{count} item', '{count} items');
+  }
   var RESTORE_SUPPRESSION_KEY = 'jenny.restore.suppressedFingerprint.v1';
 
   function start() {
@@ -52,9 +62,9 @@
         + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.description', 'Archive, restore, or remove Jenny without touching shared models or ordinary project files.') + '</p>'
         + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.localDataDescription', 'Chats, attachments, preferences, personality, calendar, and memory remain local until you delete or remove them. Usage diagnostics retain at most 30 days and 500 turns. Optional workspace archives include only reviewed portable data under the current .jenny folder.') + '</p>'
         + '<div class="data-lifecycle-settings-counts">'
-        + '<span>' + escapeHtml(utils.formatCount(overview.chats, 'chat', 'chats')) + '</span>'
-        + '<span>' + escapeHtml(utils.formatCount(overview.attachments, 'attachment', 'attachments')) + '</span>'
-        + '<span>' + escapeHtml(jt('dataLifecycle.settings.preferencesIncluded', 'Preferences included · {memory}', { memory: utils.formatCount(overview.memory, 'memory store', 'memory stores') })) + '</span>'
+        + '<span>' + escapeHtml(jtn('dataLifecycle.settings.chatCount', normalizeCount(overview.chats), countParams(normalizeCount(overview.chats)), '{count} chat', '{count} chats')) + '</span>'
+        + '<span>' + escapeHtml(jtn('dataLifecycle.settings.attachmentCount', normalizeCount(overview.attachments), countParams(normalizeCount(overview.attachments)), '{count} attachment', '{count} attachments')) + '</span>'
+        + '<span>' + escapeHtml(jt('dataLifecycle.settings.preferencesIncluded', 'Preferences included · {memory}', { memory: jtn('dataLifecycle.settings.memoryStoreCount', normalizeCount(overview.memory), countParams(normalizeCount(overview.memory)), '{count} memory store', '{count} memory stores') })) + '</span>'
         + '<span>' + escapeHtml(overview.workspaceAvailable ? jtn('dataLifecycle.settings.workspaceItemCount', Math.max(0, Math.floor(Number(overview.workspace) || 0)), { count: Math.max(0, Math.floor(Number(overview.workspace) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} workspace item', '{count} workspace items') : jt('dataLifecycle.settings.noCurrentWorkspace', 'No current workspace')) + '</span>'
         + '</div><div class="settings-note" id="dataLifecycleSettingsStatus" aria-live="polite">' + jt('dataLifecycle.settings.summaryReady', 'Data summary is ready.') + '</div></div>'
         + '<div class="settings-actions data-lifecycle-settings-actions">'
@@ -125,7 +135,7 @@
         + (overview.workspaceAvailable ? toggle.toggleSwitch({ id: 'settings-archive-workspace', label: jt('dataLifecycle.archive.includeWorkspace', 'Include current workspace .jenny data'), checked: false }) : '');
       var wrapper = root.document.createElement('div');
       wrapper.innerHTML = modalShell(jt('dataLifecycle.archive.createTitle', 'Create a Jenny archive'), jt('dataLifecycle.archive.createDescription', 'This makes a verified encrypted copy and does not remove anything.'), body,
-        button('modal-close', 'Cancel', 'secondary') + button('modal-create-archive', jt('dataLifecycle.actions.createArchive', 'Create archive'), 'primary'));
+        button('modal-close', jt('common.cancel', 'Cancel'), 'secondary') + button('modal-create-archive', jt('dataLifecycle.actions.createArchive', 'Create archive'), 'primary'));
       modal = wrapper.firstElementChild;
       modalEpoch += 1;
       modal.dataset.destinationRoot = overview.defaultArchiveRoot;
@@ -139,13 +149,13 @@
       modalBusy = false;
       selectedArchive = candidate;
       previousFocus = root.document.activeElement;
-      var details = '<div class="data-lifecycle-review-card"><h3>' + escapeHtml(jt('dataLifecycle.restore.recoverableArchive', 'Recoverable archive')) + '</h3><dl><dt>Created</dt><dd>'
-        + escapeHtml(candidate.createdAt || 'Unknown') + '</dd><dt>Contents</dt><dd>'
-        + escapeHtml(utils.formatCount(candidate.counts && candidate.counts.entries, 'item', 'items')) + ', '
+      var details = '<div class="data-lifecycle-review-card"><h3>' + escapeHtml(jt('dataLifecycle.restore.recoverableArchive', 'Recoverable archive')) + '</h3><dl><dt>' + escapeHtml(jt('dataLifecycle.restore.created', 'Created')) + '</dt><dd>'
+        + escapeHtml(candidate.createdAt || jt('dataLifecycle.restore.unknownDate', 'Unknown')) + '</dd><dt>' + escapeHtml(jt('dataLifecycle.restore.contents', 'Contents')) + '</dt><dd>'
+        + escapeHtml(itemCount(candidate.counts && candidate.counts.entries)) + ', '
         + escapeHtml(utils.formatBytes(candidate.counts && candidate.counts.bytes)) + '</dd></dl></div>'
         + (candidate.encrypted ? textField({ id: 'settingsRestorePassphrase', type: 'password', label: jt('dataLifecycle.restore.passphraseLabel', 'Archive passphrase'), maxLength: 1024 }) : '')
         + (workspaceOnly ? '<div id="settingsWorkspaceRestoreReview" class="data-lifecycle-review-card"><p>' + escapeHtml(jt('dataLifecycle.restore.reviewExactWorkspaceTarget', 'Review the exact .jenny target and conflicts before any workspace file changes.')) + '</p></div>' : '');
-      var footer = button(automatic ? 'modal-not-now' : 'modal-close', automatic ? jt('dataLifecycle.actions.notNow', 'Not now') : 'Cancel', 'secondary')
+      var footer = button(automatic ? 'modal-not-now' : 'modal-close', automatic ? jt('dataLifecycle.actions.notNow', 'Not now') : jt('common.cancel', 'Cancel'), 'secondary')
         + button('modal-choose-archive', jt('dataLifecycle.actions.chooseAnother', 'Choose another'), 'secondary')
         + button(workspaceOnly ? 'modal-review-workspace-restore' : 'modal-restore', workspaceOnly ? jt('dataLifecycle.actions.reviewWorkspaceRestore', 'Review workspace restore') : jt('dataLifecycle.actions.stageProfileRestore', 'Stage profile restore'), 'primary');
       var wrapper = root.document.createElement('div');
@@ -218,7 +228,7 @@
           return;
         }
         context.element.dataset.workspaceReviewId = preview.reviewId;
-        setModalStatus(jt('dataLifecycle.archive.scopeApprovalPrompt', 'Approve {workspaceName} ({workspaceId}): {itemCount}, {totalBytes}, scope: {scope}. Click Create archive again to approve this exact scope.', { workspaceName: preview.workspace.name, workspaceId: preview.workspace.id, itemCount: utils.formatCount(preview.itemCount, 'item', 'items'), totalBytes: utils.formatBytes(preview.totalBytes), scope: preview.scope }),
+        setModalStatus(jt('dataLifecycle.archive.scopeApprovalPrompt', 'Approve {workspaceName} ({workspaceId}): {itemCount}, {totalBytes}, scope: {scope}. Click Create archive again to approve this exact scope.', { workspaceName: preview.workspace.name, workspaceId: preview.workspace.id, itemCount: itemCount(preview.itemCount), totalBytes: utils.formatBytes(preview.totalBytes), scope: preview.scope }),
           'warning');
         return;
       }
@@ -320,7 +330,7 @@
           review.innerHTML = '<h3>' + jt('dataLifecycle.restore.exactWorkspaceScope', 'Exact workspace scope') + '</h3><dl><dt>' + jt('dataLifecycle.restore.target', 'Target') + '</dt><dd>'
             + escapeHtml(result.workspace.name + ' (' + result.workspace.id + ')')
             + '</dd><dt>' + jt('dataLifecycle.restore.scope', 'Scope') + '</dt><dd>' + escapeHtml(result.scope)
-            + '</dd><dt>' + jt('dataLifecycle.restore.contents', 'Contents') + '</dt><dd>' + escapeHtml(utils.formatCount(result.itemCount, 'item', 'items') + ', ' + utils.formatBytes(result.totalBytes))
+            + '</dd><dt>' + jt('dataLifecycle.restore.contents', 'Contents') + '</dt><dd>' + escapeHtml(itemCount(result.itemCount) + ', ' + utils.formatBytes(result.totalBytes))
             + '</dd><dt>' + jt('dataLifecycle.restore.conflicts', 'Conflicts') + '</dt><dd>' + escapeHtml(jtn('dataLifecycle.restore.existingFileCount', Math.max(0, Math.floor(Number(result.conflictCount) || 0)), { count: Math.max(0, Math.floor(Number(result.conflictCount) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} existing file', '{count} existing files'))
             + (result.conflicts?.length ? ': ' + escapeHtml(result.conflicts.join(', ')) : '')
             + '</dd></dl>';

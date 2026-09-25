@@ -10,6 +10,12 @@ from sidecar.ai.routing.iteration_limits import (
     effective_max_tool_calls_per_session,
     effective_max_web_tool_calls_per_turn,
 )
+from sidecar.ai.routing.tool_quota_state import (
+    MAX_ADMISSIONS,
+    call_arguments_digest,
+    normalize_quota_state,
+    quota_policy_state,
+)
 from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.tool_families import tool_family_for_status
 from sidecar.runtime.cooldowns import CooldownRegistry
@@ -91,6 +97,51 @@ class ToolQuotaRegistry:
     cooldown_registry: CooldownRegistry = field(default_factory=CooldownRegistry)
     _web_calls: int = 0
     _code_intelligence_calls: int = 0
+    _session_baseline: int = field(init=False, repr=False)
+    _admissions: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._session_baseline = self.session_tool_call_count
+
+    def snapshot(self) -> dict[str, Any]:
+        admissions = list(self._admissions.values())
+        if (self.session_tool_call_count != self._session_baseline + len(admissions)
+                or self._web_calls != sum(
+                    item["web"] and not item["web_refunded"] for item in admissions)
+                or self._code_intelligence_calls != sum(item["code"] for item in admissions)):
+            raise ValueError("quota_accounting_unproven")
+        return normalize_quota_state({"schema_version": 1, "enabled": True,
+            "policy": quota_policy_state(self.policy), "session_baseline": self._session_baseline,
+            "admissions": admissions, "cooldowns": self.cooldown_registry.export_tool_quota()})
+
+    @classmethod
+    def from_snapshot(cls, value: Any, *, policy: ToolQuotaPolicy,
+                      cooldown_registry: CooldownRegistry | None = None) -> ToolQuotaRegistry:
+        state = normalize_quota_state(value)
+        if state["enabled"] is not True or state["policy"] != quota_policy_state(policy):
+            raise ValueError("quota_policy_changed")
+        registry = cls(policy=policy, session_tool_call_count=state["session_baseline"],
+                       cooldown_registry=cooldown_registry or CooldownRegistry())
+        registry.cooldown_registry.restore_tool_quota(state["cooldowns"])
+        registry._admissions = {item["call_id"]: item for item in state["admissions"]}
+        registry.session_tool_call_count += len(registry._admissions)
+        registry._web_calls = sum(item["web"] and not item["web_refunded"]
+                                  for item in registry._admissions.values())
+        registry._code_intelligence_calls = sum(
+            item["code"] for item in registry._admissions.values())
+        return registry
+
+    def validate_pending_admissions(self, calls: Any, *, tool_contract: Any | None) -> None:
+        if len({call.call_id for call in calls}) != len(calls):
+            raise ValueError("quota_pending_identity_invalid")
+        for call in calls:
+            saved = self._admissions.get(call.call_id)
+            classification = _classify_call(call, tool_contract=tool_contract)
+            if (saved is None or saved["tool_id"] != call.tool_id or saved["web_refunded"]
+                    or saved["arguments_sha256"] != call_arguments_digest(call)
+                    or saved["web"] != classification.web_or_browser
+                    or saved["code"] != classification.code_intelligence):
+                raise ValueError("quota_pending_admission_changed")
 
     def filter_calls(
         self,
@@ -113,6 +164,14 @@ class ToolQuotaRegistry:
                         reason=blocked_call.reason,
                     )
                 continue
+            if call.call_id in self._admissions or len(self._admissions) >= MAX_ADMISSIONS:
+                raise ValueError("tool_quota_admission_reused_or_full")
+            self._admissions[call.call_id] = {
+                "call_id": call.call_id, "tool_id": call.tool_id,
+                "arguments_sha256": call_arguments_digest(call),
+                "web": classification.web_or_browser, "code": classification.code_intelligence,
+                "web_refunded": False,
+            }
             allowed.append(call)
             self._record_allowed(classification=classification)
         return ToolQuotaDecision(allowed=tuple(allowed), blocked=tuple(blocked))
@@ -196,10 +255,14 @@ class ToolQuotaRegistry:
         ``session_tool_call_count`` — the per-session budget is the coarse runaway-loop
         breaker and must stay attempt-based. Never drops ``_web_calls`` below zero.
         """
-        if not is_web_or_browser_call(call, tool_contract=tool_contract):
+        saved = self._admissions.get(call.call_id)
+        if (saved is None or saved["tool_id"] != call.tool_id or saved["web_refunded"]
+                or not saved["web"]
+                or not is_web_or_browser_call(call, tool_contract=tool_contract)):
             return False
         if self._web_calls <= 0:
             return False
+        saved["web_refunded"] = True
         self._web_calls -= 1
         if self._web_calls < self.policy.max_web_tool_calls_per_turn:
             cooldown = self.cooldown_registry.status(
@@ -221,6 +284,8 @@ class ToolQuotaRegistry:
         Classifies by ``outcome.tool_name`` using the same ``tool_contract`` the filter
         used, so the web/browser verdict is identical to the one that consumed the slot.
         """
+        if getattr(outcome, "success", None) is not False:
+            return False
         probe = ToolCallRequest(
             tool_id=str(getattr(outcome, "tool_name", "") or ""),
             arguments={},

@@ -13,6 +13,8 @@ import os
 import secrets
 import stat
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -22,6 +24,9 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 _enabled = False
 _root: Path | None = None
 _root_fd: int | None = None
+_operation_io: ContextVar["HostedFileIOOperation | None"] = ContextVar(
+    "hosted_file_io_operation", default=None
+)
 _O_DIRECTORY = int(getattr(os, "O_DIRECTORY", 0))
 _O_NOFOLLOW = int(getattr(os, "O_NOFOLLOW", 0))
 _O_NONBLOCK = int(getattr(os, "O_NONBLOCK", 0))
@@ -33,6 +38,76 @@ def _failure() -> ToolExecutionFailure:
         message="Hosted file access requires a regular single-link file in the approved workspace.",
         retryable=False,
     )
+
+
+@dataclass(frozen=True)
+class HostedFileIOOperation:
+    enabled: bool
+    root: Path | None
+    root_fd: int | None
+
+
+def _open_operation(
+    workspace_root: str | None,
+    *,
+    enabled: bool,
+    expected_device_id: str | None = None,
+    expected_inode: str | None = None,
+) -> HostedFileIOOperation:
+    if not enabled or workspace_root is None:
+        return HostedFileIOOperation(enabled=enabled, root=None, root_fd=None)
+    if os.name != "posix":
+        raise _failure()
+    root = Path(workspace_root)
+    if not root.is_absolute() or root != root.resolve(strict=True):
+        raise _failure()
+    fd = os.open(root.anchor, os.O_RDONLY | _O_DIRECTORY)
+    try:
+        for segment in root.parts[1:]:
+            child = os.open(segment, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        status = os.fstat(fd)
+        if expected_device_id is not None and (
+            str(status.st_dev) != expected_device_id or str(status.st_ino) != expected_inode
+        ):
+            raise _failure()
+        return HostedFileIOOperation(enabled=True, root=root, root_fd=fd)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextmanager
+def scoped_hosted_file_io(
+    workspace_root: str | None,
+    *,
+    enabled: bool,
+    expected_device_id: str | None = None,
+    expected_inode: str | None = None,
+) -> Iterator[None]:
+    """Own a pinned root descriptor for exactly one trusted tool operation."""
+
+    operation = _open_operation(
+        workspace_root,
+        enabled=enabled,
+        expected_device_id=expected_device_id,
+        expected_inode=expected_inode,
+    )
+    token = _operation_io.set(operation)
+    try:
+        yield
+    finally:
+        _operation_io.reset(token)
+        if operation.root_fd is not None:
+            os.close(operation.root_fd)
+
+
+def _active() -> HostedFileIOOperation:
+    operation = _operation_io.get()
+    if operation is not None:
+        return operation
+    return HostedFileIOOperation(enabled=_enabled, root=_root, root_fd=_root_fd)
 
 
 def configure_hosted_file_io(workspace_root: str | None, *, enabled: bool) -> None:
@@ -62,24 +137,27 @@ def configure_hosted_file_io(workspace_root: str | None, *, enabled: bool) -> No
 
 
 def hosted_file_io_root() -> str | None:
-    return str(_root) if _enabled and _root is not None else None
+    operation = _active()
+    return str(operation.root) if operation.enabled and operation.root is not None else None
 
 
 def hosted_file_io_enabled() -> bool:
-    return _enabled
+    return _active().enabled
 
 
 @contextmanager
 def _parent(path: Path, *, create: bool = False) -> Iterator[tuple[int, str]]:
-    if _root is None or _root_fd is None:
+    operation = _active()
+    root, root_fd = operation.root, operation.root_fd
+    if root is None or root_fd is None:
         raise _failure()
     try:
-        parts = path.relative_to(_root).parts
+        parts = path.relative_to(root).parts
     except ValueError as error:
         raise _failure() from error
     if not parts or any(part in {".", "..", ""} for part in parts):
         raise _failure()
-    fd = os.dup(_root_fd)
+    fd = os.dup(root_fd)
     try:
         try:
             for segment in parts[:-1]:
@@ -128,7 +206,7 @@ def _open_leaf(parent_fd: int, name: str) -> int:
 
 @contextmanager
 def open_regular_file(path: Path, mode: str = "rb", **kwargs: Any) -> Iterator[Any]:
-    if not _enabled:
+    if not hosted_file_io_enabled():
         with open(path, mode, **kwargs) as handle:
             yield handle
         return

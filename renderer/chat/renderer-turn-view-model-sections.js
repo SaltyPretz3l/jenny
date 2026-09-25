@@ -289,6 +289,7 @@
         isExecuting: hasExecuting,
         duplicateToolUseCount,
         firstEventSortKey: cloneSortKey(toolUseEvent.sort_key),
+        lastEventSortKey: cloneSortKey(bucket[bucket.length - 1] && bucket[bucket.length - 1].sort_key),
       });
     }
     toolCalls.sort((a, b) => sortKeyCompare(a.firstEventSortKey, b.firstEventSortKey));
@@ -304,6 +305,7 @@
       const payload = plainPayload(event);
       const base = {
         kind: 'system_notice',
+        eventKind: kind,
         primaryMessageId: normalizeId(event.primary_message_id),
         sourceMessageIds: Array.isArray(event.source_message_ids) ? event.source_message_ids.slice() : [],
         sortKey: cloneSortKey(event.sort_key),

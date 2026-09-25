@@ -381,6 +381,7 @@
         window.markdownUtils.renderInlineMermaidBlocks(chatTimeline, { isStreaming: false });
       }
       renderMathAfterTimelinePatch();
+      decorateCodeAfterTimelinePatch();
 
       schedulePredictedHeightCleanup();
       // Finding 2: attach first so its cancel clears the PREVIOUS render's
@@ -573,6 +574,7 @@
         window.markdownUtils.renderInlineMermaidBlocks(targetRoot, { isStreaming: Boolean(isStreaming) });
       }
       renderMathAfterTimelinePatch(targetRoot);
+      decorateCodeAfterTimelinePatch(targetRoot);
     }
 
     // KaTeX live-DOM typeset pass (katex_math): same post-insert seam as the
@@ -580,6 +582,17 @@
     function renderMathAfterTimelinePatch(targetRoot = chatTimeline) {
       if (window.markdownMathUtils && typeof window.markdownMathUtils.renderMathInto === 'function') {
         window.markdownMathUtils.renderMathInto(targetRoot);
+      }
+    }
+
+    // Syntax-color pass for code that reaches the DOM outside the markdown
+    // renderer: tool-detail sections rendered already expanded (status
+    // auto-expand, user-expanded rows on re-render) and legacy diff hunks.
+    // Idempotent — nodes marked data-code-highlighted are skipped.
+    function decorateCodeAfterTimelinePatch(targetRoot = chatTimeline) {
+      const codeHighlight = window.rendererCodeHighlight;
+      if (codeHighlight && typeof codeHighlight.decorateCodeBlocks === 'function' && targetRoot) {
+        codeHighlight.decorateCodeBlocks(targetRoot);
       }
     }
 
@@ -601,6 +614,9 @@
           window.markdownMathUtils.renderMathInto(containerEl);
         }
       } catch (_mathErr) { /* best-effort */ }
+      try {
+        decorateCodeAfterTimelinePatch(containerEl);
+      } catch (_codeErr) { /* best-effort */ }
       try {
         decorateTranscriptFollowUpButtonsIn(containerEl);
       } catch (_decorateErr) { /* best-effort */ }

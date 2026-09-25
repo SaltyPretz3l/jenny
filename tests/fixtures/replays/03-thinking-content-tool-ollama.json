@@ -44,7 +44,7 @@
       "delta": "I should read the file first.",
       "kind": "reasoning",
       "persist": true,
-      "thinking_budget_chars": 65536
+      "thinking_budget_chars": 265
     },
     {
       "_class": "TokenDeltaEvent",

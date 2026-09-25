@@ -88,3 +88,48 @@ test('execute resolves a name only among bindings the committed generation refer
   assert.equal(result.reason, 'remote_descriptor_rediscovery_required');
   assert.deepEqual(lookups, [{ name: 'plugin:acme:alpha:tool:x', allowed: [oldDigest] }]);
 });
+
+test('execute rejects a latest-name descriptor that differs from captured binding identity', async () => {
+  const { createMemoryFsFacade } = require('../../../services/plugins/store/fs-facade');
+  const { runCommitSequence } = require('../../../services/plugins/lifecycle/commit-sequence');
+  const { BASE_DIR, NOW, commitInput, pluginEntry } = require('../../helpers/plugins/durability-scenario');
+  const facade = createMemoryFsFacade();
+  const hex = (value) => value.repeat(64);
+  const bindingDigest = hex('1');
+  const committed = await runCommitSequence(facade, BASE_DIR, {
+    ...commitInput('gen-bound', { operationId: 'op-bound', now: NOW }),
+    plugins: [{
+      ...pluginEntry('alpha', { effectiveState: 'active' }),
+      package_record_digest: hex('2'), source_trust_digest: hex('3'),
+      advisory_snapshot_digest: hex('4'), data_snapshot_digest: hex('5'),
+      remote_binding_digests: [bindingDigest],
+    }],
+    policyGrantRef: { policy_snapshot_digest: hex('8'), policy_revision: 1,
+      grant_set_digest: hex('9'), network_consent_digest: hex('a') },
+    generationSchemaVersion: 3, lockDigest: hex('6'), distributionStateDigest: hex('7'),
+  });
+  assert.equal(committed.ok, true, committed.reason);
+  const name = 'plugin:acme:alpha:tool:x';
+  const descriptor = {
+    binding: { binding_digest: bindingDigest, descriptor_digest: hex('b'),
+      artifact_digest: hex('c'), endpoint_origin_digest: hex('d') },
+    contribution: { namespaced_name: name, schema_digest: hex('e') },
+  };
+  const authority = new RemoteMcpRuntimeAuthority({
+    facade, baseDir: BASE_DIR,
+    remoteMcpService: { descriptorForName: () => descriptor },
+  });
+  const state = require('../../../services/plugins/lifecycle/commit-sequence');
+  const active = await state.readCommittedState(facade, BASE_DIR);
+  const result = await authority.execute(name, {}, { executionAuthority: {
+    authority: { mode: 'plugin', active_generation_id: active.generation.generation_id,
+      commit_epoch: active.pointer.commit_epoch, registry_revision: active.pointer.revision,
+      dependency_graph_hash: active.generation.graph_hash },
+    descriptor: { capability_identity: { runtime_kind: 'remote_mcp', name,
+      binding_digest: hex('f'), descriptor_digest: hex('b'), artifact_digest: hex('c'),
+      schema_digest: hex('e'), endpoint_origin_digest: hex('d') } },
+  } });
+  assert.equal(result.reason, 'remote_tool_authority_stale');
+  assert.deepEqual(result.execution_settlement,
+    { cleanup: 'confirmed', producer_started: false });
+});

@@ -35,7 +35,6 @@ test('the renderer unload fence outlasts the Electron RPC budget', () => {
   const electronBudget = REQUEST_TIMEOUT_MS_BY_METHOD['models.unload'];
   for (const rendererFile of [
     'renderer/shell/model-library/model-library-runtime-actions.js',
-    'renderer/shell/renderer-model-library.js',
   ]) {
     assert.ok(
       readJsConstant(rendererFile, 'MODEL_UNLOAD_TIMEOUT_MS') > electronBudget,

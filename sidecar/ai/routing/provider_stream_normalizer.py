@@ -53,6 +53,15 @@ NORMALIZED_KIND_EMPTY_CHUNK = "empty_chunk"
 NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS = "malformed_tool_arguments"
 NORMALIZED_KIND_DONE = "done"
 NORMALIZED_KIND_FAILED = "failed"
+# Ninth kind (2026-09-20): a tool call whose argument fragments were cut off by
+# the provider's ``length`` terminal, or by EOF with no terminal at all. Kept
+# apart from ``malformed_tool_arguments`` (unparseable JSON under a clean
+# ``stop``/``tool_calls`` terminal, the model's own fault) so an engine hands
+# the loop a ``length``/``incomplete`` result the checkpoint continuation can
+# act on instead of a fatal parse error. Its arguments are never executed.
+NORMALIZED_KIND_TOOL_CALL_INCOMPLETE = "tool_call_incomplete"
+# Provider terminals that mean "generation was cut short", not "finished".
+_INTERRUPTED_FINISH_REASONS = frozenset({"length", "max_token", "max_tokens"})
 
 # Source values; Phase 4 only uses provider_stream. Phase 5+ may add others
 # (e.g. in_band_parser) without changing the eight kinds above.
@@ -106,6 +115,7 @@ class StreamCounters:
     tool_call_completed_count: int = 0
     empty_chunk_count: int = 0
     malformed_tool_arguments_count: int = 0
+    tool_call_incomplete_count: int = 0
     failed_count: int = 0
     total_chunk_count: int = 0
     provider: str = ""
@@ -119,6 +129,7 @@ class StreamCounters:
             "tool_call_completed_count": self.tool_call_completed_count,
             "empty_chunk_count": self.empty_chunk_count,
             "malformed_tool_arguments_count": self.malformed_tool_arguments_count,
+            "tool_call_incomplete_count": self.tool_call_incomplete_count,
             "failed_count": self.failed_count,
             "total_chunk_count": self.total_chunk_count,
             "provider": self.provider,
@@ -189,6 +200,37 @@ class _ToolCallState:
 # ---------------------------------------------------------------------------
 
 
+def native_tool_call_is_truncated(tool_call: Mapping[str, Any], finish_reason: str) -> bool:
+    """True when a whole-call provider (Ollama) cut ``arguments`` short.
+
+    Mirrors ``_classify_ollama_tool_call``: only a ``length``-style terminal
+    over arguments that do not parse means the call was truncated, and such a
+    call must never execute. Dict arguments and clean stops are never
+    truncated.
+    """
+    if str(finish_reason or "").strip().lower() not in _INTERRUPTED_FINISH_REASONS:
+        return False
+    function = tool_call.get("function") or {}
+    if not isinstance(function, Mapping):
+        return False
+    _arguments, malformed_raw = _coerce_tool_arguments(function.get("arguments"))
+    return malformed_raw is not None
+
+
+def executable_native_tool_calls(raw_calls: list[Any], finish_reason: str) -> list[dict[str, Any]]:
+    """The whole-call entries a runtime may execute: dicts that were not cut short.
+
+    A call ``done_reason: length`` truncated is dropped here (never run as
+    ``tool({})``); with nothing left the finish reason resolves to ``length``
+    and the thinking-budget checkpoint continuation re-asks the model.
+    """
+    return [
+        call
+        for call in raw_calls
+        if isinstance(call, dict) and not native_tool_call_is_truncated(call, finish_reason)
+    ]
+
+
 class ProviderStreamNormalizer:
     """Per-stream chunk classifier.
 
@@ -257,6 +299,9 @@ class ProviderStreamNormalizer:
             malformed_tool_arguments_count=self._counts.get(
                 NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS, 0
             ),
+            tool_call_incomplete_count=self._counts.get(
+                NORMALIZED_KIND_TOOL_CALL_INCOMPLETE, 0
+            ),
             failed_count=self._counts.get(NORMALIZED_KIND_FAILED, 0),
             total_chunk_count=self._total_chunk_count,
             provider=self._provider,
@@ -265,6 +310,10 @@ class ProviderStreamNormalizer:
     @property
     def reasoning_only_detected(self) -> bool:
         return self._reasoning_only_detected
+
+    @property
+    def tool_input_rejected(self) -> bool:
+        return self._tool_input_rejected
 
     @property
     def terminal_finish_reason(self) -> str:
@@ -541,12 +590,15 @@ class ProviderStreamNormalizer:
         self._aggregate_argument_bytes += argument_bytes
         arguments_dict, malformed_raw = _coerce_tool_arguments(raw_arguments)
         if malformed_raw is not None:
-            self._counts[NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS] += 1
-            yield self._build(
-                NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS,
-                tool_call_id=call_id,
-                tool_name=tool_name,
-                arguments_delta=malformed_raw,
+            # Ollama ships whole calls per chunk, so only a ``done`` chunk that
+            # says ``length`` can mean the text was cut short; a non-terminal
+            # chunk with bad JSON is malformed.
+            terminal = self._terminal_finish_reason.strip().lower()
+            yield from self._emit_unparseable_tool_call(
+                call_id,
+                tool_name,
+                malformed_raw,
+                interrupted=terminal in _INTERRUPTED_FINISH_REASONS,
             )
             return
         self._counts[NORMALIZED_KIND_TOOL_CALL_COMPLETED] += 1
@@ -555,6 +607,33 @@ class ProviderStreamNormalizer:
             tool_call_id=call_id,
             tool_name=tool_name,
             arguments_delta=arguments_dict,
+        )
+
+    def _emit_unparseable_tool_call(
+        self,
+        call_id: str,
+        tool_name: str | None,
+        raw: str,
+        *,
+        interrupted: bool,
+    ) -> Iterator[NormalizedStreamEvent]:
+        """Classify unparseable argument text as incomplete or malformed.
+
+        ``interrupted`` means the provider cut generation short (``length``)
+        or the stream ended with no terminal at all: the text is unfinished,
+        not wrong, and the engine must not treat it as a fatal parse error.
+        """
+        kind = (
+            NORMALIZED_KIND_TOOL_CALL_INCOMPLETE
+            if interrupted
+            else NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS
+        )
+        self._counts[kind] += 1
+        yield self._build(
+            kind,
+            tool_call_id=call_id,
+            tool_name=tool_name,
+            arguments_delta=raw,
         )
 
     # --------------------------------------------------------------- vllm path
@@ -681,6 +760,9 @@ class ProviderStreamNormalizer:
         elif isinstance(arguments_value, Mapping):
             # Provider already sent a parsed dict — finalize immediately.
             argument_bytes = len(serialized_tool_arguments(arguments_value))
+            # The dict replaces the accumulated fragments; refund their charge.
+            self._aggregate_argument_bytes -= state.argument_bytes
+            state.argument_bytes = 0
             if not self._arguments_fit(
                 call_bytes=state.argument_bytes,
                 added_bytes=argument_bytes,
@@ -688,6 +770,7 @@ class ProviderStreamNormalizer:
                 yield from self._reject_tool_input(reason="argument_bytes")
                 return
             self._aggregate_argument_bytes += argument_bytes
+            state.argument_bytes = argument_bytes
             state.argument_fragments.clear()
             self._counts[NORMALIZED_KIND_TOOL_CALL_COMPLETED] += 1
             state.finalized = True
@@ -756,12 +839,15 @@ class ProviderStreamNormalizer:
             return
         parsed_dict, malformed_raw = _coerce_tool_arguments(buffer)
         if malformed_raw is not None:
-            self._counts[NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS] += 1
-            yield self._build(
-                NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS,
-                tool_call_id=state.call_id,
-                tool_name=state.tool_name,
-                arguments_delta=malformed_raw,
+            # This runs only at a terminal chunk or at EOF finalize(): an empty
+            # terminal means the socket closed with no verdict, so the
+            # fragments are unfinished; ``length`` means the same.
+            terminal = self._terminal_finish_reason.strip().lower()
+            yield from self._emit_unparseable_tool_call(
+                state.call_id,
+                state.tool_name,
+                malformed_raw,
+                interrupted=(not terminal) or terminal in _INTERRUPTED_FINISH_REASONS,
             )
             return
         self._counts[NORMALIZED_KIND_TOOL_CALL_COMPLETED] += 1
@@ -790,6 +876,9 @@ __all__ = [
     "NORMALIZED_KIND_REASONING_DELTA",
     "NORMALIZED_KIND_TOOL_CALL_COMPLETED",
     "NORMALIZED_KIND_TOOL_CALL_DELTA",
+    "NORMALIZED_KIND_TOOL_CALL_INCOMPLETE",
+    "executable_native_tool_calls",
+    "native_tool_call_is_truncated",
     "NORMALIZED_KIND_VISIBLE_TEXT_DELTA",
     "NORMALIZED_SOURCE_PROVIDER_STREAM",
     "ProviderStreamNormalizer",

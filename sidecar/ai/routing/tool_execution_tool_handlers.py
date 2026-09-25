@@ -53,9 +53,16 @@ def _execute_monitor_tool(
             retryable=True,
         )
     config = getattr(kernel, "_config", None)
+    execution_context = getattr(
+        getattr(runtime, "request_context", None), "execution_context", None
+    )
     workspace_root = (
-        getattr(config, "tools_workspace_root", None)
-        or getattr(config, "agent_workspace_root", None)
+        getattr(execution_context, "root_path", None)
+        if execution_context is not None
+        else (
+            getattr(config, "tools_workspace_root", None)
+            or getattr(config, "agent_workspace_root", None)
+        )
     )
     result = manager.start_monitor(
         command=str(tool_arguments.get("command") or ""),

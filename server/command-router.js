@@ -4,10 +4,19 @@ const { validateCommand, hostFailure } = require('./api-contract');
 const { createDecisionAdapter } = require('./decision-adapter');
 const { CancellationRegistry, SessionMutationQueue } = require('./command-router-concurrency');
 const { buildSessionSnapshot } = require('./session-snapshots');
+const {
+  PROJECT_LEASE_OPERATIONS, PROJECT_MUTATIONS, PROJECT_OPERATIONS,
+  createProjectCommandDispatcher,
+} = require('../services/host/project-commands');
+
+const { RUNTIME_LEASE_OPERATIONS, RUNTIME_GLOBAL_MUTATIONS, RUNTIME_OPERATIONS,
+  createRuntimeCommandDispatcher, submissionKey } = require('../services/host/runtime-commands');
 
 const LEASE_OPERATIONS = new Set([
+  ...RUNTIME_LEASE_OPERATIONS,
   'sessions.rename', 'sessions.delete', 'sessions.preferences', 'chat.send',
   'chat.cancel', 'approval.resolve', 'questions.answer', 'questions.decline',
+  ...PROJECT_LEASE_OPERATIONS,
 ]);
 const MAX_SESSIONS = 10_000;
 const TERMINAL_STREAM_TYPES = new Set(['complete', 'error', 'cancelled', 'canceled', 'failed']);
@@ -40,6 +49,9 @@ function safeSession(value) {
   if (typeof value.plan_mode === 'boolean') result.plan_mode = value.plan_mode;
   if (Number.isSafeInteger(value.message_count) && value.message_count >= 0) {
     result.message_count = value.message_count;
+  }
+  if (/^project_[A-Za-z0-9_-]{1,128}$/u.test(value.project_id || '')) {
+    result.project_id = value.project_id;
   }
   return result;
 }
@@ -81,11 +93,23 @@ function createCommandRouter({
   const decisionAdapter = createDecisionAdapter({ backend });
   const revisions = new Map();
   const mutationQueue = new SessionMutationQueue({ capacity: MAX_SESSIONS });
+  const projectMutationQueue = new SessionMutationQueue({ capacity: 1 });
   const cancellations = new CancellationRegistry();
   let creatingSession = false;
-  const activeForeground = { value: null };
   const disposed = { value: false };
   const listeners = [];
+  const projectDispatcher = createProjectCommandDispatcher({
+    applicationService: backend.projectApplicationService,
+    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority },
+    transaction: { runReceipt },
+    result: { safeSession, bumpRevision, publish },
+  });
+
+  const runtimeDispatcher = createRuntimeCommandDispatcher({
+    applicationService: backend.runtimeApplicationService,
+    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity },
+    transaction: { runReceipt }, result: { bumpRevision, publish, trustedChatOptions },
+  });
 
   function currentRevision(sessionId) {
     const value = revisions.get(sessionId);
@@ -111,13 +135,6 @@ function createCommandRouter({
     try { eventStream.publish(type, payload); } catch (_error) { /* transport is best effort */ }
   }
 
-  function releaseForeground(streamId = '', reason = '') {
-    const current = activeForeground.value;
-    if (!current || (streamId && current.streamId && current.streamId !== streamId)) return;
-    activeForeground.value = null;
-    if (reason) publish('foreground_changed', { state: 'idle', reason });
-  }
-
   function onBackendStream(event) {
     const sessionId = text(event?.sessionId, 128);
     const streamId = text(event?.streamId, 128);
@@ -126,13 +143,12 @@ function createCommandRouter({
     if (TERMINAL_STREAM_TYPES.has(type)) {
       cancellations.markTerminal(sessionId, streamId);
       bumpRevision(sessionId);
-      releaseForeground(streamId, type);
     }
   }
 
   // BackendEvents owns canonical chat DTO publication and live projection.
   // The router observes only identity and terminal status for revision fences
-  // and foreground release; it never republishes provider payloads.
+  // only; it never republishes provider payloads.
   if (typeof backend.on === 'function') {
     backend.on('chat-stream', onBackendStream);
     listeners.push(['chat-stream', onBackendStream]);
@@ -222,8 +238,12 @@ function createCommandRouter({
       try {
         // The chat lock covers admission only; the backend's pending stream
         // promise is deliberately not awaited here.
-        return LEASE_OPERATIONS.has(command.operation)
-          ? await mutationQueue.run(command.session_id, execute) : await execute();
+        if (LEASE_OPERATIONS.has(command.operation)) {
+          return await mutationQueue.run(command.session_id, execute);
+        }
+        return (PROJECT_MUTATIONS.has(command.operation) || RUNTIME_GLOBAL_MUTATIONS.has(command.operation))
+          ? await projectMutationQueue.run('project_registry', execute)
+          : await execute();
       }
       catch (error) {
         if (error.indeterminate) throw error;
@@ -357,7 +377,8 @@ function createCommandRouter({
     const failure = mutationGuard(command, context); if (failure) return failure;
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
-      if (activeForeground.value?.sessionId === command.session_id) {
+      if (backend.sessionTurnActors?.hasActiveLifecycle?.(command.session_id)
+        || backend.sessionStore?.getActiveTurn?.(command.session_id)) {
         return hostFailure('conflict', 'session_active', command.request_id);
       }
       const value = await backend.deleteSession(command.session_id);
@@ -384,64 +405,36 @@ function createCommandRouter({
 
   async function sendChat(command, context) {
     const failure = mutationGuard(command, context); if (failure) return failure;
-    const requestKey = `${context.deviceId}:${command.request_id}`;
-    const current = activeForeground.value;
-    if (current && current.requestKey !== requestKey) return hostFailure('conflict', 'foreground_busy', command.request_id, true);
-    if (!current) {
-      activeForeground.value = { requestKey, sessionId: command.session_id, streamId: '' };
-      publish('foreground_changed', { state: 'busy', session_id: command.session_id });
-    }
-    let admittedStreamId = '';
     return runReceipt(command, context, async () => {
-      try {
+      assertMutationAuthority(command, context);
+      if (!backend.runtimeApplicationService?.submit) return hostFailure('unavailable', 'runtime_unavailable', command.request_id);
+      const ids = command.params.attachment_ids || [];
+      let attachments = [];
+      if (ids.length) {
+        if (typeof resolveAttachments !== 'function') return hostFailure('invalid', 'attachment_resolver_required', command.request_id);
+        attachments = await resolveAttachments(ids, { sessionId: command.session_id, deviceId: context.deviceId });
+        if (attachments?.ok === false) return hostFailure(attachments.error.kind, attachments.error.reason, command.request_id);
+        if (attachments?.ok === true) attachments = attachments.attachments;
         assertMutationAuthority(command, context);
-        const ids = Array.isArray(command.params.attachment_ids) ? command.params.attachment_ids : [];
-        let attachments = [];
-        if (ids.length) {
-          if (typeof resolveAttachments !== 'function') return hostFailure('invalid', 'attachment_resolver_required', command.request_id);
-          attachments = await resolveAttachments(ids, { sessionId: command.session_id, deviceId: context.deviceId });
-          if (attachments?.ok === false) return hostFailure(attachments.error.kind, attachments.error.reason, command.request_id);
-          if (attachments?.ok === true) attachments = attachments.attachments;
-          assertMutationAuthority(command, context);
-          if (!Array.isArray(attachments) || attachments.length !== ids.length) {
-            return hostFailure('invalid', 'attachment_resolution_failed', command.request_id);
-          }
+        if (!Array.isArray(attachments) || attachments.length !== ids.length) {
+          return hostFailure('invalid', 'attachment_resolution_failed', command.request_id);
         }
-        const options = trustedChatOptions(command);
-        const handle = await backend.startChatStream({
-          sessionId: command.session_id,
-          prompt: command.params.prompt,
-          visiblePrompt: command.params.prompt,
-          traceId: command.request_id,
-          attachments,
-          ...options,
-        });
-        const streamId = text(handle?.streamId || handle?.stream_id, 128);
-        if (streamId) admittedStreamId = streamId;
-        if (activeForeground.value?.requestKey === requestKey) activeForeground.value.streamId = streamId;
-        const pending = handle?._pendingPromise || handle?.pendingPromise
-          || backend.activeStreams?.get?.(streamId)?._pendingPromise;
-        if (pending && typeof pending.then === 'function') {
-          Promise.resolve(pending).then(() => releaseForeground(streamId, 'terminal'))
-            .catch(() => releaseForeground(streamId, 'error'));
-        }
-        assertPostAwaitAuthority(command, context);
-        if (!streamId) return hostFailure('unavailable', 'stream_admission_failed', command.request_id, true);
-        const revision = bumpRevision(command.session_id);
-        publish('session_changed', { session_id: command.session_id, revision, reason: 'chat_started' });
-        return { ok: true, accepted: true, session_id: command.session_id, stream_id: streamId,
-          revision };
-      } catch (error) {
-        if (!admittedStreamId) releaseForeground('', 'admission_failed');
-        if (error.indeterminate) throw error;
-        return authorityFailure(error, command);
       }
-    }).then((result) => {
-      if (result?.ok === false && activeForeground.value?.requestKey === requestKey
-        && !activeForeground.value.streamId) {
-        releaseForeground('', 'admission_failed');
-      }
-      return result;
+      const options = trustedChatOptions(command);
+      const saved = await backend.runtimeApplicationService.submit({
+        session_id: command.session_id, prompt: command.params.prompt, visible_prompt: command.params.prompt,
+        idempotency_key: submissionKey(context.deviceId, command.request_id), attachments,
+        preferred_model: options.preferredModel, reasoning_effort: options.reasoningEffort,
+        plan_mode: options.planMode, context_preferences: options.contextPreferences,
+        tool_preferences: options.toolPreferences, approval_mode: options.approvalMode,
+      }, { beforeCommit: () => assertMutationAuthority(command, context) });
+      assertPostAwaitAuthority(command, context);
+      if (!saved?.ok) return hostFailure(saved?.error?.reason === 'idempotency_conflict' ? 'conflict' : 'unavailable',
+        saved?.error?.reason || 'runtime_submission_refused', command.request_id);
+      const revision = bumpRevision(command.session_id);
+      publish('session_changed', { session_id: command.session_id, revision, reason: 'chat_saved' });
+      return { ok: true, accepted: true, durable: true, session_id: saved.session_id,
+        work_id: saved.work_id, turn_id: saved.turn_id, work_revision: saved.revision, status: saved.status, revision };
     });
   }
 
@@ -461,9 +454,9 @@ function createCommandRouter({
           stream_id: queuedPrior.streamId, awaiting_settlement: !queuedPrior.terminal };
       }
       assertMutationAuthority(command, context);
-      const foreground = activeForeground.value;
-      if (!foreground || foreground.sessionId !== command.session_id
-        || foreground.streamId !== command.params.stream_id) {
+      const activeTurn = backend.sessionStore?.getActiveTurn?.(command.session_id);
+      if (!activeTurn || (activeTurn.stream_id || activeTurn.request_id) !== command.params.stream_id
+        || !backend.activeStreams?.has(command.params.stream_id)) {
         return hostFailure('forbidden', 'stream_session_mismatch', command.request_id);
       }
       const cancellation = cancellations.remember(command, context.deviceId);
@@ -520,12 +513,18 @@ function createCommandRouter({
     try {
       // A committed exact retry returns its durable receipt even after its own
       // mutation advanced the revision. New work still checks the live lease.
-      if (LEASE_OPERATIONS.has(command.operation) || command.operation === 'sessions.create') {
+      if (LEASE_OPERATIONS.has(command.operation) || PROJECT_MUTATIONS.has(command.operation)
+        || RUNTIME_GLOBAL_MUTATIONS.has(command.operation) || command.operation === 'sessions.create') {
         const previous = receipts.lookup(command, context.deviceId);
         if (previous.found) return previous.result;
       }
-      if (['sessions.create', 'sessions.rename', 'sessions.delete', 'chat.send'].includes(command.operation)
+      if (['sessions.create', 'sessions.rename', 'sessions.delete', 'chat.send',
+        'projects.create', 'projects.rename', 'projects.bindRoot',
+        'projects.assignSession', 'permissionReview.resolve', 'sessionRuntime.start',
+        'sessionRuntime.updatePending', 'sessionRuntime.updateLimits'].includes(command.operation)
         && !canAdmit()) return hostFailure('unavailable', 'disk_pressure', command.request_id, true);
+      if (RUNTIME_OPERATIONS.has(command.operation)) return runtimeDispatcher.dispatch(command, context);
+      if (PROJECT_OPERATIONS.has(command.operation)) return projectDispatcher.dispatch(command, context);
       switch (command.operation) {
         case 'sessions.list': return listSessions(command);
         case 'requests.status': return receipts.status(command.params.request_id, context.deviceId);
@@ -563,9 +562,7 @@ function createCommandRouter({
     if (typeof backend.off === 'function') {
       for (const [type, listener] of listeners) backend.off(type, listener);
     }
-    // A browser disconnect must not cancel the backend stream. Dropping the
-    // admission marker is sufficient for this router instance's disposal.
-    activeForeground.value = null;
+    // A browser disconnect never cancels accepted durable work.
     cancellations.clear();
   }
 

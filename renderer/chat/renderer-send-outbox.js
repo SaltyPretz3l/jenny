@@ -110,6 +110,14 @@
 
     function list(sessionId) { return queueFor(sessionId).slice(); }
     function peek(sessionId) { return queueFor(sessionId)[0] || null; }
+    function firstDispatchable(sessionId) {
+      for (const entry of queueFor(sessionId)) {
+        if (['needs_review', 'sent'].includes(entry.status)) continue;
+        if (['capturing_context', 'ready', 'waiting_for_turn', 'failed'].includes(entry.status)) return entry;
+        return null;
+      }
+      return null;
+    }
 
     function enqueue(sessionId, payload) {
       const id = normalizeSessionId(sessionId);
@@ -275,6 +283,7 @@
       dispose,
       edit,
       enqueue,
+      firstDispatchable,
       list,
       peek,
       remove,

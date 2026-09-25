@@ -54,6 +54,7 @@
       clearTurnStatusPill,
       clearTurnStatusPillSources,
       showToastMessage,
+      dismissToast,
       toastSource,
       approvalToastSessionIds,
       resolveWorkspaceActivator,
@@ -109,7 +110,11 @@
         }
       };
     const safeShowToast = typeof showToastMessage === 'function' ? showToastMessage : () => {};
+    const safeDismissToast = typeof dismissToast === 'function' ? dismissToast : () => {};
     const TOAST_SOURCE = toastSource || { chatStream: 'chat-stream' };
+    // The toast store dismisses by the id showToastMessage returns, not by
+    // dedupeKey, so each session's approval toast id is kept here.
+    const approvalToastIdBySession = new Map();
     // Degraded markers are bounded by MAX_DEGRADED_STREAMS, not time: an active
     // unrecovered stream must remain routed to canonical recovery until consumed.
     if (!(state.degradedBufferedStreamsByStream instanceof Map)) {
@@ -149,6 +154,7 @@
     function getPreflightForPayload(payload) {
       const streamId = normalizeId(payload?.streamId);
       const sessionId = resolvePayloadSessionId(payload);
+      if (payload?.runtimeAdmission) return { sessionId, preflight: null };
       if (multiStreamController?.getPreflight && sessionId) {
         let resolvedSessionId = sessionId;
         let preflight = multiStreamController.getPreflight(sessionId);
@@ -429,7 +435,9 @@
     }
 
     async function refreshSessionMetadata(sessionId, options = {}) {
+      const startedAt = Date.now();
       await safeRefreshSessionSummaries(sessionId, { preserveCurrentSession: true });
+      options.noteStep?.('sessionSummaries', Date.now() - startedAt);
       if (options.signal?.aborted === true) return false;
       if (options.guard && typeof options.guard.mutate === 'function') {
         return options.guard.mutate(() => safeQueueRender({ full: true }));
@@ -495,11 +503,12 @@
         return;
       }
       approvalToastSessionIds.add(normalizedSessionId);
-      safeShowToast(jt('chat.sessionHelpers.backgroundApprovalWaiting', 'A background session is waiting for tool approval.'), {
+      const toastId = safeShowToast(jt('chat.sessionHelpers.backgroundApprovalWaiting', 'A background session is waiting for tool approval.'), {
         title: jt('chat.sessionHelpers.approvalNeededTitle', 'Approval Needed'),
         tone: 'warning',
         sticky: true,
         source: TOAST_SOURCE.chatStream,
+        sessionId: normalizedSessionId,
         dedupeKey: `${TOAST_SOURCE.chatStream}:approval:${normalizedSessionId}`,
         actions: [{
           id: `open_session_${normalizedSessionId}`,
@@ -508,6 +517,20 @@
           onClick: () => activateApprovalSession(normalizedSessionId),
         }],
       });
+      if (toastId) {
+        approvalToastIdBySession.set(normalizedSessionId, toastId);
+      }
+    }
+
+    // Called by the runtime once the session has no pending approval left.
+    function dismissApprovalToast(sessionId) {
+      const normalizedSessionId = normalizeId(sessionId);
+      const toastId = approvalToastIdBySession.get(normalizedSessionId);
+      if (!toastId) {
+        return;
+      }
+      approvalToastIdBySession.delete(normalizedSessionId);
+      safeDismissToast(toastId);
     }
 
     return {
@@ -530,6 +553,7 @@
       clearSessionTurnStatusPillSources,
       activateApprovalSession,
       showApprovalToast,
+      dismissApprovalToast,
     };
   }
 

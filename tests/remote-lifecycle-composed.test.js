@@ -7,6 +7,7 @@ const crypto = require('../services/remote/remote-crypto');
 const contracts = require('../services/remote/remote-contracts');
 const limits = require('../services/remote/remote-limits');
 const { createRemoteControlService } = require('../services/remote/remote-control-service');
+const { createRemoteChatAdapter } = require('../services/remote/remote-chat-adapter');
 const { createPeerSession } = require('../services/remote/remote-peer-session');
 const { createChatStartCancellation } = require('../services/backend/chat-start-cancellation');
 
@@ -241,7 +242,7 @@ async function connectPhone(fix, connectionId = 'connect_1', enable = true) {
     credential,
   });
   const proof = await crypto.proveHandshake(fix.deviceSecret, keys.transcriptHash);
-  fix.relay.receive(await sealPhone(keys, route.routeId, hs2.epoch, 0, {
+  await fix.relay.receive(await sealPhone(keys, route.routeId, hs2.epoch, 0, {
     v: 1,
     kind: 'hs_proof',
     proof: crypto.toBase64Url(proof),
@@ -519,6 +520,57 @@ test('device revocation fences a suspended create before its initial share', asy
   await submitted.pending;
   assert.equal(shareCalls, 0);
   assert.deepEqual(fix.record.shared_sessions, ['chat-1']);
+  await fix.service.dispose();
+});
+
+test('losing a device last ready connection cancels its pending remote start', async () => {
+  let chat;
+  let releasePreflight;
+  let preflightCancellation;
+  let admitted = 0;
+  const fix = createFixture({
+    factories: {
+      createRemoteChatAdapter(input) {
+        chat = createRemoteChatAdapter(input);
+        return chat;
+      },
+    },
+  });
+  const phone = await connectPhone(fix);
+  const control = await sendCommand(
+    fix,
+    phone,
+    command('control_disconnect', 'control.request', {}, 'chat-1')
+  );
+  fix.backend.startChatStream = async (_payload, { cancellation } = {}) => {
+    preflightCancellation = cancellation;
+    await new Promise((resolve) => { releasePreflight = resolve; });
+    if (cancellation.signal.aborted) throw new Error('remote start cancelled');
+    admitted += 1;
+    return { sessionId: 'chat-1', streamId: 'stream_disconnect' };
+  };
+  const sending = chat.send({
+    deviceId: 'device_id1',
+    sessionId: 'chat-1',
+    prompt: 'disconnect during preflight',
+    requestId: 'request_disconnect',
+    hasGrant: (sessionId) => sessionId === 'chat-1',
+    lease: control.data.lease,
+    isEpochLive: () => true,
+    isAuthorized: () => true,
+  });
+  await flushUntil(() => releasePreflight, 'remote chat preflight');
+
+  fix.relay.receive({
+    v: 1, kind: 'peer_close', connection_id: phone.connectionId,
+  });
+  const cancelledBeforeRelease = preflightCancellation.signal.aborted;
+  releasePreflight();
+  const result = await sending;
+
+  assert.equal(cancelledBeforeRelease, true);
+  assert.equal(admitted, 0);
+  assert.equal(result.error, 'unauthorized');
   await fix.service.dispose();
 });
 

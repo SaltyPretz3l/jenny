@@ -51,10 +51,9 @@ function createRuntimeSidecar() {
   };
 }
 
-function registerStartupRuntime(backendService, appRoot = process.cwd()) {
+function registerStartupRuntime(backendService, appRoot = process.cwd(), userData = makeRoot()) {
   const service = { featureFlags: { plugins: true }, sidecarClient: createRuntimeSidecar(),
     ...backendService };
-  const userData = makeRoot();
   const handle = registerPluginsRuntime({ handle() {}, on() {}, removeHandler() {} }, {
     backendService: service,
     app: { getPath: () => userData, getAppPath: () => appRoot, once() {}, isPackaged: false },
@@ -62,7 +61,7 @@ function registerStartupRuntime(backendService, appRoot = process.cwd()) {
     processRef: { argv: [], env: {}, resourcesPath: path.join(appRoot, 'build') },
     getMainWindow: () => null,
   });
-  return { handle, backendService: service };
+  return { handle, backendService: service, userData };
 }
 
 test('startup migration waits boundedly for the packaged sidecar connection', async () => {
@@ -190,6 +189,59 @@ test('a rejected post-apply refresh still settles the apply predicate', async ()
   await handle.startupReady;
   assert.equal(autoLoadCalls, 1);
   await handle.dispose();
+});
+
+test('startup provider rehydration retries the persisted ChatGPT selection after mock fallback', async () => {
+  const refreshCalls = [];
+  let engineAtAutoLoad;
+  const { handle, backendService } = registerStartupRuntime({
+    configService: { getState: () => ({ preferredEngineType: 'chatgpt' }) },
+    currentEngineType: 'mock',
+    _lastEngineFallback: { requested_engine: 'chatgpt', reason: 'ResponsesDescriptorError' },
+    async refreshManagedConfig(reason, options) {
+      refreshCalls.push({ reason, options });
+      this.currentEngineType = options.requestedEngineType || this.currentEngineType;
+    },
+    _autoLoadDefaultModel() { engineAtAutoLoad = this.currentEngineType; },
+  });
+  try {
+    await handle.startupReady;
+    assert.equal(refreshCalls[0].options.requestedEngineType, 'chatgpt');
+    assert.equal(engineAtAutoLoad, 'chatgpt');
+    assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
+  } finally { await handle.dispose(); }
+});
+
+test('cold restart longer than the apply deadline still publishes the saved ChatGPT provider', async () => {
+  const configService = { getState: () => ({ preferredEngineType: 'chatgpt' }) };
+  const seed = registerStartupRuntime({ configService });
+  await seed.handle.startupReady;
+  await seed.handle.dispose();
+  const refreshCalls = [];
+  let engineAtAutoLoad;
+  const { handle, backendService } = registerStartupRuntime({
+    configService, _managedReadyOnce: false, _stopping: false,
+    currentEngineType: 'mock',
+    _lastEngineFallback: { requested_engine: 'chatgpt', reason: 'ResponsesDescriptorError' },
+    async refreshManagedConfig(reason, options) {
+      refreshCalls.push({ reason, options });
+      this.currentEngineType = options.requestedEngineType || this.currentEngineType;
+    },
+    _autoLoadDefaultModel() { engineAtAutoLoad = this.currentEngineType; },
+  }, process.cwd(), seed.userData);
+  try {
+    // Exercise the actual persisted-plugin startup chain past its 15s apply
+    // deadline, rather than accepting an unvalidated late adapter result.
+    await new Promise(resolve => setTimeout(resolve, 16_000));
+    assert.equal(refreshCalls.length, 0);
+    backendService._managedReadyOnce = true;
+    await handle.startupReady;
+    assert.equal(refreshCalls.length, 1);
+    assert.equal(refreshCalls[0].options.requestedEngineType, 'chatgpt');
+    assert.equal(engineAtAutoLoad, 'chatgpt');
+    assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
+    assert.ok(handle.stage7Service.getState().providers.providers.includes('chatgpt'));
+  } finally { await handle.dispose(); }
 });
 
 test('migration without an available provider settles and re-arms default-model loading', async () => {

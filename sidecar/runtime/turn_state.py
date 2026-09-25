@@ -13,9 +13,17 @@ from typing import Iterator
 class LiveRunModeState:
     approval_mode: str = "prompt"
     read_only: bool = False
+    paused_unattended: bool = False
+    auto_approvals: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def update(self, *, approval_mode: str, read_only: bool) -> None:
+    def update(
+        self,
+        *,
+        approval_mode: str,
+        read_only: bool,
+        paused_unattended: bool | None = None,
+    ) -> None:
         normalized_mode = "auto_run" if approval_mode == "auto_run" else "prompt"
         with self._lock:
             self.approval_mode = normalized_mode
@@ -23,10 +31,25 @@ class LiveRunModeState:
             # Leaving Plan Mode may relax the request-local boundary immediately.
             if read_only is False:
                 self.read_only = False
+            if paused_unattended is not None:
+                self.paused_unattended = paused_unattended
 
     def snapshot(self) -> tuple[str, bool]:
         with self._lock:
             return self.approval_mode, self.read_only
+
+    def is_paused_unattended(self) -> bool:
+        with self._lock:
+            return self.paused_unattended
+
+    def record_auto_approval(self) -> int:
+        with self._lock:
+            self.auto_approvals += 1
+            return self.auto_approvals
+
+    def reset_auto_approvals(self) -> None:
+        with self._lock:
+            self.auto_approvals = 0
 
 
 _LIVE_RUN_MODE_STATE: ContextVar[LiveRunModeState | None] = ContextVar(

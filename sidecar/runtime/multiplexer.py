@@ -319,16 +319,26 @@ class PrioritizedMessageWriter:
                     "sidecar transport_backpressure: outbound frame queue "
                     f"exceeded the {lane} lane high-water mark"
                 )
-                self._logger.warning(
-                    "sidecar transport backpressure detected",
-                    extra={
-                        "event": "sidecar.runtime.transport_backpressure",
+                # log_event: the JSON formatter reads record.data, not bare extras.
+                log_event(
+                    self._logger,
+                    logging.WARNING,
+                    component="runtime.transport",
+                    event="sidecar.runtime.transport_backpressure",
+                    message="sidecar transport backpressure detected",
+                    status="error",
+                    data={
                         "buffered_bytes": self._buffered_bytes,
                         "next_frame_bytes": encoded_size,
                         "high_water_mark_bytes": lane_limit,
                         "lane": lane,
                         "control_reserve_bytes": self._control_reserve_bytes,
                     },
+                    buffered_bytes=self._buffered_bytes,
+                    next_frame_bytes=encoded_size,
+                    high_water_mark_bytes=lane_limit,
+                    lane=lane,
+                    control_reserve_bytes=self._control_reserve_bytes,
                 )
                 raise error
             self._buffered_bytes = next_size
@@ -755,7 +765,6 @@ class StdioTransportMultiplexer:
                     raise ApprovalResponseCancelledError("approval wait cancelled")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.clear_approval_waiter(approval_id)
                     raise TimeoutError("timed out waiting for approval response")
                 try:
                     message = wait_queue.get(timeout=min(0.05, remaining))
@@ -848,6 +857,9 @@ class StdioTransportMultiplexer:
         session_id = str(params.get("session_id") or "").strip()
         approval_mode = params.get("approval_mode")
         read_only = params.get("read_only")
+        reason = params.get("reason")
+        if not isinstance(reason, str):
+            reason = None
         if (
             not session_id
             or approval_mode not in {"prompt", "auto_run"}
@@ -865,6 +877,7 @@ class StdioTransportMultiplexer:
         handle.live_run_mode.update(
             approval_mode=approval_mode,
             read_only=read_only,
+            paused_unattended=reason == "unattended_idle",
         )
 
     def _route_approval_response(self, message: dict[str, Any]) -> bool:

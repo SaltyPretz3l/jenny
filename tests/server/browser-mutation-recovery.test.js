@@ -344,3 +344,51 @@ test('settlement after selection changes refreshes the current session without c
     assert.equal(app.state.snapshot.session.session_id, 'session_b');
   } finally { close(app, instance); }
 });
+
+
+test('durable Send while active preserves a newer draft and admission received before acknowledgement', async () => {
+  const gate = deferred(); const calls = [];
+  const bridge = { clientId: 'client_a', command: (operation, options) => { calls.push({ operation, options }); return gate.promise; } };
+  const { app, instance } = appWithBridge(bridge, { activeStreamId: 'old_stream' });
+  app._loadSnapshot = async () => {};
+  app.conversation.loadSnapshot = async () => {};
+  try {
+    assert.equal(instance.window.document.querySelector('#composer-prompt').disabled, false);
+    assert.ok(instance.window.document.querySelector('[data-action="send-chat"]'));
+    assert.ok(instance.window.document.querySelector('[data-action="cancel-chat"]'));
+    const pending = app.send(); await flush();
+    assert.equal(calls[0].operation, 'chat.send');
+    app.state.draft = 'a newer draft';
+    app.conversation.applyStreamEvent({ type: 'started', stream_id: 'new_stream', turn_id: 'logical_turn' });
+    gate.resolve({ ok: true, accepted: true, durable: true, session_id: 'session_a', work_id: 'work_1',
+      turn_id: 'logical_turn', work_revision: 1, revision: 'r2' });
+    await pending;
+    assert.equal(app.state.draft, 'a newer draft');
+    assert.equal(app.state.activeStreamId, 'new_stream');
+    assert.equal(app.state.liveProjection.turn_id, 'logical_turn');
+    app.conversation.applyStreamEvent({ type: 'complete', stream_id: 'old_stream' });
+    assert.equal(app.state.activeStreamId, 'new_stream');
+  } finally { close(app, instance); }
+});
+
+test('lost durable acknowledgement reconciles without an attempt ID or duplicate effect', async () => {
+  let effects = 0;
+  const saved = { ok: true, accepted: true, durable: true, session_id: 'session_a', work_id: 'work_1',
+    turn_id: 'turn_1', work_revision: 1, revision: 'r2' };
+  const bridge = new BrowserBridge({ fetchImpl: async (_url, options) => {
+    const sent = JSON.parse(options.body);
+    if (sent.operation === 'chat.send') { effects += 1; return response(null, 200, async () => { throw new Error('lost response'); }); }
+    if (sent.operation === 'requests.status') return response({ ok: true, state: 'settled', result: saved });
+    throw new Error(`unexpected ${sent.operation}`);
+  } });
+  Object.assign(bridge, { clientId: 'client_a', clientToken: 'token', csrfToken: 'csrf', bootEpoch: 'boot_a' });
+  const { app, instance } = appWithBridge(bridge);
+  app._loadSnapshot = async () => {};
+  app.conversation.loadSnapshot = async () => {};
+  app.state.activeStreamId = 'early_stream';
+  try {
+    await app.send();
+    assert.equal(effects, 1); assert.equal(app.state.draft, '');
+    assert.equal(app.state.activeStreamId, 'early_stream'); assert.equal(app.state.mutationPending, false);
+  } finally { close(app, instance); }
+});

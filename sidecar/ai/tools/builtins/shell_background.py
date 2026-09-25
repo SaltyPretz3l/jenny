@@ -24,15 +24,8 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_IO_FAILED,
 )
-from sidecar.ai.tools.builtins.owned_process import (
-    DEFAULT_MAX_ACTIVE_PROCESSES,
-    OwnedProcess,
-    OwnedProcessCapacityError,
-    OwnedProcessResult,
-    OwnedProcessShutdownError,
-    get_owned_process_service,
-    owned_process_pid_is_alive,
-)
+from sidecar.ai.tools.builtins import owned_process as _owned_process
+from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
 from sidecar.ai.tools.builtins.shell_background_status import (
     MAX_INLINE_OUTPUT_CHARS,
     MAX_STATUS_ERROR_CHARS,
@@ -57,7 +50,7 @@ from sidecar.runtime.diagnostics import log_event
 
 TOOL_RESULTS_DIR = ".jenny/tool-results"
 MAX_BACKGROUND_OUTPUT_BYTES = 50 * 1024 * 1024
-MAX_BACKGROUND_JOBS = DEFAULT_MAX_ACTIVE_PROCESSES
+MAX_BACKGROUND_JOBS = _owned_process.DEFAULT_MAX_ACTIVE_PROCESSES
 MAX_TERMINAL_STATUS_FALLBACKS = 64
 RUNNING_RECONCILIATION_GRACE_SECONDS = 5.0
 RUNNING_PID_REUSE_MAX_SECONDS = 15 * 60.0
@@ -87,10 +80,20 @@ class _ManagedBackgroundProcess:
     process: subprocess.Popen[str]
     job_object: _Closable | None = None
     process_group_id: int | None = None
-    owned_process: OwnedProcess | None = None
-    owned_result: OwnedProcessResult | None = None
+    owned_process: _owned_process.OwnedProcess | None = None
+    owned_result: _owned_process.OwnedProcessResult | None = None
+    cleanup_verdict: _owned_process_settlement.OwnedProcessCleanupVerdict | None = None
     stop_requested: threading.Event = field(default_factory=threading.Event)
+    terminalized: threading.Event = field(default_factory=threading.Event)
     settled: threading.Event = field(default_factory=threading.Event)
+
+    def observe_cleanup(
+        self, verdict: _owned_process_settlement.OwnedProcessCleanupVerdict
+    ) -> None:
+        if self.cleanup_verdict is None or self.cleanup_verdict.cleanup != "confirmed":
+            self.cleanup_verdict = verdict
+        if verdict.cleanup == "confirmed" and self.terminalized.is_set():
+            self.settled.set()
 
 
 # In-process tracking of running background jobs for cleanup.
@@ -108,9 +111,14 @@ _background_capacity = _BackgroundCapacity()
 _lock = threading.Lock()
 
 
-def active_job_ids() -> list[str]:
+def active_job_ids(*, store_key: str | None = None) -> list[str]:
+    """Running job ids, optionally only the ones one workspace store registered."""
     with _lock:
-        return sorted(_active_jobs)
+        if store_key is None:
+            return sorted(_active_jobs)
+        return sorted(
+            job_id for job_id in _active_jobs if _active_job_store_keys.get(job_id) == store_key
+        )
 
 
 def _cleanup_active_jobs() -> None:
@@ -231,7 +239,7 @@ def _release_background_start_reservation() -> None:
 
 
 def _process_is_alive(pid: int) -> bool:
-    return owned_process_pid_is_alive(pid)
+    return _owned_process.owned_process_pid_is_alive(pid)
 
 
 def _unowned_running_status_age(
@@ -436,28 +444,45 @@ def _build_terminal_status(
     return payload
 
 
-def _spawn_background_process(argv: list[str], *, cwd: Path) -> _ManagedBackgroundProcess:
-    owned = get_owned_process_service().spawn(
+def _spawn_background_process(
+    argv: list[str],
+    *,
+    cwd: Path,
+    on_cleanup: _owned_process_settlement.CleanupObserver | None = None,
+) -> _ManagedBackgroundProcess:
+    managed: list[_ManagedBackgroundProcess] = []
+
+    def _observe_cleanup(verdict: _owned_process_settlement.OwnedProcessCleanupVerdict) -> None:
+        if managed:
+            managed[0].observe_cleanup(verdict)
+        if on_cleanup is not None:
+            on_cleanup(verdict)
+
+    owned = _owned_process.get_owned_process_service().spawn(
         argv,
         cwd=cwd,
         allow_queue=False,
+        on_cleanup=_observe_cleanup,
     )
-    return _ManagedBackgroundProcess(
+    job = _ManagedBackgroundProcess(
         process=owned.process,  # type: ignore[arg-type]
         owned_process=owned,
     )
+    managed.append(job)
+    return job
 
 
 def _wait_for_background_exit(
     job: _ManagedBackgroundProcess, timeout_seconds: float
 ) -> tuple[str, str]:
     if job.owned_process is not None:
-        result = get_owned_process_service().wait(
+        result = _owned_process.get_owned_process_service().wait(
             job.owned_process,
             timeout_seconds=timeout_seconds,
             abort_event=job.stop_requested,
         )
         job.owned_result = result
+        job.observe_cleanup(result.cleanup_verdict)
         return result.stdout, result.stderr
     process = job.process
     try:
@@ -496,7 +521,7 @@ def _terminate_background_process(
     timeout_seconds: float,
 ) -> None:
     if job.owned_process is not None:
-        get_owned_process_service().cancel(
+        job.cleanup_verdict = _owned_process.get_owned_process_service().cancel(
             job.owned_process,
             timeout_seconds=timeout_seconds,
         )
@@ -558,7 +583,7 @@ def release_managed_background_process(job: ManagedBackgroundProcess) -> None:
     signalling the reaped root PID (a recycled PID must never be killed).
     """
     if job.owned_process is not None:
-        get_owned_process_service().release(job.owned_process)
+        _owned_process.get_owned_process_service().release(job.owned_process)
         return
     if job.job_object is not None:
         job.job_object.close()
@@ -574,6 +599,7 @@ class _BackgroundTerminalOutcome:
     error: str | None = None
     output_truncated: bool = False
     output_counters: dict[str, int] | None = None
+    cleanup_verdict: _owned_process_settlement.OwnedProcessCleanupVerdict | None = None
 
 
 def _remove_active_job(job_id: str) -> None:
@@ -589,10 +615,15 @@ def _spawn_background_or_publish_failure(
     store: GuardedWorkspaceStore,
     job_ref: StoreRef,
     job_id: str,
+    on_cleanup: _owned_process_settlement.CleanupObserver | None = None,
 ) -> _ManagedBackgroundProcess:
     try:
-        return _spawn_background_process(argv, cwd=cwd)
-    except (OwnedProcessCapacityError, OwnedProcessShutdownError) as error:
+        if on_cleanup is None:
+            return _spawn_background_process(argv, cwd=cwd)
+        return _spawn_background_process(argv, cwd=cwd, on_cleanup=on_cleanup)
+    except (
+        _owned_process.OwnedProcessCapacityError, _owned_process.OwnedProcessShutdownError
+    ) as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_CAP_EXCEEDED,
             message=f"background process capacity unavailable: {error}",
@@ -667,6 +698,7 @@ def _capture_background_terminal(
                 error=f"timed out after {timeout_seconds:.0f}s",
                 output_truncated=result.output.truncated or result.drain_incomplete,
                 output_counters=result.output.counters(),
+                cleanup_verdict=result.cleanup_verdict,
             )
         if result is not None and result.aborted:
             return _BackgroundTerminalOutcome(
@@ -677,6 +709,7 @@ def _capture_background_terminal(
                 error="background job was cancelled",
                 output_truncated=result.output.truncated or result.drain_incomplete,
                 output_counters=result.output.counters(),
+                cleanup_verdict=result.cleanup_verdict,
             )
         exit_code = int(job.process.returncode or 0)
         return _BackgroundTerminalOutcome(
@@ -689,6 +722,7 @@ def _capture_background_terminal(
                 and (result.output.truncated or result.drain_incomplete)
             ),
             output_counters=(result.output.counters() if result is not None else None),
+            cleanup_verdict=(result.cleanup_verdict if result is not None else None),
         )
     except subprocess.TimeoutExpired:
         _terminate_background_process(job, timeout_seconds=1.0)
@@ -723,6 +757,8 @@ def _settle_background_job(
     timeout_seconds: float,
 ) -> None:
     outcome = _capture_background_terminal(job, timeout_seconds=timeout_seconds)
+    if outcome.cleanup_verdict is not None:
+        job.observe_cleanup(outcome.cleanup_verdict)
     try:
         status = _build_terminal_status(
             job_id=job_id,
@@ -742,7 +778,9 @@ def _settle_background_job(
         if job.job_object is not None:
             job.job_object.close()
             job.job_object = None
-        job.settled.set()
+        job.terminalized.set()
+        if job.cleanup_verdict is not None and job.cleanup_verdict.cleanup == "confirmed":
+            job.settled.set()
 
 
 def _start_background_waiter(
@@ -810,6 +848,7 @@ def start_background_job(
     cwd: Path,
     workspace_root: Path,
     timeout_seconds: float,
+    on_cleanup: _owned_process_settlement.CleanupObserver | None = None,
 ) -> BackgroundJobStart:
     """Launch *argv* in the background; return the id + trusted spawned PID."""
     store = GuardedWorkspaceStore(workspace_root)
@@ -825,6 +864,7 @@ def start_background_job(
             store=store,
             job_ref=job_ref,
             job_id=job_id,
+            on_cleanup=on_cleanup,
         )
         _promote_background_start(job_id, job, store_key=store.cache_key)
         reservation_held = False

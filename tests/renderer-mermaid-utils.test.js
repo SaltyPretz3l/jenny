@@ -16,6 +16,7 @@ function installDomGlobals(dom, t) {
   const previousWindow = global.window;
   const previousDocument = global.document;
 
+  dom.window.DOMPurify = { sanitize(markup) { return markup; } };
   global.window = dom.window;
   global.document = dom.window.document;
 

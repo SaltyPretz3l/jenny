@@ -1,5 +1,7 @@
 const { logWriteFailed } = require('./session-store-logging');
 
+const MAX_EVICTED_DURABILITY_PROOFS = 30;
+
 function normalizeEpoch(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
@@ -23,11 +25,13 @@ function writeState(store) {
 class SessionStorageDurability {
   constructor() {
     this._records = new Map();
+    this._evictedProofs = new Map();
   }
 
   markLoaded(sessionId) {
     const id = String(sessionId || '').trim();
     if (!id) return null;
+    this._evictedProofs.delete(id);
     if (!this._records.has(id)) {
       this._records.set(id, {
         dirtyEpoch: 1,
@@ -48,6 +52,7 @@ class SessionStorageDurability {
   } = {}) {
     const id = String(sessionId || '').trim();
     if (!id) return null;
+    this._evictedProofs.delete(id);
     const record = this._records.get(id) || {
       dirtyEpoch: 0,
       durableEpoch: 0,
@@ -93,7 +98,7 @@ class SessionStorageDurability {
   reconcile(sessionId, sessionStore, indexStore) {
     const id = String(sessionId || '').trim();
     const record = this._records.get(id);
-    if (!record) return null;
+    if (!record) return this.snapshot(id);
     const sessionDurableGeneration = writeState(sessionStore).durableGeneration;
     const indexDurableGeneration = writeState(indexStore).durableGeneration;
     const sessionCovered = record.sessionCoverageEpoch >= record.dirtyEpoch
@@ -115,7 +120,8 @@ class SessionStorageDurability {
   }
 
   snapshot(sessionId) {
-    const record = this._records.get(String(sessionId || '').trim());
+    const id = String(sessionId || '').trim();
+    const record = this._records.get(id) || this._evictedProofs.get(id);
     if (!record) return null;
     return {
       dirtyEpoch: normalizeEpoch(record.dirtyEpoch),
@@ -124,22 +130,38 @@ class SessionStorageDurability {
   }
 
   forget(sessionId) {
-    this._records.delete(String(sessionId || '').trim());
+    const id = String(sessionId || '').trim();
+    this._records.delete(id);
+    this._evictedProofs.delete(id);
+  }
+
+  evict(sessionId) {
+    const id = String(sessionId || '').trim();
+    const record = this._records.get(id);
+    if (record && record.dirtyEpoch > 0 && record.durableEpoch >= record.dirtyEpoch) {
+      this._evictedProofs.delete(id);
+      this._evictedProofs.set(id, {
+        dirtyEpoch: record.dirtyEpoch,
+        durableEpoch: record.durableEpoch,
+      });
+      while (this._evictedProofs.size > MAX_EVICTED_DURABILITY_PROOFS) {
+        this._evictedProofs.delete(this._evictedProofs.keys().next().value);
+      }
+    }
+    this._records.delete(id);
   }
 }
 
 // _pruneCache's loadedSessions branch only reaches here once
 // hasPendingWriteForSession(sessionId) is false, i.e. dirtyEpoch <=
-// durableEpoch, no _dirtySessionIds entry, and no in-flight store write — the
-// durability record is fully settled. Forgetting it here is what bounds
-// SessionStorageDurability._records to the LRU cap instead of growing one
-// entry per distinct session ever loaded (markLoaded() runs on every
-// getSession(), but forget() was previously reachable only from hard session
-// deletion). A later getSession() on the same id calls markLoaded() again and
-// gets a fresh baseline record, identical to that session's first-ever load.
+// durableEpoch, no _dirtySessionIds entry, and no in-flight store write. Keep
+// only a bounded clean epoch proof so finalizeCommit can observe durability
+// after a newly written oversized record self-evicts. A later load or accepted
+// mutation replaces that proof with a fresh active record; hard deletion
+// removes both forms.
 function evictLoadedSession(self, sessionId) {
   self._loadedSessions.delete(sessionId);
-  self._durability.forget(sessionId);
+  self._durability.evict(sessionId);
 }
 
 function reconcileSessionDurability(self, sessionId) {
@@ -213,6 +235,8 @@ function restoreCachedSessionSnapshot(self, sessionId, snapshot, indexSnapshot =
   };
   self._cachedIndex = nextIndex;
   self._loadedSessions.set(sessionId, normalized);
+  self._transcriptCache?.invalidate(sessionId, normalized);
+  self._durability.markAccepted(sessionId, { indexChanged: true });
   self._dirtySessionIds.add(sessionId);
   self._trackActiveTurn(sessionId, normalized);
   self._touchSession(sessionId);

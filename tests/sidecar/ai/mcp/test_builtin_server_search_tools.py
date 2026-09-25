@@ -88,6 +88,15 @@ def test_default_tools_gate_knowledge_tools(tmp_path) -> None:
     assert "corpus/doc.md" in str(payload["result"])
 
 
+def test_owned_server_registers_scoped_knowledge_superset() -> None:
+    tools = builtin_server._default_tools(  # noqa: SLF001
+        knowledge_enabled=False,
+        request_scoped_authority=True,
+    )
+
+    assert {"knowledge_search", "knowledge_view", "knowledge_exec"}.issubset(tools)
+
+
 def test_builtin_server_main_parses_knowledge_args(tmp_path, monkeypatch) -> None:
     root_a = tmp_path / "alpha"
     root_b = tmp_path / "beta"
@@ -119,6 +128,7 @@ def test_builtin_server_main_parses_knowledge_args(tmp_path, monkeypatch) -> Non
 
     assert captured["knowledge_enabled"] is True
     assert captured["knowledge_roots"] == (str(root_a), str(root_b))
+    assert captured["request_scoped_authority"] is True
 
 
 def test_default_tools_gate_lsp_tools() -> None:

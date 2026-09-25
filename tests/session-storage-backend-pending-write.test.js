@@ -268,3 +268,25 @@ test('a session with a pending debounced write keeps its durability record throu
     `sibling sessions were evicted back under the cache cap (${store._backend._loadedSessions.size})`
   );
 });
+
+
+test('cache retains settled session file proof while the shared index is still pending', () => {
+  const root = makeTempRoot('jenny-cache-index-proof-');
+  const canonical = makeSessionStore(path.join(root, 'sessions.json'), { writeDebounceMs: 60000 });
+  const ids = Array.from({ length: 31 }, (_, index) => canonical.createSession({ title: `Session ${index}` }).id);
+  const backend = canonical._backend;
+  const firstStore = backend._sessionStores.get(ids[0]);
+  firstStore.flush();
+  assert.equal(firstStore.hasPendingWrite(), false);
+  assert.equal(backend.hasPendingWriteForSession(ids[0]), true);
+  backend._pruneCache();
+  assert.equal(backend._sessionStores.get(ids[0]), firstStore, 'index debt still requires the session generation proof');
+  for (const store of backend._sessionStores.values()) store.flush();
+  backend._indexStore.flush();
+  backend._pruneCache();
+  assert.equal(ids.some(id => backend.hasPendingWriteForSession(id)), false);
+  const pressure = canonical.getTranscriptCachePressure();
+  assert.equal(pressure.unknownSessions, 0);
+  assert.equal(pressure.backpressured, false);
+  assert.ok(pressure.loadedSessions <= 30);
+});

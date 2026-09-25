@@ -7,6 +7,7 @@ const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { ElectronSessionStore } = require('../backend/electron-session-store');
 const { DataLifecycleService, REMOVAL_CHOICES } = require('../data-lifecycle/data-lifecycle-service');
+const { createOfflineRuntimeArchivePort } = require('../data-lifecycle/runtime-coordination-archive');
 const {
   dataLifecycleFailure,
   dataLifecycleResult,
@@ -189,6 +190,7 @@ async function runStandaloneUninstallAssistant({ app, BrowserWindow, ipcMain, di
     runtimePath,
     appVersion: app.getVersion(),
     sessionStore,
+    runtimeArchivePort: createOfflineRuntimeArchivePort({ userDataPath, sessionStore }),
     attachmentStore: new AttachmentAssetStore({ rootDir: path.join(userDataPath, 'attachments'), nativeImage }),
     shellConfigService: new ShellConfigService({ userDataPath, resourcesPath: process.resourcesPath }),
     prepareForRemoval: createRemovalPreparation({

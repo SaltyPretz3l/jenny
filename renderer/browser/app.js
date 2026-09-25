@@ -2,11 +2,11 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     if (root.document?.getElementById('browser-root')) require('./browser-i18n').install(root);
-    module.exports = factory(require('./browser-bridge'), require('./browser-reconnect'), require('./browser-view'), require('./browser-assets'), require('./browser-device-sessions'), require('./browser-conversation'), require('./browser-identity'), require('./browser-mutation-recovery'));
+    module.exports = factory(require('./browser-bridge'), require('./browser-reconnect'), require('./browser-view'), require('./browser-assets'), require('./browser-device-sessions'), require('./browser-conversation'), require('./browser-identity'), require('./browser-mutation-recovery'), require('./browser-projects'), require('./browser-orchestration'));
     return;
   }
-  root.jennyBrowserApp = factory(root.jennyBrowserBridge, root.jennyBrowserReconnect, root.jennyBrowserView, root.jennyBrowserAssets, root.jennyBrowserDeviceSessions, root.jennyBrowserConversation, root.jennyBrowserIdentity, root.jennyBrowserMutationRecovery);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (bridgeModule, reconnectModule, view, assetsModule, deviceModule, conversationModule, identityModule, mutationModule) {
+  root.jennyBrowserApp = factory(root.jennyBrowserBridge, root.jennyBrowserReconnect, root.jennyBrowserView, root.jennyBrowserAssets, root.jennyBrowserDeviceSessions, root.jennyBrowserConversation, root.jennyBrowserIdentity, root.jennyBrowserMutationRecovery, root.jennyBrowserProjects, root.jennyBrowserOrchestration);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (bridgeModule, reconnectModule, view, assetsModule, deviceModule, conversationModule, identityModule, mutationModule, projectsModule, orchestrationModule) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
@@ -48,6 +48,7 @@
       authSessionsOpen: false,
       authSessionsBusy: false,
       authSessionsError: '',
+      ...(projectsModule?.createProjectState?.() || {}),
     };
   }
   function normalizeReason(error) {
@@ -131,6 +132,10 @@
         : null;
       this.identity = new identityModule.BrowserIdentity(this, createState, normalizeReason);
       this.mutationRecovery = new BrowserMutationRecovery(this);
+      this.orchestration = orchestrationModule?.attachBrowserOrchestration?.(this) || null;
+      this.projects = projectsModule?.attachBrowserProjects?.(this, normalizeReason) || null;
+      this.projects?.render?.();
+      this.orchestration?.render?.();
     }
 
     _bindEvents() {
@@ -243,12 +248,15 @@
       else if (id === 'download-artifact') await this._downloadArtifact(text(action.dataset.artifactId));
       else if (id === 'manage-auth-sessions') {
         this.state.authSessionsOpen = !this.state.authSessionsOpen;
+        if (this.state.authSessionsOpen) this.state.projectsOpen = false;
         this.render();
         if (this.state.authSessionsOpen) await this._loadAuthSessions();
       } else if (id === 'revoke-auth-session') await this._revokeAuthSession(text(action.dataset.sessionId));
       else if (id === 'approve-tool' || id === 'deny-tool') await this.resolveApproval(action, id === 'approve-tool');
       else if (id === 'answer-questions') await this.answerQuestions(action);
       else if (id === 'decline-questions') await this.declineQuestions(action);
+      else if (id === 'runtime-toggle') this.orchestration?.toggle();
+      else await this.projects?.handleAction?.(action, id);
     }
 
     _handleInput(event) {
@@ -476,6 +484,10 @@
         await this._loadSessions();
         return;
       }
+      if (pending.operation.startsWith('projects.')
+        || pending.operation === 'permissionReview.resolve') {
+        await this.projects?.load?.({ quiet: true });
+      }
       if (pending.operation === 'sessions.rename' && result.session?.session_id) {
         this.state.sessions = this.state.sessions.map((item) =>
           item.session_id === result.session.session_id ? result.session : item);
@@ -485,15 +497,7 @@
         this.state.planMode = result.session.plan_mode;
       }
       if (originalSelected && pending.operation === 'chat.send' && result.accepted === true) {
-        const currentIds = (this.state.attachments || []).map((item) => text(item?.attachment?.id));
-        const unchanged = this.state.draft === pending.ui?.draft
-          && JSON.stringify(currentIds) === JSON.stringify(pending.ui?.attachmentIds || []);
-        if (unchanged) {
-          this.state.draft = '';
-          this.state.attachments = [];
-        }
-        this.state.activeStreamId = text(result.stream_id);
-        this.state.statusMessage = jt("app.jennyIsWorking", "Jenny is working…");
+        this.mutationRecovery.applyAcceptedSend(pending, result);
       }
       if (this.state.selectedSessionId) await this._loadSnapshot(this.state.selectedSessionId);
     }
@@ -530,6 +534,8 @@
     render() {
       if (this.disposed || !this.root || !this.view?.mount) return;
       this.view.mount(this.root, this.state);
+      this.projects?.render?.();
+      this.orchestration?.render?.();
       const controlButton = this.root.querySelector('[data-action="acquire-control"], [data-action="release-control"]');
       if (controlButton) {
         controlButton.dataset.action = this.state.control?.owned ? 'release-control' : 'acquire-control';
@@ -571,6 +577,7 @@
       this.authGeneration += 1;
       this.sessionGeneration += 1;
       this.mutationRecovery?.dispose?.();
+      this.orchestration?.dispose?.();
       this._resetBinaryState();
       this.conversation?.dispose?.();
       this.bridge?.dispose?.();

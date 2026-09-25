@@ -286,7 +286,9 @@ function convertToolUseToProviderMessage(message) {
         type: 'function',
         function: {
           name: tc.tool_name,
-          arguments: tc.input_json || JSON.stringify(tc.input || {}),
+          arguments: typeof tc.model_input_json === 'string' && tc.model_input_json.length
+            ? tc.model_input_json
+            : tc.input_json || JSON.stringify(tc.input || {}),
         },
       },
     ],
@@ -525,8 +527,43 @@ function buildPreparedMessages(messages, prompt, options = {}) {
   return folded;
 }
 
+// Checkpoint publication can precede the tool boundary that materializes an
+// assistant row. Project its canonical text events without persisting a second
+// transcript or exposing reasoning as assistant speech.
+function buildPreparedContinuationPrefix(messages, events) {
+  const rows = Array.isArray(messages) ? messages : [];
+  const textEvents = (Array.isArray(events) ? events : []).filter(event =>
+    event.kind === 'assistant_text_segment' && typeof event.payload?.text === 'string'
+      && event.payload.text.trim());
+  if (!textEvents.length) return buildPreparedContextHistory(rows, { history_scope: 'session' });
+  const usedRows = new Set();
+  const projected = [];
+  const parts = new Map();
+  for (const event of textEvents) {
+    const ids = new Set([event.primary_message_id, ...(event.source_message_ids || [])].filter(Boolean));
+    const segment = event.payload.segment_id;
+    const row = rows.find(item => item.role === 'assistant' && (ids.has(item.id)
+      || (segment && item.visible_segments?.some(part => part.segment_id === segment))));
+    if (row) {
+      if (!usedRows.has(row.id)) {
+        projected.push(...buildPreparedContextHistory([row], { history_scope: 'session' }));
+        usedRows.add(row.id);
+      }
+      continue;
+    }
+    const key = event.payload.canonical_part_id || segment || event.event_id;
+    const message = { role: 'assistant', content: event.payload.text.trim() };
+    if (parts.has(key)) projected[parts.get(key)] = message;
+    else { parts.set(key, projected.length); projected.push(message); }
+  }
+  const unmatched = buildPreparedContextHistory(rows.filter(row => !usedRows.has(row.id)), { history_scope: 'session' });
+  if (unmatched.length) throw new Error('runtime_resume_prefix_order_unavailable');
+  return projected;
+}
+
 module.exports = {
   buildPreparedContextHistory,
+  buildPreparedContinuationPrefix,
   buildPromptWithAttachments,
   buildPreparedMessages,
   convertToolUseToProviderMessage,

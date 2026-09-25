@@ -16,6 +16,12 @@
     return (Math.round(mb / 1024 * 10) / 10) + ' GB';
   }
 
+  // The managed llama-server is ready and serving this model (alias keys match).
+  function servesModel(serverStatus, modelId) {
+    return serverStatus?.state === 'ready'
+      && mergeUtils.managedAliasKey(serverStatus?.alias) === mergeUtils.managedAliasKey(modelId);
+  }
+
   function deriveEngineView(input) {
     var source = input || {};
     var settings = source.engineSettings || {};
@@ -41,6 +47,10 @@
       mtp: false,
       modelPath: '',
     };
+    // The model's own llama-server build ('' runs the bundled one). Main records
+    // the build number at pick time; the renderer only ever displays it.
+    draft.runtimePath = persisted?.runtimePath || '';
+    draft.runtimeBuild = Number(persisted?.runtimeBuild) || 0;
     // A persisted/picked path names the directory whose drafter matters: take
     // the scanned entry for THAT path, else synthesize one with no drafter,
     // else fall back to the first entry scanned for the tag.
@@ -60,6 +70,7 @@
     }
     var effectiveModelPath = draft.modelPath || (ggufEntry
       ? mergeUtils.joinModelPath(ggufEntry.dir, ggufEntry.mainGguf) : '');
+    var ollamaFacts = source.engineHints && source.engineHints.ollama;
     return {
       key: key,
       persisted: persisted,
@@ -72,20 +83,36 @@
         ? familyHeadroom : (Number(catalog?.defaults?.vramHeadroomMb) || 2048),
       // The library card's merged verdict wins when the caller hands it over;
       // the model-list scan is the fallback for a drawer opened elsewhere.
-      ollamaAvailable: source.engineHints && source.engineHints.ollama
-        ? source.engineHints.ollama.available === true
+      ollamaAvailable: ollamaFacts
+        ? ollamaFacts.available === true
         : source.engineType === 'ollama' || models.some(function (entry) {
           var id = String(entry?.id || entry?.model || entry || '').trim();
           return id === source.activeModelId
             && String(entry?.engine_type || entry?.engineType || '').toLowerCase() === 'ollama';
         }),
+      // The scan can't prove Ollama lacks the model (a served llama-server alias
+      // hides Ollama's copy of the same tag): only card facts may say so.
+      ollamaFromScan: !ollamaFacts,
       effectiveModelPath: effectiveModelPath,
-      serving: source.serverStatus?.state === 'ready'
-        && mergeUtils.managedAliasKey(source.serverStatus?.alias)
-          === mergeUtils.managedAliasKey(source.activeModelId),
+      serving: servesModel(source.serverStatus, source.activeModelId),
+      runtimeBuild: draft.runtimeBuild,
       draft: draft,
-      baseline: { engine: draft.engine, mtp: draft.mtp, modelPath: draft.modelPath },
+      baseline: {
+        engine: draft.engine, mtp: draft.mtp, modelPath: draft.modelPath,
+        runtimePath: draft.runtimePath, runtimeBuild: draft.runtimeBuild,
+      },
     };
+  }
+
+  // The build is a change (and is sent) only while the model runs on llama-server:
+  // another file, or the saved file picked again with a different build (new
+  // files copied over it; main takes a fresh pick of the saved path).
+  function runtimeChanged(view, draft) {
+    if (draft.engine !== 'llama-server') return false;
+    var path = String(draft.runtimePath || '');
+    var base = view.baseline || {};
+    return path !== String(base.runtimePath || '')
+      || (path !== '' && (Number(draft.runtimeBuild) || 0) !== (Number(base.runtimeBuild) || 0));
   }
 
   // Dirty set relative to the draft's own seed (persisted entry, else the
@@ -96,6 +123,7 @@
     if (draft.engine !== base.engine) dirty.push('engine');
     if (draft.engine === 'llama-server' && draft.mtp !== base.mtp) dirty.push('mtp');
     if (draft.modelPath !== base.modelPath) dirty.push('modelPath');
+    if (runtimeChanged(view, draft)) dirty.push('runtimePath');
     return dirty;
   }
 
@@ -112,9 +140,16 @@
     };
   }
 
+  // Main refuses a pick on another machine (a UNC path); a share works once it
+  // is mapped to a drive letter.
+  function networkPathText() {
+    return jt('models.library.networkPath', 'Jenny can\'t use network locations here. Map the share to a drive letter, then choose it from that drive.');
+  }
+
   // llamaServer.chooseGguf fail-soft shapes: the dialog failed, or it worked
   // and the chosen file was rejected.
   function pickerFailureText(result) {
+    if (result && result.reason === 'network_path') return networkPathText();
     return result && result.reason === 'not_gguf' ? jt('models.library.tuning.notGguf', 'That file is not a GGUF model.') : jt('models.library.tuning.pickerFailed', 'Could not open the file picker.');
   }
 
@@ -129,6 +164,48 @@
     return '';
   }
 
+  // llamaServer.chooseRuntime: a pick re-targets the draft's build (Apply is the
+  // commit). Cancel ({picked:false}) and failures leave the draft alone.
+  function applyPickedRuntime(view, draft, result) {
+    if (!draft || !result || result.ok !== true || result.picked !== true
+        || typeof result.path !== 'string' || !result.path) return false;
+    var build = Number(result.build);
+    draft.runtimePath = result.path;
+    draft.runtimeBuild = Number.isSafeInteger(build) && build > 0 ? build : 0;
+    return true;
+  }
+
+  function runtimeDir(runtimePath) {
+    var path = String(runtimePath || '');
+    return /[\\/]/.test(path) ? path.replace(/[\\/][^\\/]*$/, '') : '';
+  }
+
+  // The build row's value: "Bundled", or the runtime's folder name plus its
+  // build ("llama-prism-b10683-cuda13.3 · build 10683"); the full path is the title.
+  function runtimeValueText(draft) {
+    var path = String(draft && draft.runtimePath || '');
+    if (!path) return jt('models.library.tuning.bundledBuild', 'Bundled');
+    var folder = modelPathName(runtimeDir(path)) || path;
+    var build = Number(draft.runtimeBuild);
+    return Number.isSafeInteger(build) && build > 0
+      ? jt('models.library.tuning.buildValue', '{folder} · build {build}', { folder: folder, build: build })
+      : folder;
+  }
+
+  // llamaServer.chooseRuntime {ok:false, reason} -> status copy.
+  function runtimePickerFailureText(result) {
+    var reason = String(result && result.reason || '');
+    if (reason === 'not_llama_server') return jt('models.library.tuning.notLlamaServer', 'That file is not a llama-server program.');
+    if (reason === 'runtime_probe_failed') return jt('models.library.tuning.runtimeProbeFailed', 'That llama-server didn\'t report a build number, so Jenny can\'t use it.');
+    if (reason === 'runtime_missing') return jt('models.library.tuning.runtimeGone', 'That file is no longer there.');
+    if (reason === 'network_path') return networkPathText();
+    return jt('models.library.tuning.pickerFailed', 'Could not open the file picker.');
+  }
+
+  function runtimePickerDefaultDir(draft) {
+    return runtimeDir(draft && draft.runtimePath);
+  }
+
   function buildManagedPatch(activeModelId, view, draft) {
     var entry = {
       engine: draft.engine,
@@ -140,18 +217,30 @@
     // drawer does not edit (draftNMax) instead of resetting them.
     var persistedDraftNMax = Number(view.persisted?.mtp?.draftNMax);
     if (Number.isInteger(persistedDraftNMax) && persistedDraftNMax >= 1) entry.mtp.draftNMax = persistedDraftNMax;
+    // The build goes only when it changed: an absent key keeps the saved one
+    // (main's reconcile), '' clears it, and main records the build number itself.
+    if (runtimeChanged(view, draft)) entry.runtimePath = String(draft.runtimePath || '');
     var perModel = {};
     perModel[view.key] = entry;
     var managed = { enabled: true, perModel: perModel };
     if (draft.modelPath) managed.lastPickDir = String(draft.modelPath).replace(/[\\/][^\\/]*$/, '');
-    return { payload: { managed: managed }, entry: entry };
+    var request = { payload: { managed: managed }, entry: entry };
+    // Never sent: the picked build is what the reply must carry back.
+    var build = Number(draft.runtimeBuild);
+    if (entry.runtimePath && Number.isSafeInteger(build) && build > 0) request.runtimeBuild = build;
+    return request;
   }
 
-  function returnedEntryMatches(localEngines, key, expected) {
+  function returnedEntryMatches(localEngines, key, expected, expectedBuild) {
     var entry = localEngines?.openaiCompatible?.managed?.perModel?.[key];
     return Boolean(entry && entry.engine === expected.engine && entry.tag === expected.tag
       && String(entry.modelPath || '') === expected.modelPath
-      && entry?.mtp?.mode === expected.mtp.mode);
+      && entry?.mtp?.mode === expected.mtp.mode
+      // Only a build the request sent is checked; an omitted one is main's to keep.
+      && (!Object.prototype.hasOwnProperty.call(expected, 'runtimePath')
+        || String(entry.runtimePath || '') === String(expected.runtimePath))
+      // A picked build must come back too: an echo main did not take keeps the old number.
+      && (!(Number(expectedBuild) > 0) || Number(entry.runtimeBuild) === Number(expectedBuild)));
   }
 
   function engineStatusText(view, draft, serverStatus) {
@@ -209,9 +298,12 @@
     var ollamaCopy = (!draft.modelPath && view.ggufEntry && view.ggufEntry.source === 'ollama')
       || /^sha256-[0-9a-f]{64}$/i.test(modelPathName(path));
     var pathLabel = ollamaCopy ? 'Ollama\'s copy' : (modelPathName(path) || jt('models.library.tuning.notFoundForTag', 'Not found for this tag'));
+    var chooseGgufText = jt('models.library.tuning.chooseGgufAria', 'Choose a GGUF file');
     return '<section class="model-tuning-section model-tuning-engine" data-model-tuning-engine>'
       + '<h4 class="model-tuning-section-title">Engine</h4>'
-      + '<p class="model-tuning-section-hint">' + escapeHtml(jt('models.library.tuning.engineHint', 'Ollama or Jenny\'s own llama-server. llama-server can speed up verified models with multi-token prediction.')) + '</p>'
+      + '<p class="model-tuning-section-hint">' + escapeHtml(view.ollamaAvailable || view.ollamaFromScan
+        ? jt('models.library.tuning.engineHint', 'Ollama or Jenny\'s own llama-server. llama-server can speed up verified models with multi-token prediction.')
+        : jt('models.library.tuning.engineHintNoOllama', 'Ollama doesn\'t have this model, so it runs on Jenny\'s own llama-server.')) + '</p>'
       + '<div class="model-tuning-row" data-model-tuning-row="engine">'
       + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.runWith', 'Run with')) + '</span>'
       + '<div class="model-tuning-row-control">'
@@ -247,9 +339,39 @@
       + '<code class="model-tuning-gguf-path" data-model-tuning-gguf title="' + escapeHtml(path) + '">'
       + escapeHtml(pathLabel) + '</code>'
       + '</div>'
-      + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), variant: 'ghost', size: 'sm', disabled: ctx.pending })
+      + ctx.actionButton({ id: 'choose-model-gguf', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseGgufText, title: chooseGgufText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
       + '</div>'
+      + buildRuntimeRowHtml(ctx)
       + '</section>';
+  }
+
+  // actionButton has no `hidden` option: the attribute goes on the button's own tag.
+  function hiddenButtonHtml(html) {
+    return String(html).replace(/^<(\w+)/, '<$1 hidden');
+  }
+
+  // Tune drawer > Engine > "llama-server build", under GGUF file with the same
+  // row grammar; only when the bridge can pick a build. "Use bundled" is always
+  // rendered (hidden while unused) so a pick can toggle it without a re-render.
+  function buildRuntimeRowHtml(ctx) {
+    var draft = ctx && ctx.draft;
+    if (!ctx || ctx.runtimeRowAvailable !== true || !draft || typeof ctx.actionButton !== 'function') return '';
+    var escapeHtml = ctx.escapeHtml;
+    var path = String(draft.runtimePath || '');
+    var chooseBuildText = jt('models.library.tuning.chooseBuildAria', 'Choose a llama-server build');
+    var useBundled = ctx.actionButton({ id: 'use-bundled-llama-server', label: jt('models.library.tuning.useBundled', 'Use bundled'), variant: 'ghost', size: 'sm', disabled: ctx.pending });
+    return '<div class="model-tuning-row model-tuning-row--gguf" data-model-tuning-row="runtimePath"'
+      + (draft.engine === 'llama-server' ? '' : ' hidden') + '>'
+      + '<span class="model-tuning-row-label">' + escapeHtml(jt('models.library.tuning.llamaServerBuild', 'llama-server build')) + '</span>'
+      + '<div class="model-tuning-row-control">'
+      + '<code class="model-tuning-gguf-path" data-model-tuning-runtime title="' + escapeHtml(path) + '">'
+      + escapeHtml(runtimeValueText(draft)) + '</code>'
+      + '</div>'
+      + '<div class="model-tuning-row-actions">'
+      + ctx.actionButton({ id: 'choose-llama-server-runtime', label: jt('models.library.tuning.choose', 'Choose…'), ariaLabel: chooseBuildText, title: chooseBuildText, variant: 'ghost', size: 'sm', disabled: ctx.pending })
+      + (path ? useBundled : hiddenButtonHtml(useBundled))
+      + '</div>'
+      + '</div>';
   }
 
   // Status line after the drawer applies a patch. Preflight warnings refine
@@ -273,8 +395,10 @@
 
   return {
     applyPickedGguf: applyPickedGguf,
+    applyPickedRuntime: applyPickedRuntime,
     applyStatusMessage: applyStatusMessage,
     buildEngineSectionHtml: buildEngineSectionHtml,
+    buildRuntimeRowHtml: buildRuntimeRowHtml,
     deriveEngineView: deriveEngineView,
     engineDirtyFields: engineDirtyFields,
     engineNote: engineNote,
@@ -285,5 +409,9 @@
     formatGb: formatGb,
     modelPathName: modelPathName,
     returnedEntryMatches: returnedEntryMatches,
+    runtimePickerDefaultDir: runtimePickerDefaultDir,
+    runtimePickerFailureText: runtimePickerFailureText,
+    runtimeValueText: runtimeValueText,
+    servesModel: servesModel,
   };
 });

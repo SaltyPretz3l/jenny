@@ -32,7 +32,7 @@ CHAT_CANCEL_METHOD = "chat.cancel"
 ENGINE_ACTIVITY_METHOD = "engine.activity"
 SESSION_RUN_MODE_UPDATED_METHOD = "session.run_mode_updated"
 # Manual context-compaction trigger. Request/response sibling of chat.send /
-# chat.cancel — NOT a notification, so it is intentionally absent from
+# chat.cancel -- NOT a notification, so it is intentionally absent from
 # ALLOWED_NOTIFICATION_METHODS. Success re-emits the existing
 # CONTEXT_COMPACTED_METHOD notification; no new notification channel exists.
 CHAT_COMPACT_METHOD = "chat.compact"
@@ -75,6 +75,15 @@ WORKSPACE_RESTORE_TRASH_ENTRY_METHOD = "workspace.restore_trash_entry"
 WORKSPACE_LIST_RECOVERY_REVIEW_METHOD = "workspace.list_recovery_review"
 WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD = "workspace.acknowledge_recovery_review"
 WORKSPACE_ABANDON_RESTORE_METHOD = "workspace.abandon_restore"
+# Private runtime owner cleanup; never exposed as a tool or renderer operation.
+WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD = "workspace.reconcile_runtime_preparations"
+WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD = "workspace.confirm_runtime_checkpoint"
+WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD = "workspace.release_runtime_checkpoint"
+# Private one-operation peer used only by the desktop Workspace Test Runner.
+WORKSPACE_TEST_RUN_METHOD = "workspace_test.run"
+WORKSPACE_TEST_CANCEL_METHOD = "workspace_test.cancel"
+WORKSPACE_TEST_CLEANUP_METHOD = "workspace_test.cleanup"
+WORKSPACE_TEST_CLOSE_METHOD = "workspace_test.close"
 
 # Shell -> sidecar request methods that participate in the lockstep API-version
 # contract. ``engine.activity`` and ``session.run_mode_updated`` are unversioned
@@ -119,6 +128,9 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
         WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
         WORKSPACE_ABANDON_RESTORE_METHOD,
+        WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
+        WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
+        WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
     }
 )
 
@@ -149,7 +161,7 @@ CHAT_STREAM_RESET_METHOD = "chat.stream_reset"
 # generation timing for the chunk; the renderer treats it as best-effort meta).
 CHAT_THINKING_METHOD = "chat.thinking"
 # Semantic phase-boundary events: signal reasoning/text/tool_use/tool_result/
-# approval_wait transitions.  Orthogonal to CHAT_STREAM_RESET_METHOD — the
+# approval_wait transitions.  Orthogonal to CHAT_STREAM_RESET_METHOD -- the
 # renderer handles them independently.  Gated by FEATURE_PHASE_EVENTS.
 # Required payload: ``phase_id``, ``phase_kind``, ``iteration`` (int).  Optional:
 # ``thinking_id``, ``tool_call_id``, ``tool_name``, ``summary`` (free-form
@@ -180,7 +192,7 @@ CHAT_ERROR_METHOD = "chat.error"
 CHAT_PLAN_USAGE_METHOD = "chat.plan_usage"
 TOOL_EXECUTING_METHOD = "tool.executing"
 # Live stdout/stderr tail for an in-flight run_command (W2-1). EPHEMERAL:
-# batches are never journaled and never enter the canonical turn record — the
+# batches are never journaled and never enter the canonical turn record -- the
 # final tool.result output stays the persisted snapshot. Payload: standard
 # chat ctx + ``tool_call_id``, ``tool_name``, ``sequence`` (int, per-call),
 # ``lines`` ([{stream: stdout|stderr, text}]), ``emitted_lines``,
@@ -189,12 +201,18 @@ TOOL_OUTPUT_CHUNK_METHOD = "tool.output_chunk"
 TOOL_RESULT_METHOD = "tool.result"
 TOOL_REQUEST_APPROVAL_METHOD = "tool.request_approval"
 TOOL_EXECUTE_ELECTRON_METHOD = "tool.execute_electron"
+# Internal sidecar -> application request used for a live per-operation
+# authority check. It is never advertised as a model tool or notification.
+RUNTIME_OPERATION_METHOD = "runtime.operation"
 MONITOR_EVENT_METHOD = "monitor.event"
 AGENT_PROGRESS_METHOD = "agent.progress"
 BUDGET_UPDATE_METHOD = "budget.update"
+# Ephemeral compaction-start notification; never enters the canonical turn record.
+# Payload: standard chat ctx + ``phase``, ``tokens_before``, ``message_count``.
+CONTEXT_COMPACTION_STARTED_METHOD = "context.compaction_started"
 CONTEXT_COMPACTED_METHOD = "context.compacted"
 # Mid-turn context-usage snapshot for the composer context ring. EPHEMERAL:
-# snapshots are never journaled and never enter the canonical turn record —
+# snapshots are never journaled and never enter the canonical turn record --
 # ``chat.done``'s usage block stays the terminal truth. Payload: standard chat
 # ctx + ``phase`` (preflight|iteration), ``iteration``, ``context_used_tokens``,
 # ``context_used_source`` (provider|estimate), ``context_tokens_estimate``,
@@ -213,7 +231,7 @@ PLUGIN_RUNTIME_APPLIED_METHOD = "plugin.runtime_applied"
 # Canonical set of notification method names the sidecar is permitted to emit.
 # Any new notification method MUST be added here so `rpc.notification()` can
 # fail fast on drift. Request/response methods (initialize, chat.send, etc.)
-# are intentionally excluded — only fire-and-forget notification channels live
+# are intentionally excluded -- only fire-and-forget notification channels live
 # in this set.
 ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
     {
@@ -233,6 +251,7 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         MONITOR_EVENT_METHOD,
         AGENT_PROGRESS_METHOD,
         BUDGET_UPDATE_METHOD,
+        CONTEXT_COMPACTION_STARTED_METHOD,
         CONTEXT_COMPACTED_METHOD,
         CONTEXT_USAGE_METHOD,
         CHAT_PLAN_USAGE_METHOD,

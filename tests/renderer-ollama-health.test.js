@@ -23,6 +23,7 @@ function makeDom() {
           <div class="settings-group" role="group" aria-labelledby="modelsRuntimeHeading">
             <h4 class="settings-group-heading" id="modelsRuntimeHeading">Runtime model</h4>
           </div>
+          <div id="modelLibrarySectionToolbarHost"></div>
         </section>
       </body>
     </html>
@@ -84,6 +85,7 @@ test('flag ON: mounts recovery actions plus Diagnostics and reflects detected st
 
   const group = dom.window.document.getElementById('ollamaHealthGroup');
   assert.ok(group, 'group should mount when flag is on');
+  assert.equal(group.nextElementSibling.id, 'modelLibrarySectionToolbarHost');
   assert.match(group.textContent, /Ollama engine health/);
   assert.match(group.textContent, /1234|ollama app\.exe/);
   assert.match(group.textContent, /Ollama\.lnk/);

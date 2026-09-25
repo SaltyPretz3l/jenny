@@ -190,3 +190,41 @@ test('app binding routes the nudge action through the commit-capable workspace c
     await app.dispose();
   }
 });
+
+test('F33: in the full renderer, a folder picked through the nudge provisions a project that the switcher lists and announces without a reload', async () => {
+  // jsdom cannot inject the lazy project-switcher <script>s, so the two
+  // modules are seeded as the window globals the loader would have created.
+  const lists = [];
+  const app = await loadRendererApp({
+    windowGlobals: {
+      rendererProjectMenu: require('../renderer/features/renderer-project-menu'),
+      rendererProjectSwitcher: require('../renderer/features/renderer-project-switcher'),
+    },
+    shell: {
+      features: { state: { featureFlags: { workspace_root_nudge: true } } },
+      projects: {
+        // Main provisions the folder's project inside the root commit.
+        list: ({ state }) => {
+          const projects = [{ id: 'project_general', name: 'General', root_path: null, authority_key: 'g:0' }];
+          if (state.workspaceRootState?.workspaceRoot === 'G:/workspace/selected') {
+            projects.push({ id: 'project_selected', name: 'selected', root_path: 'G:/workspace/selected', authority_key: 's:1' });
+          }
+          lists.push(projects.length);
+          return { ok: true, projects };
+        },
+      },
+    },
+  });
+  try {
+    const changes = [];
+    app.window.addEventListener('jenny:projects-changed', (event) => changes.push(event.detail && event.detail.source));
+    app.window.document.querySelector('[data-workspace-root-nudge-action="set-root"]').click();
+    await waitForUi(app.window, 200);
+    assert.equal(app.shell.__state.workspaceRootState.workspaceRoot, 'G:/workspace/selected');
+    assert.ok(lists.at(-1) === 2, 'the last list read has the provisioned project');
+    assert.ok(changes.includes('switcher'), 'the post-commit sync announces the change to every project surface');
+    assert.match(app.window.document.body.textContent, /New project "selected" from G:\/workspace\/selected\. New chats start here\./);
+  } finally {
+    await app.dispose();
+  }
+});

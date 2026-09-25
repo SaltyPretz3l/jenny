@@ -18,6 +18,12 @@ const {
 const { parsePngDimensions } = require('./png-metadata-utils');
 const { createPreviewScreenshot } = require('./preview-screenshot-store');
 const { isJennyStateDirRoot } = require('./workspace-root-identity');
+const { ArtifactSessionAuthority, createSessionArtifactWorkspaceFacade } = require('./artifact-session-authority');
+const { cloneSessionArtifactsForBranch } = require('./artifact-branch-workspace');
+const {
+  deleteSessionArtifactsForScope,
+  prepareSessionArtifactDeletion,
+} = require('./artifact-session-cleanup');
 
 const MAX_EDITABLE_BYTES = 512 * 1024;
 const MAX_BINARY_ARTIFACT_BYTES = 10 * 1024 * 1024;
@@ -206,7 +212,6 @@ function normalizeFileStem(value, fallback) {
   const normalized = slugify(value, fallback);
   return normalized || fallback;
 }
-
 class ArtifactWorkspaceService {
   constructor({
     configService,
@@ -216,6 +221,7 @@ class ArtifactWorkspaceService {
     logger,
     fsImpl,
     pathImpl,
+    projectAuthorityProvider,
   } = {}) {
     this._configService = configService || null;
     this._sessionMessageReader = typeof sessionMessageReader === 'function'
@@ -228,17 +234,45 @@ class ArtifactWorkspaceService {
     this._logger = typeof logger === 'function' ? logger : () => {};
     this._fs = fsImpl || fs;
     this._path = pathImpl || path;
+    this._sessionAuthority = new ArtifactSessionAuthority({
+      configService: this._configService, projectAuthorityProvider, sanitizeSessionId,
+    });
     this._writeLocks = new Map();
     this._pruneProtectedSessionIds = new Map();
   }
 
-  getWorkspaceRoot() {
-    const configured = this._configService?.getState?.().toolsWorkspaceRoot;
-    return String(configured || '').trim();
+  forSessionAuthority(authority, sessionId) {
+    if (!this._sessionAuthority.hasProvider) {
+      throw new TypeError('Session artifact authority requires a project authority provider.');
+    }
+    return createSessionArtifactWorkspaceFacade(this, authority, sessionId, sanitizeSessionId);
   }
 
+  _captureSessionScope(sessionId, admittedAuthority = null, options) {
+    return this._sessionAuthority.capture(sessionId, admittedAuthority, options); }
+
+  _assertSessionScopeCurrent(scope) {
+    return this._sessionAuthority.assertCurrent(scope); }
+
+  getWorkspaceRoot() {
+    if (this._sessionAuthority.hasProvider) return '';
+    const configured = this._configService?.getState?.().toolsWorkspaceRoot;
+    return String(configured || '').trim(); }
+
   async requireWorkspaceRoot() {
-    const workspaceRoot = this.getWorkspaceRoot();
+    if (this._sessionAuthority.hasProvider) {
+      throw artifactError(
+        ARTIFACT_ERROR_CODES.WORKSPACE_ROOT_UNAVAILABLE,
+        'A session project authority is required for artifact operations.',
+        { reason: 'session_authority_required' }
+      );
+    }
+    return this._requireWorkspaceRootForScope(this._captureSessionScope('legacy-artifact-session'));
+  }
+
+  async _requireWorkspaceRootForScope(scope) {
+    this._assertSessionScopeCurrent(scope);
+    const workspaceRoot = scope.rootPath;
     if (!workspaceRoot) {
       throw artifactError(
         ARTIFACT_ERROR_CODES.WORKSPACE_ROOT_MISSING,
@@ -257,6 +291,7 @@ class ArtifactWorkspaceService {
       );
     }
     const stats = await this._fs.stat(resolved).catch(() => null);
+    this._assertSessionScopeCurrent(scope);
     if (!stats?.isDirectory()) {
       throw artifactError(
         ARTIFACT_ERROR_CODES.WORKSPACE_ROOT_UNAVAILABLE,
@@ -267,7 +302,11 @@ class ArtifactWorkspaceService {
   }
 
   async getSessionScratchDir(sessionId) {
-    const workspaceRoot = await this.requireWorkspaceRoot();
+    return this._getSessionScratchDir(sanitizeSessionId(sessionId), null); }
+
+  async _getSessionScratchDir(sessionId, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    const workspaceRoot = await this._requireWorkspaceRootForScope(scope);
     return this._buildSessionScratchDir(workspaceRoot, sessionId);
   }
 
@@ -285,13 +324,17 @@ class ArtifactWorkspaceService {
     }
   }
 
-  async _writeSessionArtifact(sessionId, { prepare }) {
-    const workspaceRoot = await this.requireWorkspaceRoot();
+  async _writeSessionArtifact(sessionId, { prepare }, scope) {
+    const workspaceRoot = await this._requireWorkspaceRootForScope(scope);
     const scratchDir = this._buildSessionScratchDir(workspaceRoot, sessionId);
+    this._assertSessionScopeCurrent(scope);
     await this._fs.mkdir(scratchDir, { recursive: true });
+    this._assertSessionScopeCurrent(scope);
 
     const realWorkspaceRoot = await this._fs.realpath(workspaceRoot);
+    this._assertSessionScopeCurrent(scope);
     const realScratchDir = await this._fs.realpath(scratchDir);
+    this._assertSessionScopeCurrent(scope);
     this._assertPathInside(
       realWorkspaceRoot,
       realScratchDir,
@@ -302,19 +345,24 @@ class ArtifactWorkspaceService {
     const { artifactKind, title, fileStem, extension, write, metadata } = prepare();
     let fileName = '';
     let absolutePath = '';
-    await this._withArtifactWriteLock(`${sessionId}:create:${fileStem}${extension}`, async () => {
+    await this._withArtifactWriteLock(`${realScratchDir}:create:${fileStem}${extension}`, async () => {
+      this._assertSessionScopeCurrent(scope);
       fileName = `${fileStem}${extension}`;
       absolutePath = this._path.join(realScratchDir, fileName);
       let suffix = 2;
       while (await this._pathExists(absolutePath)) {
+        this._assertSessionScopeCurrent(scope);
         fileName = `${fileStem}-${suffix}${extension}`;
         absolutePath = this._path.join(realScratchDir, fileName);
         suffix += 1;
       }
-      await write(absolutePath);
+      this._assertSessionScopeCurrent(scope);
+      await write(absolutePath, scope);
     });
 
+    this._assertSessionScopeCurrent(scope);
     const realWrittenPath = await this._fs.realpath(absolutePath);
+    this._assertSessionScopeCurrent(scope);
     if (!isPathInside(this._path, realScratchDir, realWrittenPath)) {
       await this._fs.rm(absolutePath, { force: true }).catch(() => {});
       throw artifactError(
@@ -337,7 +385,11 @@ class ArtifactWorkspaceService {
   }
 
   async createArtifact(sessionId, input = {}) {
+    return this._createArtifact(sanitizeSessionId(sessionId), input, null); }
+
+  async _createArtifact(sessionId, input = {}, admittedAuthority = null) {
     const safeSessionId = sanitizeSessionId(sessionId);
+    const scope = this._captureSessionScope(safeSessionId, admittedAuthority);
     return this._writeSessionArtifact(safeSessionId, {
       prepare: () => {
         const artifactKind = normalizeArtifactKind(input.artifactKind || input.artifact_kind);
@@ -360,7 +412,7 @@ class ArtifactWorkspaceService {
           title,
           fileStem,
           extension,
-          write: (absolutePath) => this._writeFileAtomic(absolutePath, content),
+          write: (absolutePath, writeScope) => this._writeFileAtomic(absolutePath, content, writeScope),
           metadata: ({ fileName, displayPath, realWrittenPath }) => ({
             artifact_id: buildArtifactId(safeSessionId, fileName),
             artifact_kind: artifactKind,
@@ -374,12 +426,18 @@ class ArtifactWorkspaceService {
           }),
         };
       },
-    });
+    }, scope);
   }
 
   async createBinaryArtifact(sessionId, input = {}) {
-    if (input.previewScreenshot === true) return createPreviewScreenshot(this, sanitizeSessionId(sessionId), input, buildArtifactId);
+    return this._createBinaryArtifact(sanitizeSessionId(sessionId), input, null); }
+
+  async _createBinaryArtifact(sessionId, input = {}, admittedAuthority = null) {
     const safeSessionId = sanitizeSessionId(sessionId);
+    const scope = this._captureSessionScope(safeSessionId, admittedAuthority);
+    if (input.previewScreenshot === true) {
+      return createPreviewScreenshot(this, safeSessionId, input, buildArtifactId, scope);
+    }
     const content = Buffer.isBuffer(input.content)
       ? input.content
       : Buffer.from(input.content || []);
@@ -409,7 +467,7 @@ class ArtifactWorkspaceService {
           title,
           fileStem,
           extension,
-          write: (absolutePath) => this._writeBufferAtomic(absolutePath, content),
+          write: (absolutePath, writeScope) => this._writeBufferAtomic(absolutePath, content, writeScope),
           metadata: ({ fileName, displayPath, realWrittenPath }) => {
             const hasValidatedPngDimensions = (input.png_validated === true || input.pngValidated === true)
               && Number(input.width) > 0
@@ -434,11 +492,15 @@ class ArtifactWorkspaceService {
           },
         };
       },
-    });
+    }, scope);
   }
 
   async readArtifact(sessionId, artifactId) {
-    const artifact = await this.resolveArtifact(sessionId, artifactId);
+    return this._readArtifact(sanitizeSessionId(sessionId), artifactId, null); }
+
+  async _readArtifact(sessionId, artifactId, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    const artifact = await this._resolveArtifact(sessionId, artifactId, {}, scope);
     if (artifact.status !== 'available') {
       throw artifactError(
         ARTIFACT_ERROR_CODES.FILE_UNAVAILABLE,
@@ -448,9 +510,13 @@ class ArtifactWorkspaceService {
     if (!artifact.editable) {
       const mimeType = normalizeMimeType(artifact.mime_type);
       if (artifact.artifact_kind === 'image' && isDataUrlPreviewMimeType(mimeType)) {
+        this._assertSessionScopeCurrent(scope);
         const stats = await this._fs.stat(artifact.absolute_path).catch(() => null);
+        this._assertSessionScopeCurrent(scope);
         if (stats?.isFile() && Number(stats.size || 0) <= MAX_BINARY_ARTIFACT_BYTES) {
+          this._assertSessionScopeCurrent(scope);
           const buffer = await this._fs.readFile(artifact.absolute_path);
+          this._assertSessionScopeCurrent(scope);
           if (buffer.length > MAX_BINARY_ARTIFACT_BYTES) {
             return { artifact: toRendererSafeArtifact(artifact), content: '' };
           }
@@ -463,15 +529,24 @@ class ArtifactWorkspaceService {
       }
       return { artifact: toRendererSafeArtifact(artifact), content: '' };
     }
+    this._assertSessionScopeCurrent(scope);
     const content = await this._fs.readFile(artifact.absolute_path, 'utf8');
+    this._assertSessionScopeCurrent(scope);
     return { artifact: toRendererSafeArtifact(artifact), content };
   }
 
   async saveArtifact(sessionId, artifactId, content) {
+    return this._saveArtifact(sanitizeSessionId(sessionId), artifactId, content, null); }
+
+  async _saveArtifact(sessionId, artifactId, content, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
     return this._withArtifactWriteLock(
-      `${sanitizeSessionId(sessionId)}:${String(artifactId || '').trim()}`,
+      `${scope.rootPath}:${sessionId}:${String(artifactId || '').trim()}`,
       async () => {
-        const artifact = await this.resolveArtifact(sessionId, artifactId, { requireEditable: true });
+        this._assertSessionScopeCurrent(scope);
+        const artifact = await this._resolveArtifact(
+          sessionId, artifactId, { requireEditable: true }, scope
+        );
         const normalizedContent = String(content || '');
         if (!getEditableStateForContent(normalizedContent)) {
           throw artifactError(
@@ -479,7 +554,8 @@ class ArtifactWorkspaceService {
             'Artifact exceeds Jenny\'s 512 KB inline editor limit.'
           );
         }
-        await this._writeFileAtomic(artifact.absolute_path, normalizedContent);
+        this._assertSessionScopeCurrent(scope);
+        await this._writeFileAtomic(artifact.absolute_path, normalizedContent, scope);
         return {
           artifact: toRendererSafeArtifact({
             ...artifact,
@@ -491,7 +567,11 @@ class ArtifactWorkspaceService {
   }
 
   async revealArtifact(sessionId, artifactId) {
-    const artifact = await this.resolveArtifact(sessionId, artifactId);
+    return this._revealArtifact(sanitizeSessionId(sessionId), artifactId, null); }
+
+  async _revealArtifact(sessionId, artifactId, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    const artifact = await this._resolveArtifact(sessionId, artifactId, {}, scope);
     this._assertArtifactCanExternalAction(artifact, 'revealed');
     if (!this._showItemInFolderImpl) {
       throw artifactError(
@@ -499,12 +579,17 @@ class ArtifactWorkspaceService {
         'Reveal in folder is unavailable.'
       );
     }
+    this._assertSessionScopeCurrent(scope);
     this._showItemInFolderImpl(artifact.absolute_path);
     return { ok: true, artifact: toRendererSafeArtifact(artifact) };
   }
 
   async openArtifactExternal(sessionId, artifactId) {
-    const artifact = await this.resolveArtifact(sessionId, artifactId);
+    return this._openArtifactExternal(sanitizeSessionId(sessionId), artifactId, null); }
+
+  async _openArtifactExternal(sessionId, artifactId, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    const artifact = await this._resolveArtifact(sessionId, artifactId, {}, scope);
     this._assertArtifactCanExternalAction(artifact, 'opened');
     if (!this._openPathImpl) {
       throw artifactError(
@@ -512,11 +597,24 @@ class ArtifactWorkspaceService {
         'Open externally is unavailable.'
       );
     }
+    this._assertSessionScopeCurrent(scope);
     const result = await this._openPathImpl(artifact.absolute_path);
+    this._assertSessionScopeCurrent(scope);
     return { ok: !result, result, artifact: toRendererSafeArtifact(artifact) };
   }
 
   async resolveArtifact(sessionId, artifactId, { requireEditable = false } = {}) {
+    return this._resolveArtifactForSession(
+      sanitizeSessionId(sessionId), artifactId, { requireEditable }, null
+    );
+  }
+
+  async _resolveArtifactForSession(sessionId, artifactId, options = {}, admittedAuthority = null) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    return this._resolveArtifact(sessionId, artifactId, options, scope);
+  }
+
+  async _resolveArtifact(sessionId, artifactId, { requireEditable = false } = {}, scope) {
     const targetId = String(artifactId || '').trim();
     const safeSessionId = sanitizeSessionId(sessionId);
     if (!targetId) {
@@ -526,9 +624,10 @@ class ArtifactWorkspaceService {
       );
     }
 
-    const workspaceRoot = await this.requireWorkspaceRoot();
+    const workspaceRoot = await this._requireWorkspaceRootForScope(scope);
     const sessionScratchDir = this._buildSessionScratchDir(workspaceRoot, safeSessionId);
     const messages = await Promise.resolve(this._sessionMessageReader(safeSessionId));
+    this._assertSessionScopeCurrent(scope);
     const toolResults = Array.isArray(messages) ? messages : [];
     for (const message of toolResults) {
       const artifacts = Array.isArray(message?.tool_result?.generated_artifacts)
@@ -565,14 +664,18 @@ class ArtifactWorkspaceService {
       // real workspace root). This blocks junctions that would let an
       // artifact read/write escape the per-session sandbox even when the
       // lexical path looks confined.
+      this._assertSessionScopeCurrent(scope);
       const stats = await this._fs.stat(resolvedPath).catch(() => null);
+      this._assertSessionScopeCurrent(scope);
       let effectivePath;
       const realScratchDir = await this._fs
         .realpath(sessionScratchResolved)
         .catch(() => sessionScratchResolved);
+      this._assertSessionScopeCurrent(scope);
       const realWorkspaceRoot = await this._fs
         .realpath(rootResolved)
         .catch(() => rootResolved);
+      this._assertSessionScopeCurrent(scope);
       this._assertPathInside(
         realWorkspaceRoot,
         realScratchDir,
@@ -582,6 +685,7 @@ class ArtifactWorkspaceService {
       const realParentDir = await this._fs
         .realpath(this._path.dirname(resolvedPath))
         .catch(() => this._path.dirname(resolvedPath));
+      this._assertSessionScopeCurrent(scope);
       this._assertPathInside(
         realScratchDir,
         realParentDir,
@@ -590,6 +694,7 @@ class ArtifactWorkspaceService {
       );
       if (stats) {
         const realPath = await this._fs.realpath(resolvedPath).catch(() => resolvedPath);
+        this._assertSessionScopeCurrent(scope);
         this._assertPathInside(
           realScratchDir,
           realPath,
@@ -615,6 +720,7 @@ class ArtifactWorkspaceService {
           'Artifact is not editable in Jenny.'
         );
       }
+      this._assertSessionScopeCurrent(scope);
       return refreshed;
     }
     throw artifactError(
@@ -655,20 +761,18 @@ class ArtifactWorkspaceService {
   }
 
   async deleteSessionArtifacts(sessionId) {
+    return this._deleteSessionArtifacts(sanitizeSessionId(sessionId), null); }
+
+  async _deleteSessionArtifacts(sessionId, admittedAuthority) {
     const safeSessionId = sanitizeSessionId(sessionId);
-    const workspaceRoot = this.getWorkspaceRoot();
-    if (!workspaceRoot) return { deleted: false };
-    const artifactsRoot = this._path.join(
-      this._path.resolve(workspaceRoot),
-      SESSION_ARTIFACT_ROOT
+    const scope = this._captureSessionScope(safeSessionId, admittedAuthority);
+    return deleteSessionArtifactsForScope(this, safeSessionId, scope, SESSION_ARTIFACT_ROOT);
+  }
+
+  _prepareSessionArtifactDeletion(sessionId, admittedAuthority) {
+    return prepareSessionArtifactDeletion(
+      this, sanitizeSessionId(sessionId), admittedAuthority, SESSION_ARTIFACT_ROOT
     );
-    const scratchDir = this._path.join(artifactsRoot, safeSessionId);
-    const stats = await this._fs.stat(scratchDir).catch(() => null);
-    if (!stats?.isDirectory()) return { deleted: false };
-    await this._assertRealPathInside(scratchDir, artifactsRoot);
-    await this._fs.rm(scratchDir, { recursive: true, force: true });
-    this._logger('INFO', 'artifacts.session_deleted', { sessionId: safeSessionId });
-    return { deleted: true };
   }
 
   /**
@@ -677,13 +781,18 @@ class ArtifactWorkspaceService {
    * so conversation history is preserved.
    */
   async deleteArtifact(sessionId, artifactId) {
-    const artifact = await this.resolveArtifact(sessionId, artifactId);
+    return this._deleteArtifact(sanitizeSessionId(sessionId), artifactId, null); }
+
+  async _deleteArtifact(sessionId, artifactId, admittedAuthority) {
+    const scope = this._captureSessionScope(sessionId, admittedAuthority);
+    const artifact = await this._resolveArtifact(sessionId, artifactId, {}, scope);
     // File already removed externally — treat as successful deletion.
     if (artifact.status !== 'available') {
       return { deleted: true, artifact: toRendererSafeArtifact(artifact) };
     }
-    const scratchDir = await this.getSessionScratchDir(sanitizeSessionId(sessionId));
+    const scratchDir = this._buildSessionScratchDir(scope.rootPath, sessionId);
     await this._assertRealPathInside(artifact.absolute_path, scratchDir);
+    this._assertSessionScopeCurrent(scope);
     await this._fs.rm(artifact.absolute_path, { force: true });
     this._logger('INFO', 'artifacts.file_deleted', {
       sessionId: sanitizeSessionId(sessionId),
@@ -735,166 +844,31 @@ class ArtifactWorkspaceService {
    * callers fall back to strip-and-mark (B1) semantics for those.
    */
   async cloneSessionArtifactsForBranch(sourceSessionId, targetSessionId, { maxTotalBytes, maxEntries } = {}) {
-    const safeSourceId = sanitizeSessionId(sourceSessionId);
-    const safeTargetId = sanitizeSessionId(targetSessionId);
-    const byteCap = Number.isFinite(maxTotalBytes) && maxTotalBytes > 0
-      ? maxTotalBytes
-      : MAX_BRANCH_CLONE_TOTAL_BYTES;
-    const entryCap = Number.isFinite(maxEntries) && maxEntries > 0
-      ? maxEntries
-      : MAX_BRANCH_CLONE_ENTRIES;
-    let workspaceRoot;
-    try {
-      workspaceRoot = await this.requireWorkspaceRoot();
-    } catch (_error) {
-      return { cloned: false, reason: 'workspace_root_unavailable' };
-    }
-    const artifactsRoot = this._path.join(
-      this._path.resolve(workspaceRoot),
-      SESSION_ARTIFACT_ROOT
+    return this._cloneSessionArtifactsForBranch(
+      sourceSessionId, targetSessionId, { maxTotalBytes, maxEntries }, null
     );
-    const sourceDir = this._buildSessionScratchDir(workspaceRoot, safeSourceId);
-    const sourceStats = await this._fs.stat(sourceDir).catch(() => null);
-    if (!sourceStats?.isDirectory()) {
-      return { cloned: false, reason: 'source_scratch_missing' };
-    }
-    const targetDir = this._buildSessionScratchDir(workspaceRoot, safeTargetId);
-    // Only remove the target dir on failure if this call created it: a
-    // pre-existing dir belongs to some other session/holder and must never
-    // be destroyed by a failed clone (mkdir below is non-recursive on
-    // purpose - the parent exists because the source dir does).
-    let createdTargetDir = false;
-    try {
-      const realSourceDir = await this._assertRealPathInside(sourceDir, artifactsRoot);
-      const plan = await this._collectScratchCopyPlan(realSourceDir, { byteCap, entryCap });
-      await this._fs.mkdir(targetDir);
-      createdTargetDir = true;
-      const realTargetDir = await this._assertRealPathInside(targetDir, artifactsRoot);
-      for (const relativePath of plan.files) {
-        const destination = this._path.join(realTargetDir, relativePath);
-        await this._fs.mkdir(this._path.dirname(destination), { recursive: true });
-        await this._fs.copyFile(this._path.join(realSourceDir, relativePath), destination);
-      }
-      this._logger('INFO', 'artifacts.branch_cloned', {
-        sourceSessionId: safeSourceId,
-        targetSessionId: safeTargetId,
-        files: plan.files.length,
-        bytes: plan.bytes,
-      });
-      return {
-        cloned: true,
-        files: plan.files.length,
-        bytes: plan.bytes,
-        rewriteEntry: this._buildBranchArtifactEntryRewriter(safeSourceId, safeTargetId, realTargetDir),
-      };
-    } catch (error) {
-      if (createdTargetDir) {
-        await this._fs.rm(targetDir, { recursive: true, force: true }).catch(() => {});
-      }
-      if (error?.cloneCapReason) {
-        this._logger('WARN', 'artifacts.branch_clone_skipped', {
-          sourceSessionId: safeSourceId,
-          targetSessionId: safeTargetId,
-          reason: error.cloneCapReason,
-          bytes: error.cloneBytes,
-          byteCap,
-        });
-        return { cloned: false, reason: error.cloneCapReason, bytes: error.cloneBytes };
-      }
-      // Redaction: fs error messages embed absolute local paths; log only
-      // the bounded error code/name.
-      this._logger('WARN', 'artifacts.branch_clone_failed', {
-        sourceSessionId: safeSourceId,
-        targetSessionId: safeTargetId,
-        error: String(error?.code || error?.name || 'error'),
-      });
-      return { cloned: false, reason: 'copy_failed' };
-    }
   }
 
-  // Walk a scratch dir and list copyable files (scratch-relative) with their
-  // aggregate size. Symlinks/junctions are skipped outright so a clone can
-  // never follow a link out of the per-session sandbox. The walk aborts as
-  // soon as either cap is exceeded (cap errors carry `cloneCapReason`) so a
-  // huge scratch dir is never fully enumerated on the fork path.
-  async _collectScratchCopyPlan(rootDir, { byteCap, entryCap }) {
-    const files = [];
-    let bytes = 0;
-    let entriesSeen = 0;
-    const capExceeded = (reason) => {
-      const error = new Error(`branch clone aborted: ${reason}`);
-      error.cloneCapReason = reason;
-      error.cloneBytes = bytes;
-      return error;
-    };
-    const walk = async (relativeDir) => {
-      const absoluteDir = relativeDir ? this._path.join(rootDir, relativeDir) : rootDir;
-      const entries = await this._fs.readdir(absoluteDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isSymbolicLink()) {
-          continue;
-        }
-        entriesSeen += 1;
-        if (entriesSeen > entryCap) {
-          throw capExceeded('entry_cap_exceeded');
-        }
-        const relativePath = relativeDir
-          ? this._path.join(relativeDir, entry.name)
-          : entry.name;
-        if (entry.isDirectory()) {
-          await walk(relativePath);
-        } else if (entry.isFile()) {
-          const stats = await this._fs.stat(this._path.join(rootDir, relativePath));
-          files.push(relativePath);
-          bytes += Number(stats.size || 0);
-          if (bytes > byteCap) {
-            throw capExceeded('size_cap_exceeded');
-          }
-        }
+  async _cloneSessionArtifactsForBranch(
+    sourceSessionId,
+    targetSessionId,
+    { maxTotalBytes, maxEntries } = {},
+    admittedAuthority = null
+  ) {
+    return cloneSessionArtifactsForBranch(
+      this,
+      sourceSessionId,
+      targetSessionId,
+      { maxTotalBytes, maxEntries },
+      admittedAuthority,
+      {
+        maxTotalBytes: MAX_BRANCH_CLONE_TOTAL_BYTES,
+        maxEntries: MAX_BRANCH_CLONE_ENTRIES,
+        sessionArtifactRoot: SESSION_ARTIFACT_ROOT,
+        isRedactedArtifactPath,
+        sanitizeSessionId,
       }
-    };
-    await walk('');
-    return { files, bytes };
-  }
-
-  _buildBranchArtifactEntryRewriter(safeSourceId, safeTargetId, targetScratchDir) {
-    const artifactRootPosix = SESSION_ARTIFACT_ROOT.replace(/\\/g, '/');
-    const sourceDisplayPrefix = `${artifactRootPosix}/${safeSourceId}/`;
-    const targetDisplayPrefix = `${artifactRootPosix}/${safeTargetId}/`;
-    const sourceIdPrefix = `artifact_file_${safeSourceId}_`;
-    const targetIdPrefix = `artifact_file_${safeTargetId}_`;
-    const pathImpl = this._path;
-    return (entry) => {
-      const normalized = normalizeGeneratedArtifactMetadata(entry);
-      if (!normalized) {
-        return null;
-      }
-      const displayPath = normalized.display_path.replace(/\\/g, '/');
-      if (!displayPath.startsWith(sourceDisplayPrefix)) {
-        return null;
-      }
-      const scratchRelativePath = displayPath.slice(sourceDisplayPrefix.length);
-      if (!scratchRelativePath) {
-        return null;
-      }
-      // Service-issued ids embed the owning session id; rebase those onto the
-      // branch. Foreign id shapes stay as-is - artifact ids are only ever
-      // looked up within their own session's messages.
-      const artifactId = normalized.artifact_id.startsWith(sourceIdPrefix)
-        ? `${targetIdPrefix}${normalized.artifact_id.slice(sourceIdPrefix.length)}`
-        : normalized.artifact_id;
-      return {
-        ...normalized,
-        artifact_id: artifactId,
-        display_path: `${targetDisplayPrefix}${scratchRelativePath}`,
-        // A redacted stored path stays redacted; resolveArtifact rebuilds it
-        // from the (rewritten) display_path. Concrete paths are rebuilt from
-        // the display_path remainder, never from the untrusted stored path.
-        absolute_path: isRedactedArtifactPath(entry?.absolute_path)
-          ? normalized.absolute_path
-          : pathImpl.join(targetScratchDir, ...scratchRelativePath.split('/')),
-      };
-    };
+    );
   }
 
   /**
@@ -906,13 +880,26 @@ class ArtifactWorkspaceService {
    *   on a stale snapshot.
    */
   async pruneOrphanedArtifacts(activeSessionIds) {
-    const workspaceRoot = this.getWorkspaceRoot();
+    if (this._sessionAuthority.hasProvider) return { removed: 0 };
+    return this._pruneOrphanedArtifacts(activeSessionIds, null, null); }
+
+  async _pruneOrphanedArtifacts(activeSessionIds, admittedAuthority, admittedSessionId) {
+    let scope = null;
+    if (admittedAuthority && admittedSessionId) {
+      scope = this._captureSessionScope(admittedSessionId, admittedAuthority);
+    }
+    // Legacy artifact dirs cannot prove orphan ownership across projects that share a root;
+    // scoped facades therefore leave cleanup to explicit session deletion.
+    if (scope?.kind === 'project') return { removed: 0 };
+    const workspaceRoot = scope ? scope.rootPath : this.getWorkspaceRoot();
     if (!workspaceRoot) return { removed: 0 };
     const artifactsRoot = this._path.join(
       this._path.resolve(workspaceRoot),
       SESSION_ARTIFACT_ROOT
     );
+    if (scope) this._assertSessionScopeCurrent(scope);
     const stats = await this._fs.stat(artifactsRoot).catch(() => null);
+    if (scope) this._assertSessionScopeCurrent(scope);
     if (!stats?.isDirectory()) return { removed: 0 };
     const resolveActiveSet = () => {
       // Fail closed: if the active set cannot be resolved, prune nothing.
@@ -930,6 +917,7 @@ class ArtifactWorkspaceService {
     const activeSet = resolveActiveSet();
     if (!activeSet) return { removed: 0 };
     const entries = await this._fs.readdir(artifactsRoot, { withFileTypes: true });
+    if (scope) this._assertSessionScopeCurrent(scope);
     let removed = 0;
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
@@ -946,6 +934,7 @@ class ArtifactWorkspaceService {
       const fullPath = this._path.join(artifactsRoot, entry.name);
       try {
         await this._assertRealPathInside(fullPath, artifactsRoot);
+        if (scope) this._assertSessionScopeCurrent(scope);
         await this._fs.rm(fullPath, { recursive: true, force: true });
         removed += 1;
       } catch (_) {
@@ -967,22 +956,28 @@ class ArtifactWorkspaceService {
     }
   }
 
-  async _writeFileAtomic(targetPath, content) {
+  async _writeFileAtomic(targetPath, content, scope = null) {
     const tempPath = `${targetPath}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     try {
+      if (scope) this._assertSessionScopeCurrent(scope);
       await this._fs.writeFile(tempPath, String(content || ''), 'utf8');
+      if (scope) this._assertSessionScopeCurrent(scope);
       await this._fs.rename(tempPath, targetPath);
+      if (scope) this._assertSessionScopeCurrent(scope);
     } catch (error) {
       await this._fs.rm(tempPath, { force: true }).catch(() => {});
       throw error;
     }
   }
 
-  async _writeBufferAtomic(targetPath, content) {
+  async _writeBufferAtomic(targetPath, content, scope = null) {
     const tempPath = `${targetPath}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     try {
+      if (scope) this._assertSessionScopeCurrent(scope);
       await this._fs.writeFile(tempPath, Buffer.isBuffer(content) ? content : Buffer.from(content || []));
+      if (scope) this._assertSessionScopeCurrent(scope);
       await this._fs.rename(tempPath, targetPath);
+      if (scope) this._assertSessionScopeCurrent(scope);
     } catch (error) {
       await this._fs.rm(tempPath, { force: true }).catch(() => {});
       throw error;

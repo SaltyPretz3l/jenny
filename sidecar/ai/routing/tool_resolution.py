@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -33,6 +34,35 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 
 
+def _request_scoped_config(config: Any, request_context: ChatRequestContext | None) -> Any:
+    execution = getattr(request_context, "execution_context", None)
+    if execution is None:
+        return config
+    skills = getattr(execution, "skills_config", None)
+    changes: dict[str, Any] = {
+        "tools_workspace_root": execution.root_path,
+        "agent_workspace_root": execution.root_path,
+        "tool_policy_snapshot": execution.tool_policy_snapshot,
+        "tools_knowledge_enabled": bool(execution.knowledge_roots),
+        "knowledge_roots": execution.knowledge_roots,
+        "skills_project_root": getattr(skills, "project_root", None),
+        "skills_project_enabled": bool(getattr(skills, "project_enabled", False)),
+    }
+    if skills is not None:
+        changes.update({
+            "skills_bundled_root": skills.bundled_root,
+            "skills_user_root": skills.user_root,
+            "skills_bundled_enabled": skills.bundled_enabled,
+            "skills_user_enabled": skills.user_enabled,
+            "skills_disabled_ids": skills.disabled_ids,
+            "skills_auto_index": skills.auto_index,
+        })
+    try:
+        return replace(config, **changes)
+    except TypeError:
+        return SimpleNamespace(**{**vars(config), **changes})
+
+
 def _config_bool(config: Any, key: str) -> bool:
     value = getattr(config, key, None)
     if isinstance(value, bool):
@@ -44,7 +74,9 @@ def _config_bool(config: Any, key: str) -> bool:
     return False
 
 
-def _electron_bridge_runtime_descriptors(config: Any) -> tuple[Any, ...]:
+def _electron_bridge_runtime_descriptors(
+    config: Any, *, runtime_children_enabled: bool = False,
+) -> tuple[Any, ...]:
     """Bridge descriptors for every Electron-owned tool the config enables.
 
     Derived from the manifest instead of a hand-maintained name list. A tool
@@ -69,6 +101,9 @@ def _electron_bridge_runtime_descriptors(config: Any) -> tuple[Any, ...]:
     for entry in entries:
         name = str(entry.get("name") or "").strip()
         if not name:
+            continue
+        if (name in {"session_spawn", "session_wait", "session_result"}
+                and not runtime_children_enabled):
             continue
         availability = entry.get("availability")
         config_flag = (
@@ -125,15 +160,19 @@ def _electron_bridge_runtime_descriptors(config: Any) -> tuple[Any, ...]:
     return tuple(descriptors)
 
 
-def _catalog_for_kernel(kernel: Any) -> tuple[Any, ...]:
+def _catalog_for_kernel(
+    kernel: Any, *, config: Any | None = None, runtime_children_enabled: bool = False,
+) -> tuple[Any, ...]:
+    effective_config = config if config is not None else kernel._config
     runtime_descriptors = tuple(getattr(kernel._mcp_client, "available_tools", ()) or ())
     plugin_provider = getattr(kernel, "_plugin_runtime_tool_provider", None)
     plugin_descriptors = tuple(plugin_provider() or ()) if callable(plugin_provider) else ()
     return build_tool_catalog(
-        config=kernel._config,
+        config=effective_config,
         runtime_descriptors=(
             *runtime_descriptors,
-            *_electron_bridge_runtime_descriptors(kernel._config),
+            *_electron_bridge_runtime_descriptors(
+                effective_config, runtime_children_enabled=runtime_children_enabled),
             *plugin_descriptors,
         ),
     )
@@ -180,10 +219,11 @@ def _context_from_request(
     include_deferred_tools: bool,
     lockdown_disabled_tools: frozenset[str] = frozenset(),
 ) -> ToolAssemblyContext:
+    scoped_config = _request_scoped_config(kernel._config, request_context)
     if request_context is None:
         return ToolAssemblyContext(
             surface=MANAGED_SIDECAR_SURFACE,
-            config=kernel._config,
+            config=scoped_config,
             engine_supports_tool_calling=engine_supports_tool_calling(kernel),
             engine_supports_inband_tool_calling=engine_supports_inband_tool_calling(kernel),
             mode=getattr(kernel._config, "mode", None),
@@ -207,7 +247,7 @@ def _context_from_request(
         }
     return ToolAssemblyContext(
         surface=MANAGED_SIDECAR_SURFACE,
-        config=kernel._config,
+        config=scoped_config,
         engine_supports_tool_calling=engine_supports_tool_calling(kernel),
         engine_supports_inband_tool_calling=engine_supports_inband_tool_calling(kernel),
         mode=request_context.mode,
@@ -235,7 +275,10 @@ def assemble_tool_contract(
     enforce_request_preferences: bool = True,
     include_deferred_tools: bool = True,
 ):
-    catalog = _catalog_for_kernel(kernel)
+    scoped_config = _request_scoped_config(kernel._config, request_context)
+    catalog = _catalog_for_kernel(kernel, config=scoped_config,
+        runtime_children_enabled=(
+            getattr(request_context, "runtime_children_enabled", False) is True))
     lockdown_disabled_tools = frozenset(
         descriptor.name
         for descriptor in catalog

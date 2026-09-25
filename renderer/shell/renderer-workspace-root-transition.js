@@ -377,12 +377,16 @@
             });
           }
         } else {
-          const prepareName = mode === 'clear' ? 'prepareClear' : 'prepareChoose';
+          // 'project' resolves the folder in main from a project id (Projects
+          // v2): the renderer never sends a path.
+          const prepareName = mode === 'clear' ? 'prepareClear' : mode === 'project' ? 'prepareProject' : 'prepareChoose';
           if (typeof bridge?.[prepareName] !== 'function') {
             return failure(mode, initialContext, 'bridge_unavailable', { blocked: true, stage: 'prepare' });
           }
           try {
-            prepared = await bridge[prepareName]();
+            prepared = mode === 'project'
+              ? await bridge.prepareProject({ project_id: String(request?.projectId || '') })
+              : await bridge[prepareName]();
           } catch (error) {
             return failure(mode, initialContext, 'prepare_failed', {
               blocked: true,
@@ -623,7 +627,11 @@
       return run('external', request || {});
     }
 
-    return { choose, clear, external };
+    function project(request) {
+      return run('project', request || {});
+    }
+
+    return { choose, clear, external, project };
   }
 
   return {

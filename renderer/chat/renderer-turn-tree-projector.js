@@ -85,14 +85,16 @@
     getPhaseField,
   } = projectorMessageUtils;
 
-  // Row-ID stability contract: turn_id is derived from the persisted
-  // parent_stream_id field (set by the backend on every assistant/tool
-  // message at stream time). event_id and row_id are then composed
+  // Row-ID stability contract: explicit persisted turn_id is authoritative;
+  // legacy messages derive turn_id from their existing stream fields.
+  // event_id and row_id are then composed
   // deterministically from turn_id + kind + ordinal. These identities
-  // survive app restart because parent_stream_id survives app restart.
+  // survive app restart because their persisted identity fields survive.
   // Do NOT change the derivation algorithm without a migration that
   // re-stamps all existing messages in the session store.
   function extractMessageStreamId(message) {
+    const logicalTurnId = normalizeId(message?.turn_id) || normalizeId(message?.turnId);
+    if (logicalTurnId) return logicalTurnId;
     const directId = normalizeId(
       message && (
         message.streamId
@@ -353,6 +355,7 @@
           approval_state: approvalState,
           summary: String(toolCall.summary || ''),
           ...(String(toolCall.reason || '').trim() ? { reason: String(toolCall.reason).trim() } : {}),
+          ...(toolCall.one_off_only === true ? { one_off_only: true } : {}),
           parent_stream_id: normalizeId(toolCall.parent_stream_id),
         },
       });
@@ -877,7 +880,7 @@
         // the approval block vanish at the first tool event). Adoption only
         // applies when the user key would CREATE a turn; a user message that
         // joins an existing turn keeps today's grouping.
-        const answeringStreamId = streamId && turnByKey.has(streamId)
+        const answeringStreamId = normalizeId(message.turn_id) || normalizeId(message.turnId) || (streamId && turnByKey.has(streamId))
           ? ''
           : resolveAnsweringStreamId(messages, index);
         turn = ensureTurnForKey(answeringStreamId || streamId || `turn_${index}`, index);
@@ -887,7 +890,7 @@
           turnByKey.set(streamId, turn);
         }
         latestUserTurnId = turn.turn_id;
-        pendingUserTurnId = turn.turn_id;
+        pendingUserTurnId = normalizeId(message.turn_id) || normalizeId(message.turnId) ? '' : turn.turn_id;
       } else if (STANDALONE_TURN_KINDS.has(kind)) {
         turn = ensureTurnForKey(`turn_${messageId}`, index);
         pendingUserTurnId = '';

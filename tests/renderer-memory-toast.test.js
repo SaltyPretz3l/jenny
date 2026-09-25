@@ -270,8 +270,8 @@ test('renderer dismiss action tracks fingerprint and calls memory.dismiss', asyn
         async listApproved() {
           return { memories: [] };
         },
-        async dismiss(fingerprint) {
-          memoryCalls.dismiss.push(fingerprint);
+        async dismiss(sessionId, fingerprint) {
+          memoryCalls.dismiss.push([sessionId, fingerprint]);
         },
       },
     },
@@ -303,7 +303,7 @@ test('renderer dismiss action tracks fingerprint and calls memory.dismiss', asyn
     await waitForUi(window, 20);
 
     assert.ok(memoryCalls.dismiss.length >= 1);
-    assert.equal(memoryCalls.dismiss[0], candidate.content_fingerprint);
+    assert.deepEqual(memoryCalls.dismiss[0], ['session-1', candidate.content_fingerprint]);
   } finally {
     await app.dispose();
   }
@@ -329,8 +329,8 @@ test('renderer auth reset clears dismissed memory state so the suggestion can re
         async listApproved() {
           return { memories: [] };
         },
-        async dismiss(fingerprint) {
-          memoryCalls.dismiss.push(fingerprint);
+        async dismiss(sessionId, fingerprint) {
+          memoryCalls.dismiss.push([sessionId, fingerprint]);
         },
       },
     },
@@ -399,7 +399,7 @@ test('renderer auth reset clears dismissed memory state so the suggestion can re
       .querySelector('[data-toast-action-id="dismiss"]');
     assert.ok(reappearedDismissButton);
     assert.equal(memoryCalls.suggest.length, 2);
-    assert.deepEqual(memoryCalls.dismiss, [candidate.content_fingerprint]);
+    assert.deepEqual(memoryCalls.dismiss, [['session-1', candidate.content_fingerprint]]);
   } finally {
     await app.dispose();
   }

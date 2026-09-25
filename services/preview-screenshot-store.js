@@ -71,39 +71,52 @@ async function retainedEntries(fs, root, entries) {
 // Caller serializes this operation for the entire workspace, including restarts
 // through the application's exclusive profile owner. Index publication precedes
 // image creation, so interrupted writes cannot leave untracked image accumulation.
-async function savePreviewScreenshot({ fs, workspace, session, content, writeIndex }) {
+async function savePreviewScreenshot({ fs, workspace, session, content, writeIndex, assertCurrent }) {
   if (!SESSION_PATTERN.test(session) || session === '.' || session === '..'
       || !Buffer.isBuffer(content) || !content.length || content.length > MAX_PREVIEW_IMAGE_BYTES) {
     throw new Error('Preview screenshot exceeds the cache contract.');
   }
+  assertCurrent();
   const realWorkspace = await fs.realpath(workspace);
+  assertCurrent();
   const state = await directory(fs, realWorkspace, '.jenny');
+  assertCurrent();
   const root = await directory(fs, state, 'artifacts');
+  assertCurrent();
   const entries = await retainedEntries(fs, root, await readIndex(fs, root));
+  assertCurrent();
   if (entries.length >= MAX_WORKSPACE_CAPTURES
       || entries.filter((entry) => entry.session === session).length >= MAX_SESSION_CAPTURES) {
     throw new Error('Preview screenshot storage is full (4 per session, 32 per workspace). '
       + 'Remove unwanted saved screenshots to free space; model image delivery can continue.');
   }
   const parent = await directory(fs, root, session);
+  assertCurrent();
   const file = `preview-capture-${crypto.randomUUID()}.png`;
   const target = path.join(parent, file);
   entries.push({ session, file, sha256: digest(content) });
+  assertCurrent();
   await fs.writeFile(path.join(root, MARKER_NAME), '1', { flag: 'wx' }).catch((error) => {
     if (error.code !== 'EEXIST') throw error;
   });
+  assertCurrent();
   await writeIndex(path.join(root, INDEX_NAME), JSON.stringify({ version: 1, entries }));
+  assertCurrent();
   await fs.writeFile(target, content, { flag: 'wx' });
+  assertCurrent();
   return { file, absolutePath: target, displayPath: path.relative(realWorkspace, target).replace(/\\/g, '/') };
 }
 
-async function createPreviewScreenshot(service, session, input, buildArtifactId) {
-  const workspace = await service._fs.realpath(await service.requireWorkspaceRoot());
+async function createPreviewScreenshot(service, session, input, buildArtifactId, scope) {
+  const workspace = await service._fs.realpath(await service._requireWorkspaceRootForScope(scope));
+  service._assertSessionScopeCurrent(scope);
   const previous = workspaceLocks.get(workspace) || Promise.resolve();
   const next = previous.catch(() => {}).then(async () => {
+    service._assertSessionScopeCurrent(scope);
     const saved = await savePreviewScreenshot({
       fs: service._fs, workspace, session, content: input.content,
-      writeIndex: (target, text) => service._writeFileAtomic(target, text),
+      writeIndex: (target, text) => service._writeFileAtomic(target, text, scope),
+      assertCurrent: () => service._assertSessionScopeCurrent(scope),
     });
     return { metadata: normalizeGeneratedArtifactMetadata({
       artifact_id: buildArtifactId(session, saved.file),

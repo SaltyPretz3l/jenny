@@ -1,0 +1,40 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const test = require('node:test');
+const { waitFor, createBackend } = require('../helpers/session-runtime-stdio-fixture');
+const { captureSessionRuntimeProviderRoute } = require('../../services/backend/session-runtime-provider-route');
+
+test('Send stays pending without a canonical turn until auxiliary inference releases capacity', { timeout: 30000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-inference-review-'));
+  const profile = path.join(root, 'profile'); const workspace = path.join(root, 'workspace');
+  fs.mkdirSync(profile); fs.mkdirSync(workspace);
+  const script = path.join(root, 'replay.json');
+  fs.writeFileSync(script, JSON.stringify({ version: 1, calls: [{ text: 'First.' }, { text: 'Next.' }] }));
+  const previous = process.env.JENNY_REPLAY_SCRIPT; process.env.JENNY_REPLAY_SCRIPT = script;
+  const seen = []; const backend = createBackend(profile, workspace, seen, []);
+  t.after(async () => {
+    await backend.stop(); backend.dispose();
+    if (previous === undefined) delete process.env.JENNY_REPLAY_SCRIPT; else process.env.JENNY_REPLAY_SCRIPT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await backend.start();
+  const sessionId = (await backend.createSession({})).data.id;
+  const runtime = backend.sessionRuntime;
+  const route = captureSessionRuntimeProviderRoute(backend);
+  const held = runtime.lanes.tryAcquireInference({ ownerId: 'auxiliary_fixture', route });
+  assert.equal(held.status, 'granted');
+  const sent = await backend.runtimeApplicationService.submit({ session_id: sessionId, prompt: 'Hello.', idempotency_key: 'held' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(runtime.store.get(sent.work_id).status, 'pending');
+  assert.equal(seen.some(event => event.type === 'started'), false);
+  assert.ok(!backend.sessionStore.getSession(sessionId).active_turn);
+  runtime.lanes.release(held.lease, { producerSettled: true });
+  await waitFor(() => runtime.store.get(sent.work_id).status === 'completed');
+  assert.equal(seen.some(event => event.type === 'error'), false);
+  assert.equal(runtime.lanes.snapshot().active_leases, 0);
+  const next = await backend.runtimeApplicationService.submit({ session_id: sessionId, prompt: 'Next.', idempotency_key: 'next' });
+  await waitFor(() => runtime.store.get(next.work_id).status === 'completed');
+});

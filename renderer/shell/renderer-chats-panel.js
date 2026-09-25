@@ -19,7 +19,10 @@
   var PAGE_SIZE = 100;
   var MAX_VISIBLE = 500;
   var SEARCH_LIMIT = 200;
-  var SLOW_RENDER_MS = 32;
+  // 50 ms is the browser long-task line; boot contention alone put renders at
+  // 32-56 ms (2026-09-22 diagnostics), so only a clear stall warns.
+  var SLOW_RENDER_MS = 50;
+  var STALLED_RENDER_MS = 100;
   var SLOW_LOG_INTERVAL_MS = 30000;
   var SCROLL_PRESERVE = 'preserve';
   var SCROLL_RESET = 'reset';
@@ -110,8 +113,11 @@
       : new Set(Array.isArray(o.pendingDeleteIds) ? o.pendingDeleteIds : []);
     var scope = o.scope === 'archived' ? 'archived' : 'recent';
     var query = normalizeInlineText(o.query).toLowerCase();
+    // Projects v2: '' = all projects; a chat without project_id is General.
+    var projectId = String(o.projectId || '').trim();
     var recentTotal = 0;
     var archivedTotal = 0;
+    var projectTotal = 0;
     var eligible = [];
 
     sessions.forEach(function (session) {
@@ -119,6 +125,8 @@
       var archived = Boolean(session.archived_at);
       if (archived) archivedTotal += 1;
       else recentTotal += 1;
+      if (projectId && (String(session.project_id || '').trim() || GENERAL_PROJECT_ID) !== projectId) return;
+      projectTotal += 1;
       if ((scope === 'archived') !== archived) return;
       if (query) {
         var title = normalizeInlineText(session.title).toLowerCase();
@@ -140,11 +148,14 @@
     var emptyKind = '';
     if (!visibleSessions.length) {
       if (query) emptyKind = 'search';
+      else if (projectId && scope !== 'archived') emptyKind = 'project';
       else emptyKind = scope === 'archived' ? 'archived' : 'empty';
     }
     return {
       scope: scope,
       query: query,
+      projectId: projectId,
+      projectTotal: projectTotal,
       recentTotal: recentTotal,
       archivedTotal: archivedTotal,
       scopeTotal: scopeTotal,
@@ -158,6 +169,8 @@
       emptyKind: emptyKind,
     };
   }
+
+  var GENERAL_PROJECT_ID = 'project_general';
 
   function createChatsPanelController(deps) {
     var state = deps.state;
@@ -185,6 +198,10 @@
     var lastSlowLogAt = 0;
     var lastScopeState = null;
     var rovingSessionId = '';
+    // Projects v2 filter: the shared project switcher (lazy) names projects
+    // and opens the one project menu; cached once it resolves.
+    var projectSwitcher = null;
+    var projectSwitcherRequested = false;
 
     function nowMs() {
       return windowRef.performance && typeof windowRef.performance.now === 'function'
@@ -194,6 +211,48 @@
 
     function currentScope() {
       return state.ui && state.ui.sidebarArchivedView === true ? 'archived' : 'recent';
+    }
+
+    function currentProjectFilter() {
+      return String(state.ui && state.ui.chatsProjectFilter || '').trim();
+    }
+
+    function requestProjectSwitcher() {
+      if (projectSwitcher) return Promise.resolve(projectSwitcher);
+      if (typeof callbacks.getProjectSwitcher !== 'function') return Promise.resolve(null);
+      var first = !projectSwitcherRequested;
+      projectSwitcherRequested = true;
+      return Promise.resolve(callbacks.getProjectSwitcher()).then(function (switcher) {
+        if (disposed || !switcher) return null;
+        projectSwitcher = switcher;
+        if (first) Promise.resolve(switcher.refresh()).then(function () { scheduleRender(); }).catch(function () {});
+        return switcher;
+      }).catch(function () { return null; });
+    }
+
+    function projectFilterName(projectId) {
+      if (!projectId) return jt('projects.filter.all', 'All projects');
+      var project = projectSwitcher && typeof projectSwitcher.projectById === 'function' ? projectSwitcher.projectById(projectId) : null;
+      if (project) return project.name;
+      if (!projectSwitcher) requestProjectSwitcher();
+      return projectId === GENERAL_PROJECT_ID ? jt('projects.switcher.generalName', 'General') : jt('projects.filter.project', 'Project');
+    }
+
+    // The filtered project can vanish (deleted in Settings): fall back to all.
+    function reconcileProjectFilter() {
+      var projectId = currentProjectFilter();
+      if (!projectId || projectId === GENERAL_PROJECT_ID || !projectSwitcher) return projectId;
+      if (projectSwitcher.getProjects().length && !projectSwitcher.projectById(projectId)) {
+        state.ui.chatsProjectFilter = '';
+        return '';
+      }
+      return projectId;
+    }
+
+    function isCurrentWorkspaceProject(projectId) {
+      if (!projectSwitcher) return false;
+      var current = projectSwitcher.currentProject();
+      return current ? current.id === projectId : projectId === GENERAL_PROJECT_ID;
     }
 
     function pendingDeleteIds() {
@@ -227,6 +286,11 @@
       return windowRef.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
     }
 
+    function outcomeFor(id) {
+      var outcome = state.awayDigest?.digest?.outcomeBySession?.[id];
+      return outcome ? [outcome, state.awayDigest?.digest?.latestTerminalBySession?.[id]] : null;
+    }
+
     function rowSignature(session, active) {
       var outbox = state.sendOutboxBySession instanceof Map
         ? state.sendOutboxBySession.get(session.id) || []
@@ -243,6 +307,7 @@
         provider: session.plugin_session && session.plugin_session.provider_name || '',
         icon: session.plugin_session && session.plugin_session.icon_token || '',
         lockdown: isOfflineLockdownVisible(session),
+        outcome: outcomeFor(session.id),
         outbox: outbox.map(function (item) { return [item && item.id, item && item.revision, item && item.status]; }),
       });
     }
@@ -256,6 +321,9 @@
       var lockdown = isOfflineLockdownVisible(session);
       var sessionNoun = isPlugin ? jt('sidebar.chats.pluginSession', '{provider} session', { provider: provider || jt('sidebar.chats.pluginFallback', 'plugin') }) : jt('sidebar.chats.session', 'session');
       var timestamp = session.updated_at || session.created_at || '';
+      var outcome = outcomeFor(session.id);
+      var when = outcome && formatRelativeTime(outcome[1]);
+      var outcomeLine = outcome ? '\n' + (outcome[0] === 'failed' ? jt('sidebar.chats.lastRunFailed', 'Last run failed · {when}', { when: when }) : jt('sidebar.chats.lastRunFinished', 'Finished · {when}', { when: when })) : '';
       var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       var failed = outbox.filter(function (item) { return item && (item.status === 'failed' || item.status === 'needs_review'); }).length;
       var outboxMarkup = outbox.length
@@ -281,7 +349,7 @@
         plain: true,
         className: 'session-row__open',
         ariaLabel: lockdown ? jt('sidebar.chats.openSessionLockdown', 'Open {session} {title}, Offline lockdown', { session: sessionNoun, title: accessibleTitle }) : jt('sidebar.chats.openSession', 'Open {session} {title}', { session: sessionNoun, title: accessibleTitle }),
-        title: lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) }),
+        title: (lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) })) + outcomeLine,
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-open': session.id, 'session-id': session.id },
         trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span><span class="session-row__dot" aria-hidden="true"></span>'
@@ -366,19 +434,43 @@
 
     function renderScopeControl(model) {
       if (!dom.scopeSlot || typeof segmentedControl !== 'function') return;
+      var filterLabel = projectFilterName(model.projectId);
       if (lastScopeState
         && lastScopeState.scope === model.scope
         && lastScopeState.recentTotal === model.recentTotal
-        && lastScopeState.archivedTotal === model.archivedTotal) return;
+        && lastScopeState.archivedTotal === model.archivedTotal
+        && lastScopeState.projectId === model.projectId
+        && lastScopeState.filterLabel === filterLabel) return;
       var focusedScope = documentRef.activeElement && dom.scopeSlot.contains(documentRef.activeElement)
         ? documentRef.activeElement.dataset && documentRef.activeElement.dataset.value
         : '';
+      var filterHost = dom.projectRow || dom.scopeSlot;
+      var focusedFilter = documentRef.activeElement && filterHost.contains(documentRef.activeElement)
+        && documentRef.activeElement.hasAttribute('data-chats-project-filter');
       lastScopeState = {
         scope: model.scope,
         recentTotal: model.recentTotal,
         archivedTotal: model.archivedTotal,
+        projectId: model.projectId,
+        filterLabel: filterLabel,
       };
-      dom.scopeSlot.innerHTML = segmentedControl({
+      var filterMarkup = typeof callbacks.getProjectSwitcher === 'function' && typeof actionButton === 'function'
+        ? actionButton({
+          plain: true,
+          className: 'chats-project-filter' + (model.projectId ? ' chats-project-filter--set' : ''),
+          ariaHaspopup: 'listbox',
+          ariaLabel: jt('sidebar.chats.projectFilterLabel', 'Filter chats by project: {name}', { name: filterLabel }),
+          title: jt('sidebar.chats.projectFilterTitle', 'Filter by project'),
+          dataset: { 'chats-project-filter': model.projectId || 'all' },
+          trustedHtml: '<svg class="chats-project-filter-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>'
+            + '<span class="chats-project-filter-name">' + escapeHtml(filterLabel) + '</span>'
+            + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>',
+        })
+        : '';
+      // The filter lives on its own row above the tabs when the shell provides
+      // one (index.html #chatsProjectRow); older hosts keep it in the slot.
+      if (dom.projectRow) dom.projectRow.innerHTML = filterMarkup;
+      dom.scopeSlot.innerHTML = (dom.projectRow ? '' : filterMarkup) + segmentedControl({
         id: 'chats-scope',
         className: 'chats-scope-control',
         ariaLabel: jt('sidebar.chats.historyScope', 'Chat history scope'),
@@ -393,7 +485,21 @@
           || dom.scopeSlot.querySelector('[data-value="' + focusedScope + '"]');
         try { selected && selected.focus({ preventScroll: true }); }
         catch (_error) { selected && selected.focus(); }
+      } else if (focusedFilter) {
+        var filterButton = filterHost.querySelector('[data-chats-project-filter]');
+        try { filterButton && filterButton.focus({ preventScroll: true }); }
+        catch (_error) { filterButton && filterButton.focus(); }
       }
+    }
+
+    // The filtered project is empty. Offer a new chat there only when that is
+    // where a new chat would truthfully land (the current Workspace project);
+    // otherwise offer the way back to every project.
+    function projectEmptyAction(model) {
+      var name = projectFilterName(model.projectId);
+      return isCurrentWorkspaceProject(model.projectId)
+        ? { label: jt('sidebar.chats.newChatIn', 'New chat in {name}', { name: name }), action: 'project-new' }
+        : { label: jt('sidebar.chats.showAllProjects', 'Show all projects'), action: 'project-all' };
     }
 
     function emptyCopy(model) {
@@ -402,6 +508,15 @@
       }
       if (model.emptyKind === 'archived') {
         return [jt('sidebar.chats.archivedEmptyTitle', 'No archived chats.'), jt('sidebar.chats.archivedEmptyDescription', 'Archive a chat from its row menu and it will appear here.')];
+      }
+      if (model.emptyKind === 'project') {
+        var name = projectFilterName(model.projectId);
+        return [
+          jt('sidebar.chats.projectEmptyTitle', 'No chats in {name} yet.', { name: name }),
+          isCurrentWorkspaceProject(model.projectId)
+            ? jt('sidebar.chats.projectEmptyDescription', 'Start one and it will appear here.')
+            : jt('sidebar.chats.projectEmptyElsewhere', 'New chats start in the current Workspace project.'),
+        ];
       }
       return [jt('sidebar.chats.emptyTitle', 'No chats yet.'), jt('sidebar.chats.emptyDescription', 'Start a conversation and it will appear here.')];
     }
@@ -424,12 +539,13 @@
       empty.dataset.emptyKind = model.emptyKind;
       empty.querySelector('.sidebar-empty-title').textContent = copy[0];
       empty.querySelector('.sidebar-empty-copy').textContent = copy[1];
+      var projectAction = model.emptyKind === 'project' ? projectEmptyAction(model) : null;
       empty.querySelector('.sidebar-empty-action-slot').innerHTML = actionButton({
         id: 'chats-empty-action',
-        label: model.emptyKind === 'search'
-          ? jt('sidebar.chats.clearSearch', 'Clear search') : (model.emptyKind === 'archived' ? jt('sidebar.chats.viewRecentChats', 'View recent chats') : jt('sidebar.chats.newChat', 'New chat')),
+        label: projectAction ? projectAction.label : (model.emptyKind === 'search'
+          ? jt('sidebar.chats.clearSearch', 'Clear search') : (model.emptyKind === 'archived' ? jt('sidebar.chats.viewRecentChats', 'View recent chats') : jt('sidebar.chats.newChat', 'New chat'))),
         variant: 'ghost', size: 'sm', className: 'sidebar-empty-action',
-        dataset: { 'chats-empty-action': model.emptyKind },
+        dataset: { 'chats-empty-action': projectAction ? projectAction.action : model.emptyKind },
       });
       dom.conversationGroups.appendChild(empty);
     }
@@ -594,6 +710,12 @@
         container.scrollTop = Math.max((Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0), 0);
         return;
       }
+      // At the very top, stay there: a chat that lands above the first row
+      // must show, not shove the list down a row under the viewport edge.
+      if (snapshot.top === 0) {
+        container.scrollTop = 0;
+        return;
+      }
       var currentRows = Array.from(getVisibleSessionElements());
       var currentIds = currentRows.map(function (row) { return row.dataset.sessionId; });
       var ids = new Set(currentIds);
@@ -612,8 +734,11 @@
         anchor = fallbackId && rowById.get(fallbackId);
       }
       if (anchor && anchor.isConnected && typeof anchor.getBoundingClientRect === 'function') {
+        // Measure from the live offset: the layout the rect read forces has
+        // already applied the browser's own scroll anchoring, and adding the
+        // delta to the stale snapshot.top would undo it (a one-row jump).
         var delta = anchor.getBoundingClientRect().top - container.getBoundingClientRect().top - snapshot.offset;
-        container.scrollTop = Math.max(0, snapshot.top + delta);
+        container.scrollTop = Math.max(0, (Number(container.scrollTop) || 0) + delta);
         return;
       }
       var max = Math.max((Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0), 0);
@@ -665,9 +790,18 @@
       });
     }
 
+    function cancelFrame(id) {
+      if (typeof windowRef.cancelAnimationFrame === 'function') windowRef.cancelAnimationFrame(id);
+      else windowRef.clearTimeout && windowRef.clearTimeout(id);
+    }
+
     function renderNow() {
-      if (disposed || !dom.conversationGroups) return null;
+      // Clear the latch before any early return: a frame that fired while the
+      // groups node was gone left scheduleRender wedged on its stale id. A
+      // direct call also cancels the pending frame so nothing paints twice.
+      if (scheduledFrame) cancelFrame(scheduledFrame);
       scheduledFrame = 0;
+      if (disposed || !dom.conversationGroups) return null;
       var scrollPolicy = pendingScrollPolicy;
       pendingScrollPolicy = SCROLL_PRESERVE;
       var startedAt = nowMs();
@@ -676,6 +810,7 @@
         sessions: state.sessions,
         pendingDeleteIds: pendingDeleteIds(),
         scope: currentScope(),
+        projectId: reconcileProjectFilter(),
         query: dom.searchInput && dom.searchInput.value,
         visibleLimit: visibleLimit,
       });
@@ -703,7 +838,7 @@
       var durationMs = nowMs() - startedAt;
       if (durationMs > SLOW_RENDER_MS && Date.now() - lastSlowLogAt >= SLOW_LOG_INTERVAL_MS) {
         lastSlowLogAt = Date.now();
-        callbacks.appendClientLog && callbacks.appendClientLog('WARN', 'sidebar.render_slow', {
+        callbacks.appendClientLog && callbacks.appendClientLog(durationMs > STALLED_RENDER_MS ? 'WARN' : 'INFO', 'sidebar.render_slow', {
           durationMs: Math.round(durationMs * 10) / 10,
           sessionCount: Array.isArray(state.sessions) ? state.sessions.length : 0,
           visibleCount: model.visibleCount,
@@ -744,6 +879,32 @@
       if (event && event.detail && event.detail.id === 'chats-scope') {
         setScope(event.detail.value);
       }
+    }
+
+    // Window-scoped, not persisted: the filter follows a Workspace switch (the
+    // switcher sets state.ui.chatsProjectFilter) and can go back to all any time.
+    function setProjectFilter(projectId) {
+      if (!state.ui) state.ui = {};
+      var next = String(projectId || '').trim();
+      if (next === currentProjectFilter()) return;
+      state.ui.chatsProjectFilter = next;
+      visibleLimit = PAGE_SIZE;
+      scheduleRender({ scrollPolicy: SCROLL_RESET });
+      callbacks.appendClientLog && callbacks.appendClientLog('INFO', 'sessions.project_filter_set', { projectId: next });
+    }
+
+    function handleScopeSlotClick(event) {
+      var button = event.target && event.target.closest && event.target.closest('[data-chats-project-filter]');
+      if (!button || !(dom.scopeSlot.contains(button) || (dom.projectRow && dom.projectRow.contains(button)))) return;
+      event.preventDefault();
+      requestProjectSwitcher().then(function (switcher) {
+        if (!switcher || disposed) return;
+        return switcher.openFilterMenu({ anchor: button, selectedId: currentProjectFilter(), onPick: setProjectFilter });
+      }).catch(function () {});
+    }
+
+    function handleProjectsChanged() {
+      if (!disposed) scheduleRender();
     }
 
     function loadMore() {
@@ -788,6 +949,8 @@
         dom.searchInput && dom.searchInput.focus();
       } else if (action.dataset.chatsEmptyAction === 'archived') {
         setScope('recent');
+      } else if (action.dataset.chatsEmptyAction === 'project-all') {
+        setProjectFilter('');
       } else {
         callbacks.newChat && callbacks.newChat();
       }
@@ -795,14 +958,15 @@
 
     function dispose() {
       disposed = true;
-      if (scheduledFrame) {
-        if (typeof windowRef.cancelAnimationFrame === 'function') windowRef.cancelAnimationFrame(scheduledFrame);
-        else windowRef.clearTimeout && windowRef.clearTimeout(scheduledFrame);
-      }
+      if (scheduledFrame) cancelFrame(scheduledFrame);
       scheduledFrame = 0;
       dom.scopeSlot && dom.scopeSlot.removeEventListener('inv-segmented-change', handleScopeChange);
+      dom.scopeSlot && dom.scopeSlot.removeEventListener('click', handleScopeSlotClick);
+      dom.projectRow && dom.projectRow.removeEventListener('click', handleScopeSlotClick);
+      windowRef && typeof windowRef.removeEventListener === 'function' && windowRef.removeEventListener('jenny:projects-changed', handleProjectsChanged);
       dom.conversationGroups && dom.conversationGroups.removeEventListener('click', handlePanelClick);
       if (dom.scopeSlot) dom.scopeSlot.replaceChildren();
+      if (dom.projectRow) dom.projectRow.replaceChildren();
       if (dom.conversationGroups) dom.conversationGroups.replaceChildren();
       if (dom.status) dom.status.textContent = '';
       rowById.clear();
@@ -810,6 +974,11 @@
     }
 
     dom.scopeSlot && dom.scopeSlot.addEventListener('inv-segmented-change', handleScopeChange);
+    dom.scopeSlot && dom.scopeSlot.addEventListener('click', handleScopeSlotClick);
+    dom.projectRow && dom.projectRow.addEventListener('click', handleScopeSlotClick);
+    if (typeof callbacks.getProjectSwitcher === 'function' && windowRef && typeof windowRef.addEventListener === 'function') {
+      windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
+    }
     dom.conversationGroups && dom.conversationGroups.addEventListener('click', handlePanelClick);
 
     return {
@@ -819,6 +988,8 @@
       setScope: setScope,
       toggleScope: toggleScope,
       getScope: currentScope,
+      setProjectFilter: setProjectFilter,
+      getProjectFilter: currentProjectFilter,
       loadMore: loadMore,
       prepareForStripExpansion: prepareForStripExpansion,
       setRovingSession: setRovingSession,

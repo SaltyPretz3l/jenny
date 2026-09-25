@@ -501,3 +501,34 @@ test('probeSetupReadiness: a starting backend on a cloud engine stays pending, n
     'the cloud token must survive the early return so diagnostics show the real engine');
   assert.equal(listCalls, 0, 'catalog discovery must still wait for backend startup');
 });
+
+// Gate C1 (F1): SetupService side of the post-load re-probe.
+const { SetupService } = require('../services/setup-service');
+const { createConfigService } = require('./helpers/setup-service-test-support');
+
+test('a readiness probe taken after the model load backfills the step the startup probe missed', async () => {
+  // Gate C1 (F1): the post-start probe ran while the default model was still
+  // loading; the probe after the load reports it loaded while the catalog is
+  // still pending, which alone must satisfy the local model step.
+  const configService = createConfigService({
+    toolsWorkspaceRoot: 'C:/dev/jenny',
+    workspaceRootStatus: { state: 'ready', message: 'Workspace root is configured.' },
+  });
+  const probes = [
+    { runtime_ready: false, runtime_model_loaded: false, runtime_engine: 'ollama', catalog_pending: true },
+    { runtime_ready: true, runtime_model_loaded: true, runtime_engine: 'ollama', catalog_pending: true },
+  ];
+  const service = new SetupService({
+    configService,
+    mcpToolsDiscoveredProvider: () => false,
+    readinessProvider: async () => probes.shift(),
+  });
+
+  const beforeLoad = await service.refreshReadiness();
+  assert.equal(beforeLoad.setup_state.steps.local_model, 'pending');
+  assert.equal(service.getState().setup_state.steps.local_model, 'pending', 'the cache stays stale until re-probed');
+
+  const afterLoad = await service.refreshReadiness();
+  assert.equal(afterLoad.setup_state.steps.local_model, 'done');
+  assert.equal(configService.getSetupState().steps.localModel, 'done');
+});

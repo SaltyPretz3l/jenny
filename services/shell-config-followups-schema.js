@@ -18,9 +18,8 @@ const MAX_FOLLOW_UP_LABEL_CHARS = 200;
 const MAX_FOLLOW_UP_BODY_CHARS = 4000;
 const MAX_REMINDER_SOURCE_ID_CHARS = 128;
 // Reminder cadences. 'once_at' is the one-shot: it fires at a single local
-// wall-clock moment instead of repeating. NOTE: nothing in this codebase
-// actually fires reminders (they surface as manual nudges), so this enum is
-// schema only — adding it does not introduce a scheduler.
+// wall-clock moment instead of repeating. The main-process reminder notifier
+// evaluates these cadences while Jenny is running.
 const REMINDER_SCHEDULE_TYPES = Object.freeze(['daily_at', 'interval_minutes', 'once_at']);
 // Attribution for a reminder, mirroring the follow-up sourceKind precedent
 // below: a closed enum coercing anything unrecognized to '' (unattributed).
@@ -135,6 +134,80 @@ function normalizeIsoString(value) {
   }
   const parsed = new Date(token);
   return Number.isNaN(parsed.valueOf()) ? '' : parsed.toISOString();
+}
+
+function parseReminderInstant(value) {
+  const token = normalizeString(value);
+  const localMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(token);
+  if (localMatch) {
+    const [, year, month, day, hour, minute] = localMatch.map(Number);
+    const parsed = new Date(year, month - 1, day, hour, minute);
+    return parsed.getFullYear() === year
+      && parsed.getMonth() === month - 1
+      && parsed.getDate() === day
+      && parsed.getHours() === hour
+      && parsed.getMinutes() === minute
+      ? parsed.getTime()
+      : null;
+  }
+  const parsed = new Date(token);
+  return token && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : null;
+}
+
+function reminderDueAt(reminder, nowMs) {
+  if (!reminder || reminder.enabled === false || !Number.isFinite(nowMs)) return null;
+  const scheduleType = String(reminder.scheduleType || '');
+  if (scheduleType === 'once_at') {
+    if (normalizeString(reminder.lastFiredAt)) return null;
+    return parseReminderInstant(reminder.onceAt);
+  }
+  if (scheduleType === 'daily_at') {
+    const match = /^(\d{2}):(\d{2})$/.exec(normalizeString(reminder.dailyAt));
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return null;
+    const nowDate = new Date(nowMs);
+    return new Date(
+      nowDate.getFullYear(),
+      nowDate.getMonth(),
+      nowDate.getDate(),
+      Number(match[1]),
+      Number(match[2])
+    ).getTime();
+  }
+  if (scheduleType === 'interval_minutes') {
+    const intervalMinutes = Number(reminder.intervalMinutes);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) return null;
+    const lastFiredAt = normalizeString(reminder.lastFiredAt);
+    const baseMs = parseReminderInstant(lastFiredAt || reminder.createdAt);
+    return baseMs === null ? null : baseMs + intervalMinutes * 60000;
+  }
+  return null;
+}
+
+function isSameLocalDay(leftMs, rightMs) {
+  const left = new Date(leftMs);
+  const right = new Date(rightMs);
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function isReminderDue(reminder, nowMs) {
+  const dueAt = reminderDueAt(reminder, nowMs);
+  if (dueAt === null || dueAt > nowMs) return false;
+  const lastFiredAt = normalizeString(reminder?.lastFiredAt);
+  if (reminder.scheduleType === 'once_at') return !lastFiredAt;
+  if (reminder.scheduleType === 'daily_at') {
+    if (!lastFiredAt) return true;
+    const lastFiredMs = parseReminderInstant(lastFiredAt);
+    return lastFiredMs !== null && !isSameLocalDay(lastFiredMs, nowMs);
+  }
+  if (reminder.scheduleType === 'interval_minutes') {
+    if (!lastFiredAt) return true;
+    const lastFiredMs = parseReminderInstant(lastFiredAt);
+    return lastFiredMs !== null
+      && nowMs - lastFiredMs >= Number(reminder.intervalMinutes) * 60000;
+  }
+  return false;
 }
 
 function normalizeFollowUpStatus(value, legacyResolved = false) {
@@ -299,6 +372,8 @@ module.exports = {
   normalizeDailyAt,
   normalizeIntervalMinutes,
   normalizeIsoString,
+  reminderDueAt,
+  isReminderDue,
   normalizeFollowUpStatus,
   normalizeFollowUpDeferPreset,
   normalizeFollowUpSourceKind,

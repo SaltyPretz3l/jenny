@@ -211,7 +211,7 @@ def _validate_manifest_entry(entry: dict[str, Any], *, index: int) -> tuple[Conf
     if (
         isinstance(availability, dict)
         and availability.get("plan_mode_artifact_write") is True
-        and name not in {"create_artifact", "mermaid_generate"}
+        and name not in {"create_artifact", "mermaid_generate", "todo_write"}
     ):
         raise ValueError(f"tool manifest entry {label} cannot declare plan_mode_artifact_write")
     validate_manifest_aliases(entry.get("aliases"), label=label)

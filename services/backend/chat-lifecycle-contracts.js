@@ -181,6 +181,7 @@ const IDENTITY_BUNDLE_FIELDS = [
   'sessionRevision',
   'generation',
 ];
+const MANAGED_RUNTIME_CONTROLLERS = new WeakMap();
 
 // Diagnostics helper: which identity-bundle fields are still null/absent.
 // Used to give the L1 'chat.start_identity' debug log a quick "what's
@@ -216,15 +217,29 @@ function buildManagedStartResult(service, { sessionId, streamId, identity: issue
   return { streamId, sessionId, identity };
 }
 
+function retainManagedRuntimeController(startResult, controller) {
+  if (startResult && typeof startResult === 'object' && controller?._runtimeCompletion) {
+    MANAGED_RUNTIME_CONTROLLERS.set(startResult, controller);
+  }
+  return startResult;
+}
+
+function getManagedRuntimeController(startResult) {
+  return startResult && typeof startResult === 'object'
+    ? MANAGED_RUNTIME_CONTROLLERS.get(startResult) || null : null;
+}
+
 module.exports = {
   TERMINAL_KINDS,
   buildTerminalCommitResult,
   buildTerminalIdentity,
   buildStartIdentityBundle,
   describeMissingIdentityFields,
+  getManagedRuntimeController,
   buildManagedStartResult,
   isDurableCommitOutcome,
   normalizeTerminalKind,
+  retainManagedRuntimeController,
   terminalIdentityMatches,
   validateTerminalIdentity,
 };

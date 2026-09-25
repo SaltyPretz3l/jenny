@@ -13,7 +13,9 @@ const {
   fingerprintCompactionPrefix,
 } = require('./session-compaction-snapshot');
 const { buildCompactPayloadMessages } = require('./backend-compact-payload');
+const { requestRuntimeInference } = require('./backend-runtime-inference');
 const { NEVER_PERSIST_ALWAYS_ALLOW } = require('../tools/tool-permission-store');
+const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 const {
   assertSessionLockdownAllowsEngine,
   isSessionOfflineLockdownActive,
@@ -37,6 +39,19 @@ function handleChatStreamEnd(service, event) {
 }
 
 function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
+  // Record/fence the durable attempt before aborting the transport. The runtime
+  // note never aborts recursively and cannot certify producer cleanup.
+  try {
+    service.sessionRuntime?.noteStreamCancellation?.(streamId, reason);
+  } catch (error) {
+    // A failed intent write must not prevent the user's stop request. Runtime
+    // admission remains fenced and its settlement owner retains the evidence.
+    try {
+      service._emitServiceLog?.('ERROR', 'session_runtime.cancellation_intent_failed', {
+        reason: String(error?.code || 'runtime_cancellation_intent_failed').slice(0, 128),
+      });
+    } catch (_logError) { /* Diagnostics cannot prevent cancellation. */ }
+  }
   const controller = service.activeStreams.get(streamId);
   if (!controller) {
     return false;
@@ -118,57 +133,62 @@ async function compactContextNow(service, sessionId) {
     // edit that preserves ids and count, so fingerprint the exact history sent
     // to the sidecar and refuse to persist if it changed mid-summarization.
     const historyFingerprint = fingerprintCompactionPrefix(canonicalMessages);
-    const result = await service.sidecarClient.chatCompact(normalizedSessionId, messages);
-    const resultStatus = String(result?.status || '').trim();
-    let snapshotPersisted = false;
-    if (resultStatus === 'ok' && result?.compacted === true) {
-      const postCompactionMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
-      const prefixUnchanged = fingerprintCompactionPrefix(
-        (Array.isArray(postCompactionMessages) ? postCompactionMessages : [])
-          .slice(0, canonicalMessages.length)
-      ) === historyFingerprint;
-      const snapshot = prefixUnchanged
-        ? buildCompactionSnapshotFromResult(result, {
-          boundaryMessageId: String(boundaryMessage?.id || ''),
-          boundaryMessageCount: canonicalMessages.length,
-        })
-        : null;
-      snapshotPersisted = Boolean(
-        snapshot
-        && service.sessionStore.setCompactionSnapshot(normalizedSessionId, snapshot)
-      );
+    const consumeResult = (result) => {
+      const resultStatus = String(result?.status || '').trim();
+      let snapshotPersisted = false;
+      if (resultStatus === 'ok' && result?.compacted === true) {
+        const postCompactionMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
+        const prefixUnchanged = fingerprintCompactionPrefix(
+          (Array.isArray(postCompactionMessages) ? postCompactionMessages : [])
+            .slice(0, canonicalMessages.length)
+        ) === historyFingerprint;
+        const snapshot = prefixUnchanged
+          ? buildCompactionSnapshotFromResult(result, {
+            boundaryMessageId: String(boundaryMessage?.id || ''),
+            boundaryMessageCount: canonicalMessages.length,
+            canonicalMessages,
+          })
+          : null;
+        snapshotPersisted = Boolean(
+          snapshot
+          && service.sessionStore.setCompactionSnapshot(normalizedSessionId, snapshot)
+        );
+        service._emitServiceLog(
+          snapshotPersisted ? 'INFO' : 'WARN',
+          'chat.compaction_snapshot_persisted',
+          {
+            sessionId: normalizedSessionId,
+            persisted: snapshotPersisted,
+            prefix_unchanged: prefixUnchanged,
+            strategy: String(result?.strategy || '').trim(),
+            boundary_message_count: canonicalMessages.length,
+          }
+        );
+      }
       service._emitServiceLog(
-        snapshotPersisted ? 'INFO' : 'WARN',
-        'chat.compaction_snapshot_persisted',
+        resultStatus === 'ok' ? 'INFO' : 'WARN',
+        'chat.compact_now_result',
         {
           sessionId: normalizedSessionId,
-          persisted: snapshotPersisted,
-          prefix_unchanged: prefixUnchanged,
-          strategy: String(result?.strategy || '').trim(),
-          boundary_message_count: canonicalMessages.length,
+          status: resultStatus,
+          reason: String(result?.reason || '').trim(),
+          snapshot_persisted: snapshotPersisted,
         }
       );
-    }
-    service._emitServiceLog(
-      resultStatus === 'ok' ? 'INFO' : 'WARN',
-      'chat.compact_now_result',
-      {
-        sessionId: normalizedSessionId,
-        status: resultStatus,
-        reason: String(result?.reason || '').trim(),
-        snapshot_persisted: snapshotPersisted,
+      if (!result || typeof result !== 'object') {
+        return result;
       }
-    );
-    if (!result || typeof result !== 'object') {
-      return result;
-    }
-    // The compacted replacement history lives in the session store; the
-    // renderer status line only needs the outcome, so keep `messages` off the
-    // IPC payload and report whether future turns will actually use it.
-    const { messages: _compactedMessages, ...renderableResult } = result;
-    return resultStatus === 'ok'
-      ? { ...renderableResult, snapshot_persisted: snapshotPersisted }
-      : renderableResult;
+      // The compacted replacement history lives in the session store; the
+      // renderer status line only needs the outcome, so keep `messages` off the
+      // IPC payload and report whether future turns will actually use it.
+      const { messages: _compactedMessages, ...renderableResult } = result;
+      return resultStatus === 'ok'
+        ? { ...renderableResult, snapshot_persisted: snapshotPersisted }
+        : renderableResult;
+    };
+    return await requestRuntimeInference(service, 'chat.compact', {
+      accept_version: '2026-08-17', session_id: normalizedSessionId, messages,
+    }, { sessionId: normalizedSessionId, timeoutMs: 120_000, consumeResult });
   } catch (error) {
     service._emitServiceLog('WARN', 'chat.compact_now_result', {
       sessionId: normalizedSessionId,
@@ -196,7 +216,7 @@ function resolvePendingApprovalEntry(service, approvalRef) {
   for (const [key, pending] of service.pendingToolApprovals.entries()) {
     if (
       String(pending?.approvalId || '').trim() === normalizedRef
-      || String(pending?.callId || '').trim() === normalizedRef
+      || (pending?.requireExactRef !== true && String(pending?.callId || '').trim() === normalizedRef)
     ) {
       matches.push({ key, pending });
     }
@@ -205,7 +225,8 @@ function resolvePendingApprovalEntry(service, approvalRef) {
 }
 
 function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
-  if (options?.alwaysAllow !== true) {
+  if (options?.alwaysAllow !== true
+    || pending?.oneOffOnly === true || pending?.one_off_only === true) {
     return;
   }
   const toolName = String(pending?.toolName || '').trim();
@@ -219,10 +240,13 @@ function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
     || typeof permissionStore.setPolicy === 'function'
   )) {
     try {
+      const authority = pending?.executionAuthority
+        ? service.sessionExecutionAuthority.requireCurrent(pending.executionAuthority)
+        : undefined;
       // Path-bearing calls persist an exact path-prefix grant for this tool.
       // Calls without a declared path target retain the whole-tool policy.
       if (typeof permissionStore.grantAlwaysAllow === 'function') {
-        const grant = permissionStore.grantAlwaysAllow(toolName, pending?.toolInput);
+        const grant = permissionStore.grantAlwaysAllow(toolName, pending?.toolInput, authority);
         if (grant?.scope === 'path' && typeof service?._emitServiceLog === 'function') {
           service._emitServiceLog('INFO', 'tool_permission.always_allow_scoped', {
             toolName,
@@ -231,7 +255,7 @@ function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
           });
         }
       } else {
-        permissionStore.setPolicy(toolName, 'auto');
+        permissionStore.setPolicy(toolName, 'auto', authority);
       }
       policyUpdated = true;
     } catch (error) {
@@ -253,6 +277,20 @@ function approveToolCall(service, approvalRef, options = {}) {
   if (!entry) {
     return false;
   }
+  try {
+    if (entry.pending.executionAuthority) {
+      service.sessionExecutionAuthority.requireCurrent(entry.pending.executionAuthority);
+    }
+  } catch (error) {
+    entry.pending.resolve(false, 'cancelled');
+    service.pendingToolApprovals.delete(entry.key);
+    service?._emitServiceLog?.('WARN', 'tool_permission.approval_authority_stale', {
+      approvalId: String(entry.pending.approvalId || approvalRef || ''),
+      toolName: String(entry.pending.toolName || ''),
+      message: String(error?.message || error || '').slice(0, 500),
+    });
+    return false;
+  }
   // Settle the waiter FIRST: alwaysAllow is a side effect of this specific
   // approval, not a precondition for it. Applying the global policy before
   // resolve() meant a settlement throw left the policy permanently flipped
@@ -260,9 +298,18 @@ function approveToolCall(service, approvalRef, options = {}) {
   // policy write can never outlive/outrun the decision it is attached to, and
   // a policy-write failure only logs — it never affects the settlement above.
   const requestedDecision = String(options?.decision || 'approved').trim();
-  const decision = ['approved', 'approved_auto', 'rejected'].includes(requestedDecision)
-    ? requestedDecision
-    : 'approved';
+  if (!PLAN_DECISIONS.includes(requestedDecision)) {
+    // Fail closed: an unrecognized decision denies instead of executing.
+    service?._emitServiceLog?.('WARN', 'tool_permission.unknown_decision_denied', {
+      approvalId: String(entry.pending.approvalId || approvalRef || ''),
+      toolName: String(entry.pending.toolName || ''),
+      decision: requestedDecision.slice(0, 40),
+    });
+    entry.pending.resolve(false, 'denied');
+    service.pendingToolApprovals.delete(entry.key);
+    return true;
+  }
+  const decision = requestedDecision;
   const feedback = String(options?.feedback || '').trim().slice(0, 800);
   entry.pending.resolve(true, decision, feedback, options?.plan);
   service.pendingToolApprovals.delete(entry.key);
@@ -302,7 +349,7 @@ function resolvePendingQuestionEntry(service, questionRef) {
     if (
       String(pending?.questionRef || '').trim() === normalizedRef
       || String(pending?.questionId || '').trim() === normalizedRef
-      || String(pending?.callId || '').trim() === normalizedRef
+      || (pending?.requireExactRef !== true && String(pending?.callId || '').trim() === normalizedRef)
     ) {
       matches.push({ key, pending });
     }

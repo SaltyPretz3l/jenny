@@ -309,10 +309,14 @@ function normalizeToolCallMetadata(value) {
     return null;
   }
   const externalPayloads = normalizeExternalPayloadReferences(value.external_payloads);
+  const modelInputJson = typeof value.model_input_json === 'string'
+    ? value.model_input_json
+    : '';
   return {
     call_id: callId,
     tool_name: toolName,
     input_json: String(value.input_json || ''),
+    ...(modelInputJson.trim() ? { model_input_json: modelInputJson } : {}),
     input: value.input && typeof value.input === 'object' && !Array.isArray(value.input)
       ? value.input
       : {},
@@ -555,6 +559,36 @@ function normalizeToolStep(value) {
   };
 }
 
+function normalizeContextCompaction(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const tokensBefore = Number(value.tokensBefore);
+  const tokensAfter = Number(value.tokensAfter);
+  const droppedMessages = Number(value.droppedMessages);
+  const droppedBytes = Number(value.droppedBytes);
+  const occurredAt = normalizeString(value.occurredAt);
+  return {
+    strategy: clipNormalizedString(value.strategy, 40),
+    tokensBefore: Number.isFinite(tokensBefore)
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(tokensBefore))) : 0,
+    tokensAfter: Number.isFinite(tokensAfter)
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(tokensAfter))) : 0,
+    phase: clipNormalizedString(value.phase, 40),
+    summaryStatus: clipNormalizedString(value.summaryStatus, 40),
+    reasonCode: clipNormalizedString(value.reasonCode, 80),
+    inputComplete: Boolean(value.inputComplete),
+    droppedMessages: Number.isFinite(droppedMessages)
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedMessages))) : 0,
+    droppedBytes: Number.isFinite(droppedBytes)
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedBytes))) : 0,
+    summaryPersisted: Boolean(value.summaryPersisted),
+    historyScopeFallback: clipNormalizedString(value.historyScopeFallback, 40),
+    summaryExcerpt: clipNormalizedString(value.summaryExcerpt, 1200),
+    ...(Number.isFinite(Date.parse(occurredAt)) ? { occurredAt } : {}),
+  };
+}
+
 function flattenReasoningEntriesFromPhases(phases, fallbackEntries) {
   const flattened = [];
   const phaseList = Array.isArray(phases) ? phases : [];
@@ -687,7 +721,12 @@ function normalizeMessageFields(input, fallbackModel = '') {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return null;
   }
-  const { messageReactions: _legacyMessageReactions, ...sourceFields } = input;
+  const {
+    messageReactions: _legacyMessageReactions,
+    context_compactions: _contextCompactions,
+    context_compacted: _contextCompacted,
+    ...sourceFields
+  } = input;
   const toolCall = normalizeToolCallMetadata(input.tool_call);
   const toolResult = normalizeToolResultMetadata(input.tool_result);
   const proactiveSuggestion = normalizeProactiveSuggestionMetadata(input.proactive_suggestion);
@@ -700,6 +739,11 @@ function normalizeMessageFields(input, fallbackModel = '') {
   const toolSteps = Array.isArray(input.tool_steps)
     ? input.tool_steps.map((toolStep) => normalizeToolStep(toolStep)).filter(Boolean)
     : [];
+  const hasContextCompactions = Object.prototype.hasOwnProperty.call(input, 'context_compactions');
+  const contextCompactions = Array.isArray(input.context_compactions)
+    ? input.context_compactions.map(normalizeContextCompaction).filter(Boolean).slice(-20)
+    : [];
+  const hasContextCompacted = Object.prototype.hasOwnProperty.call(input, 'context_compacted');
   const content = buildVisibleSegmentContent(visibleSegments, input.content);
   return {
     ...sourceFields,
@@ -714,10 +758,15 @@ function normalizeMessageFields(input, fallbackModel = '') {
     model_used: String(input.model_used || ''),
     client_message_id: String(input.client_message_id || ''),
     parent_stream_id: normalizeString(input.parent_stream_id || input.parentStreamId),
+    ...(input.turn_id || input.turnId ? { turn_id: normalizeId(input.turn_id || input.turnId) } : {}),
     event_seq: Number.isInteger(input.event_seq) && input.event_seq >= 0 ? input.event_seq : null,
     phases,
     visible_segments: visibleSegments,
     tool_steps: toolSteps,
+    ...(hasContextCompactions ? { context_compactions: contextCompactions } : {}),
+    ...(hasContextCompacted
+      ? { context_compacted: normalizeContextCompaction(input.context_compacted) }
+      : {}),
     reasoning: normalizeReasoningPayload(input.reasoning, phases),
     attachments: normalizeAttachmentMetadataList(input.attachments),
     interactive_batch: normalizePendingQuestionBatch(input.interactive_batch),
@@ -751,6 +800,7 @@ module.exports = {
   normalizeVisibleSegment,
   buildVisibleSegmentContent,
   normalizeToolStep,
+  normalizeContextCompaction,
   normalizeTurnEvent,
   flattenReasoningEntriesFromPhases,
   normalizeProactiveSuggestionMetadata,

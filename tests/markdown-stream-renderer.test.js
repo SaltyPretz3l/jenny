@@ -31,7 +31,8 @@ test('stable-prefix scan holds continuations and open constructs in the tail', (
   assert.equal(streamRenderer.findStablePrefixEnd('<mark>\nalpha\n\nbeta', scanDependencies), 0);
   assert.equal(streamRenderer.findStablePrefixEnd('<!--\nalpha\n\nbeta', scanDependencies), 0);
   assert.equal(streamRenderer.findStablePrefixEnd('<custom-box>\nalpha\n\nbeta', scanDependencies), 0);
-  assert.equal(streamRenderer.findStablePrefixEnd('`inline code\n\ncontinues`', scanDependencies), 0);
+  // marked ends an inline-code candidate at a blank line, so that paragraph is stable.
+  assert.equal(streamRenderer.findStablePrefixEnd('`inline code\n\ncontinues`', scanDependencies), 14);
   assert.equal(streamRenderer.findStablePrefixEnd('- [ ] done\n\nParagraph.', scanDependencies), 12);
 });
 
@@ -290,5 +291,31 @@ test('a nested table streams byte-identically to a from-scratch render', () => {
     }
     const full = markdownUtils.renderStreamingMarkdownUnits(source, { mermaid: 'plain' });
     assert.equal(model.html, full.html, label);
+  }
+});
+
+// Astra batch review 2026-09-20: a list item's lazy continuation keeps the item
+// open across a blank line, so the indented paragraph after it belongs to the
+// item. The container flag must be sticky for the paragraph, not just the last
+// line, or the prefix freezes with `more` outside the list.
+test('lazy list continuations stay inside the item at every streamed character', () => {
+  const sources = [
+    '- item `\nlazy continuation\n\n    more `\n\nend',
+    '- item [x]\nlazy continuation\n\n    more\n\nend',
+    '- item\nlazy continuation\n\n    more\n\nend',
+  ];
+  for (const source of sources) {
+    for (const mode of ['plain', 'answer']) {
+      let previousUnits = [];
+      let previousStreamState = null;
+      for (let end = 1; end <= source.length; end += 1) {
+        const prefix = source.slice(0, end);
+        const model = markdownUtils.renderStreamingMarkdownUnits(prefix, { ...(mode === 'plain' ? { mermaid: 'plain' } : {}), previousUnits, previousStreamState });
+        const full = markdownUtils.renderStreamingMarkdownUnits(prefix, mode === 'plain' ? { mermaid: 'plain' } : {});
+        assert.equal(model.html, full.html, `${mode} mode diverged at ${end} for ${JSON.stringify(source)}`);
+        previousUnits = model.units;
+        previousStreamState = model.streamState;
+      }
+    }
   }
 });

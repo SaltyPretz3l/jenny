@@ -1,3 +1,5 @@
+mod output_reader;
+
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]

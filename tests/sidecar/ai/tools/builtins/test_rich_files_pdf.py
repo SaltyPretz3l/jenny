@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import importlib
+import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from sidecar.ai.error_codes import CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING
+from sidecar.ai.error_codes import (
+    CMP_TOOL_EXECUTION_FAILED,
+    CMP_TOOL_PDF_ADDON_MISSING,
+)
+from sidecar.ai.tools.builtins import pdf_ocr, pdf_text
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -77,7 +84,7 @@ def test_pdf_inspect_skips_preview_without_session_id(tmp_path: Path) -> None:
     assert "preview skipped" in result.metadata["warnings"][0].lower()
 
 
-def test_pdf_inspect_dependency_missing_degrades(
+def test_pdf_inspect_fails_with_pdf_addon_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace_root = tmp_path / "workspace"
@@ -86,17 +93,23 @@ def test_pdf_inspect_dependency_missing_degrades(
     source_path.write_bytes(b"%PDF-1.4\n")
     module = importlib.import_module("sidecar.ai.tools.builtins.filesystem_content")
 
-    def _missing_pymupdf():
-        raise ModuleNotFoundError("missing PyMuPDF")
+    real_import = module.importlib.import_module
 
-    monkeypatch.setattr(module, "_load_pymupdf", _missing_pymupdf)
+    def _missing_fitz(name: str):
+        if name == "fitz":
+            raise ImportError("fitz unavailable")
+        return real_import(name)
 
-    result = _pdf_tool()({"path": "sample.pdf"}, WorkspaceGuard(str(workspace_root)))
+    monkeypatch.setattr(module.importlib, "import_module", _missing_fitz)
 
-    assert result.success is True
-    assert result.metadata["status"] == "unavailable"
-    assert result.metadata["failure"]["error_code"] == CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING
-    assert result.generated_artifacts == ()
+    with pytest.raises(ToolExecutionFailure) as raised:
+        _pdf_tool()({"path": "sample.pdf"}, WorkspaceGuard(str(workspace_root)))
+
+    assert raised.value.code == CMP_TOOL_PDF_ADDON_MISSING
+    assert raised.value.retryable is False
+    assert raised.value.message.startswith(
+        "PDF reading needs the optional PDF reading add-on, which is not installed."
+    )
 
 
 def test_pdf_inspect_invalid_page_selection_fails_before_preview(tmp_path: Path) -> None:
@@ -121,46 +134,53 @@ def test_pdf_inspect_corrupt_pdf_returns_unsupported(tmp_path: Path) -> None:
     assert result.metadata["failure"]["reason"] == "pdf_parse_failed"
 
 
-def test_pdf_exact_page_text_cap_is_not_marked_truncated(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pdf_complete_page_is_not_marked_truncated(tmp_path: Path) -> None:
+    """A page whose numbered lines all fit the budget carries no continuation."""
+    fitz = pytest.importorskip("fitz")
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
-    filesystem_content = importlib.import_module("sidecar.ai.tools.builtins.filesystem_content")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    (workspace_root / "sample.pdf").write_bytes(b"%PDF-1.4\n")
-
-    class Page:
-        def get_text(self, _kind: str) -> str:
-            return "x" * filesystem_content.MAX_PDF_PAGE_TEXT_CHARS
-
-    class Document:
-        page_count = 1
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args) -> None:
-            return None
-
-        def load_page(self, _index: int) -> Page:
-            return Page()
-
-    class Fitz:
-        @staticmethod
-        def open(_path: Path) -> Document:
-            return Document()
-
-    monkeypatch.setattr(filesystem_content, "_load_pymupdf", Fitz)
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    for i in range(1, 6):
+        page.insert_text((72, 40 + i * 14), f"{i}. Short line", fontsize=9)
+    document.save(workspace_root / "sample.pdf")
+    document.close()
 
     result = module.pdf_inspect_tool(
         {"path": "sample.pdf", "pages": "1"},
         WorkspaceGuard(str(workspace_root)),
     )
 
-    page = result.metadata["summary"]["pages"][0]
-    assert len(page["text_excerpt"]) == filesystem_content.MAX_PDF_PAGE_TEXT_CHARS
-    assert "text_truncated" not in page
+    page_payload = result.metadata["summary"]["pages"][0]
+    assert page_payload["line_count"] == 5
+    assert page_payload["lines_from"] == 1 and page_payload["lines_to"] == 5
+    assert "text_truncated" not in page_payload
+    assert "continue_cursor" not in page_payload
+    assert "cursor" not in result.metadata["summary"]
+    assert len(page_payload["text_excerpt"]) <= module.PDF_INSPECT_PAGE_TEXT_CHARS
+    assert result.metadata["summary"]["note"] == pdf_text.SOURCES_NOTE
+
+
+def test_pdf_inspect_reads_first_pages_of_an_over_limit_range(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    document = fitz.open()
+    for number in range(1, 6):
+        document.new_page(width=160, height=90).insert_text((20, 40), f"Page {number}")
+    document.save(workspace_root / "sample.pdf")
+    document.close()
+
+    result = _pdf_tool()(
+        {"path": "sample.pdf", "pages": "1-5"}, WorkspaceGuard(str(workspace_root))
+    )
+
+    summary = result.metadata["summary"]
+    assert summary["selected_pages"] == [1, 2, 3]
+    assert summary["unread_pages"] == "4-5"
+    assert summary["note"].startswith("Only 3 pages are read per call; pages 4-5 were not read.")
+    assert summary["note"].endswith(pdf_text.SOURCES_NOTE)
 
 
 def test_pdf_preview_skips_oversized_render_without_pixmap(tmp_path: Path) -> None:
@@ -249,3 +269,292 @@ def test_pdf_preview_skips_oversized_png_bytes(
 
     assert result.previews == ()
     assert "preview skipped" in result.warnings[0]
+
+
+def test_pdf_inspect_page_without_text_layer_uses_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fitz = pytest.importorskip("fitz")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source = fitz.open()
+    page = source.new_page(width=300, height=150)
+    page.insert_text((30, 80), "SCANNED", fontsize=24)
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+    scanned = fitz.open()
+    image_page = scanned.new_page(width=300, height=150)
+    image_page.insert_image(image_page.rect, pixmap=pixmap)
+    scanned.save(workspace_root / "scan.pdf")
+    scanned.close()
+
+    monkeypatch.delenv("JENNY_ENABLE_PDF_OCR", raising=False)
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR_RAPID", "0")
+    monkeypatch.setattr(
+        pdf_ocr, "resolve_tessdata",
+        lambda **_k: pdf_ocr.TessdataResolution(tmp_path, "override"),
+    )
+    ocr_source = fitz.open()
+    ocr_page = ocr_source.new_page(width=300, height=150)
+    ocr_page.insert_text((30, 80), "Premiums earned 12,345", fontsize=12)
+    ocr_textpage = ocr_page.get_textpage()
+
+    class _BorrowedTextPage:
+        """PyMuPDF only accepts a textpage whose parent is the page being read."""
+
+        def __init__(self, parent: object) -> None:
+            self.parent = parent
+
+        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+            return ocr_textpage.extractWORDS(*args, **kwargs)
+
+    def _stub_ocr(page: object, *, tessdata_dir: Path) -> _BorrowedTextPage:
+        return _BorrowedTextPage(page)
+
+    monkeypatch.setattr(pdf_ocr, "ocr_page_textpage", _stub_ocr)
+
+    result = _pdf_tool()({"path": "scan.pdf", "pages": "1"}, WorkspaceGuard(str(workspace_root)))
+
+    summary = result.metadata["summary"]
+    page_payload = summary["pages"][0]
+    assert page_payload["text_layer"] is False
+    assert page_payload["ocr"] is True
+    assert "Premiums earned 12,345" in page_payload["text_excerpt"]
+    assert "recovered with OCR" in summary["note"]
+    assert summary["note"].endswith(pdf_text.SOURCES_NOTE)
+    assert summary["note"].index("recovered with OCR") < summary["note"].index("Sources table")
+
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR", "0")
+    result = _pdf_tool()({"path": "scan.pdf", "pages": "1"}, WorkspaceGuard(str(workspace_root)))
+    page_payload = result.metadata["summary"]["pages"][0]
+    assert page_payload["text_layer"] is False
+    assert "ocr" not in page_payload
+    assert "JENNY_ENABLE_PDF_OCR=0" in page_payload["ocr_unavailable"]
+
+
+def _write_dense_pdf(path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    document = fitz.open()
+    for _page_number in range(3):
+        page = document.new_page(width=612, height=792)
+        for i in range(1, 61):
+            y = 42 + (i - 1) * 12
+            page.insert_text((72, y), f"{i}. Line item {i}", fontsize=9)
+            page.insert_text((200, y), "......", fontsize=9)
+            page.insert_text((330, y), f"{i * 1000 + i:,}", fontsize=9)
+            if i % 2:
+                page.insert_text((420, y), f"{i * 10:,}", fontsize=9)
+            page.insert_text((510, y), f"({i * 7 + 0.25:,.2f})", fontsize=9)
+    document.save(path)
+    document.close()
+
+
+def _follow_page_cursors(
+    *,
+    workspace_root: Path,
+    path: str,
+    first_page: dict[str, object],
+) -> tuple[list[int], str]:
+    page_payload = first_page
+    numbered_lines: list[str] = []
+    seen_cursors: set[str] = set()
+    while True:
+        excerpt = str(page_payload["text_excerpt"])
+        if excerpt:
+            numbered_lines.extend(excerpt.splitlines())
+        cursor = page_payload.get("continue_cursor")
+        if not isinstance(cursor, str):
+            break
+        assert cursor not in seen_cursors
+        seen_cursors.add(cursor)
+        result = _pdf_tool()(
+            {"path": path, "cursor": cursor},
+            WorkspaceGuard(str(workspace_root)),
+        )
+        page_payload = result.metadata["summary"]["pages"][0]
+    numbers = [int(line.split(":", 1)[0]) for line in numbered_lines]
+    return numbers, "\n".join(numbered_lines)
+
+
+def _expected_numbered_pages(path: Path) -> list[str]:
+    fitz = pytest.importorskip("fitz")
+
+    expected: list[str] = []
+    with fitz.open(path) as document:
+        for page in document:
+            lines = [
+                replace(
+                    line,
+                    text=sanitize_tool_output_no_truncate(
+                        line.text, tool_name="pdf_inspect"
+                    ),
+                )
+                for line in pdf_text.reconstruct_page_lines(page)
+            ]
+            expected.append(pdf_text.render_lines(lines, max_chars=10**9)[0])
+    return expected
+
+
+def test_pdf_inspect_page_budget_keeps_whole_numbered_lines(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    _write_dense_pdf(workspace_root / "dense.pdf")
+
+    result = _pdf_tool()(
+        {"path": "dense.pdf", "pages": "1"},
+        WorkspaceGuard(str(workspace_root)),
+    )
+
+    summary = result.metadata["summary"]
+    page = summary["pages"][0]
+    assert len(page["text_excerpt"]) <= 2_000
+    assert all(re.match(r"^[1-9][0-9]*: ", line) for line in page["text_excerpt"].splitlines())
+    assert "[truncated]" not in result.output
+    assert page["text_truncated"] is True
+    assert page["next_line"] == page["lines_to"] + 1
+    assert page["continue_cursor"]
+    assert summary["cursor"] == page["continue_cursor"]
+    assert "without gaps" in summary["continuation_hint"]
+
+
+def test_pdf_inspect_cursor_continuation_is_gapless(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "dense.pdf"
+    _write_dense_pdf(source_path)
+
+    result = _pdf_tool()(
+        {"path": "dense.pdf", "pages": "1"},
+        WorkspaceGuard(str(workspace_root)),
+    )
+    first_page = result.metadata["summary"]["pages"][0]
+    numbers, joined = _follow_page_cursors(
+        workspace_root=workspace_root,
+        path="dense.pdf",
+        first_page=first_page,
+    )
+
+    assert numbers == list(range(1, first_page["line_count"] + 1))
+    assert joined == _expected_numbered_pages(source_path)[0]
+
+
+def test_pdf_inspect_aggregate_budget_and_each_page_cursor_is_gapless(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "dense.pdf"
+    _write_dense_pdf(source_path)
+
+    result = _pdf_tool()(
+        {"path": "dense.pdf", "pages": "1-3"},
+        WorkspaceGuard(str(workspace_root)),
+    )
+
+    summary = result.metadata["summary"]
+    assert len(result.output) <= 12_000
+    assert summary["truncated"] is True
+    expected_pages = _expected_numbered_pages(source_path)
+    for page_payload, expected in zip(summary["pages"], expected_pages, strict=True):
+        assert page_payload["lines_to"] >= page_payload["lines_from"] >= 1
+        assert page_payload["continue_cursor"]
+        numbers, joined = _follow_page_cursors(
+            workspace_root=workspace_root,
+            path="dense.pdf",
+            first_page=page_payload,
+        )
+        assert numbers == list(range(1, page_payload["line_count"] + 1))
+        assert joined == expected
+
+
+def test_pdf_inspect_preserves_values_and_blank_columns(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "dense.pdf"
+    _write_dense_pdf(source_path)
+    expected = _expected_numbered_pages(source_path)[0]
+
+    assert "(14.25)" in expected
+    assert "2,002" in expected
+    assert ".." not in expected
+    even_row = next(line for line in expected.splitlines() if "2. Line item 2" in line)
+    assert re.search(r"2,002 {6,}\(14\.25\)", even_row)
+
+
+def test_pdf_inspect_rejects_stale_conflicting_and_malformed_cursors(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "dense.pdf"
+    _write_dense_pdf(source_path)
+    guard = WorkspaceGuard(str(workspace_root))
+    result = _pdf_tool()({"path": "dense.pdf", "pages": "1"}, guard)
+    cursor = result.metadata["summary"]["pages"][0]["continue_cursor"]
+
+    _write_pdf(source_path)
+    with pytest.raises(ToolExecutionFailure, match="cursor is stale") as stale:
+        _pdf_tool()({"path": "dense.pdf", "cursor": cursor}, guard)
+    assert stale.value.code == CMP_TOOL_EXECUTION_FAILED
+
+    with pytest.raises(ToolExecutionFailure, match="mutually exclusive"):
+        _pdf_tool()({"path": "dense.pdf", "cursor": cursor, "pages": "1"}, guard)
+
+    with pytest.raises(ToolExecutionFailure, match="tool argument 'cursor' is invalid"):
+        _pdf_tool()({"path": "dense.pdf", "cursor": "not-a-cursor"}, guard)
+
+
+def test_pdf_inspect_scanned_page_uses_ocr_textpage_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fitz = pytest.importorskip("fitz")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    text_document = fitz.open()
+    text_page = text_document.new_page(width=300, height=150)
+    text_page.insert_text((30, 80), "Recovered positioned text", fontsize=16)
+    textpage = text_page.get_textpage()
+    pixmap = text_page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+    scanned = fitz.open()
+    image_page = scanned.new_page(width=300, height=150)
+    image_page.insert_image(image_page.rect, pixmap=pixmap)
+    scanned.save(workspace_root / "scan-lines.pdf")
+    scanned.close()
+
+    class _BorrowedTextPage:
+        def __init__(self, parent: object) -> None:
+            self.parent = parent
+
+        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+            return textpage.extractWORDS(*args, **kwargs)
+
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR_RAPID", "0")
+    monkeypatch.setattr(
+        pdf_ocr,
+        "resolve_tessdata",
+        lambda **_kwargs: pdf_ocr.TessdataResolution(tmp_path, "override"),
+    )
+    monkeypatch.setattr(
+        pdf_ocr,
+        "ocr_page_textpage",
+        lambda page, *, tessdata_dir: _BorrowedTextPage(page),
+    )
+    try:
+        result = _pdf_tool()(
+            {"path": "scan-lines.pdf", "pages": "1"},
+            WorkspaceGuard(str(workspace_root)),
+        )
+    finally:
+        text_document.close()
+
+    page_payload = result.metadata["summary"]["pages"][0]
+    assert page_payload["ocr"] is True
+    assert page_payload["text_layer"] is False
+    assert page_payload["text_excerpt"].startswith("1: ")
+    assert page_payload["text_excerpt"].split()[-3:] == [
+        "Recovered",
+        "positioned",
+        "text",
+    ]

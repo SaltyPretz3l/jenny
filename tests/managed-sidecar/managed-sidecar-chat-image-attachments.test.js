@@ -16,6 +16,9 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('../helpers/resource-cleanup');
+const {
+  ensureSessionAttachmentAuthority,
+} = require('../../services/projects/session-attachment-authority');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -36,6 +39,24 @@ for (const { engineType, modelId, featureFlags, expectedMode, flagState } of [
         return realImagePath;
       },
     };
+    const sessionId = `session_${engineType}_image`;
+    service.sessionStore.createSessionWithId(sessionId, {
+      project_id: 'project_general',
+      created_at: '2026-09-09T00:00:00.000Z',
+      session_incarnation: `inc_${engineType}_image`,
+    });
+    const attachment = {
+      id: `att_${engineType}_image`,
+      kind: 'image',
+      assetPath: path.join(tempDir, 'logical.png'),
+      displayName: 'capture.png',
+      mimeType: 'image/png',
+    };
+    const attachmentAuthority = ensureSessionAttachmentAuthority(service);
+    attachmentAuthority.registerImportedImages(
+      attachmentAuthority.captureImportScope(sessionId),
+      [attachment]
+    );
     service._resolveModel = async () => modelId;
     let chatSendCount = 0;
     let chatSendParams = null;
@@ -50,16 +71,10 @@ for (const { engineType, modelId, featureFlags, expectedMode, flagState } of [
     };
 
     const stream = await startManagedSidecarChatStream(service, buildManagedChatRequest({
-      sessionId: `session_${engineType}_image`,
+      sessionId,
       prompt: 'Describe this image',
       runtimePreferredModel: modelId,
-      attachments: [{
-        id: `att_${engineType}_image`,
-        kind: 'image',
-        assetPath: path.join(tempDir, 'logical.png'),
-        displayName: 'capture.png',
-        mimeType: 'image/png',
-      }],
+      attachments: [attachment],
     }));
     const controller = service.activeStreams.get(stream.streamId);
     assert.ok(controller, 'active stream controller must exist before settle');

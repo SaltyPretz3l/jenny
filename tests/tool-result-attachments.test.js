@@ -75,6 +75,7 @@ test('ingest stores bytes in the asset store and bounded ID read round-trips the
   const wire = wireAttachment();
 
   const refs = ingestToolResultAttachments(service, [wire], {
+    sessionId: 'session-a',
     streamId: 'stream-1',
     callId: 'call-1',
     toolName: 'read_file',
@@ -90,7 +91,7 @@ test('ingest stores bytes in the asset store and bounded ID read round-trips the
     Buffer.from(wire.data_base64, 'base64')
   );
 
-  const read = readToolResultAttachment(service, refs[0].id);
+  const read = readToolResultAttachment(service, refs[0].id, { sessionId: 'session-a' });
   assert.equal(read.ok, true);
   assert.equal(read.mimeType, 'image/jpeg');
   assert.equal(read.byteLength, wire.byte_length);
@@ -99,19 +100,105 @@ test('ingest stores bytes in the asset store and bounded ID read round-trips the
 
 test('bounded read refuses unknown ids and oversize assets', (t) => {
   const service = makeTempStoreService(t);
-  const refs = ingestToolResultAttachments(service, [wireAttachment()], {});
+  const refs = ingestToolResultAttachments(service, [wireAttachment()], {
+    sessionId: 'session-a',
+  });
   assert.equal(refs.length, 1);
 
-  assert.equal(readToolResultAttachment(service, 'image_not_real').ok, false);
+  assert.equal(readToolResultAttachment(
+    service,
+    'image_not_real',
+    { sessionId: 'session-a' }
+  ).ok, false);
 
   // Swap the stored asset for an oversized file: the bounded read refuses.
   fs.writeFileSync(
     refs[0].assetPath,
     Buffer.alloc(MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES + 1)
   );
-  const read = readToolResultAttachment(service, refs[0].id);
+  const read = readToolResultAttachment(service, refs[0].id, { sessionId: 'session-a' });
   assert.equal(read.ok, false);
   assert.match(read.reason, /bounded-read/);
+});
+
+test('bounded read requires the exact owning session and never falls back globally', (t) => {
+  const service = makeTempStoreService(t);
+  const refs = ingestToolResultAttachments(service, [wireAttachment()], {
+    sessionId: 'session-owner',
+  });
+
+  assert.equal(readToolResultAttachment(service, refs[0].id).ok, false);
+  assert.equal(readToolResultAttachment(service, {
+    attachment_id: refs[0].id,
+    session_id: 'session-other',
+  }).ok, false);
+  assert.equal(readToolResultAttachment(service, {
+    attachment_id: refs[0].id,
+    session_id: 'session-owner',
+  }).ok, true);
+});
+
+test('bounded read resolves a persisted ref from only the requested canonical session', (t) => {
+  const service = makeTempStoreService(t);
+  const refs = ingestToolResultAttachments(service, [wireAttachment()], {
+    sessionId: 'session-owner',
+  });
+  const ref = toPersistedToolResultAttachmentRefs(refs)[0];
+  delete service._toolResultAttachmentIndex;
+  service.sessionStore = {
+    peekSessionMessages(sessionId) {
+      return sessionId === 'session-owner'
+        ? [{ kind: 'tool_result', tool_result: { trusted_attachment_refs: [ref] } }]
+        : [];
+    },
+  };
+
+  const read = readToolResultAttachment(service, ref.id, { sessionId: 'session-owner' });
+  assert.equal(read.ok, true);
+  assert.equal(read.dataBase64, wireAttachment().data_base64);
+  assert.equal(readToolResultAttachment(
+    service,
+    ref.id,
+    { sessionId: 'session-other' }
+  ).ok, false);
+});
+
+test('production cache reads reject a deleted or replaced owning session', (t) => {
+  const service = makeTempStoreService(t);
+  let summary = {
+    id: 'session-owner',
+    project_id: 'project-a',
+    created_at: '2026-09-09T00:00:00.000Z',
+  };
+  service.projectAuthority = {};
+  service.sessionStore = {
+    getSessionSummary(sessionId) {
+      return sessionId === summary?.id ? summary : null;
+    },
+    peekSessionMessages() {
+      return [];
+    },
+  };
+  const refs = ingestToolResultAttachments(service, [wireAttachment()], {
+    sessionId: 'session-owner',
+  });
+  assert.equal(refs.length, 1);
+  assert.equal(readToolResultAttachment(
+    service,
+    refs[0].id,
+    { sessionId: 'session-owner' }
+  ).ok, true);
+
+  summary = { ...summary, created_at: '2026-09-09T00:01:00.000Z' };
+  assert.equal(readToolResultAttachment(
+    service,
+    refs[0].id,
+    { sessionId: 'session-owner' }
+  ).ok, false);
+  summary = null;
+  assert.deepEqual(ingestToolResultAttachments(service, [wireAttachment()], {
+    sessionId: 'session-owner',
+  }), []);
 });
 
 test('ingest drops sliced base64 and enforces the aggregate cap whole-attachment', (t) => {
@@ -131,7 +218,9 @@ test('ingest drops sliced base64 and enforces the aggregate cap whole-attachment
     byte_length: big.length,
   });
 
-  const refs = ingestToolResultAttachments(service, [sliced, first, second], {});
+  const refs = ingestToolResultAttachments(service, [sliced, first, second], {
+    sessionId: 'session-a',
+  });
 
   // Sliced encoding refused outright; the second big attachment would push
   // the aggregate past 2 MiB so it is dropped WHOLE.
@@ -250,7 +339,9 @@ test('tool.result notification ingest persists refs-only into messages and turn 
   assert.equal(streamEvent.payload.trustedAttachments[0].mimeType, 'image/jpeg');
 
   // Ingested bytes round-trip through the bounded ID-based read.
-  const read = readToolResultAttachment(service, refs[0].id);
+  const read = readToolResultAttachment(service, refs[0].id, {
+    sessionId: 'session-att',
+  });
   assert.equal(read.ok, true);
   assert.equal(read.dataBase64, wire.data_base64);
 });

@@ -47,7 +47,10 @@ EXCLUDED_DIR_NAMES = {
     ".ruff_cache", "node_modules", "dist", "build", "out", "coverage", "vendor",
 }
 
-JS_DESIGNATED_DIRS = ["services/main", "services/backend", "services/plugins"]
+JS_DESIGNATED_DIRS = [
+    "services/main", "services/backend", "services/plugins",
+    "services/projects", "services/session-runtime",
+]
 # routing + runtime are the orchestration core; tools + mcp are the
 # high-blast-radius execution surface (filesystem/shell/network/MCP) and get the
 # same "every non-trivial file needs a discoverable test" guarantee so a new

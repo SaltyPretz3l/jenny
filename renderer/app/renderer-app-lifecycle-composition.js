@@ -44,7 +44,7 @@
       resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
       refreshCompanionState: (...a) => refreshCompanionStateSafe(...a), refreshProactiveState: (...a) => refreshProactiveStateSafe(...a),
       refreshSkillsState: (...a) => refreshSkillsStateSafe(...a), refreshTipsState: (...a) => refreshTipsStateSafe(...a),
-      refreshOfflineState: (...a) => refreshOfflineStateSafe(...a),
+      refreshOfflineState: (...a) => refreshOfflineStateSafe(...a), refreshAwayDigest: (...a) => refreshAwayDigestSafe(...a),
       refreshPhasePercentiles: (...a) => refreshPhasePercentiles(...a),
       refreshPersonalityWorkspace: (...a) => refreshPersonalityWorkspaceSafe(...a), toErrorMessage: (...a) => toErrorMessage(...a),
       initializeComposerHolo: (...a) => initializeComposerHolo(...a), initializeSpriteHolo: (...a) => initializeSpriteHolo(...a), initializeComposerLayoutObserver: (...a) => initializeComposerLayoutObserver(...a),
@@ -154,8 +154,7 @@
     (async () => { try { return await window.jennyShell?.chatUi?.getState?.(); } catch (_error) { return null; } })(),
     (async () => { try { return await window.jennyShell?.windowUi?.getState?.(); } catch (_error) { return null; } })(),
   ]);
-  /* restore saved preferences */
-  const savedAppearancePreferences = loadAppearancePreferences();
+  const savedAppearancePreferences = loadAppearancePreferences(); // Restore saved preferences.
   state.ui.appearance = normalizeAppearancePreferences(savedAppearancePreferences);
   state.ui.chatZoomPercent = normalizeChatZoomPercent(
     persistedChatZoomState?.zoomPercent ?? state.ui.chatZoomPercent ?? DEFAULT_CHAT_ZOOM_PERCENT
@@ -166,6 +165,7 @@
   state.uiLanguage = chatUiNormalizers.normalizeUiLanguageTag?.(persistedChatZoomState?.uiLanguage) || state.uiLanguage || 'en';
   state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
   state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 0;
+  state.autoApproveStreakCap = chatUiNormalizers.normalizeAutoApproveStreakCap?.(persistedChatZoomState?.autoApproveStreakCap) ?? state.autoApproveStreakCap ?? 50;
   state.ui.appZoomPercent = Number(
     persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 100
   ) || 100;
@@ -266,7 +266,7 @@
     resetPhasePercentiles = noopAsync,
     hydrateCachedLazyShellState = noop,
     queueStartupLazyHydration = noop,
-    handleWorkspaceRootChoose = noopAsync,
+    handleWorkspaceRootChoose = noopAsync, clearWorkspaceRoot = noopAsync, getProjectSwitcher = noopAsync,
     getPersonalityActiveFileSafe = noopNull,
     setPersonalityDraftSafe = noop,
     refreshPersonalityWorkspaceSafe = noopAsync,
@@ -321,7 +321,7 @@
     renderHomePanelSafe = noop,
     applyCompanionPayload = noop,
     getAvailableCompanionDeferPresets = noopArr,
-    renderDashboardSafe = noop,
+    renderDashboardSafe = noop, refreshAwayDigestSafe = (...a) => Promise.resolve(state.awayDigestReader?.refresh?.(...a) ?? false),
     initSetupControllerSafe = noopAsync,
     refreshSetupStateSafe = noopAsync,
     applySetupBackendStatusSafe = noop,
@@ -498,6 +498,7 @@
   /* transcriptRenderer */
   const transcriptRenderer = transcriptUtils.createTranscriptRenderer({
     MESSAGE_STATUS, buildMessageActionModel, escapeHtml,
+    getApprovalCardState: (ref) => globalThis.rendererApprovalBlock?.resolveApprovalCardState?.(state, ref) || null,
     getReasoningEntries: (...a) => getReasoningEntries(...a),
     groupReasoningByPhase: typeof groupReasoningByPhase === 'function'
       ? (...a) => groupReasoningByPhase(...a)
@@ -532,6 +533,9 @@
       const expandedSet = expandedBySession.get(resolvedSessionId);
       return Boolean(expandedSet && typeof expandedSet.has === 'function' && expandedSet.has(resolvedRecapId));
     },
+    /* The compaction notice re-renders by innerHTML, so its open/closed flag
+       has to come from state on every render rather than living in the DOM. */
+    isContextCompactionExpanded: (...a) => isContextCompactionExpanded(...a),
     getThinkingSummary, shouldShowThinkingToggle, thinkingController, toolCallUtils,
     renderMarkdown: (...a) => (window.markdownUtils?.renderMarkdown ? window.markdownUtils.renderMarkdown(...a) : escapeHtml(String(a[0] || ''))),
     renderStreamingMarkdownUnits: (...a) => (
@@ -569,73 +573,39 @@
     renderComposerInteractivePanel = noop, clearStalledTimer = noop,
   } = interactivePanelController || {};
   registerRendererCleanup(() => clearStalledTimer?.());
-  const chatScrollCoordinator = (window.rendererChatScrollCoordinator || {}).createChatScrollCoordinator?.({
-    state, scrollContainer: chatThreadScroll, timelineContainer: chatTimeline, window,
-    appendClientLog: (...a) => appendClientLog(...a), renderJumpControls: (...a) => renderComposerJumpControls?.(...a),
-    isStreaming: () => isSessionStreaming?.(state.currentSessionId) === true,
-  }) || null;
-  registerRendererCleanup(() => chatScrollCoordinator?.dispose?.());
-  /* viewportController */
-  const viewportController = viewportUtils.createViewportController?.({
-    state,
-    constants: { MESSAGE_STATUS },
-    dom: {
-      chatView,
-      chatSurfaceEffects,
-      chatSurfaceEffectLeft,
-      chatThreadStage,
-      chatThreadColumn,
-      composerWrap,
-      chatTimeline,
-      chatThreadScroll,
+  /* chat pane surface cluster (split view W0-1): the scroll coordinator, the viewport
+     controller and the renderless pin-to-top observer for ONE pane, constructed and wired
+     together in renderer/chat/renderer-chat-pane-surface-controllers.js because this file
+     sat at the 1015-line hard cap. paneId 0 is today's only chat surface; the seam is
+     inert until a later slice builds a second pane. Its dispose() runs pin -> viewport ->
+     scroll, the order the cleanup registry (which pops LIFO) already tears them down in. */
+  const paneSurface = (window.rendererChatPaneSurfaceControllers || {}).createChatPaneSurfaceControllers?.({
+    state, paneId: 0, windowRef: window, constants: { MESSAGE_STATUS },
+    dom: { chatView, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, chatThreadColumn, composerWrap, chatTimeline, chatThreadScroll },
+    factories: { scrollCoordinatorUtils: window.rendererChatScrollCoordinator || {}, viewportUtils, pinToTopUtils: window.rendererPinToTopUtils || {} },
+    controllers: { thinkingController, reducedMotionQuery },
+    callbacks: {
+      appendClientLog: (...a) => appendClientLog(...a), renderJumpControls: (...a) => renderComposerJumpControls?.(...a),
+      isStreaming: () => isSessionStreaming?.(state.currentSessionId) === true,
+      mergeReasoningEntries, deriveFollowLatestFromScroll, shouldAutoScrollThread, escapeSelectorValue: (...a) => escapeSelectorValue(...a), getCurrentSessionMessages: (...a) => getCurrentSessionMessages(...a), buildInteractiveRecapViewModel: (...a) => buildInteractiveRecapViewModel(...a), renderMessages: (...a) => renderMessages(...a), updateAssistantSpritePosition: (...a) => updateAssistantSpritePosition(...a),
+      getWayfinderController: () => getChatWayfinderController?.(),
     },
-    controllers: { thinkingController, reducedMotionQuery, scrollCoordinator: chatScrollCoordinator },
-    callbacks: { mergeReasoningEntries, deriveFollowLatestFromScroll, shouldAutoScrollThread, escapeSelectorValue: (...a) => escapeSelectorValue(...a), getCurrentSessionMessages: (...a) => getCurrentSessionMessages(...a), buildInteractiveRecapViewModel: (...a) => buildInteractiveRecapViewModel(...a), renderMessages: (...a) => renderMessages(...a), updateAssistantSpritePosition: (...a) => updateAssistantSpritePosition(...a), appendClientLog: (...a) => appendClientLog(...a) },
-  }) || null;
+  }) || {};
+  const chatScrollCoordinator = paneSurface.scrollCoordinator || null;
+  const viewportController = paneSurface.viewport || null;
+  const pinToTopController = paneSurface.pinToTop || null;
+  registerRendererCleanup(() => paneSurface?.dispose?.());
   const {
-    composerLayoutRuntime = { measureCanvas: null, measureContext: null, resizeObserver: null, safeOffset: 0 },
-    getReasoningEntries = (m) => m?.reasoning?.entries && Array.isArray(m.reasoning.entries) ? m.reasoning.entries : [],
-    mergeMessageReasoning = (msg, payload) => {
-      if (!payload || !Array.isArray(payload.entriesDelta) || !payload.entriesDelta.length) {
-        return msg.reasoning || { source: 'none', entries: [] };
-      }
-      const existing = msg?.reasoning?.entries && Array.isArray(msg.reasoning.entries) ? msg.reasoning.entries : [];
-      return { source: String(payload.source || 'provider'), entries: mergeReasoningEntries(existing, payload.entriesDelta) };
-    },
-    getScrollMetrics = () => ({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }),
-    getScrollBehavior = () => 'auto',
-    setFollowLatest = (v) => { state.ui.followLatest = Boolean(v); },
-    syncThreadScrollState = () => true,
-    getComposerSafeOffset = () => 0, measureComposerSafeOffset = () => 0,
-    updateComposerSafeOffset = noop, initializeComposerLayoutObserver = noop,
-    scrollThreadToTop = noop, scrollThreadToBottom = noop,
-    scrollMessageIntoView = noopFalse, viewportReveal = null, getCurrentMessageById = noopNull,
-    isInteractiveRoundRecapExpanded = () => false,
-    pruneInteractiveRoundRecapExpansionState = noop,
-    toggleInteractiveRoundRecap = noopAsync, clearCopyFeedback = noop,
-    showCopyFeedback = noop, syncRenderedThinkingPanels = noop,
-    syncThinkingBlockNode = noop, scheduleMessageViewportSync = noop,
-    disposeViewportController = noop,
-  } = viewportController || {}; chatScrollCoordinator?.setViewportController?.(viewportController);
+    composerLayoutRuntime, getReasoningEntries, mergeMessageReasoning, getScrollMetrics, getScrollBehavior,
+    setFollowLatest, syncThreadScrollState, getComposerSafeOffset, measureComposerSafeOffset, updateComposerSafeOffset,
+    initializeComposerLayoutObserver, scrollThreadToTop, scrollThreadToBottom, scrollMessageIntoView, viewportReveal,
+    getCurrentMessageById, isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap,
+    isContextCompactionExpanded, toggleContextCompactionDetails,
+    clearCopyFeedback, showCopyFeedback, syncRenderedThinkingPanels, syncThinkingBlockNode, scheduleMessageViewportSync,
+    disposeViewportController,
+  } = paneSurface.viewportApi || {};
   if (lifecycleController) lifecycleController.viewportReveal = viewportReveal;
-  /* pinToTopController */
-  const pinToTopUtils = window.rendererPinToTopUtils || {};
   let chatWayfinderController = null;
-  const pinToTopController = (typeof pinToTopUtils.createPinToTopController === 'function'
-    ? pinToTopUtils.createPinToTopController({
-        scrollContainer: chatThreadScroll,
-        timelineContainer: chatTimeline,
-        pinnableSelector: '.chat-entry[data-message-role="user"]',
-        topOffset: 88, listenForScroll: false,
-        onStateChange: function (nextState) {
-          getChatWayfinderController?.()?.setPinState?.({
-            ...nextState,
-            sessionId: state.currentSessionId,
-          });
-          renderComposerJumpControls?.();
-        },
-      })
-    : null); chatScrollCoordinator?.setPinController?.(pinToTopController);
   /* sessionManager */
   const buildArtifactsFromMessages = typeof artifactsUtils.buildArtifactsFromMessages === 'function'
     ? artifactsUtils.buildArtifactsFromMessages
@@ -761,7 +731,12 @@
         saveReasoningPhaseExpansionPreferences();
         // Enqueue before acceptance can refresh summaries/restore the workspace.
         // The workspace owns focus: promotion must not activate a background tab.
+        // A first send's optimistic chat never held a tab: give the promoted
+        // chat one while it is still the chat on screen.
         workspaceStateController?.rekeySession(sourceSessionId, targetSessionId)
+          .then((workspace) => (!workspace?.openSessionIds?.includes(targetSessionId)
+            && String(state.currentSessionId || '').trim() === targetSessionId
+            ? workspaceStateController.openSession(targetSessionId) : workspace))
           .then(() => renderWorkspaceChrome())
           .catch((error) => appendClientLog('WARN', 'workspace.session_rekey_failed', {
             message: String(error?.message || error),
@@ -849,10 +824,11 @@
   chatsPanelController = (window.rendererChatsPanel || {}).createChatsPanelController?.({
     state, documentRef: document, windowRef: window,
     dom: { conversationGroups, conversationCount, searchInput,
-      scopeSlot: document.getElementById('chatsScopeSlot'), status: document.getElementById('chatsPanelStatus') },
+      scopeSlot: document.getElementById('chatsScopeSlot'), projectRow: document.getElementById('chatsProjectRow'),
+      status: document.getElementById('chatsPanelStatus') },
     inventory: { actionButton: window.inventoryActionButton, segmentedControl: window.inventorySegmentedControl },
     callbacks: { escapeHtml, newChat: () => document.getElementById('newChatButton')?.click?.(),
-      appendClientLog: (...a) => appendClientLog(...a),
+      appendClientLog: (...a) => appendClientLog(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
       afterRenderSessions: (...a) => { renderWorkspaceSidebarBadges(...a); topNavShellController?.syncChatsStrip?.(); } },
   }) || null;
   const { renderSessions = noop, loadMore: loadMoreChats = noop,
@@ -967,7 +943,7 @@
       saveAppearancePreferences, applyAppearancePreferences, isDefaultAppearancePreferences, buildSelectOptionMarkup, attachGlobalErrorBoundary,
       detachGlobalErrorBoundary, getChatTimelineRowModelEnabled, recordChatTimelineRolloutSignal, refreshDefaultChatTimelineBatch4Preference, rollbackChatTimelineRowModel,
       clearProjectionContextCacheForSession, rekeyProjectionContextCache, initializeEagerServices, applyFeatureStatePayload, refreshFeatureState,
-      refreshWorkspaceRootState, refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose,
+      refreshWorkspaceRootState, refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher,
       getPersonalityActiveFileSafe, setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe, handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
       handlePersonalityOpenFolderSafe, hasPersonalityUnsavedChangesSafe,
       refreshMemoryContextFilesSafe, renderMemoryContextFilesSafe, loadMemoryContextFileSafe,
@@ -990,7 +966,7 @@
       renderToolCallBlock, setToolCallExpansion, renderProactiveSuggestionBlock, renderSlashCommandOutput, interactivePanelController, queueInteractiveComposerFocus, flushInteractiveComposerFocus, renderComposerInteractivePanel, clearStalledTimer,
       viewportController, chatScrollCoordinator, composerLayoutRuntime, getReasoningEntries, mergeMessageReasoning, getScrollMetrics, getScrollBehavior, setFollowLatest, syncThreadScrollState,
       getComposerSafeOffset, measureComposerSafeOffset, updateComposerSafeOffset, initializeComposerLayoutObserver, scrollThreadToTop, scrollThreadToBottom, scrollMessageIntoView, viewportReveal, getCurrentMessageById,
-      isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, clearCopyFeedback, showCopyFeedback, syncRenderedThinkingPanels, syncThinkingBlockNode, scheduleMessageViewportSync,
+      isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, isContextCompactionExpanded, toggleContextCompactionDetails, clearCopyFeedback, showCopyFeedback, syncRenderedThinkingPanels, syncThinkingBlockNode, scheduleMessageViewportSync,
       disposeViewportController, chatWayfinderController, pinToTopController, buildArtifactsFromMessages, shellArtifactBridge, getArtifactsForSession, selectArtifact,
       invalidateSessionArtifacts, pruneSessionArtifacts, resetArtifactsState, isArtifactReviewVisible, renderArtifactReviewPanelSafe,
       openArtifactTarget, syncArtifactReviewLayout, openCodeReviewTarget, openFilePreviewTarget, contextPanelController, sessionManager, getSessionMessages, setSessionMessages, getSessionTurnEventState,

@@ -58,10 +58,13 @@ function createCodexCliAuthService({
   openLoginTerminal = openCodexLoginTerminal,
   logger = null,
 } = {}) {
+  let credentialEpoch = 0;
   async function getState(options = {}) {
     try {
       const setup = await Promise.resolve(checkSetup(options));
-      return compactAuthStatus(setup);
+      const state = compactAuthStatus(setup);
+      credentialEpoch += 1;
+      return state;
     } catch (error) {
       const message = redactDiagnosticString(error?.message || error || 'Codex CLI login status failed.');
       if (typeof logger === 'function') {
@@ -70,7 +73,7 @@ function createCodexCliAuthService({
           errorType: String(error?.name || 'Error'),
         });
       }
-      return {
+      const state = {
         ok: false,
         configured: false,
         status: 'unconfigured',
@@ -81,6 +84,8 @@ function createCodexCliAuthService({
         commandPath: '',
         message,
       };
+      credentialEpoch += 1;
+      return state;
     }
   }
 
@@ -105,6 +110,7 @@ function createCodexCliAuthService({
   }
 
   return {
+    getCredentialEpoch: () => credentialEpoch,
     getState,
     openLoginTerminal: openLogin,
   };

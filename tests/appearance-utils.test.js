@@ -954,12 +954,14 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
     chatsCss,
     /\.session-row__open\s*\{[\s\S]*?display:\s*flex;[\s\S]*?gap:\s*var\(--space-4\);/
   );
-  assert.match(chatsCss, /\.session-row__dot\s*\{[\s\S]*?display:\s*none;[\s\S]*?order:\s*1;/);
+  const dotRule = chatsCss.match(/\.session-row__dot\s*\{([\s\S]*?)\}/)?.[1] || '';
+  assert.doesNotMatch(dotRule, /display:\s*none|order\s*:/);
   assert.match(
     chatsCss,
-    /\.session-row\[data-session-dominant-state="streaming"\] \.session-row__dot,[\s\S]*?display:\s*block;/,
-    'exceptional-state dots reveal without reserving space for inactive rows'
+    /\.session-row\[data-session-dominant-state="streaming"\] \.session-row__dot\s*\{[\s\S]*?background:\s*var\(--sidebar-state-streaming-color\)/
   );
+  assert.match(chatsCss, /\.session-row:is\(\[data-session-dominant-state="idle"\], \[data-session-dominant-state="open"\]\)\[data-session-last-outcome="completed"\] \.session-row__dot\s*\{\s*background:\s*var\(--text-muted\)/);
+  assert.match(chatsCss, /\.session-row:is\(\[data-session-dominant-state="idle"\], \[data-session-dominant-state="open"\]\)\[data-session-last-outcome="failed"\] \.session-row__dot\s*\{\s*background:\s*var\(--text-danger-emphasis\)/);
   const narrowStart = chatsCss.indexOf('@container viewpanel (max-width: 279px)');
   const narrowEnd = chatsCss.indexOf('@media (prefers-reduced-motion: reduce)', narrowStart);
   const narrowRule = chatsCss.slice(narrowStart, narrowEnd);

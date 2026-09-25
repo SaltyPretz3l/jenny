@@ -203,6 +203,8 @@
         if (!source || !target || source === target) return snapshot();
         return queueMutation(async () => {
           sessionAliases.set(source, target);
+          lastValidSessionIds = resolveIds(lastValidSessionIds);
+          const before = JSON.stringify(captureInternalState());
           const migrate = (ids) => ids.includes(source)
             ? normalizeIdList(ids.filter((id) => id !== target).map((id) => id === source ? target : resolveId(id)))
             : resolveIds(ids);
@@ -210,11 +212,14 @@
           state.openSessionIds = migrate(state.openSessionIds);
           state.mruStack = migrate(state.mruStack);
           state.activeSessionId = resolveId(state.activeSessionId);
-          lastValidSessionIds = resolveIds(lastValidSessionIds);
           if (cycleSnapshot) {
             cycleSnapshot = migrate(cycleSnapshot);
             cycleCursor = cycleSnapshot.indexOf(resolveId(cycleActive));
           }
+          // A session no tab holds (the optimistic shell of a first send) moves
+          // nothing. Publishing anyway would push the workspace's stale active
+          // id over the renderer's current session mid-handoff.
+          if (JSON.stringify(captureInternalState()) === before) return snapshot();
           // Unlike ordinary tab mutations, never roll back to a dead local ID.
           // restore() also resolves saved aliases, so a failed write is recoverable.
           try { await persist(); } catch (_error) {

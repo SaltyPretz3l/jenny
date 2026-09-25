@@ -22,6 +22,8 @@ MAX_LIST_PAGE_SIZE = 250
 DEFAULT_LIST_PAGE_SIZE = 100
 MAX_QUARANTINE_ROWS = 1_000
 MAX_QUARANTINE_PAYLOAD_CHARS = 2_000
+GENERAL_PROJECT_ID = "project_general"
+MAX_PROJECT_ID_CHARS = len("project_") + 128
 CONTENT_DIGEST_PREFIX = "sha256:"
 CONTENT_DIGEST_HEX_CHARS = 64
 CONTENT_DIGEST_CHARS = len(CONTENT_DIGEST_PREFIX) + CONTENT_DIGEST_HEX_CHARS
@@ -32,10 +34,24 @@ class MemoryPolicy:
     enabled: bool = True
     include_response_style: bool = True
     recall_query: str = ""
+    project_id: str = GENERAL_PROJECT_ID
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "project_id", require_project_id(self.project_id))
 
 
 _SPACES_RE = re.compile(r"\s+")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PROJECT_ID_RE = re.compile(r"^project_[A-Za-z0-9_-]{1,128}$")
+
+
+def require_project_id(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError("project_id must be a string")
+    project_id = value.strip()
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        raise ValueError("project_id is invalid")
+    return project_id
 
 
 def normalize_spaces(value: Any, *, max_chars: int | None = None) -> str:
@@ -113,11 +129,13 @@ __all__ = [
     "CONTENT_DIGEST_CHARS",
     "CONTENT_DIGEST_PREFIX",
     "DEFAULT_LIST_PAGE_SIZE",
+    "GENERAL_PROJECT_ID",
     "MAX_CATEGORY_CHARS",
     "MAX_FAMILY_KEY_CHARS",
     "MAX_LESSON_TEXT_CHARS",
     "MAX_LIST_PAGE_SIZE",
     "MAX_PROVENANCE_CHARS",
+    "MAX_PROJECT_ID_CHARS",
     "MAX_RECALL_QUERY_CHARS",
     "MAX_REQUEST_ID_CHARS",
     "MAX_SESSION_ID_CHARS",
@@ -130,4 +148,5 @@ __all__ = [
     "normalize_spaces",
     "require_bounded_text",
     "require_finite_confidence",
+    "require_project_id",
 ]

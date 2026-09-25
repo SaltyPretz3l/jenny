@@ -13,9 +13,14 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-
+  const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const MAX_PREVIEW_PATH_REVISIONS = 512;
+  const DOCUMENT_FORMAT_BY_EXTENSION = Object.freeze({ docx: 'docx', pdf: 'pdf' });
+  const DOCUMENT_MIME_BY_FORMAT = Object.freeze({
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    pdf: 'application/pdf',
+  });
   const IMAGE_MIME_BY_EXTENSION = Object.freeze({
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
     webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp',
@@ -33,7 +38,6 @@
     const normalized = normalizePath(path);
     return isWindowsPlatform(platform) ? normalized.toLocaleLowerCase('en-US') : normalized;
   }
-
   function operationError(result, fallback) {
     const error = new Error(String(result?.message || fallback || 'Workspace file operation failed.'));
     error.code = String(result?.code || result?.error_code || 'workspace_file_operation_failed');
@@ -157,6 +161,49 @@
       return dotIndex > 0 ? IMAGE_MIME_BY_EXTENSION[fileName.slice(dotIndex + 1).toLowerCase()] || '' : '';
     }
 
+    function documentFormatForPath(path) {
+      const fileName = normalizePath(path).split('/').pop() || '';
+      const dotIndex = fileName.lastIndexOf('.');
+      return dotIndex > 0 ? DOCUMENT_FORMAT_BY_EXTENSION[fileName.slice(dotIndex + 1).toLowerCase()] || '' : '';
+    }
+
+    function validateDocumentResult(result, requestedPath) {
+      if (!result || result.ok !== true) throw operationError(result, jt('ide.fileOps.documentReadFailed', 'Could not read the workspace document.'));
+      const canonicalPath = normalizePath(result.path);
+      const canonicalKey = String(result.pathKey || '');
+      const requestedKey = String(result.requestedPathKey || '');
+      const expectedFormat = documentFormatForPath(canonicalPath);
+      const requestedFormat = documentFormatForPath(requestedPath);
+      if (!canonicalPath
+        || !canonicalKey
+        || !requestedKey
+        || canonicalKey !== pathKey(canonicalPath)
+        || requestedKey !== pathKey(requestedPath)
+        || typeof result.rootId !== 'string'
+        || !result.rootId
+        || !Number.isSafeInteger(result.generation)
+        || typeof result.fileVersion !== 'string'
+        || !result.fileVersion
+        || result.kind !== 'document'
+        || result.representation !== 'base64'
+        || !expectedFormat
+        || requestedFormat !== expectedFormat
+        || result.format !== expectedFormat
+        || result.mime !== DOCUMENT_MIME_BY_FORMAT[expectedFormat]
+        || result.editable !== true
+        || result.truncated !== false
+        || !Number.isSafeInteger(result.size)
+        || result.size < 0
+        || result.size > MAX_DOCUMENT_BYTES
+        || base64DecodedSize(result.base64) !== result.size) {
+        throw operationError({
+          code: 'workspace_file_result_invalid',
+          message: jt('ide.fileOps.invalidDocumentResponse', 'The workspace returned an invalid or stale document response.'),
+        });
+      }
+      return { ...result, path: canonicalPath, pathKey: canonicalKey };
+    }
+
     function validateImageResult(result, requestedPath) {
       if (!result || result.ok !== true) throw operationError(result, jt('ide.fileOps.imageReadFailed', 'Could not read the workspace image.'));
       const canonicalPath = normalizePath(result.path);
@@ -192,7 +239,6 @@
       }
       return { ...result, path: canonicalPath, pathKey: canonicalKey };
     }
-
     function runQueued(run) {
       operationSequence += 1;
       const operationId = operationSequence;
@@ -210,7 +256,6 @@
       queueTail = execute.catch(() => undefined);
       return execute;
     }
-
     function beginOpen(path) {
       openIntentSequence += 1;
       return Object.freeze({
@@ -265,6 +310,25 @@
         const result = await api.readImage({ path: intent.path });
         if (!isOpenIntentCurrent(intent)) return { stale: true, payload: null };
         const payload = validateImageResult(result, intent.path);
+        if (!currentContextMatches(payload.rootId, payload.generation)) return { stale: true, payload: null };
+        return { stale: false, payload };
+      });
+    }
+
+    async function readDocumentForOpen(intent) {
+      if (!isOpenIntentCurrent(intent)) return { stale: true, payload: null };
+      return runQueued(async () => {
+        if (!isOpenIntentCurrent(intent)) return { stale: true, payload: null };
+        const api = getWorkspaceFsApi();
+        if (typeof api?.readDocument !== 'function') {
+          throw operationError({
+            code: 'versioned_file_bridge_unavailable',
+            message: jt('ide.fileOps.versionedDocumentAccessUnavailable', 'Versioned workspace document access is unavailable.'),
+          });
+        }
+        const result = await api.readDocument({ path: intent.path });
+        if (!isOpenIntentCurrent(intent)) return { stale: true, payload: null };
+        const payload = validateDocumentResult(result, intent.path);
         if (!currentContextMatches(payload.rootId, payload.generation)) return { stale: true, payload: null };
         return { stale: false, payload };
       });
@@ -354,9 +418,11 @@
 
     function commitDocumentOpen(intent, payload, documentKind) {
       if (!isOpenIntentCurrent(intent)) return null;
-      const result = documentKind === 'image'
-        ? validateImageResult(payload, intent.path)
-        : validateReadResult(payload, intent.path);
+      const result = documentKind === 'document'
+        ? validateDocumentResult(payload, intent.path)
+        : documentKind === 'image'
+          ? validateImageResult(payload, intent.path)
+          : validateReadResult(payload, intent.path);
       if (!currentContextMatches(result.rootId, result.generation)) return null;
       registerPathIdentity(intent.path, result);
       activeContext = Object.freeze({ rootId: result.rootId, generation: result.generation });
@@ -374,6 +440,7 @@
         documentKind,
         controllerEpoch,
       };
+      if (documentKind === 'document') token.format = result.format;
       documents.set(token.pathKey, token);
       return cloneToken(token);
     }
@@ -384,6 +451,10 @@
 
     function commitImageOpen(intent, payload) {
       return commitDocumentOpen(intent, payload, 'image');
+    }
+
+    function commitBinaryDocumentOpen(intent, payload) {
+      return commitDocumentOpen(intent, payload, 'document');
     }
 
     function noteEdit(path) {
@@ -411,6 +482,16 @@
         content,
         savedVersionId: savedVersionId == null ? null : savedVersionId,
       });
+    }
+
+    function captureDocumentSave(path, { base64 } = {}) {
+      const token = getMutable(path);
+      if (!token
+        || token.documentKind !== 'document'
+        || token.controllerEpoch !== controllerEpoch
+        || typeof base64 !== 'string'
+        || !base64) return null;
+      return Object.freeze({ ...token, base64 });
     }
 
     function sameDocument(snapshot) {
@@ -442,6 +523,32 @@
         const result = await api.writeText({
           path: snapshot.path,
           content: snapshot.content,
+          expectedGeneration: snapshot.generation,
+          expectedFileVersion: snapshot.fileVersion,
+        });
+        return validateWriteResult(result, snapshot);
+      });
+    }
+
+    async function writeDocument(snapshot) {
+      if (!sameDocument(snapshot) || snapshot.documentKind !== 'document') {
+        throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.documentChangedBeforeSave', 'The editor document changed before it could be saved.') });
+      }
+      return runQueued(async () => {
+        if (!sameDocument(snapshot) || snapshot.documentKind !== 'document') {
+          throw operationError({ code: 'workspace_file_operation_stale', message: jt('ide.fileOps.documentChangedBeforeSave', 'The editor document changed before it could be saved.') });
+        }
+        const api = getWorkspaceFsApi();
+        if (typeof api?.writeDocument !== 'function') {
+          throw operationError({
+            code: 'versioned_file_bridge_unavailable',
+            message: jt('ide.fileOps.versionedDocumentAccessUnavailable', 'Versioned workspace document access is unavailable.'),
+          });
+        }
+        const result = await api.writeDocument({
+          path: snapshot.path,
+          base64: snapshot.base64,
+          format: snapshot.format,
           expectedGeneration: snapshot.generation,
           expectedFileVersion: snapshot.fileVersion,
         });
@@ -550,6 +657,27 @@
       });
     }
 
+    async function readDocumentForReload(snapshot, reloadOptions = {}) {
+      if (!reloadIsCurrent(snapshot, reloadOptions) || snapshot.documentKind !== 'document') {
+        return { stale: true, payload: null };
+      }
+      return runQueued(async () => {
+        if (!reloadIsCurrent(snapshot, reloadOptions) || snapshot.documentKind !== 'document') {
+          return { stale: true, payload: null };
+        }
+        const api = getWorkspaceFsApi();
+        if (typeof api?.readDocument !== 'function') {
+          throw operationError(null, jt('ide.fileOps.versionedDocumentAccessUnavailable', 'Versioned workspace document access is unavailable.'));
+        }
+        const result = await api.readDocument({ path: snapshot.path });
+        const payload = validateDocumentResult(result, snapshot.path);
+        if (!reloadIsCurrent(snapshot, reloadOptions)
+          || payload.rootId !== snapshot.rootId
+          || payload.generation !== snapshot.generation) return { stale: true, payload: null };
+        return { stale: false, payload };
+      });
+    }
+
     function commitReload(snapshot, payload, reloadOptions = {}) {
       if (!reloadIsCurrent(snapshot, reloadOptions)) return false;
       const token = documents.get(snapshot.pathKey);
@@ -612,11 +740,13 @@
       canCommitReload,
       cancelOpenIntents,
       cancelPreviewIntents,
+      captureDocumentSave,
       captureReload,
       captureSave,
       close,
-      commitOpen,
+      commitBinaryDocumentOpen,
       commitImageOpen,
+      commitOpen,
       commitReload,
       createPathKey: pathKey,
       dispose,
@@ -627,6 +757,8 @@
       noteDirty,
       noteEdit,
       noteExternalChange,
+      readDocumentForOpen,
+      readDocumentForReload,
       readForPreview,
       readImageForOpen,
       readImageForReload,
@@ -636,6 +768,7 @@
       reset,
       resolvePath,
       write,
+      writeDocument,
       writeMutation,
     };
   }

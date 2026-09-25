@@ -136,6 +136,13 @@ def test_sidecar_entrypoint_main_dispatches_grep_worker_before_multiprocessing(
     assert "multiprocessing" not in sys.modules
 
 
+def test_sidecar_entrypoint_dispatches_contained_test_helper_without_runtime_boot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sidecar_main, "_run_workspace_test_helper", lambda: 41)
+    assert sidecar_main.main(["--workspace-test-runner-helper"]) == 41
+
+
 def test_sidecar_entrypoint_prompt_dispatches_headless_runner(monkeypatch) -> None:
     called: dict[str, object] = {}
 

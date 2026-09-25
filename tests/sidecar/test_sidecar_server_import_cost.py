@@ -37,7 +37,13 @@ import sys
 # 2026-09-05: 352 after the workspace recovery program (mutation journal
 # lifecycle + task_board/connections policy mirrors on the tool-loop path);
 # the recovery RPC family itself is lazy in request_dispatch.py.
-_MEASURED_SIDECAR_MODULES = 352
+# 2026-09-10: 345 after deferring MCP transport construction/inspection to
+# request use. Runtime admission/continuation modules are included in this count.
+# 2026-09-23: 353 (bisected; one per landing, no single eager regression):
+# pipe_stdin (server stdio gate), media_site (optional PDF add-on check),
+# pdf_text (PDF reader, used at filesystem_content module scope), and two
+# file-size splits (builder_workspace_files, phase_trace).
+_MEASURED_SIDECAR_MODULES = 353
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to
@@ -77,6 +83,14 @@ def test_server_import_graph_stays_within_module_budget() -> None:
         "sidecar.ai.routing.preview_vision",
         "sidecar.ai.tools.preview_image",
     }), "Preview helpers must load on use rather than during server startup"
+    assert loaded.isdisjoint({
+        "sidecar.ai.mcp.client",
+        "sidecar.ai.mcp.inspection",
+        "sidecar.runtime.chat_continuation_resume",
+        "sidecar.runtime.chat_resume_admission",
+        "sidecar.runtime.chat_resume_snapshots",
+        "sidecar.runtime.decision_checkpoint",
+    }), "MCP transports and the resume executor must load on request use"
     assert len(loaded) <= _MAX_SIDECAR_MODULES, (
         f"importing sidecar.server loaded {len(loaded)} sidecar modules; "
         f"the limit is {_MAX_SIDECAR_MODULES}. Investigate the new eager import "

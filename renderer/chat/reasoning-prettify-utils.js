@@ -175,10 +175,13 @@
   }
 
   function repairSentenceGlue(prose) {
+    // Glue repair only inserts spaces, so path separators cannot appear later.
+    // Avoid scanning every boundary when this segment contains no path at all.
+    const hasPathSeparator = prose.includes('/') || prose.includes('\\');
     const repaired = prose.replace(SENTENCE_GLUE_RE, (match, before, ender, offset) => {
       // Paths and dotted file names ("notes/plans/Foo.Md") are not sentence
       // boundaries — leave any token carrying a path separator alone.
-      const token = tokenAround(prose, offset);
+      const token = hasPathSeparator ? tokenAround(prose, offset) : '';
       if (token.includes('/') || token.includes('\\')) {
         return match;
       }
@@ -187,7 +190,7 @@
     let lastScannedOffset = 0;
     let runningQuoteCount = 0;
     return repaired.replace(QUOTED_SENTENCE_GLUE_RE, (match, ender, quote, offset) => {
-      const token = tokenAround(repaired, offset);
+      const token = hasPathSeparator ? tokenAround(repaired, offset) : '';
       if (token.includes('/') || token.includes('\\')) {
         return match;
       }

@@ -109,3 +109,43 @@ test('malformed modern discovery and JSON-RPC envelopes fail closed', async () =
     binding: remoteBinding(), consent: {}, context: transportContext() }).negotiate()).reason,
   'mcp_json_invalid');
 });
+
+test('tool settlement requires a correlated JSON-RPC terminal acknowledgement', async () => {
+  async function invoke(reply) {
+    const broker = createScriptedBroker((input) => {
+      const body = bodyOf(input);
+      return body.method === 'server/discover'
+        ? jsonResponse(body.id, { supportedVersions: ['2026-07-28'], capabilities: { tools: {} } })
+        : reply(body.id);
+    });
+    return new RemoteMcpTransport({ networkBroker: broker,
+      binding: remoteBinding(), consent: {}, context: transportContext() })
+      .call('tools/call', { name: 'search', arguments: {} });
+  }
+  const httpFailure = await invoke(() => ({ ok: true, status_code: 504, headers: {},
+    body: Buffer.alloc(0), endpoint_origin_digest: 'd'.repeat(64) }));
+  assert.deepEqual(httpFailure.execution_settlement, { cleanup: 'uncertain' });
+  const invalidJson = await invoke(() => ({ ok: true, status_code: 200,
+    headers: { 'content-type': 'application/json' }, body: Buffer.from('{'),
+    endpoint_origin_digest: 'd'.repeat(64) }));
+  assert.deepEqual(invalidJson.execution_settlement, { cleanup: 'uncertain' });
+  const mismatched = await invoke(() => jsonResponse('different-id', { accepted: true }));
+  assert.deepEqual(mismatched.execution_settlement, { cleanup: 'uncertain' });
+  const rpcError = await invoke((id) => ({ ok: true, status_code: 200,
+    headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({
+      jsonrpc: '2.0', id, error: { code: -32000, message: 'rejected' },
+    })), endpoint_origin_digest: 'd'.repeat(64) }));
+  assert.equal(rpcError.reason, 'remote_mcp_error');
+  assert.deepEqual(rpcError.execution_settlement,
+    { cleanup: 'confirmed', producer_started: true });
+});
+
+test('a failed protocol handshake confirms that the tool producer never started', async () => {
+  const broker = createScriptedBroker(() => ({ ok: true, status_code: 504, headers: {},
+    body: Buffer.alloc(0), endpoint_origin_digest: 'd'.repeat(64) }));
+  const result = await new RemoteMcpTransport({ networkBroker: broker,
+    binding: remoteBinding(), consent: {}, context: transportContext() })
+    .call('tools/call', { name: 'search', arguments: {} });
+  assert.deepEqual(result.execution_settlement,
+    { cleanup: 'confirmed', producer_started: false });
+});

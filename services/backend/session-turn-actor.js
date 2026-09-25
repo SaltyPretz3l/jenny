@@ -13,17 +13,30 @@ const {
   getPendingQuestionBatch,
   normalizeContinuationToken,
 } = require('./session-turn-continuation');
+const { normalizeIdentifier } = require('./generated-chat-lifecycle-contract');
 const {
   adoptPendingTerminalRepair: adoptRepairLease,
+  blockCheckpointOrphan: blockCheckpointOrphanLease,
   createLeaseLifecycle,
   finalizeTerminal: finalizeTerminalLease,
+  pauseForCheckpoint: pauseCheckpointLease,
+  pauseRecoveredCheckpoint: pauseRecoveredCheckpointLease,
   markProviderQuiesced: markLeaseProviderQuiesced,
   pendingRepairForActiveTurn,
   prepareTerminalTransition: prepareLeaseTerminalTransition,
   releaseLease,
   runTerminalMutation: runLeaseTerminalMutation,
+  settleCheckpointOrphan: settleCheckpointOrphanLease,
 } = require('./session-turn-actor-terminal');
-const { normalizeId } = require('../shared/normalize');
+const {
+  assertEditAnchor,
+  provePausedRuntimeCleanup,
+  queuedSubmissionBlock,
+  requireStore,
+  resolveCheckpointResumeIdentity,
+  sessionMessages,
+} = require('./session-turn-actor-resume');
+const { normalizeId } = require('../shared/normalize'); const { captureFailureRetryReasoningAtReservation } = require('./session-failure-retry-reasoning');
 const DEFAULT_MAX_ACTORS = 512;
 const DEFAULT_QUIESCENCE_TIMEOUT_MS = 5_000;
 const MAX_QUIESCENCE_TIMEOUT_MS = 60_000;
@@ -35,12 +48,6 @@ function isRecord(value) { return Boolean(value && typeof value === 'object' && 
 function asGeneration(value, fallback = 0) { const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback; }
 function normalizeStatus(value) {
   return normalizeId(value).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[\s.-]+/g, '_').toLowerCase();
-}
-function sessionMessages(store, sessionId) {
-  if (typeof store.getSessionMessages === 'function') return store.getSessionMessages(sessionId);
-  if (typeof store.getMessages === 'function') return store.getMessages(sessionId);
-  const messages = store.getSession(sessionId)?.messages;
-  return Array.isArray(messages) ? messages : [];
 }
 function terminalConsumesContinuation(messages, streamId) {
   const terminal = [...(Array.isArray(messages) ? messages : [])].reverse().find(
@@ -75,16 +82,6 @@ function recoveryError(reason, cause = null) {
   if (cause) error.cause = cause;
   return error;
 }
-function requireStore(store) {
-  for (const name of ['getSession', 'getActiveTurn', 'setActiveTurn', 'clearActiveTurn']) {
-    if (!store || typeof store[name] !== 'function') {
-      throw new TypeError(`SessionTurnActor requires store.${name}().`);
-    }
-  }
-  if (typeof store.flushSession !== 'function' && typeof store.flush !== 'function') {
-    throw new TypeError('SessionTurnActor requires a durable store flush operation.');
-  }
-}
 class SessionTurnActorRegistry {
   constructor({ maxActors = DEFAULT_MAX_ACTORS, logger = null,
     now = () => Date.now(), createId = () => randomUUID(), terminalRepairStore = null } = {}) {
@@ -108,19 +105,29 @@ class SessionTurnActorRegistry {
     store,
     activeStreams,
     interactiveResponse = null,
-    editedMessageId = '',
+    editedMessageId = '', failureRetry = false, failureRetryReasoningCarry = false,
     deferEditValidation = false,
     prompt = '',
     path = '',
     traceId = '',
+    logicalTurnId, // Internal scheduler seam; public/model payloads never forward this.
+    checkpointResume = null, // Branded app-only identity from a validated checkpoint.
   } = {}) {
     const id = normalizeId(sessionId);
     if (!id) throw new TypeError('SessionTurnActor.reserveStart requires sessionId.');
+    const logicalTurn = logicalTurnId === undefined ? null : normalizeIdentifier(logicalTurnId);
+    if (logicalTurn && !logicalTurn.ok) throw Object.assign(
+      new TypeError('SessionTurnActor.reserveStart received an invalid logicalTurnId.'),
+      { code: 'invalid_logical_turn_id', reason: logicalTurn.reason }
+    );
     requireStore(store);
     if (!activeStreams || typeof activeStreams.get !== 'function') {
       throw new TypeError('SessionTurnActor.reserveStart requires activeStreams.');
     }
     const actor = this._getActor(id, store);
+    if (actor.checkpointRecoveryBarrier) {
+      throw recoveryError(actor.checkpointRecoveryBarrier.reason);
+    }
     if (actor.tombstoned || actor.deleting || actor.lease) {
       const deleting = actor.tombstoned || actor.deleting;
       this._recordLeaseConflict(path, id, deleting ? 'session_deleting' : 'lease_active');
@@ -157,8 +164,10 @@ class SessionTurnActorRegistry {
       // A bracket without the actor lease/controller is crash evidence, even when fresh.
       this._recoverOrphan(actor, store, activeTurn);
     }
+    const resume = resolveCheckpointResumeIdentity(checkpointResume, { sessionId: id, store,
+      interactiveResponse, editedMessageId, deferEditValidation, logicalTurnId });
     const editId = normalizeId(editedMessageId);
-    if (editId && deferEditValidation !== true) this._assertEditAnchor(store, id, editId);
+    if (editId && deferEditValidation !== true) assertEditAnchor(store, id, editId);
     const continuation = interactiveResponse
       ? this._validateContinuation(actor, store, interactiveResponse)
       : null;
@@ -166,13 +175,14 @@ class SessionTurnActorRegistry {
     const streamId = this._id('stream');
     const identity = Object.freeze({
       sessionId: id, sessionIncarnation: actor.sessionIncarnation,
-      generation: previousGeneration + 1, turnId: streamId, streamId,
-      userMessageId: editId || `user_${streamId}`, sessionRevision: null,
+      generation: previousGeneration + 1, turnId: resume?.turnId || logicalTurn?.value || streamId, streamId,
+      userMessageId: resume?.userMessageId || editId || `user_${streamId}`, sessionRevision: null,
     });
     const leaseLifecycle = createLeaseLifecycle();
     const lease = {
       identity, store, activeStreams, prompt: String(prompt || ''),
       editedMessageId: editId || null, consumedContinuation: null,
+      reuseExistingUserMessage: Boolean(resume),
       editValidationDeferred: Boolean(editId && deferEditValidation === true),
       continuationReplaced: false, controller: null, released: false,
       ...leaseLifecycle,
@@ -218,27 +228,26 @@ class SessionTurnActorRegistry {
       }
       if (!this._activeTurnMatches(store.getActiveTurn(id), identity)) {
         throw recoveryError('active_turn_claim_unverified_after_flush');
-      }
+      } else if (failureRetry === true && failureRetryReasoningCarry === true) captureFailureRetryReasoningAtReservation({ store, identity, userMessageId: editId, log: this._log.bind(this) });
       // Claim the crash-recovery bracket before consuming a continuation.
       // The safe intermediate state is an orphaned lease with a retryable
       // token, never a consumed token with no durable generation evidence.
       if (continuation) this._consumeContinuation(lease, continuation);
       return lease;
     } catch (error) {
-      const continuationRestored = lease.consumedContinuation
-        ? this._restoreContinuation(lease)
-        : true;
-      const continuationRollbackBlocked = !continuationRestored;
+      const continuationRollbackBlocked = lease.consumedContinuation
+        ? !this._restoreContinuation(lease) : false;
+      let rollbackConfirmed = false;
       if (continuationRollbackBlocked) {
         actor.recoveryBlocked = 'continuation_restore_failed';
         lease.activeTurnClaim = {
-          ...(lease.activeTurnClaim || this._buildActiveTurnClaim(lease, traceId)),
-          continuation_restore_required: true,
+          ...(lease.activeTurnClaim || this._buildActiveTurnClaim(lease, traceId)), continuation_restore_required: true,
         };
         this._ensureActiveTurnDurably(lease);
       }
       if (claimAttempted && !continuationRollbackBlocked) {
-        if (!this._clearActiveTurnDurably(lease)) {
+        rollbackConfirmed = this._clearActiveTurnDurably(lease);
+        if (!rollbackConfirmed) {
           actor.recoveryBlocked = 'active_turn_claim_rollback_failed';
           this._log('ERROR', 'lifecycle.active_turn_claim_rollback_failed', {
             sessionId: id,
@@ -248,6 +257,7 @@ class SessionTurnActorRegistry {
           });
         }
       }
+      if (claimAttempted && error && typeof error === 'object') error.claimState = rollbackConfirmed ? 'not_claimed' : 'uncertain';
       actor.lease = null;
       lease.released = true;
       lease.providerQuiesced = true;
@@ -347,9 +357,11 @@ class SessionTurnActorRegistry {
   finalizeTerminal(lease, commitResult, options) {
     return finalizeTerminalLease(this, lease, commitResult, options);
   }
-  release(lease, options) {
-    return releaseLease(this, lease, options);
-  }
+  release(lease, options) { return releaseLease(this, lease, options); }
+  pauseForCheckpoint(lease, options) { return pauseCheckpointLease(this, lease, options); }
+  blockCheckpointOrphan(options) { return blockCheckpointOrphanLease(this, options); }
+  pauseRecoveredCheckpoint(options) { return pauseRecoveredCheckpointLease(this, options); }
+  settleCheckpointOrphan(options) { return settleCheckpointOrphanLease(this, options); }
   attachContinuationToken(lease, batch) {
     const reason = this._leaseReason(lease);
     if (reason) {
@@ -504,15 +516,6 @@ class SessionTurnActorRegistry {
     this._touch(actor);
     return true;
   }
-  _assertEditAnchor(store, sessionId, editId) {
-    const anchor = sessionMessages(store, sessionId).find(
-      (message) => normalizeId(message?.id) === editId
-    );
-    if (anchor && normalizeId(anchor.role) === 'user') return;
-    throw Object.assign(new Error('The edited user message is no longer available.'), {
-      code: 'invalid_edit_target', category: 'validation', retryable: false,
-    });
-  }
   _getActor(sessionId, store) {
     const existing = this._actors.get(sessionId);
     if (existing) {
@@ -535,6 +538,7 @@ class SessionTurnActorRegistry {
       sessionIncarnation: persisted.sessionIncarnation || this._id('incarnation'),
       generation: persisted.generation || 0, store: store || null,
       lease: null, controller: null, deleting: false, tombstoned: false,
+      checkpointRecoveryBarrier: null,
       deletionHandle: null, recoveryBlocked: '', legacyContinuationTokenId: '',
       deletionResult: null,
       pendingMutations: new Set(),
@@ -564,6 +568,7 @@ class SessionTurnActorRegistry {
         !actor.lease
         && !actor.deleting
         && !actor.recoveryBlocked
+        && !actor.checkpointRecoveryBarrier
         && actor.pendingMutations.size === 0
       ) {
         this._actors.delete(sessionId);
@@ -790,7 +795,7 @@ class SessionTurnActorRegistry {
     return Boolean(
       activeTurn
       && normalizeId(activeTurn.request_id) === identity.turnId
-      && normalizeId(activeTurn.turn_id || activeTurn.stream_id) === identity.turnId
+      && normalizeId(activeTurn.turn_id) === identity.turnId
       && normalizeId(activeTurn.stream_id) === identity.streamId
       && normalizeId(activeTurn.user_message_id) === identity.userMessageId
       && normalizeId(activeTurn.session_incarnation) === identity.sessionIncarnation
@@ -929,6 +934,7 @@ class SessionTurnActorRegistry {
       });
     }
   }
+  getQueuedSubmissionBlock(sessionId) { return queuedSubmissionBlock(this, sessionId); }
   hasActiveLifecycle(sessionId) {
     const actor = this._actors.get(normalizeId(sessionId));
     return Boolean(
@@ -936,6 +942,7 @@ class SessionTurnActorRegistry {
       && (actor.lease || actor.deleting || actor.tombstoned || actor.pendingMutations.size)
     );
   }
+  provePausedRuntimeCleanup(sessionId, handle) { return provePausedRuntimeCleanup(this, sessionId, handle); }
   _currentDeletion(handle) {
     return Boolean(
       handle

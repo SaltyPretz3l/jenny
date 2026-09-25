@@ -13,7 +13,7 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 | [Web](#web) | `web_search`, `fetch_url` | Read-only with SSRF guards | Off by default; gated by the `web` config toggle |
 | [Python runtime](#python) | `python_execute` | Approval required | Off by default; sandboxed (Job Object on Windows; rlimits on POSIX); Windows-only currently |
 | [Shell](#shell) | `run_command`, `run_temp_script`, `check_background_job`, `stop_background_job` | Approval required for execution/stop; status readback is read-only | Off by default; fail-closed shell classifier and owned process-tree lifecycle |
-| [Artifacts](#artifacts) | `create_artifact`, `mermaid_generate` | `create_artifact` requires approval; `mermaid_generate` is read-only | Artifacts live under `.jenny/artifacts` for the session; Mermaid renders as an inline chat chart plus a reusable `.mmd` artifact |
+| [Artifacts](#artifacts) | `create_artifact`, `mermaid_generate` | Inert `create_artifact` documents need no approval; scripts and executable types do; `mermaid_generate` is read-only | Artifacts live under `.jenny/artifacts` for the session; Mermaid renders as an inline chat chart plus a reusable `.mmd` artifact |
 | [Todo](#todo) | `todo_write`, `todo_read` | Read-only / in-session state | Off by default; gated by the `todo` config toggle |
 | [Diagnostics](#diagnostics) | `jenny_status`, `tool_search` | Read-only | Runtime status and deferred-tool discovery; not for source-code questions |
 | [Connections](#connections) | `connections_list` | Read-only | On by default; reports configured remote surfaces without probing the network or exposing secrets |
@@ -121,9 +121,9 @@ Read the contents of a file.
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
 - **Workspace required:** yes.
-- **Notes:** PDF page selection (`pages: "1-3,5"`) is feature-gated behind the `imageRead` config toggle. Default is text only.
+- **Notes:** PDF page selection (`pages: "1-3"` or `"2,5"`, at most 3 pages per call; a longer selection reads its first 3 distinct pages and returns the rest as `unread_pages` in sorted, merged `pages` syntax (at most about 200 characters; a longer tail collapses into one covering range), e.g. `"1-4"` reads 1-3 and reports `"4"`, instead of failing) is feature-gated behind the `imageRead` config toggle. Default is text only. Every PDF read (text, page images, OCR, and the rich-file `pdf` adapter) needs the optional PDF reading add-on: PyMuPDF, AGPL-3.0, not bundled, installed by the user in Settings › Tools › PDF reading add-on. Without it the call fails with non-retryable `CMP-TOOL-0047`, telling the model that the add-on is not installed or, when it is installed but did not load, that the user should reinstall it; the chat row offers "Set up PDF reading". Each PDF page reports `text_layer`; scanned pages are recognized by RapidOCR (PP-OCRv6, onnxruntime) when available, else Tesseract, and carry `ocr: true` plus `ocr_engine`, or `ocr_unavailable` with the reason. `ocr_uncertain` lists up to 20 low-confidence tokens as `{line, token, score, alt?}`, where `alt` is Tesseract's reading of the same spot when it differs; the model must treat both readings as candidates and say so, never silently choose. An implausible `alt` (more than twice the token's length plus slack, no letters or digits, or mostly one repeated non-digit character such as a dot leader) is dropped. Every PDF read carries a top-level `note`: the unread-pages pointer (when any), then any OCR caveat, then a fixed Sources instruction (`pdf_text.SOURCES_NOTE`) asking the model to copy figures verbatim and end with a Sources table (`Item | Value | Where | OCR`, Where as `p<page> L<n>` with `n` the reader's line number, never a row number printed in the document; OCR is `no` on text-layer pages, `uncertain` when the value contains an `ocr_uncertain` token, otherwise `yes`). The OCR caveat tells the model to report low-confidence tokens exactly as read and mark them uncertain, never to resolve them. `JENNY_ENABLE_PDF_OCR_RAPID=0` forces Tesseract; `JENNY_ENABLE_PDF_OCR=0` disables OCR. Override the Tesseract model location with `JENNY_TESSDATA_DIR`. A page whose declared size would exceed 50 million pixels at OCR resolution is never rasterized; it reports `ocr_unavailable` with "page too large to rasterize for OCR". A page on which RapidOCR finds no words is retried with Tesseract before either engine is credited. When neither engine finds any words, the note says OCR found no text on that page (blank or unreadable image) instead of claiming its text was recovered, and still names any other page OCR could not read, with the reason. PDF text uses layout-preserving numbered lines (`"<n>: <text>"`): dot leaders are collapsed and column alignment is retained from x-position. Excerpts use a 4000-character whole-line page budget (2000 on the rich-file path when image reads are off) and a 12,000-character whole-line aggregate budget, so a dense statement page is never clipped to a 320-character stub. A partial page reports `text_truncated`, `next_line`, and `continue_cursor`; the first continuation is also the top-level `cursor`. Cursors are bound to a digest of the file bytes and are rejected as stale after the PDF changes. Sources: [`sidecar/ai/tools/builtins/pdf_ocr.py`](../sidecar/ai/tools/builtins/pdf_ocr.py), [`sidecar/ai/tools/builtins/pdf_ocr_rapid.py`](../sidecar/ai/tools/builtins/pdf_ocr_rapid.py), [`sidecar/ai/tools/builtins/pdf_text.py`](../sidecar/ai/tools/builtins/pdf_text.py).
 - **Errors:** written for model recovery — a missing path reports `path does not exist: <path>` and points at `list_dir`/`glob_files`; a directory path reports `path is a directory, not a file: <path>` and points at `list_dir`. Unknown tool names get the per-request available-tool list appended to the error observation.
-- **Parameters:** `path` (required), `offset` (line number), `limit` (max lines), `pages` (PDF range, when enabled).
+- **Parameters:** `path` (required), `offset` (line number), `limit` (max lines), `pages` (PDF range, when enabled), `cursor` (PDF continuation, mutually exclusive with `pages`).
 - **Source:** [`sidecar/ai/tools/builtins/filesystem_content.py`](../sidecar/ai/tools/builtins/filesystem_content.py).
 
 ### `write_file` (alias `Write`)
@@ -269,6 +269,7 @@ Check status and output of a background shell job.
 - **Parameters:** `job_id` (returned by `run_command` with `run_in_background: true`).
 - **Job-ID contract (2026-07-10, WIDE-011):** `job_id` must be exactly 12 lowercase hex characters (the format `run_command` mints); anything else is refused before any path is assembled, closing traversal/absolute/UNC/separator escapes. The job directory is revalidated against symlink/reparse redirection (a redirected directory reads as `not_found`), `status.json` reads are capped at 256 KiB, and a non-object or malformed status body is a typed "corrupt" result rather than a crash.
 - **Lifecycle contract (2026-07-11, WIDE-015/WIDE-041):** initial status-publication failure synchronously terminates and removes the spawned process before returning a typed refusal. Terminal status-publication failure preserves the validated result in a bounded 64-entry in-memory fallback, while an old unowned `running` record is reconciled to `failed` after restart rather than remaining permanently live.
+- **Schema liveness (2026-09-15, B3S-4):** when a turn decides whether the background-job status tools stay in its schema, the registry is read per workspace store (`active_job_ids(store_key=...)`, keyed like the ownership contract below), so a job running in another workspace never counts as live here.
 - **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py) and [`shell_background.py`](../sidecar/ai/tools/builtins/shell_background.py).
 
 ### `stop_background_job`
@@ -366,6 +367,11 @@ The Python runtime runs each invocation in a fresh subprocess with hard limits:
 - **Filesystem:** ephemeral working directory, scrubbed after execution. There is no broader filesystem jail — see threat model below.
 - **Network:** no isolation. The Python sandbox does not block outbound network calls.
 - **Environment:** minimal (`PATH`, locale only); secrets and Jenny-internal env vars are stripped.
+- **No user site-packages:** the managed interpreter always starts with `-s`, for the
+  pip probe and install, import validation and every execution. The embeddable
+  runtime's `._pth` ends with `import site`, which would otherwise put the user's own
+  `%APPDATA%\Python\...\site-packages` on `sys.path` during bootstrap but not inside
+  the scrubbed sandbox, so pip could skip a package that the sandbox then cannot import.
 - **Scientific worker pools:** native BLAS/OpenMP worker counts are pinned to
   one so package imports fit predictably inside the configured memory limit.
 
@@ -390,6 +396,8 @@ Treat `python_execute` as "what you would let your local Python REPL do," gated 
 Four read-only views into a git repository inside the workspace root. None of the tools mutate the repo — there is intentionally no `git_commit`, `git_push`, or `git_checkout` in Jenny's built-in surface. Mutating git operations go through the [shell tool](#shell) under approval.
 
 All git tools require `tools_workspace_root` to be set and operate within that root or a workspace-relative `cwd`.
+
+Every invocation neutralizes repository-configured commands before the verb runs (2026-09-15): `run_owned_git_process` reads the configured keys once and passes command-scoped `-c` overrides that disable `core.fsmonitor`, hooks, external diff and textconv drivers, clean/smudge/process filters, credential helpers, `core.sshCommand`, `core.askPass`, and signature display. Git configuration discovery fails closed when its result is unsuccessful or incomplete, and `git_log`/`git_show` explicitly disable signature display, so a cloned repository's `.git/config` cannot make a read-only view execute a program.
 
 ### `git_status`
 
@@ -501,7 +509,7 @@ Two tools for generating session-scoped artifacts: scratch documents and Mermaid
 
 Create a session-scoped scratch document or script under `.jenny/artifacts`.
 
-- **Approval:** required (side-effecting), except for the bounded Plan Mode document capability below.
+- **Approval:** none for an inert document (the classifier below: `artifact_kind: document`, Markdown, text, Mermaid, JSON, YAML or CSV, at most 512 KiB), in any mode; required for every `script` artifact and every executable type. An explicit user policy still wins. Owner decision 2026-09-22: approval is for the user's files and commands, not the model's own scratch notes.
 - **Side-effecting:** yes.
 - **Workspace required:** yes.
 - **Notes:** Use this for plans, notes, helper scripts, or anything the user might want to reference later in the session. When the content is HTML (a `.html`/`.htm` file name/extension, or `language: "html"`), the artifact renders as a **live, network-isolated sandboxed in-app preview** — this is the supported way to display HTML/JS to the user in-app (there is no `file://` browsing or local HTTP server in this environment). See **HTML document artifacts** below. **Do not** use [`write_file`](#write_file-alias-write) for new files under `.jenny/artifacts` — that path is owned by the artifact service.
@@ -510,7 +518,7 @@ Create a session-scoped scratch document or script under `.jenny/artifacts`.
 
 #### Plan Mode document capability
 
-Plan Mode exposes a narrowed `create_artifact` schema and automatically executes only the built-in default `ask` decision for an eligible inert document. The contract is fail-closed:
+Plan Mode exposes a narrowed `create_artifact` schema that accepts only inert documents. Since 2026-09-22 the built-in default for an inert document is `auto` in every mode; Plan Mode still converts a built-in default `ask` for an eligible document. The contract is fail-closed:
 
 - `artifact_kind` must be `document` and UTF-8 content must be at most 512 KiB.
 - Every supplied classifier must agree. Allowed final extensions are `.md`, `.markdown`, `.txt`, `.mmd`, `.mermaid`, `.json`, `.yaml`, `.yml`, and `.csv`; allowed language hints are Markdown, plain text, Mermaid, JSON, YAML, and CSV aliases.
@@ -596,7 +604,7 @@ Gated by `artifact_html_preview` (default-on). When the flag is off the artifact
 
 ### Security notes
 
-- `create_artifact` normally requires approval because it writes to disk. The approval-plan fingerprint covers the artifact kind, title, content, target file name, and any trusted Plan Mode capability frozen for that call.
+- `create_artifact` requires approval for scripts and executable types because they are one step from running; inert documents are the model's own scratch notes and run without approval. When a call is approved, the approval-plan fingerprint covers the artifact kind, title, content, target file name, and any trusted Plan Mode capability frozen for that call.
 - `mermaid_generate` is rendered client-side (inline chat chart + artifact panel) via Mermaid.js. The renderer sandboxes the SVG output; arbitrary script tags inside the diagram source are stripped.
 - Both tools' outputs are sanitized for prompt-injection patterns before being added to chat history.
 
@@ -1030,8 +1038,8 @@ produces a daily one (`daily_at`). Anything else is refused rather than
 coerced; a reminder that silently lands on the wrong cadence is worse than an
 error the model can correct.
 
-Nothing in Jenny *fires* reminders. They surface on Home as manual nudges, so
-`reminder_upsert` never schedules background work.
+Jenny fires reminder notifications while the app is running, with an in-app
+toast fallback. Reminders do not fire while Jenny is closed.
 
 ### What the chat timeline renders
 
@@ -1352,10 +1360,11 @@ Two tools for managing an in-session todo list. Off by default; gated by the `to
 
 Replace the in-session todo list atomically.
 
-- **Approval:** none.
+- **Approval:** none: the built-in policy default is `auto` on both evaluators (`sidecar/ai/tools/policy.py`, `services/tools/tool-policy-evaluator.js`); an explicit user policy still wins.
 - **Side-effecting:** yes (mutates session state, but session-only).
 - **Workspace required:** no.
 - **Gated by:** `tools_todo_enabled` (off by default).
+- **Plan Mode:** allowed (owner decision 2026-09-22). The manifest's `availability.plan_mode_artifact_write` bit covers it, because the list is session memory, never a workspace write; a read-only capture outside Plan Mode still blocks it.
 - **Notes:** This is a full replace, not an append. Pass the entire list each call. Each todo has `content` and a `status` of `pending`, `in_progress`, or `completed`.
 - **Parameters:** `todos` (required, full list).
 - **Source:** [`sidecar/ai/tools/builtins/todo.py`](../sidecar/ai/tools/builtins/todo.py).
@@ -1431,3 +1440,15 @@ Choose user-configured MCP when connecting one Jenny profile to a server the
 user selects and operates independently of any plugin. This is the appropriate
 path for a local stdio server or approved remote endpoint that should remain
 under the user's direct configuration and trust review.
+
+## Containment hardening (2026-09-15)
+
+Fixes from the Astra A7 containment review of the built-in tools; each keeps the tool's advertised contract honest:
+
+- `delete_file` refuses the reserved `.jenny` store in any letter case or separator spelling (`.JENNY\backups` named the real recovery store on Windows).
+- Desktop reads (`read_file`, media and rich-file readers, knowledge views) verify that the opened handle's final path is inside the workspace before consuming bytes, so a directory swapped for a junction between authorization and open is refused instead of read.
+- Desktop edits and writes carry the validated preimage into a compare-and-replace write; a file that changed after validation fails with the stale-content error instead of being overwritten. Pre-change snapshot dedupe verifies the existing snapshot's type and content hash before trusting it.
+- `web_fetch` and `web_search` share one deadline across DNS, redirects, connects and chunked body reads, and the DuckDuckGo path uses the same bounded, redirect-validated transport as every other fetch (1 MiB cap, public destinations only).
+- `lsp` pins the TypeScript implementation that ships beside the trusted launcher (never a workspace-local copy), disables automatic type acquisition, fails closed when no trusted implementation is found, and refuses to synchronize documents over 2 MiB.
+- `python_execute` bootstrap locking no longer reclaims a lock whose owner record is still being published, and same-process waiters honor the bootstrap deadline.
+- `run_command` classification: `>>` needs approval like `>`; Git stays auto-allowed only for an explicit read-only allowlist of verbs and arguments; `find -exec`/`-delete` and `xargs` need approval; caret-escaped CMD payloads, `start` wrappers and dynamic PowerShell evaluation are treated as destructive for the always-ask promise.

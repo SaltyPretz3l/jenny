@@ -88,7 +88,7 @@ def test_published_release_refuses_prepare_and_upload(tmp_path):
     assert all(args[:2] == ("release", "view") for args in calls)
 
 
-def test_upload_rechecks_before_every_asset_and_stops_if_owner_publishes(tmp_path):
+def test_upload_stops_before_next_asset_if_owner_publishes(tmp_path):
     calls = []
     reads = 0
 
@@ -100,9 +100,76 @@ def test_upload_rechecks_before_every_asset_and_stops_if_owner_publishes(tmp_pat
             return result({**draft(), "isDraft": reads == 1})
         return result()
 
-    with pytest.raises(RuntimeError, match="Published"):
+    with pytest.raises(RuntimeError) as error:
         release_assets.upload("v1.0.2", [tmp_path / "one", tmp_path / "two"], run)
+    message = str(error.value)
+    assert "v1.0.2" in message
+    assert "one" in message
+    assert "inspect the published release by hand" in message
+    uploads = [args for args in calls if args[:2] == ("release", "upload")]
+    assert [args[3] for args in uploads] == [str(tmp_path / "one")]
+
+
+def test_upload_fails_if_owner_publishes_after_last_asset(tmp_path):
+    calls = []
+    reads = 0
+
+    def run(*args):
+        nonlocal reads
+        calls.append(args)
+        if args[:2] == ("release", "view"):
+            reads += 1
+            return result({**draft(), "isDraft": reads == 1})
+        return result()
+
+    with pytest.raises(RuntimeError) as error:
+        release_assets.upload("v1.0.2", [tmp_path / "last"], run)
+    message = str(error.value)
+    assert "v1.0.2" in message
+    assert "last" in message
+    assert "inspect the published release by hand" in message
     assert len([args for args in calls if args[:2] == ("release", "upload")]) == 1
+
+
+def test_upload_all_draft_sequence_uploads_every_asset(tmp_path):
+    calls = []
+
+    def run(*args):
+        calls.append(args)
+        if args[:2] == ("release", "view"):
+            return result(draft())
+        return result()
+
+    files = [tmp_path / "one", tmp_path / "two"]
+    release_assets.upload("v1.0.2", files, run)
+
+    uploads = [args for args in calls if args[:2] == ("release", "upload")]
+    assert [args[3] for args in uploads] == [str(file) for file in files]
+    assert len([args for args in calls if args[:2] == ("release", "view")]) == 3
+
+
+def test_upload_stops_if_draft_recheck_cannot_be_verified(tmp_path):
+    calls = []
+    reads = 0
+
+    def run(*args):
+        nonlocal reads
+        calls.append(args)
+        if args[:2] == ("release", "view"):
+            reads += 1
+            if reads == 2:
+                return result(code=1, stderr="HTTP 503")
+            return result(draft())
+        return result()
+
+    with pytest.raises(RuntimeError) as error:
+        release_assets.upload("v1.0.2", [tmp_path / "one", tmp_path / "two"], run)
+    message = str(error.value)
+    assert "v1.0.2" in message
+    assert "one" in message
+    assert "inspect the published release by hand" in message
+    uploads = [args for args in calls if args[:2] == ("release", "upload")]
+    assert [args[3] for args in uploads] == [str(tmp_path / "one")]
 
 
 def test_prepare_creates_only_after_confirmed_missing_release_and_rechecks_draft():

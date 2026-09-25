@@ -34,7 +34,9 @@ test('RTL isolation and directional icon contracts are present', () => {
 
 test('the static chat textarea carries automatic direction', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  assert.match(html, /id="chatInput" dir="auto"/);
+  // Attribute adjacency is not the contract: the textarea carrying dir="auto"
+  // is (split view W0-6 added data-chat-node between the two).
+  assert.match(html, /id="chatInput"[^>]*\sdir="auto"/);
 });
 
 test('inventory text editors use automatic direction except for passwords', () => {

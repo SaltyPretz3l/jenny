@@ -461,3 +461,19 @@ test('reasoning delta sets REASONING_AFTER_VISIBLE protocol error when the colle
   assert.equal(callsOf(ctx, 'noteTurnEvent').length, 0);
   assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
 });
+
+test('reasoning that resumes after a completed reasoning phase starts a new entry (F19)', () => {
+  // The sidecar closes a reasoning phase at the first tool-call output; more
+  // reasoning in the same provider call reuses its thinking id.
+  const ctx = makeCtx();
+  const send = (notification) => handleNotification(ctx, notification, {
+    toolContext: {},
+    handleToolNotification: makeHandleToolNotification(ctx),
+  });
+  send({ method: 'chat.thinking', params: { kind: 'reasoning', delta: 'First thought.', thinking_id: 'think-Z' } });
+  send({ method: 'chat.phase_completed', params: { phase_id: 'phase-1', phase_kind: 'reasoning', thinking_id: 'think-Z' } });
+  send({ method: 'chat.thinking', params: { kind: 'reasoning', delta: 'Second thought.', thinking_id: 'think-Z' } });
+
+  assert.deepEqual(ctx.reasoningEntries.map((entry) => entry.text), ['First thought.', 'Second thought.']);
+  assert.notEqual(ctx.reasoningEntries[0].id, ctx.reasoningEntries[1].id);
+});

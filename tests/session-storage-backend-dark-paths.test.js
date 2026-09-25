@@ -287,6 +287,36 @@ test('flush skips a dirty session with no loaded record and logs flush_failed wh
   assert.equal(failures[0].data.errorMessage, 'immediate write blew up', 'carries the thrown message');
 });
 
+test('dispose keeps a failed session flush retryable while rejecting later mutations', () => {
+  const rootDir = makeTempRoot('dispose-retry');
+  const logger = makeRecordingLogger();
+  const backend = makeBackend(rootDir, { logger, writeDebounceMs: 60_000 });
+  backend.upsertSession('sess_retry', { title: 'Retry me' });
+  const store = backend._sessionStores.get('sess_retry');
+  const writeNow = store._writeNow.bind(store);
+  let failNextWrite = true;
+  store._writeNow = (...args) => {
+    if (failNextWrite) {
+      failNextWrite = false;
+      throw new Error('transient dispose failure');
+    }
+    return writeNow(...args);
+  };
+
+  assert.deepEqual(backend.dispose(), { disposed: true, pending: 1 });
+  assert.equal(backend.isDisposed(), true);
+  assert.equal(backend.upsertSession('sess_late', { title: 'Too late' }), false);
+  assert.equal(logger.find('session_store.mutation_after_dispose').length, 1);
+  assert.equal(backend.flush(), true);
+  assert.equal(backend.hasPendingWrites(), false);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(rootDir, 'sess_retry.json'), 'utf8')).session.title,
+    'Retry me'
+  );
+  assert.deepEqual(backend.dispose(), { disposed: true, pending: 0 });
+  assert.equal(backend.flush(), false);
+});
+
 // Region 386-392: a per-session store.flush() throws during the live-store
 // flush loop -> flush_failed keyed by store.filePath.
 test('flush logs flush_failed when a live session store.flush() throws', () => {

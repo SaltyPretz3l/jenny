@@ -2,14 +2,38 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { startManagedSidecarChatStream } = require('../../services/backend/managed-sidecar-chat');
+const { SessionExecutionAuthority } = require('../../services/backend/session-execution-authority');
+
+function createSessionExecutionAuthority() {
+  const authority = Object.freeze({
+    project_id: 'project_1',
+    root_path: null,
+    root_id: null,
+    root_revision: 1,
+    device_id: null,
+    inode: null,
+  });
+  return new SessionExecutionAuthority({
+    projectAuthority: {
+      captureSession: () => authority,
+      requireCurrent: (captured) => captured,
+    },
+    permissionStore: { getSnapshot: () => ({ version: 1, legacy_policies: {}, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+    randomUUID: () => 'authority_revision_1',
+  });
+}
 
 function createService({ sessionSummary, sessionMessages, linkedMessages }) {
   let capturedParams = null;
   let activeTurn = null;
   const persistedMessages = [];
+  const activeSummary = { project_id: 'project_1', ...sessionSummary };
   const linkedSummary = {
     id: 'linked_1',
     title: 'Linked Session',
+    project_id: 'project_1',
     updated_at: '2026-03-19T08:30:00.000Z',
     linked_session_ids: [],
   };
@@ -23,13 +47,20 @@ function createService({ sessionSummary, sessionMessages, linkedMessages }) {
     attachmentAssetStore: null,
     emittedEvents: [],
     serviceLogs: [],
+    sessionExecutionAuthority: createSessionExecutionAuthority(),
     sessionStore: {
       createSessionWithId() {},
       getSession(sessionId) {
         if (sessionId === 'linked_1') {
           return linkedSummary;
         }
-        return sessionSummary;
+        return activeSummary;
+      },
+      getSessionSummary(sessionId) {
+        if (sessionId === 'linked_1') {
+          return linkedSummary;
+        }
+        return activeSummary;
       },
       getSessionMessages(sessionId) {
         return sessionId === 'linked_1' ? linkedMessages : sessionMessages;
@@ -55,9 +86,9 @@ function createService({ sessionSummary, sessionMessages, linkedMessages }) {
         return true;
       },
       setTurnIdentity(_sessionId, identity) {
-        sessionSummary.session_incarnation = identity.session_incarnation;
-        sessionSummary.turn_generation = identity.turn_generation;
-        return sessionSummary;
+        activeSummary.session_incarnation = identity.session_incarnation;
+        activeSummary.turn_generation = identity.turn_generation;
+        return activeSummary;
       },
       flushSession() {
         return true;
@@ -146,7 +177,12 @@ async function runManagedSend(overrides = {}) {
   });
 
   await service.activeStreams.get(stream.streamId)._pendingPromise;
-  return getCapturedParams();
+  const capturedParams = getCapturedParams();
+  assert.ok(capturedParams, `managed send did not reach the provider: ${JSON.stringify({
+    events: service.emittedEvents,
+    logs: service.serviceLogs,
+  })}`);
+  return capturedParams;
 }
 
 function contextBlockKinds(params) {

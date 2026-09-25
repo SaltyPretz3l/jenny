@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 const {
@@ -148,6 +150,7 @@ test('normalizeFeatureState preserves sanitized tool config metadata', () => {
       storage: 'config',
       default: false,
       helpText: 'Use <live> lookup.',
+      addonNote: '',
       configFlag: 'tools_web_enabled',
       toolIds: ['web_search', 'fetch_url'],
     },
@@ -199,6 +202,38 @@ test('tool config field list renders display-safe inventory toggle rows', () => 
   assert.equal(toggle.hasAttribute('disabled'), true);
   assert.match(row.innerHTML, /Live &lt;web&gt;/);
   assert.match(row.innerHTML, /Use &lt;live&gt; lookup\./);
+});
+
+// F24: the backend's tool metadata carries no add-on note; the renderer owns
+// that copy and must keep it through normalization. The stylesheet shows the
+// note only while the field list says the PDF add-on is needed.
+test('file-tool toggles from backend metadata show the PDF add-on note only while the add-on is missing', () => {
+  const backendField = (key, label, configFlag) => ({ key, label, field_type: 'toggle', storage: 'config',
+    default: false, help_text: `${label} help.`, config_flag: configFlag, tool_ids: ['read_file'] });
+  const normalized = normalizeFeatureState({
+    toolConfig: { schemaVersion: 1, fields: [
+      backendField('imageRead', 'Image and PDF reads', 'tools_image_read_enabled'),
+      backendField('richFiles', 'Rich file tools', 'tools_rich_files_enabled'),
+      backendField('web', 'Web tools', 'tools_web_enabled'),
+    ] },
+  });
+  const markup = buildToolConfigFieldListMarkup({
+    fields: getToolConfigFieldsForRender(normalized), tools: {}, availability: {}, escapeHtml, toggleSwitch,
+  });
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'settings-controls.css'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><head><style>${css}</style></head>
+    <body><div id="toolsConfigFieldList" data-pdf-addon-needed="true">${markup}</div></body>`);
+  const doc = dom.window.document;
+  const note = (key) => doc.querySelector(`[data-tool-config-key="${key}"] .tools-config-field-addon-note`);
+
+  assert.equal(note('imageRead')?.textContent, 'PDF pages need the PDF reading add-on.');
+  assert.equal(note('richFiles')?.textContent, 'PDFs need the PDF reading add-on.');
+  assert.equal(note('web'), null);
+  assert.equal(dom.window.getComputedStyle(note('imageRead')).display, 'inline');
+
+  doc.getElementById('toolsConfigFieldList').dataset.pdfAddonNeeded = 'false';
+  assert.equal(dom.window.getComputedStyle(note('imageRead')).display, 'none');
+  assert.equal(dom.window.getComputedStyle(note('richFiles')).display, 'none');
 });
 
 test('tool config field list escapes help text with its built-in fallback', () => {

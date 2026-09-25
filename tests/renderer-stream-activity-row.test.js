@@ -179,6 +179,145 @@ test('context_usage neither resets the silence clock nor dismisses the row', (t)
   assert.ok(findRow(timeline), 'chrome-only telemetry leaves the row alone');
 });
 
+test('context compaction renders immediately and ends on the next real event', (t) => {
+  const { timeline, row } = makeHarness(t);
+  noteEvent(row, 'context_compacting', {
+    compactionPhase: 'preflight',
+    tokensBefore: 12300,
+    messageCount: 14,
+  });
+
+  const node = findRow(timeline);
+  assert.ok(node, 'compaction does not wait for the silence threshold');
+  assert.equal(node.dataset.turnActivityKind, 'compaction');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Compacting context');
+  assert.equal(
+    node.querySelector('.turn-activity-label').textContent,
+    'summarizing 14 older messages · 12,300 tokens'
+  );
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '0:00');
+
+  noteEvent(row, 'context_compacting', { compactionPhase: 'tool_loop' });
+  assert.equal(findRow(timeline), node, 'the activity node is updated in place');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Compacting context mid-task');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'summarizing older context…');
+
+  noteEvent(row, 'context_compacted');
+  assert.equal(findRow(timeline), null);
+  noteEvent(row, 'context_compacting', { compactionPhase: 'preflight' });
+  assert.ok(findRow(timeline));
+  noteEvent(row, 'delta');
+  assert.equal(findRow(timeline), null, 'ordinary stream progress clears the typed episode');
+});
+
+test('tool input renders live tool, path, size, and elapsed details', (t) => {
+  const { timeline, clock, row } = makeHarness(t);
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-1',
+    toolName: 'write_file',
+    argumentsDelta: '{',
+    sequence: 0,
+  });
+
+  const node = findRow(timeline);
+  assert.ok(node, 'tool input does not wait for the silence threshold');
+  assert.equal(node.dataset.turnActivityKind, 'tool_input');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'write_file');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'Composing…');
+
+  const pathSuffix = '"path":"src/a.js","content":"';
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-1', toolName: 'write_file', argumentsDelta: pathSuffix, sequence: 1,
+  });
+  assert.equal(findRow(timeline), node, 'more input for the same call keeps the row mounted');
+  const label = node.querySelector('.turn-activity-label');
+  assert.equal(label.textContent, 'src/a.js');
+  assert.equal(label.classList.contains('turn-activity-label--path'), true);
+
+  clock.nowMs = 3000;
+  let remaining = 1229 - 1 - pathSuffix.length;
+  let sequence = 2;
+  while (remaining > 0) {
+    const chunk = 'x'.repeat(Math.min(512, remaining));
+    noteEvent(row, 'tool_input_delta', {
+      toolCallId: 'call-1', toolName: 'write_file', argumentsDelta: chunk, sequence,
+    });
+    remaining -= chunk.length;
+    sequence += 1;
+  }
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '1.2 KB · 0:03');
+  assert.equal(node.querySelector('.turn-activity-elapsed').hasAttribute('data-turn-elapsed'), false,
+    'the shared clock must not rewrite the size · elapsed label');
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-1', toolName: 'write_file', argumentsDelta: '', argumentsBytes: 20480, sequence,
+  });
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '20.0 KB · 0:03',
+    'a cumulative byte count from Electron wins over summed delta lengths');
+
+  clock.nowMs = 4000;
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-2', toolName: 'edit_file', argumentsDelta: 'x', sequence: 0,
+  });
+  assert.equal(findRow(timeline), node, 'a new call reuses the DOM node');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'edit_file');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'Composing…');
+  assert.equal(node.querySelector('.turn-activity-label').classList.contains('turn-activity-label--path'), false);
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '1 B · 0:00');
+
+  noteEvent(row, 'tool_use');
+  assert.equal(findRow(timeline), null);
+});
+
+test('tool input retains only the first 4 KB while looking for a path', (t) => {
+  const first = makeHarness(t);
+  for (let offset = 0; offset < 3584; offset += 512) {
+    noteEvent(first.row, 'tool_input_delta', {
+      toolCallId: 'call-early', toolName: 'write_file', argumentsDelta: 'x'.repeat(512), sequence: offset / 512,
+    });
+  }
+  noteEvent(first.row, 'tool_input_delta', {
+    toolCallId: 'call-early', toolName: 'write_file', argumentsDelta: '"file_path":"src/early.js"', sequence: 7,
+  });
+  assert.equal(findRow(first.timeline).querySelector('.turn-activity-label').textContent, 'src/early.js');
+
+  const second = makeHarness(t);
+  for (let offset = 0; offset < 4096; offset += 512) {
+    noteEvent(second.row, 'tool_input_delta', {
+      toolCallId: 'call-late', toolName: 'write_file', argumentsDelta: 'x'.repeat(512), sequence: offset / 512,
+    });
+  }
+  noteEvent(second.row, 'tool_input_delta', {
+    toolCallId: 'call-late', toolName: 'write_file', argumentsDelta: '"path":"src/late.js"', sequence: 8,
+  });
+  assert.equal(findRow(second.timeline).querySelector('.turn-activity-label').textContent, 'Composing…');
+});
+
+test('typed activity honors visibility, blocking state, and live stream ownership', (t) => {
+  const { timeline, flags, row } = makeHarness(t);
+  flags.visible = false;
+  noteEvent(row, 'context_compacting', { phase: 'preflight' });
+  assert.equal(findRow(timeline), null);
+  flags.visible = true;
+  row.tick();
+  assert.ok(findRow(timeline), 'visible session reveals the active typed episode');
+
+  flags.blocking = true;
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-1', toolName: 'write_file', argumentsDelta: '{}', sequence: 0,
+  });
+  assert.equal(findRow(timeline), null);
+  flags.blocking = false;
+  row.tick();
+  assert.ok(findRow(timeline), 'typed activity resumes after blocking tool state clears');
+
+  flags.live = false;
+  row.tick();
+  assert.equal(findRow(timeline), null);
+  flags.live = true;
+  row.tick();
+  assert.equal(findRow(timeline), null, 'a dead stream was untracked rather than merely hidden');
+});
+
 test('falls back to the timeline when no assistant article exists', (t) => {
   const { timeline, clock, row } = makeHarness(t, { withPendingArticle: false });
   noteEvent(row, 'delta');

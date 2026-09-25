@@ -32,6 +32,7 @@ function assistantMessage() {
     status: 'complete',
     terminal_status: 'complete',
     parent_stream_id: identity.streamId,
+    turn_id: identity.turnId,
     timestamp: '2026-07-14T12:00:01.000Z',
   };
 }

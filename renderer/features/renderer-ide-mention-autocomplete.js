@@ -551,10 +551,13 @@
         return [];
       }
       var fsApi = getWorkspaceFs();
-      if (!fsApi || typeof fsApi.readFile !== 'function') {
+      if (!fsApi || (typeof fsApi.readText !== 'function' && typeof fsApi.readFile !== 'function')) {
         return [];
       }
       var settleOptions = collectOptions || {};
+      var capturedRootKey = filesRootKey;
+      var capturedGeneration = filesGate.capture();
+      var versioned = typeof fsApi.readText === 'function';
       var readTimeoutMs = (typeof settleOptions.readTimeoutMs === 'number'
         && Number.isFinite(settleOptions.readTimeoutMs)
         && settleOptions.readTimeoutMs > 0)
@@ -570,15 +573,17 @@
             resolve({ ok: false, path: path, reason: 'timeout' });
           }, readTimeoutMs);
           Promise.resolve()
-            .then(function () { return fsApi.readFile({ path: path }); })
+            .then(function () { return versioned ? fsApi.readText({ path: path, intent: 'preview', maxBytes: 65536 }) : fsApi.readFile({ path: path }); })
             .then(function (res) {
               if (timer === null) {
                 return; // already settled via timeout — drop the late result
               }
               clearTimeoutFn(timer);
               timer = null;
-              if (res && typeof res.content === 'string') {
-                resolve({ ok: true, path: path, content: res.content });
+              if (res && typeof res.content === 'string' && (!versioned
+                || (res.ok === true && capturedRootKey && rootKeyOf(res) === capturedRootKey && filesRootKey === capturedRootKey))) {
+                resolve({ ok: true, path: path, content: res.content,
+                  ...(versioned ? { workspace_id: String(res.rootId) } : {}) });
               } else {
                 resolve({ ok: false, path: path, reason: 'empty' });
               }
@@ -599,11 +604,13 @@
       }
 
       var outcomes = await Promise.all(paths.map(readOne));
+      if (disposed || !filesGate.isCurrent(capturedGeneration) || filesRootKey !== capturedRootKey) return [];
       var out = [];
       for (var i = 0; i < outcomes.length; i += 1) {
         var outcome = outcomes[i];
         if (outcome.ok) {
-          out.push({ path: outcome.path, content: outcome.content });
+          out.push({ path: outcome.path, content: outcome.content,
+            ...(outcome.workspace_id ? { workspace_id: outcome.workspace_id } : {}) });
         } else if (outcome.reason === 'timeout') {
           appendClientLog('INFO', 'chat.mention_read_failed', {
             path: outcome.path,

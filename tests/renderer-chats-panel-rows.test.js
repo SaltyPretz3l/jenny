@@ -203,3 +203,34 @@ test('compact rows badge queued and failed background sends per session', async 
   assert.equal(badge.textContent, '1 failed');
   assert.equal(badge.classList.contains('send-outbox-badge--failed'), true);
 });
+
+test('chat rows show the newest unseen terminal outcome without outranking live state', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const doc = window.document;
+  const state = window.__rendererState;
+  state.awayDigest = { digest: {
+    outcomeBySession: { s1: 'failed', s2: 'completed' },
+    latestTerminalBySession: { s1: '2026-09-21T12:00:00.000Z', s2: '2026-09-21T12:05:00.000Z' },
+  } };
+  await seedSessions(window, shell, [
+    buildSidebarSession('s1', 'Failed Chat', '2026-09-21T12:00:00.000Z'),
+    buildSidebarSession('s2', 'Streaming Chat', '2026-09-21T12:05:00.000Z'),
+    buildSidebarSession('s3', 'Quiet Chat', '2026-09-21T12:10:00.000Z'),
+  ]);
+
+  const controller = window.rendererWorkspaceChromeUtils.createWorkspaceChromeController({});
+  t.after(() => controller.dispose());
+  controller.renderSidebarBadges(
+    doc.querySelectorAll('.conversation-item[data-session-id]'), [], ['s2'], [], {}, null,
+    state.awayDigest.digest.outcomeBySession
+  );
+
+  const row = id => doc.querySelector(`.conversation-item[data-session-id="${id}"]`);
+  assert.equal(row('s1').dataset.sessionLastOutcome, 'failed');
+  assert.equal(row('s2').dataset.sessionLastOutcome, 'completed');
+  assert.equal(row('s3').hasAttribute('data-session-last-outcome'), false);
+  assert.equal(row('s2').dataset.sessionDominantState, 'streaming');
+  for (const id of ['s1', 's2', 's3']) assert.equal(row(id).querySelectorAll('.session-row__dot').length, 1);
+  assert.match(row('s1').querySelector('[data-session-open]').title.split('\n').at(-1), /^Last run failed/);
+  assert.equal(row('s3').querySelector('[data-session-open]').title.split('\n').length, 2);
+});

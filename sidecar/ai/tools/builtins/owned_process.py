@@ -19,6 +19,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Callable, Mapping, Sequence
 
+from sidecar.ai.tools.builtins.owned_process_observation import (
+    create_process_cleanup_observer,
+)
+from sidecar.ai.tools.builtins.owned_process_settlement import (
+    CleanupObservation,
+    CleanupObserver,
+    OwnedProcessCleanupVerdict,
+)
 from sidecar.ai.tools.builtins.owned_process_windows import (
     WindowsJobObject,
     encode_windows_bootstrap_payload,
@@ -107,6 +115,14 @@ class OwnedProcessResult:
     timed_out: bool = False
     aborted: bool = False
     drain_incomplete: bool = False
+    cleanup_verdict: OwnedProcessCleanupVerdict = field(
+        default_factory=lambda: OwnedProcessCleanupVerdict(
+            cleanup="uncertain",
+            process_tree_terminated=False,
+            output_readers_terminated=False,
+            reason="cleanup_evidence_unavailable",
+        )
+    )
 
     @property
     def stdout(self) -> str:
@@ -179,6 +195,10 @@ class OwnedProcess:
     job_object: WindowsJobObject | None
     _service: OwnedProcessService
     _lease: _CapacityLease
+    _cleanup_observation: CleanupObservation = field(default_factory=CleanupObservation)
+    _input_data: bytes | None = None
+    _input_writer: threading.Thread | None = None
+    _output_readers: tuple[threading.Thread, ...] = ()
     _finalized: bool = False
     _finalize_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -214,7 +234,7 @@ class OwnedProcessService:
                 shutting_down=self._shutting_down,
             )
 
-    def spawn(
+    def spawn(  # noqa: PLR0913 -- explicit process ownership contract.
         self,
         argv: Sequence[str],
         *,
@@ -222,27 +242,40 @@ class OwnedProcessService:
         env: Mapping[str, str] | None = None,
         allow_queue: bool = True,
         queue_timeout_seconds: float = DEFAULT_QUEUE_WAIT_SECONDS,
+        on_cleanup: CleanupObserver | None = None,
+        input_data: bytes | None = None,
     ) -> OwnedProcess:
         if not argv:
             raise ValueError("argv cannot be empty")
+        if input_data is not None and not isinstance(input_data, bytes):
+            raise TypeError("owned process input_data must be bytes or None")
         normalized_argv = tuple(str(argument) for argument in argv)
+        bootstrap_payload = None
+        if os.name == "nt" or input_data is not None:
+            # The bootstrap encoder owns the single 1 MiB launch-envelope bound.
+            # Reuse it on POSIX when input is present so the public input contract
+            # has the same explicit limit on every platform.
+            bootstrap_payload = encode_windows_bootstrap_payload(
+                normalized_argv,
+                cwd=cwd,
+                env=env,
+                input_data=input_data,
+            )
         lease = self._acquire_capacity(
             allow_queue=allow_queue,
             timeout_seconds=max(0.0, float(queue_timeout_seconds)),
         )
+        cleanup_observation = CleanupObservation(
+            create_process_cleanup_observer(on_cleanup)
+        )
         job_object: WindowsJobObject | None = None
-        process: subprocess.Popen[bytes] | None = None
         process_group_id: int | None = None
+        owned: OwnedProcess | None = None
         try:
             creationflags = 0
             start_new_session = False
             containment = "posix_process_group"
             if os.name == "nt":
-                bootstrap_payload = encode_windows_bootstrap_payload(
-                    normalized_argv,
-                    cwd=cwd,
-                    env=env,
-                )
                 job_object = WindowsJobObject()
                 creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 containment = "windows_job_object_bootstrap"
@@ -260,7 +293,9 @@ class OwnedProcessService:
                     None if job_object is not None else external_child_environment(env)
                 ),
                 stdin=(
-                    subprocess.PIPE if job_object is not None else subprocess.DEVNULL
+                    subprocess.PIPE
+                    if job_object is not None or input_data is not None
+                    else subprocess.DEVNULL
                 ),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -270,11 +305,6 @@ class OwnedProcessService:
                 start_new_session=start_new_session,
             )
             process_group_id = int(process.pid) if os.name != "nt" else None
-            if job_object is not None:
-                job_object.assign_pid(int(process.pid))
-                if process.stdin is None:
-                    raise OwnedProcessError("owned process bootstrap pipe is unavailable")
-                release_windows_bootstrap_target(process.stdin, bootstrap_payload)
             owned = OwnedProcess(
                 process=process,
                 args=normalized_argv,
@@ -283,22 +313,48 @@ class OwnedProcessService:
                 job_object=job_object,
                 _service=self,
                 _lease=lease,
+                _cleanup_observation=cleanup_observation,
+                _input_data=input_data if job_object is None else None,
             )
             with self._condition:
-                if self._shutting_down:
-                    self._terminate_unregistered(process, job_object, process_group_id)
-                    raise OwnedProcessShutdownError("owned process service is shutting down")
                 self._active[id(owned)] = owned
+                if self._shutting_down:
+                    raise OwnedProcessShutdownError(
+                        "owned process service is shutting down"
+                    )
+            if job_object is not None:
+                self._release_bootstrap(job_object, process, bootstrap_payload)
             return owned
         except BaseException:
-            try:
-                if process is not None:
-                    self._terminate_unregistered(process, job_object, process_group_id)
-                elif job_object is not None:
-                    job_object.close()
-            finally:
+            if owned is not None:
+                self.cancel(owned)
+            else:
+                if job_object is not None:
+                    try:
+                        job_object.close()
+                    except Exception:  # noqa: BLE001 - no child exists to quarantine.
+                        logger.warning("empty owned Job handle cleanup degraded", exc_info=True)
+                cleanup_observation.publish(
+                    OwnedProcessCleanupVerdict(
+                        cleanup="confirmed",
+                        process_tree_terminated=True,
+                        output_readers_terminated=True,
+                        reason="no_child_started",
+                    )
+                )
                 lease.release()
             raise
+
+    @staticmethod
+    def _release_bootstrap(
+        job_object: WindowsJobObject, process: subprocess.Popen, payload: bytes | None,
+    ) -> None:
+        job_object.assign_pid(int(process.pid))
+        if process.stdin is None:
+            raise OwnedProcessError("owned process bootstrap pipe is unavailable")
+        if payload is None:
+            raise OwnedProcessError("owned process bootstrap payload is unavailable")
+        release_windows_bootstrap_target(process.stdin, payload)
 
     def run(  # noqa: PLR0913 - explicit process lifecycle contract.
         self,
@@ -309,6 +365,8 @@ class OwnedProcessService:
         env: Mapping[str, str] | None = None,
         abort_event: threading.Event | None = None,
         on_output_chunk: Callable[[str, bytes], None] | None = None,
+        on_cleanup: CleanupObserver | None = None,
+        input_data: bytes | None = None,
     ) -> OwnedProcessResult:
         owned = self.spawn(
             argv,
@@ -318,6 +376,8 @@ class OwnedProcessService:
             queue_timeout_seconds=min(
                 max(0.0, float(timeout_seconds)), DEFAULT_QUEUE_WAIT_SECONDS
             ),
+            on_cleanup=on_cleanup,
+            input_data=input_data,
         )
         return self.wait(
             owned,
@@ -326,7 +386,7 @@ class OwnedProcessService:
             on_output_chunk=on_output_chunk,
         )
 
-    def wait(
+    def wait(  # noqa: C901, PLR0912, PLR0915 -- one owned lifecycle.
         self,
         owned: OwnedProcess,
         *,
@@ -335,8 +395,12 @@ class OwnedProcessService:
         on_output_chunk: Callable[[str, bytes], None] | None = None,
     ) -> OwnedProcessResult:
         process = owned.process
-        if process.stdout is None or process.stderr is None:
-            self._finalize(owned)
+        if (
+            process.stdout is None
+            or process.stderr is None
+            or (owned._input_data is not None and process.stdin is None)  # noqa: SLF001
+        ):
+            self.cancel(owned)
             raise OwnedProcessError("owned process pipes are unavailable")
 
         per_stream_limit = self._max_capture_bytes // 2
@@ -347,17 +411,27 @@ class OwnedProcessService:
         timed_out = False
         aborted = False
         drain_incomplete = False
+        cleanup_verdict: OwnedProcessCleanupVerdict | None = None
         try:
             readers.append(
                 self._start_reader(
                     process.stdout, stdout_capture, "stdout", on_chunk=on_output_chunk
                 )
             )
+            owned._output_readers = tuple(readers)  # noqa: SLF001
             readers.append(
                 self._start_reader(
                     process.stderr, stderr_capture, "stderr", on_chunk=on_output_chunk
                 )
             )
+            owned._output_readers = tuple(readers)  # noqa: SLF001
+            if owned._input_data is not None:  # noqa: SLF001
+                if process.stdin is None:
+                    raise RuntimeError("Owned process input pipe is unavailable")
+                owned._input_writer = self._start_input_writer(  # noqa: SLF001
+                    process.stdin,
+                    owned._input_data,  # noqa: SLF001
+                )
             deadline = started_at + max(0.0, float(timeout_seconds))
             while True:
                 if abort_event is not None and abort_event.is_set():
@@ -376,14 +450,17 @@ class OwnedProcessService:
                     continue
 
             self._close_containment(owned)
-            for reader in readers:
-                reader.join(timeout=PIPE_DRAIN_GRACE_SECONDS)
-            if any(reader.is_alive() for reader in readers):
+            io_threads = self._io_threads(owned)
+            for io_thread in io_threads:
+                io_thread.join(timeout=PIPE_DRAIN_GRACE_SECONDS)
+            if any(io_thread.is_alive() for io_thread in io_threads):
                 drain_incomplete = True
+                if process.stdin is not None:
+                    self._close_pipe(process.stdin)
                 self._close_pipe(process.stdout)
                 self._close_pipe(process.stderr)
-                for reader in readers:
-                    reader.join(timeout=0.2)
+                for io_thread in io_threads:
+                    io_thread.join(timeout=0.2)
 
             output, drain_incomplete, read_error_types = _captured_output_with_diagnostics(
                 already_incomplete=drain_incomplete,
@@ -403,6 +480,7 @@ class OwnedProcessService:
                         "read_error_types": read_error_types,
                     },
                 )
+            cleanup_verdict = self._finalize(owned)
             return OwnedProcessResult(
                 args=owned.args,
                 returncode=int(process.returncode if process.returncode is not None else -1),
@@ -413,16 +491,20 @@ class OwnedProcessService:
                 timed_out=timed_out,
                 aborted=aborted,
                 drain_incomplete=drain_incomplete,
+                cleanup_verdict=cleanup_verdict,
             )
         except BaseException:
             self.terminate(owned)
+            if process.stdin is not None:
+                self._close_pipe(process.stdin)
             self._close_pipe(process.stdout)
             self._close_pipe(process.stderr)
-            for reader in readers:
-                reader.join(timeout=0.2)
+            for io_thread in self._io_threads(owned):
+                io_thread.join(timeout=0.2)
             raise
         finally:
-            self._finalize(owned)
+            if cleanup_verdict is None:
+                self._finalize(owned)
 
     def terminate(
         self,
@@ -437,9 +519,9 @@ class OwnedProcessService:
                 # descendant is not guaranteed to inherit the job when its
                 # parent is already inside an ambient tracking job. Run this
                 # first while the bootstrap/target lineage is still intact.
-                self._kill_windows_process_tree(int(process.pid))
-                owned.job_object.close()
-                owned.job_object = None
+                terminate_tree = getattr(owned.job_object, "terminate_tree", None)
+                if not callable(terminate_tree) or not terminate_tree():
+                    self._kill_windows_process_tree(int(process.pid))
             elif os.name != "nt" and owned.process_group_id is not None:
                 self._terminate_posix_group(
                     owned.process_group_id,
@@ -476,12 +558,12 @@ class OwnedProcessService:
         owned: OwnedProcess,
         *,
         timeout_seconds: float = DEFAULT_TERMINATION_GRACE_SECONDS,
-    ) -> None:
-        """Terminate one owned tree and release its capacity lease."""
+    ) -> OwnedProcessCleanupVerdict:
+        """Terminate one owned tree and release capacity only after proof."""
         self.terminate(owned, timeout_seconds=timeout_seconds)
-        self._finalize(owned)
+        return self.retry_cleanup(owned, timeout_seconds=timeout_seconds)
 
-    def release(self, owned: OwnedProcess) -> None:
+    def release(self, owned: OwnedProcess) -> OwnedProcessCleanupVerdict:
         """Release an owned process whose root the caller already reaped.
 
         For callers that drive ``process.wait()`` themselves instead of
@@ -492,7 +574,49 @@ class OwnedProcessService:
         PID cannot be killed by mistake; a still-running tree belongs in
         :meth:`cancel`.
         """
-        self._finalize(owned)
+        return self._finalize(owned)
+
+    def retry_cleanup(
+        self,
+        owned: OwnedProcess,
+        *,
+        timeout_seconds: float = DEFAULT_TERMINATION_GRACE_SECONDS,
+    ) -> OwnedProcessCleanupVerdict:
+        """Retry owner cleanup and release a quarantined slot only on proof."""
+
+        self.terminate(owned, timeout_seconds=timeout_seconds)
+        for pipe in (
+            getattr(owned.process, "stdin", None),
+            owned.process.stdout,
+            owned.process.stderr,
+        ):
+            if pipe is not None:
+                self._close_pipe(pipe)
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        for io_thread in self._io_threads(owned):
+            io_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return self._finalize(owned)
+
+    def retry_quarantined_cleanup(
+        self,
+        *,
+        timeout_seconds: float = DEFAULT_TERMINATION_GRACE_SECONDS,
+    ) -> tuple[OwnedProcessCleanupVerdict, ...]:
+        """Retry every cleanup attempt that previously lacked termination proof."""
+
+        with self._condition:
+            quarantined = [
+                owned
+                for owned in self._active.values()
+                if (
+                    (latest := owned._cleanup_observation.latest) is not None  # noqa: SLF001
+                    and latest.cleanup == "uncertain"
+                )
+            ]
+        return tuple(
+            self.retry_cleanup(owned, timeout_seconds=timeout_seconds)
+            for owned in quarantined
+        )
 
     def shutdown(self) -> None:
         with self._condition:
@@ -543,23 +667,89 @@ class OwnedProcessService:
             self._active_count = max(0, self._active_count - 1)
             self._condition.notify()
 
-    def _finalize(self, owned: OwnedProcess) -> None:
+    def _finalize(self, owned: OwnedProcess) -> OwnedProcessCleanupVerdict:
         with owned._finalize_lock:  # noqa: SLF001
             if owned._finalized:  # noqa: SLF001
-                return
-            owned._finalized = True  # noqa: SLF001
-        self._close_containment(owned)
-        with self._condition:
-            self._active.pop(id(owned), None)
-        owned._lease.release()  # noqa: SLF001
+                latest = owned._cleanup_observation.latest  # noqa: SLF001
+                return latest or OwnedProcessCleanupVerdict(
+                    cleanup="confirmed",
+                    process_tree_terminated=True,
+                    output_readers_terminated=True,
+                )
+            process_tree_terminated = self._close_containment(owned)
+            output_readers_terminated = not any(
+                io_thread.is_alive() for io_thread in self._io_threads(owned)
+            )
+            confirmed = process_tree_terminated and output_readers_terminated
+            reason_parts = []
+            if not process_tree_terminated:
+                reason_parts.append("process_tree_termination_unconfirmed")
+            if not output_readers_terminated:
+                reason_parts.append("output_reader_termination_unconfirmed")
+            verdict = OwnedProcessCleanupVerdict(
+                cleanup="confirmed" if confirmed else "uncertain",
+                process_tree_terminated=process_tree_terminated,
+                output_readers_terminated=output_readers_terminated,
+                reason=";".join(reason_parts) or None,
+            )
+            if confirmed:
+                owned._finalized = True  # noqa: SLF001
+        if confirmed:
+            with self._condition:
+                self._active.pop(id(owned), None)
+            owned._lease.release()  # noqa: SLF001
+        owned._cleanup_observation.publish(verdict)  # noqa: SLF001
+        return verdict
 
-    def _close_containment(self, owned: OwnedProcess) -> None:
-        if owned.job_object is not None:
-            owned.job_object.close()
-            owned.job_object = None
-        if os.name != "nt" and owned.process_group_id is not None:
-            self._terminate_exited_process_group(owned.process_group_id)
-            owned.process_group_id = None
+    def _close_containment(self, owned: OwnedProcess) -> bool:
+        process = owned.process
+        if os.name == "nt" and owned.job_object is not None:
+            job = owned.job_object
+            try:
+                assigned = tuple(job.assigned_process_ids())
+                if assigned:
+                    terminate_tree = getattr(job, "terminate_tree", None)
+                    if callable(terminate_tree):
+                        terminate_tree()
+                    deadline = time.monotonic() + DEFAULT_TERMINATION_GRACE_SECONDS
+                    while assigned and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                        assigned = tuple(job.assigned_process_ids())
+                if assigned:
+                    return False
+                job.close()
+                owned.job_object = None
+            except Exception:  # noqa: BLE001 - missing proof quarantines capacity.
+                logger.warning("owned Windows process-tree proof unavailable", exc_info=True)
+                return False
+        elif os.name != "nt" and owned.process_group_id is not None:
+            process_group_id = owned.process_group_id
+            self._terminate_exited_process_group(process_group_id)
+            deadline = time.monotonic() + DEFAULT_TERMINATION_GRACE_SECONDS
+            while (
+                self._posix_process_group_is_alive(process_group_id)
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            if self._posix_process_group_is_alive(process_group_id):
+                return False
+            # A process group is observable, not a descendant-containment
+            # boundary: a child can call setsid() and outlive the group. An
+            # empty original group therefore cannot prove full-tree cleanup.
+            return False
+        return process.poll() is not None
+
+    @staticmethod
+    def _posix_process_group_is_alive(process_group_id: int) -> bool:
+        if not hasattr(os, "killpg"):
+            return True
+        try:
+            os.killpg(process_group_id, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except (OSError, ValueError):
+            return True
 
     @staticmethod
     def _terminate_posix_group(
@@ -604,34 +794,28 @@ class OwnedProcessService:
             return
 
     @staticmethod
-    def _terminate_unregistered(
-        process: subprocess.Popen[bytes],
-        job_object: WindowsJobObject | None,
-        process_group_id: int | None,
-    ) -> None:
-        if job_object is not None:
-            job_object.close()
-        if process_group_id is not None:
+    def _io_threads(owned: OwnedProcess) -> tuple[threading.Thread, ...]:
+        input_writer = owned._input_writer  # noqa: SLF001
+        return owned._output_readers + ((input_writer,) if input_writer else ())  # noqa: SLF001
+
+    @staticmethod
+    def _start_input_writer(pipe: IO[bytes], input_data: bytes) -> threading.Thread:
+        def _write() -> None:
             try:
-                OwnedProcessService._terminate_posix_group(
-                    process_group_id,
-                    process,
-                    timeout_seconds=DEFAULT_TERMINATION_GRACE_SECONDS,
-                )
-            except Exception:  # noqa: BLE001
-                logger.warning("unregistered process-group cleanup degraded", exc_info=True)
-        poll = getattr(process, "poll", None)
-        is_running = not callable(poll) or poll() is None
-        if is_running:
-            try:
-                kill = getattr(process, "kill", None)
-                if callable(kill):
-                    kill()
-                wait = getattr(process, "wait", None)
-                if callable(wait):
-                    wait(timeout=0.5)
-            except Exception:  # noqa: BLE001
-                logger.warning("unregistered owned process cleanup degraded", exc_info=True)
+                pipe.write(input_data)
+                pipe.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                OwnedProcessService._close_pipe(pipe)
+
+        thread = threading.Thread(
+            target=_write,
+            daemon=True,
+            name="owned-process-stdin",
+        )
+        thread.start()
+        return thread
 
     @staticmethod
     def _start_reader(
@@ -724,6 +908,7 @@ __all__ = [
     "DEFAULT_MAX_QUEUED_PROCESSES",
     "OwnedProcess",
     "OwnedProcessCapacityError",
+    "OwnedProcessCleanupVerdict",
     "OwnedProcessError",
     "OwnedProcessResult",
     "OwnedProcessService",

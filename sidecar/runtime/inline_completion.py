@@ -10,8 +10,14 @@ degrades to "no suggestion this round".
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from sidecar.ai.container import BrainContainer
+from sidecar.ai.engines.admitted import (
+    InferenceAdmissionError,
+    InferenceAttemptContext,
+    execute_admitted_provider_attempt,
+)
 from sidecar.runtime.diagnostics import log_event
 
 _DEFAULT_MAX_TOKENS = 96
@@ -143,7 +149,7 @@ def unload_inline_model(model: str, logger: logging.Logger) -> bool:
     return True
 
 
-def generate_inline_completion(  # noqa: PLR0913 -- explicit inline-completion request boundary
+def generate_inline_completion(  # noqa: PLR0911, PLR0913 -- explicit inline-completion request boundary
     brain_container: BrainContainer,
     *,
     prefix: str,
@@ -151,13 +157,16 @@ def generate_inline_completion(  # noqa: PLR0913 -- explicit inline-completion r
     model: str,
     max_tokens: int,
     logger: logging.Logger,
+    request_id: str | None = None,
+    inference_admission: Any | None = None,
 ) -> str:
     """Produce a single inline completion for the cursor position.
 
     Returns the cleaned completion string, or an empty string on any failure
     (no model selected, no FIM path and no constructable Ollama fallback, or an
     engine error). Works even when no chat model is loaded — the completion runs
-    on its own Ollama model, independent of the chat engine. Never raises.
+    on its own Ollama model, independent of the chat engine. Typed application
+    admission failures propagate to the RPC boundary.
     """
     selected = str(model or "").strip()
     if not selected:
@@ -173,6 +182,11 @@ def generate_inline_completion(  # noqa: PLR0913 -- explicit inline-completion r
     stack = brain_container.stack
     engine = getattr(stack, "engine", None) if stack is not None else None
     fim = getattr(engine, "generate_inline_completion", None)
+    actual_provider = (
+        str(getattr(getattr(stack, "config", None), "engine_type", "") or "")
+        if callable(fim)
+        else "ollama"
+    )
     if not callable(fim):
         fallback = _build_ollama_fallback_engine()
         fim = getattr(fallback, "generate_inline_completion", None)
@@ -209,18 +223,32 @@ def generate_inline_completion(  # noqa: PLR0913 -- explicit inline-completion r
         tokens = _DEFAULT_MAX_TOKENS
 
     try:
-        raw = fim(
-            selected,
-            bounded_prefix,
-            bounded_suffix,
-            # ``use_gpu`` remains in the Python call signature for one-release
-            # compatibility, but placement is automatic now: True means the
-            # Ollama adapter does not pin ``num_gpu=0`` and lets the daemon use
-            # its current hardware/resource policy.
-            use_gpu=True,
-            max_tokens=tokens,
-            timeout=_ENGINE_TIMEOUT_SECONDS,
+        raw = execute_admitted_provider_attempt(
+            admission=inference_admission,
+            context=InferenceAttemptContext(
+                request_id=str(request_id or ""),
+                session_id="",
+                provider=actual_provider,
+                model=selected,
+                request_source="inline_completion",
+                attempt=1,
+                streaming=False,
+            ),
+            operation=lambda: fim(
+                selected,
+                bounded_prefix,
+                bounded_suffix,
+                # ``use_gpu`` remains in the Python call signature for one-release
+                # compatibility, but placement is automatic now: True means the
+                # Ollama adapter does not pin ``num_gpu=0`` and lets the daemon use
+                # its current hardware/resource policy.
+                use_gpu=True,
+                max_tokens=tokens,
+                timeout=_ENGINE_TIMEOUT_SECONDS,
+            ),
         )
+    except InferenceAdmissionError:
+        raise
     except Exception:
         log_event(
             logger,

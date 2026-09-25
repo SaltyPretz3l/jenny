@@ -114,6 +114,7 @@ class FakeEngine:
         self.provider_requests: list[dict[str, Any]] = []
         self.usages: list[dict[str, Any]] = []
         self.completed = 0
+        self.outcomes: list[str] = []
         self.first_chunks = 0
 
     # readiness / message + option building
@@ -157,8 +158,9 @@ class FakeEngine:
     def _record_provider_request(self, **kwargs: Any) -> None:
         self.provider_requests.append(kwargs)
 
-    def _complete_provider_request(self) -> None:
+    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
         self.completed += 1
+        self.outcomes.append(outcome)
 
     def _record_first_chunk(self) -> None:
         self.first_chunks += 1

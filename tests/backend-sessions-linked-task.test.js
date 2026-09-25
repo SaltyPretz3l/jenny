@@ -2,10 +2,21 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createSession } = require('../services/backend/backend-sessions');
+const {
+  initializeApplicationProjects,
+} = require('../services/projects/application-project-scope');
+const {
+  cleanupTrackedResources,
+  createTrackedTempDir,
+} = require('./helpers/resource-cleanup');
+
+test.afterEach(async () => {
+  await cleanupTrackedResources();
+});
 
 function buildService(calls) {
-  return {
-    _normalizeManagedSessionPreferencePatch: (preferences) => preferences || {},
+  const service = {
+    _emitServiceLog() {},
     sessionStore: {
       createSession(args) {
         calls.push(args);
@@ -13,6 +24,10 @@ function buildService(calls) {
       },
     },
   };
+  initializeApplicationProjects(service, {
+    userDataPath: createTrackedTempDir('jenny-session-linked-task-'),
+  });
+  return service;
 }
 
 test('backend session creation forwards a normalized linked task id', async () => {

@@ -33,6 +33,8 @@ _MANIFEST_PATH = (
 # would agree with any derivation, including a broken one. Spelling the roster out
 # means a thirteenth Electron-owned tool reds this file until someone extends the
 # literal on purpose -- the review beat `ask_user` skipped.
+REQUEST_OWNED_CHILD_TOOLS = frozenset({"session_spawn", "session_wait", "session_result"})
+
 EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
     {
         "ask_user",
@@ -121,7 +123,7 @@ def _payload_names(kernel: SimpleNamespace, *, plan_mode: bool) -> set[str]:
 
 def test_the_expected_bridge_roster_matches_the_manifest(tmp_path) -> None:
     declared = {entry["name"] for entry in _electron_owned_entries()}
-    assert declared == EXPECTED_ELECTRON_BRIDGE_TOOLS, (
+    assert declared == EXPECTED_ELECTRON_BRIDGE_TOOLS | REQUEST_OWNED_CHILD_TOOLS, (
         "services/tools/tool-manifest.json changed which tools Electron owns. "
         "Extend EXPECTED_ELECTRON_BRIDGE_TOOLS deliberately, then confirm the "
         "new tool actually reaches the provider schema below."
@@ -215,3 +217,14 @@ def test_every_expected_bridge_tool_is_registered_when_all_flags_are_on(
     assert not tool_resolution._electron_bridge_runtime_descriptors(
         _kernel(str(tmp_path), electron_tool_bridge_enabled=False)._config
     )
+
+
+def test_child_tools_are_request_owned_without_global_config_mutation(tmp_path):
+    kernel = _kernel(str(tmp_path))
+    context = ChatRequestContext(request_id="request", trace_id=None, session_id="session",
+        mode="assist", approvals_pre_granted=False, workspace_root_present=True,
+        runtime_children_enabled=True)
+    names = {item["name"] for item in tool_resolution.build_tool_payload(kernel, None, request_context=context)}
+    assert REQUEST_OWNED_CHILD_TOOLS <= names
+    assert REQUEST_OWNED_CHILD_TOOLS.isdisjoint(_payload_names(kernel, plan_mode=False))
+    assert not hasattr(kernel._config, "runtime_children_enabled")

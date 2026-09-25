@@ -23,6 +23,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
     confidence: float,
     source_excerpt: str,
     category: str = "",
+    project_id: str = "project_general",
 ) -> tuple[int, str]:
     timestamp = datetime.now(timezone.utc).isoformat()
     fingerprint = build_content_digest(lesson_kind, lesson_text)
@@ -31,8 +32,8 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
             confidence, source_excerpt, content_fingerprint, family_key,
-            category, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+            category, created_at, updated_at, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -46,6 +47,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
             category,
             timestamp,
             timestamp,
+            project_id,
         ),
     )
     store._connection.commit()  # noqa: SLF001
@@ -734,6 +736,16 @@ def test_process_message_memory_recall_returns_ranked_memories(tmp_path) -> None
         lesson_kind="preference",
         confidence=0.7,
         source_excerpt="I prefer green tea in the afternoon",
+        project_id="project_alpha",
+    )
+    memory_store.save_memory(
+        session_id="session_3",
+        title="Preference: green tea elsewhere",
+        lesson_text="The user prefers green tea in another project.",
+        lesson_kind="preference",
+        confidence=0.99,
+        source_excerpt="green tea in another project",
+        project_id="project_beta",
     )
 
     message = {
@@ -744,6 +756,8 @@ def test_process_message_memory_recall_returns_ranked_memories(tmp_path) -> None
             "accept_version": API_VERSION,
             "query": "green tea",
             "limit": 2,
+            "project_id": "project_alpha",
+            "include_general": True,
         },
     }
 
@@ -754,6 +768,10 @@ def test_process_message_memory_recall_returns_ranked_memories(tmp_path) -> None
     assert len(memories) == 2
     assert memories[0]["title"] == "Preference: green tea"
     assert memories[1]["title"] == "Preference: tea"
+    assert {memory["project_id"] for memory in memories} == {
+        "project_alpha",
+        "project_general",
+    }
     assert set(memories[0]) == {
         "id",
         "session_id",
@@ -767,6 +785,7 @@ def test_process_message_memory_recall_returns_ranked_memories(tmp_path) -> None
         "provenance",
         "created_at",
         "updated_at",
+        "project_id",
     }
 
 
@@ -981,6 +1000,24 @@ def test_process_message_memory_list_returns_all_memories(tmp_path) -> None:
         confidence=0.93,
         source_excerpt="be concise",
     )
+    alpha_memory, _ = memory_store.save_memory(
+        session_id="session_alpha",
+        title="Preference: alpha",
+        lesson_text="The user prefers alpha project behavior.",
+        lesson_kind="preference",
+        confidence=0.9,
+        source_excerpt="alpha project behavior",
+        project_id="project_alpha",
+    )
+    beta_memory, _ = memory_store.save_memory(
+        session_id="session_beta",
+        title="Preference: beta",
+        lesson_text="The user prefers beta project behavior.",
+        lesson_kind="preference",
+        confidence=0.9,
+        source_excerpt="beta project behavior",
+        project_id="project_beta",
+    )
 
     message = {
         "jsonrpc": "2.0",
@@ -988,6 +1025,7 @@ def test_process_message_memory_list_returns_all_memories(tmp_path) -> None:
         "method": "memory.list",
         "params": {
             "accept_version": API_VERSION,
+            "scope": "all",
         },
     }
 
@@ -995,7 +1033,17 @@ def test_process_message_memory_list_returns_all_memories(tmp_path) -> None:
 
     assert outcome.response is not None
     memories = outcome.response["result"]["memories"]
-    assert [memory["id"] for memory in memories] == [newer_memory.id, older_memory.id]
+    assert {memory["id"] for memory in memories} == {
+        older_memory.id,
+        newer_memory.id,
+        alpha_memory.id,
+        beta_memory.id,
+    }
+    assert {memory["project_id"] for memory in memories} == {
+        "project_general",
+        "project_alpha",
+        "project_beta",
+    }
 
 
 def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> None:
@@ -1031,6 +1079,7 @@ def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> Non
         confidence=0.88,
         source_excerpt="morning tea",
         category="user",
+        project_id="project_alpha",
     )
     memory_store._connection.execute(  # noqa: SLF001
         "UPDATE pending_memory_candidates SET updated_at = ? WHERE id = ?",
@@ -1048,6 +1097,7 @@ def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> Non
         "method": "memory.pending.list",
         "params": {
             "accept_version": API_VERSION,
+            "scope": "all",
         },
     }
 
@@ -1056,6 +1106,10 @@ def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> Non
     assert outcome.response is not None
     candidates = outcome.response["result"]["candidates"]
     assert [candidate["session_id"] for candidate in candidates] == ["session-new", "session-old"]
+    assert {candidate["project_id"] for candidate in candidates} == {
+        "project_general",
+        "project_alpha",
+    }
 
 
 def test_process_message_memory_update_updates_existing_memory(tmp_path) -> None:

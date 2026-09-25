@@ -24,7 +24,8 @@
   const RECENT_LIMIT = 8;
   const COPY_HAS_ROOT =
     jt('ide.welcome.openFilePrompt', 'Open a file from the explorer to start editing, search across the workspace, or review Jenny’s changes.');
-  const COPY_NO_ROOT = jt('ide.welcome.chooseFolderPrompt', 'Choose a workspace folder to start editing files.');
+  // Projects v2: the Workspace folder is the project, so the empty state says so.
+  const COPY_NO_ROOT = jt('ide.welcome.pickFolderPrompt', 'Pick a folder and Jenny makes it a project: file tools work inside it and new chats start there.');
   const COPY_NO_BRIDGE = jt('ide.welcome.fileAccessUnavailable', 'Workspace file access is unavailable in this shell mode.');
 
   function defaultEscape(value) {
@@ -61,6 +62,11 @@
       : () => '';
     const onOpenFile = typeof options.onOpenFile === 'function' ? options.onOpenFile : () => {};
     const onChooseFolder = typeof options.onChooseFolder === 'function' ? options.onChooseFolder : () => {};
+    // Projects v2 (both optional): cached project rows for "Your projects" and
+    // the lazily loaded switcher behind "Switch project…" / a project row.
+    const getProjects = typeof options.getProjects === 'function' ? options.getProjects : () => [];
+    const getProjectSwitcher = typeof options.getProjectSwitcher === 'function' ? options.getProjectSwitcher : null;
+    let switcherLoadKicked = false;
     const disposalFence = asyncFence.createDisposalFence();
     const renderGate = asyncFence.createGenerationGate();
 
@@ -111,7 +117,7 @@
       }
       const markup = showChoose && actionButton
         ? actionButton({
-          label: jt('ide.welcome.chooseFolder', 'Choose Folder'),
+          label: jt('ide.welcome.chooseAFolder', 'Choose a folder…'),
           variant: 'primary',
           dataset: { 'ide-choose-root': '1' },
         })
@@ -163,19 +169,61 @@
 
     // When a root is configured the primary #ideEmptyStateAction button is
     // hidden (its slot is the no-root call-to-action), so the welcome surface
-    // carries a secondary "Open a different folder" affordance.
+    // carries a secondary affordance: "Switch project…" (the shared project
+    // menu) when a switcher is wired, else "Open a different folder…".
     function buildSwitchFolderHtml(hasRoot) {
       if (!hasRoot || !actionButton) {
         return '';
       }
       return '<div class="ide-welcome-actions">'
-        + actionButton({
-          label: jt('ide.welcome.openDifferentFolder', 'Open a different folder…'),
-          variant: 'ghost',
-          size: 'sm',
-          dataset: { 'ide-welcome-choose-root': '1' },
-        })
+        + (getProjectSwitcher
+          ? actionButton({
+            label: jt('ide.welcome.switchProject', 'Switch project…'),
+            variant: 'ghost',
+            size: 'sm',
+            ariaHaspopup: 'listbox',
+            dataset: { 'ide-welcome-project-menu': '1' },
+          })
+          : actionButton({
+            label: jt('ide.welcome.openDifferentFolder', 'Open a different folder…'),
+            variant: 'ghost',
+            size: 'sm',
+            dataset: { 'ide-welcome-choose-root': '1' },
+          }))
         + '</div>';
+    }
+
+    // No folder open: existing projects are one click away, so "switch" never
+    // needs the dialog. Rows share the recent-files row styling.
+    function buildProjectsHtml(hasRoot) {
+      if (hasRoot || !actionButton || !getProjectSwitcher) {
+        return '';
+      }
+      const projects = (getProjects() || []).filter((project) => project && project.rootPath && project.id !== 'project_general');
+      if (!projects.length) {
+        return '';
+      }
+      const rows = projects.map((project) => actionButton({
+        plain: true,
+        className: 'ide-welcome-recent-item',
+        dataset: { 'ide-welcome-project': project.id },
+        title: project.rootPath,
+        trustedHtml: '<span class="ide-welcome-recent-name">' + escapeHtml(project.name) + '</span>'
+          + '<span class="ide-welcome-recent-dir">' + escapeHtml(project.rootPath) + '</span>',
+      })).join('');
+      return '<section class="ide-welcome-section">'
+        + '<h3 class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.yourProjects', 'Your projects')) + '</h3>'
+        + '<div class="ide-welcome-recent-list">' + rows + '</div>'
+        + '</section>';
+    }
+
+    function kickSwitcherLoad() {
+      if (switcherLoadKicked || !getProjectSwitcher) return;
+      switcherLoadKicked = true;
+      Promise.resolve(getProjectSwitcher()).then((switcher) => {
+        if (!switcher || disposalFence.isDisposed()) return;
+        return Promise.resolve(switcher.refresh()).then(() => { if (!disposalFence.isDisposed()) render(); });
+      }).catch(() => {});
     }
 
     function ensureExtra() {
@@ -234,12 +282,18 @@
         // Order: recent files, then the actionable "open a folder" CTA, then
         // the collapsed shortcut catalog — the primary action stays above the
         // fold (GUI finding 2026-07-20).
-        const markup = buildRecentHtml() + buildSwitchFolderHtml(hasRoot) + buildShortcutsSection();
+        const markup = buildRecentHtml() + buildSwitchFolderHtml(hasRoot) + buildProjectsHtml(hasRoot) + buildShortcutsSection();
         if (extra.__jennyWelcomeMarkup !== markup) {
           extra.innerHTML = markup;
           extra.__jennyWelcomeMarkup = markup;
         }
       }
+      if (!hasRoot) kickSwitcherLoad();
+    }
+
+    function withSwitcher(fn) {
+      if (!getProjectSwitcher) return;
+      Promise.resolve(getProjectSwitcher()).then((switcher) => { if (switcher && !disposalFence.isDisposed()) return fn(switcher); }).catch(() => {});
     }
 
     function handleClick(event) {
@@ -250,6 +304,19 @@
       if (target.closest('[data-ide-choose-root]') || target.closest('[data-ide-welcome-choose-root]')) {
         event.preventDefault();
         onChooseFolder();
+        return;
+      }
+      const menuEl = target.closest('[data-ide-welcome-project-menu]');
+      if (menuEl) {
+        event.preventDefault();
+        withSwitcher((switcher) => switcher.openSwitcher(menuEl));
+        return;
+      }
+      const projectEl = target.closest('[data-ide-welcome-project]');
+      if (projectEl) {
+        event.preventDefault();
+        const projectId = projectEl.getAttribute('data-ide-welcome-project') || '';
+        withSwitcher((switcher) => switcher.switchToProject(projectId));
         return;
       }
       const fileEl = target.closest('[data-ide-welcome-file]');
@@ -270,7 +337,17 @@
       bound = true;
       clickHandler = handleClick;
       host.addEventListener('click', clickHandler);
+      const view = host.ownerDocument?.defaultView || null;
+      if (getProjectSwitcher && view && typeof view.addEventListener === 'function') {
+        projectsChangedView = view;
+        view.addEventListener('jenny:projects-changed', handleProjectsChanged);
+      }
     }
+
+    function handleProjectsChanged() {
+      if (!disposalFence.isDisposed()) render();
+    }
+    let projectsChangedView = null;
 
     function dispose() {
       renderGate.bump();
@@ -281,6 +358,8 @@
           host.removeEventListener('click', clickHandler);
         }
       }
+      projectsChangedView?.removeEventListener?.('jenny:projects-changed', handleProjectsChanged);
+      projectsChangedView = null;
       bound = false;
       clickHandler = null;
       recent.length = 0;

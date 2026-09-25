@@ -15,10 +15,14 @@ import re
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
 
-from sidecar.ai.tools.builtins.web_http import _BROWSER_USER_AGENT, _is_public_ip
+from sidecar.ai.tools.builtins.web_http import (
+    _BROWSER_USER_AGENT,
+    _is_public_ip,
+    read_url_response,
+    validate_public_url,
+)
 
 # web_ddg is the SOLE importer of web_search_providers (the hub reaches it
 # transitively, keeping the hub fan-out at 6). web_ddg uses the two aliased
@@ -249,19 +253,6 @@ class _DdgBlockedError(Exception):
         self.status = status
 
 
-def _coerce_response_status(resp: Any, *, default: int = 200) -> int:
-    """Read an HTTP status from a response, tolerating mocks whose ``status`` isn't an int.
-
-    Only ever called on a successful ``urlopen`` response (an ``http.client.HTTPResponse``,
-    which always exposes ``.status``); ``HTTPError`` statuses are read separately from
-    ``exc.code``. The ``int()`` guard is what tolerates ``MagicMock`` test responses.
-    """
-    try:
-        return int(getattr(resp, "status", default))
-    except (TypeError, ValueError):
-        return default
-
-
 def _retry_after_seconds(headers: Any) -> float:
     """Bounded backoff from a ``Retry-After`` header, defaulting to the base backoff."""
     raw = ""
@@ -306,42 +297,54 @@ def _ddg_http_request(
     timeout shrinks to the remaining budget and retries stop once it elapses, so the
     whole search honors the caller's ``timeout_s`` instead of spending it per request.
     """
+    request_deadline = deadline if deadline is not None else time.monotonic() + timeout_s
+    headers = dict(_DDG_REQUEST_HEADERS)
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+
     for attempt in range(_DDG_MAX_ATTEMPTS):
         last_attempt = attempt + 1 >= _DDG_MAX_ATTEMPTS
-        req_timeout = timeout_s
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            req_timeout = max(1, min(timeout_s, int(remaining) or 1))
-        req = urllib.request.Request(url, data=data, method=method)
-        for header, value in _DDG_REQUEST_HEADERS.items():
-            req.add_header(header, value)
-        if data is not None:
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        remaining = request_deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-                status = _coerce_response_status(resp)
-                if status in _DDG_RETRY_STATUS:
-                    if last_attempt:
-                        raise _DdgBlockedError(status)
-                    _backoff_sleep(_retry_after_seconds(getattr(resp, "headers", None)), deadline)
-                    continue
-                return resp.read().decode("utf-8", errors="replace")
+            validated = validate_public_url(url, deadline=request_deadline)
+            remaining = request_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Web request timed out.")
+            result = read_url_response(
+                validated,
+                timeout_s=remaining,
+                method=method,
+                data=data,
+                headers=headers,
+            )
+            if result.was_truncated:
+                raise ValueError("DuckDuckGo response was too large.")
+            status = result.status_code
+            if status in _DDG_RETRY_STATUS:
+                if last_attempt:
+                    raise _DdgBlockedError(status)
+                _backoff_sleep(_retry_after_seconds(None), request_deadline)
+                continue
+            return result.payload.decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             status = int(getattr(exc, "code", 0) or 0)
             if status not in _DDG_RETRY_STATUS:
                 raise
             if last_attempt:
                 raise _DdgBlockedError(status) from exc
-            _backoff_sleep(_retry_after_seconds(getattr(exc, "headers", None)), deadline)
+            _backoff_sleep(
+                _retry_after_seconds(getattr(exc, "headers", None)),
+                request_deadline,
+            )
             continue
         except TimeoutError:
             # Only timeouts are retried among transport errors; other connection
             # failures fail fast (no backoff) so the caller surfaces them immediately.
             if last_attempt:
                 raise
-            _backoff_sleep(_DDG_RETRY_BACKOFF_SECONDS, deadline)
+            _backoff_sleep(_DDG_RETRY_BACKOFF_SECONDS, request_deadline)
             continue
     # Unreachable on the happy/last-attempt paths (each returns or raises); this is the
     # required fall-through that also fires if the deadline elapsed mid-loop.
@@ -360,10 +363,8 @@ def _ddg_html_search(
     most-blocked combination). Raises ``_DdgBlockedError`` only when every endpoint is
     blocked, so the caller can distinguish a bot challenge from a genuine empty result.
 
-    Note: like the rest of the search path (and unlike ``fetch_url``), these requests use
-    the default opener and target only hard-coded DuckDuckGo hosts — they intentionally do
-    NOT use ``fetch_url``'s pinned-IP / no-redirect SSRF opener, since the query is not a
-    user-supplied URL. Result links are still filtered through ``_is_safe_metadata_url``.
+    Requests use the shared pinned-IP, redirect-validating, size-bounded transport.
+    Result links are still filtered through ``_is_safe_metadata_url``.
     """
     body = urllib.parse.urlencode({"q": query}).encode("utf-8")
     blocked_status = 0

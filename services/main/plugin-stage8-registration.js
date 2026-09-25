@@ -3,15 +3,18 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { t: jt } = require('../i18n-main');
 
 const { getContent, contentPath, sha256Hex } = require('../plugins/store/content-store');
 const { NativeSupervisorClient } = require('../plugins/full-host/native-supervisor-client');
 const { FullHostProcessSupervisor } = require('../plugins/full-host/process-supervisor');
+const { createHostResourceAdmission } = require('../plugins/full-host/host-resource-admission');
 const { HostSessionManager } = require('../plugins/full-host/host-session-manager');
 const { SessionProviderManager } = require('../plugins/full-host/session-provider-manager');
 const { FullHostDiagnostics } = require('../plugins/full-host/diagnostics');
 const { CleanupReconciler } = require('../plugins/full-host/cleanup-reconciler');
 const { FullHostCleanupReceiptStore } = require('../plugins/full-host/cleanup-receipt-store');
+const { createDurableHostLaunch } = require('../plugins/full-host/durable-host-launch');
 const { CrashQuarantineController } = require('../plugins/full-host/crash-quarantine-controller');
 const { FullHostCrashQuarantineStore } = require('../plugins/full-host/crash-quarantine-store');
 const { SecretDeliveryGrantStore } = require('../plugins/full-host/secret-delivery-grant-store');
@@ -26,6 +29,8 @@ const { reconcileStartupCleanup } = require('../plugins/lifecycle/startup-cleanu
 const { PluginHighConsequenceConsent } = require('./plugin-high-consequence-consent');
 const { PluginConsentWindow } = require('./plugin-consent-window');
 
+const BACKEND_QUIESCE_TIMEOUT_MS = 4_000;
+
 function supervisorPath({ appRoot, resourcesRoot, isPackaged, platform = process.platform }) {
   const name = platform === 'win32' ? 'plugin-full-host-supervisor.exe' : 'plugin-full-host-supervisor';
   return isPackaged
@@ -35,8 +40,12 @@ function supervisorPath({ appRoot, resourcesRoot, isPackaged, platform = process
 
 function createPluginStage8Registration({ enabled, runtimeCoordinator, backendService, facade,
   baseDir, rootDir, appRoot, resourcesRoot, isPackaged, ipcMain, BrowserWindow, session,
-  managedPolicy = null, recoverPersistentState = true, log = () => {} } = {}) {
+  managedPolicy = null, recoverPersistentState = true, spawnSupervisor = null,
+  backendQuiesceTimeoutMs = BACKEND_QUIESCE_TIMEOUT_MS, log = () => {} } = {}) {
   const executionEnabled = enabled === true;
+  const backendShutdownTimeout = Number.isSafeInteger(backendQuiesceTimeoutMs)
+    && backendQuiesceTimeoutMs > 0 ? Math.min(backendQuiesceTimeoutMs,
+      BACKEND_QUIESCE_TIMEOUT_MS) : BACKEND_QUIESCE_TIMEOUT_MS;
   const capturePolicy = () => managedPolicy?.capture?.() || null;
   const guardPolicy = (token = null) => managedPolicy?.guard?.(token) || { ok: true };
 
@@ -58,22 +67,35 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
       return loaded.ok;
     });
   let sessionManager;
+  let backendShutdownRequested = false;
+  const hostResources = createHostResourceAdmission({
+    resourceAdmissionProvider: () => ({ broker: backendService.sessionRuntime?.resourceBroker }),
+  });
   const nativeClient = new NativeSupervisorClient({
     executablePath: supervisorPath({ appRoot, resourcesRoot, isPackaged }), log,
-    onExit: async () => {
+    ...(typeof spawnSupervisor === 'function' ? { spawn: spawnSupervisor } : {}),
+    hostResources, validateResourceAuthority: () => guardPolicy().ok,
+    onExit: async (event) => {
+      const invalidated = sessionManager?.markSupervisorSessionsUnusable(event?.sessions) || [];
+      if (event?.cleanup_phase === 'closed') {
+        await sessionManager?.handleSupervisorExit(event.sessions, event.reason);
+        return;
+      }
       await crashReady;
-      for (const active of sessionManager?.sessions?.() || []) {
+      for (const active of invalidated) {
         await crashController.recordCrash({ ...active,
           executable_digest: active.executable_digest || active.artifact_digest });
       }
     },
-    onHostExit: async ({ session_id: sessionId, reason }) => {
+    onHostExit: async ({ session_id: sessionId, session_epoch: sessionEpoch, reason }) => {
+      sessionManager?.markSupervisorSessionsUnusable([{ session_id: sessionId, session_epoch: sessionEpoch }]);
       await crashReady;
       const settled = await sessionManager?.handleUnexpectedExit?.(
         sessionId,
         reason,
         (active) => crashController.recordCrash({ ...active,
-          executable_digest: active.executable_digest || active.artifact_digest })
+          executable_digest: active.executable_digest || active.artifact_digest }),
+        sessionEpoch
       );
       if (!settled?.session) return;
       if (!settled.ok) diagnostics.record('WARN', 'host_crash_cleanup_unproven', {
@@ -82,7 +104,8 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
       });
     },
   });
-  const supervisor = new FullHostProcessSupervisor({ nativeClient, diagnostics });
+  const supervisor = new FullHostProcessSupervisor({ nativeClient, diagnostics, hostResources });
+  const durableHost = createDurableHostLaunch({ cleanupStore, supervisor });
 
   async function resolveExecutable(descriptor) {
     const digest = String(descriptor?.executable_digest || '');
@@ -109,13 +132,15 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
   sessionManager = new HostSessionManager({
     limits: { global: 2, perPlugin: 1, perContribution: 1,
       idleMs: 300_000, absoluteMs: 3_600_000 },
-    onUnprovenTermination: (record) => cleanupStore.record(record),
+    getEffectiveGlobalLimit: (configured) => hostResources.effectiveHostLimit(configured),
+    onUnprovenTermination: (record) => durableHost.recordUnproven(record),
     isAuthorityCurrent: (_authority, token) => guardPolicy(token).ok,
     startSession: async ({ authority, contributionId, descriptor, signal, policyToken,
       workloadIdentity = null }) => {
       const capturedPolicy = policyToken || capturePolicy();
       const initialPolicy = guardPolicy(capturedPolicy);
       if (!initialPolicy.ok) return initialPolicy;
+      if (backendShutdownRequested) return { ok: false, reason: 'stage8_backend_shutdown' };
       if (!await crashReady) {
         log('WARN', 'plugins.stage8.host_launch_rejected', {
           contribution_id: contributionId, reason_code: 'crash_quarantine_unavailable',
@@ -129,6 +154,7 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
         return { ok: false, reason: 'full_host_quarantined' };
       }
       const executable = await resolveExecutable(descriptor);
+      if (backendShutdownRequested) return { ok: false, reason: 'stage8_backend_shutdown' };
       if (!guardPolicy(capturedPolicy).ok) {
         return { ok: false, reason: 'managed_policy_authority_stale' };
       }
@@ -144,7 +170,8 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
           publisher_id: descriptor.publisher_id, plugin_id: descriptor.plugin_id,
           contribution_id: contributionId, display_name: contributionId,
           containment_label: 'Windows job: kill-on-close; account/network permissions remain',
-          limit_label: '1 session for this contribution; 2 full-host sessions globally',
+          limit_label: jt('plugins.fullHost.sessionLimits', 'Session limits: 1 per contribution; {count} total.',
+            { count: hostResources.effectiveHostLimit(2) }),
         },
         artifact: { version: 'verified package', executable_digest: executable.digest },
         session: null,
@@ -158,6 +185,7 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
         });
         return { ok: false, reason: 'full_host_consent_unavailable' };
       }
+      if (backendShutdownRequested) return { ok: false, reason: 'stage8_backend_shutdown' };
       if (!guardPolicy(capturedPolicy).ok) {
         return { ok: false, reason: 'managed_policy_authority_stale' };
       }
@@ -176,17 +204,16 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
           workloadIdentity?.publisher_key_id || descriptor.publisher_key_id || ''
         ),
       };
-      const launched = await supervisor.start({ authority, executable, identity, sessionId,
-        sessionEpoch: epoch, signal });
+      const launched = await durableHost.start({ authority, executable, identity, sessionId,
+        sessionEpoch: epoch, signal, validateResourceAuthority: () => guardPolicy(capturedPolicy).ok },
+      { session_id: sessionId, session_epoch: epoch, authority, ...identity });
       if (!launched.ok) return launched;
       if (!guardPolicy(capturedPolicy).ok) {
-        const termination = await supervisor.terminate({ session_id: sessionId,
+        const termination = await durableHost.terminate({ session_id: sessionId,
           session_epoch: epoch, reason: 'managed_policy_revoked' });
-        if (termination?.terminated !== true || termination?.tree_empty !== true) {
-          await cleanupStore.record({ session: { session_id: sessionId, session_epoch: epoch,
-            authority, ...identity }, result: termination, reason: 'managed_policy_revoked' });
-        }
-        return { ok: false, reason: 'managed_policy_authority_stale' };
+        return { ok: false, reason: 'managed_policy_authority_stale', session_id: sessionId,
+          session_epoch: epoch, termination, resource_cleanup: termination.resource_cleanup,
+          cleanup_persistence: termination.cleanup_persistence };
       }
       return { ok: true, session: {
         session_id: sessionId, session_epoch: epoch,
@@ -206,7 +233,7 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
         cancel: (request) => launched.channel.request('cancel', request),
       } };
     },
-    terminateSession: async (active, reason) => supervisor.terminate({
+    terminateSession: async (active, reason) => durableHost.terminate({
       session_id: active.session_id, session_epoch: active.session_epoch, reason,
       workload_profile_id: active.workload_profile_id,
       proof_timeout_ms: active.forced_termination_proof_ms,
@@ -283,7 +310,12 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
       session_id: receipt.session_id, session_epoch: receipt.session_epoch,
       reason: 'cleanup_reconciliation',
     }),
-    persistReceipt: (receipt) => cleanupStore.settle(receipt), diagnostics,
+    persistReceipt: async (receipt) => {
+      const persisted = await cleanupStore.settle(receipt);
+      if (!persisted.ok) throw new Error(persisted.reason);
+      try { await supervisor.acknowledgeTermination?.(receipt); } catch (_error) { /* Retain bounded native proof. */ }
+    }, diagnostics,
+    onConfirmed: (receipt) => sessionManager.confirmTermination(receipt),
   });
   const processCleanupReady = recoverPersistentState
     ? cleanupStore.list().then((stored) => (
@@ -292,6 +324,62 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
     : Promise.resolve(null);
   let disposing = false;
   let startupCleanupReady = null;
+  let backendShutdownSettlement = null;
+  let backendShutdownAttempt = null;
+  let backendQuiesced = false;
+  function beginBackendShutdown({ reason = 'backend_stop' } = {}) {
+    if (disposing) return Promise.resolve({ ok: false, reason: 'stage8_disposed' });
+    backendShutdownRequested = true;
+    consent.cancel();
+    consentWindow.close();
+    if (backendShutdownAttempt) return backendShutdownAttempt;
+    if (!backendShutdownSettlement) {
+      const sessionShutdown = sessionManager.beginQuiesce(reason);
+      backendShutdownSettlement = (async () => {
+        const sessions = await sessionShutdown;
+        if (!sessions.ok) return { ok: false, reason: sessions.reason, sessions };
+        const helper = await supervisor.quiesce();
+        backendQuiesced = helper?.ok === true;
+        return backendQuiesced ? { ok: true, sessions, helper }
+          : { ok: false, reason: helper?.reason || 'stage8_cleanup_unconfirmed', sessions, helper };
+      })().catch((error) => ({
+        ok: false, reason: String(error?.message || 'stage8_cleanup_unconfirmed'),
+      }));
+      const settlement = backendShutdownSettlement;
+      void settlement.then((result) => {
+        if (!result.ok && backendShutdownSettlement === settlement) {
+          backendShutdownSettlement = null;
+        }
+      });
+    }
+    const settlement = backendShutdownSettlement;
+    backendShutdownAttempt = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ timedOut: true }), backendShutdownTimeout);
+      timer.unref?.();
+      settlement.then((result) => {
+        clearTimeout(timer);
+        resolve({ timedOut: false, result });
+      });
+    }).then((observed) => {
+      if (observed.timedOut) return { ok: false, reason: 'stage8_cleanup_timeout' };
+      if (!observed.result.ok) backendShutdownSettlement = null;
+      return observed.result;
+    }).finally(() => { backendShutdownAttempt = null; });
+    return backendShutdownAttempt;
+  }
+  function reopenAfterBackendStart() {
+    if (disposing) return { ok: false, reason: 'stage8_disposed' };
+    if (!backendShutdownRequested) return { ok: true };
+    const helper = supervisor.reopenAfterQuiesce();
+    if (!helper?.ok) return helper;
+    const sessions = sessionManager.reopenAfterQuiesce();
+    if (!sessions?.ok) return sessions;
+    backendShutdownSettlement = null;
+    backendShutdownAttempt = null;
+    backendShutdownRequested = false;
+    backendQuiesced = false;
+    return { ok: true };
+  }
   const runStartupCleanup = () => {
     if (disposing) {
       return Promise.resolve({ ok: false, reason: 'startup_cleanup_cancelled',
@@ -416,6 +504,8 @@ function createPluginStage8Registration({ enabled, runtimeCoordinator, backendSe
     runtimeCoordinator: executionEnabled ? service.runtimeCoordinator : runtimeCoordinator,
     runStartupCleanup,
     runSyntheticSecretDeliveryDrill,
+    beginBackendShutdown,
+    reopenAfterBackendStart,
     async dispose() {
       disposing = true;
       consent.cancel();

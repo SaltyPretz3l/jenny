@@ -42,7 +42,13 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
     leaf = resolve_workspace_leaf(root, raw_path)
     relative = leaf.relative_path
 
-    if relative == _JENNY_DIR or relative.startswith(f"{_JENNY_DIR}/"):
+    normalized_relative = relative.replace("\\", "/")
+    while normalized_relative.startswith("./"):
+        normalized_relative = normalized_relative[2:]
+    normalized_relative = normalized_relative.casefold()
+    if normalized_relative == _JENNY_DIR or normalized_relative.startswith(
+        f"{_JENNY_DIR}/"
+    ):
         return failure_result(
             message=(
                 f"Refusing to delete {relative}: the .jenny directory holds Jenny's "

@@ -9,7 +9,7 @@ const { killProcessTree, waitForProcessExit } = require('../services/backend/pro
 const { createRunMonitor } = require('./run-node-tests-monitor');
 const {
   formatRunSummary,
-  hasTapTestEvents,
+  hasTestEvents,
   isInfrastructureFailure,
   reportFileResult,
   retryInfrastructureFailures,
@@ -959,7 +959,7 @@ module.exports = {
   resolvePerFileTimeoutMs,
   resolveTimeoutMs,
   runCapturedChild,
-  hasTapTestEvents,
+  hasTestEvents,
   isInfrastructureFailure,
   selectRunGroups,
 };

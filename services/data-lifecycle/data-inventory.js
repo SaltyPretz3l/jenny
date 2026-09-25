@@ -6,6 +6,7 @@ const path = require('path');
 
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { exportSession } = require('../backend/session-export-import');
+const { collectRuntimeArchiveEntries } = require('./runtime-archive');
 
 const MAX_INVENTORY_FILES = 10_000;
 const MAX_INVENTORY_FILE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -138,6 +139,7 @@ function collectDataInventory({
   attachmentStore = null,
   portablePreferences = null,
   portableShellConfig = null,
+  runtimeArchivePort = null,
   maxFiles = MAX_INVENTORY_FILES,
   maxFileBytes = MAX_INVENTORY_FILE_BYTES,
 } = {}) {
@@ -165,6 +167,10 @@ function collectDataInventory({
       category: 'preferences',
       data,
     });
+  }
+  for (const entry of collectRuntimeArchiveEntries(userRoot, { runtimeArchivePort })) {
+    assertInventoryCapacity(entries, entry.data.length, limits);
+    entries.push(entry);
   }
   collectDirectoryFiles(
     path.join(userRoot, 'personality', 'default-workspace'),
@@ -202,13 +208,24 @@ function collectDataInventory({
   if (entries.length > maxFiles) {
     throw new Error('Jenny data inventory exceeds the supported file count.');
   }
-  const counts = { chats: 0, attachments: 0, memory: 0, workspace: 0, preferences: 0, totalBytes: 0 };
+  const counts = {
+    chats: 0,
+    attachments: 0,
+    memory: 0,
+    workspace: 0,
+    preferences: 0,
+    projects: 0,
+    permissions: 0,
+    totalBytes: 0,
+  };
   for (const entry of entries) {
     counts.totalBytes += entry.data ? entry.data.length : Number(entry.size || 0);
     if (entry.category === 'chats') counts.chats += 1;
     if (entry.category === 'memory' || entry.category === 'personality') counts.memory += 1;
     if (entry.category === 'workspace') counts.workspace += 1;
     if (entry.category === 'preferences') counts.preferences += 1;
+    if (entry.category === 'project_state') counts.projects += 1;
+    if (entry.category === 'tool_permissions') counts.permissions += 1;
   }
   counts.attachments = countSessionAttachments(sessionStore);
   return { entries, counts, descriptions: DATA_INVENTORY_DESCRIPTIONS };

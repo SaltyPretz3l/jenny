@@ -8,6 +8,8 @@
 *.html text eol=lf
 *.css text eol=lf
 *.json text eol=lf
+# The generated ledger is compared byte-for-byte with its LF generator output.
+docs/i18n/STRING_LEDGER.md text eol=lf
 renderer/inventory/assets/*.svg text eol=lf
 # Shell entrypoints must stay LF on every platform (CRLF breaks bash: "/bin/bash^M").
 *.sh text eol=lf
@@ -39,3 +41,7 @@ tests/release-compat/fixtures/jenny-archive-v1-plain/data/preferences/fixture.tx
 archive/** linguist-generated
 repomix/** linguist-generated
 vendor/** linguist-vendored
+
+# Workspace document-editing fixtures: byte-exact PDF/DOCX inputs (annotated.pdf has no NUL bytes and would otherwise be eol-normalized).
+tests/fixtures/documents/*.pdf binary
+tests/fixtures/documents/*.docx binary

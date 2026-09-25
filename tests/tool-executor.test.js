@@ -459,6 +459,33 @@ describe('ToolExecutor', () => {
     )));
   });
 
+  test('an unrecognized approval decision denies instead of executing', async () => {
+    let executed = false;
+    const logs = [];
+    const tool = makeMockTool({
+      name: 'Write',
+      readOnly: false,
+      execute: async () => { executed = true; return { content: 'ok', summary: 'ok', isError: false }; },
+    });
+    const executor = new ToolExecutor({
+      registry: makeRegistry([tool]),
+      permissionStore: makePermissionStore({ Write: 'ask' }),
+      pathPolicy: {},
+      shellRunner: makeShellRunner(),
+      logger: (level, event, details) => logs.push({ level, event, details }),
+    });
+
+    const resultPromise = executor.execute(
+      { callId: 'call_unknown', toolName: 'Write', input: {} },
+      makeContext()
+    );
+    assert.equal(executor.approve('call_unknown', { decision: 'yolo' }), true);
+    const result = await resultPromise;
+    assert.equal(executed, false);
+    assert.equal(result.isError, true);
+    assert.ok(logs.some(({ event }) => event === 'tool.unknown_decision_denied'));
+  });
+
   test('exit_plan_mode never creates a persistent always-allow policy', async () => {
     const policies = {};
     const tool = makeMockTool({

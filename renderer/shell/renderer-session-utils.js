@@ -274,8 +274,8 @@
     function getVisibleSessionMessages(sessionId) {
       return getSessionMessages(sessionId).filter(isVisibleChatMessage);
     }
-
     function setSessionMessages(sessionId, messages, fallbackIdPrefix) {
+      messages = state.runtimeSendController?.mergePending?.(sessionId, messages) || messages;
       const resolvedSessionId = resolveSessionId(sessionId);
       const normalizedMessages = normalizeChatMessages(messages, {
         fallbackIdPrefix: fallbackIdPrefix || 'message',

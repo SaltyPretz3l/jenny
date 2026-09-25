@@ -125,6 +125,10 @@ test('workspace-root IPC exposes two-phase transitions and legacy aliases stay p
       calls.push('prepareClear');
       return { prepared: true, transitionId: 'transition-2' };
     },
+    prepareProject(payload) {
+      calls.push(['prepareProject', payload]);
+      return { prepared: true, transitionId: 'transition-3' };
+    },
     commit(payload) {
       calls.push(['commit', payload]);
       return { committed: true, context };
@@ -151,6 +155,10 @@ test('workspace-root IPC exposes two-phase transitions and legacy aliases stay p
     prepared: true,
     transitionId: 'transition-2',
   });
+  assert.deepEqual(await handlers.get('workspace-root:prepare-project')(null, { project_id: 'project_a' }), {
+    prepared: true,
+    transitionId: 'transition-3',
+  });
   assert.deepEqual(await handlers.get('workspace-root:commit')(null, {
     transitionId: 'transition-1',
     terminateProcesses: true,
@@ -162,6 +170,7 @@ test('workspace-root IPC exposes two-phase transitions and legacy aliases stay p
     'capture',
     'prepareChoose',
     'prepareClear',
+    ['prepareProject', { project_id: 'project_a' }],
     ['commit', { transitionId: 'transition-1', terminateProcesses: true }],
     ['cancel', { transitionId: 'transition-2' }],
   ]);

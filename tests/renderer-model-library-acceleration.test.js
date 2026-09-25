@@ -22,8 +22,8 @@ async function flush() {
 
 function makeDom() {
   return new JSDOM(`<!doctype html><body>
-    <nav class="settings-nav"><button data-settings-section="modelLibrary">Model library</button></nav>
-    <section class="settings-card" data-settings-section="modelLibrary">
+    <nav class="settings-nav"><button data-settings-section="models">Models</button></nav>
+    <section class="settings-card" data-settings-section="models">
       <div id="modelLibrarySectionToolbarHost"></div>
       <div class="model-library-section-status" aria-live="polite"></div>
       <div id="modelLibrarySectionHost"></div>
@@ -32,7 +32,7 @@ function makeDom() {
 }
 
 function makeState({ accelerationFlag = false, mode = 'off', catalog, managed } = {}) {
-  const featureFlags = { model_management_ui: true, model_library_section: true };
+  const featureFlags = { model_management_ui: true };
   if (accelerationFlag) featureFlags.llama_server_acceleration = true;
   const openaiCompatible = { acceleration: { mode, draftNMax: 4 } };
   if (managed !== undefined) openaiCompatible.managed = managed;
@@ -41,7 +41,7 @@ function makeState({ accelerationFlag = false, mode = 'off', catalog, managed } 
     localEngines: { openaiCompatible },
     status: { model: '' },
     offline: { preferredLocalModel: '' },
-    ui: { activeSettingsSection: 'modelLibrary' },
+      ui: { activeSettingsSection: 'models' },
   };
   if (catalog !== undefined) state.accelerationCatalog = catalog;
   return state;

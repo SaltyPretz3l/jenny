@@ -16,6 +16,7 @@ const {
 const { initializeManagedSidecar } = require('../../services/backend/managed-sidecar-lifecycle');
 const { BackendService } = require('../../services/backend/backend-service');
 const { createHostedBackend } = require('../../services/host/service-composition');
+const { GENERAL_PROJECT_ID } = require('../../services/projects/project-schema');
 
 class SidecarHarness extends EventEmitter {
   constructor() {
@@ -116,7 +117,21 @@ test('hosted composition uses external endpoint policy across lifecycle and chat
   try {
     assert.equal(hosted.backend.hostMode, 'server');
     assert.equal(hosted.backend.hostPorts.posture.ownsEngineLifecycle, false);
+    assert.equal(typeof hosted.backend.projectApplicationService?.listProjects, 'function');
     assert.equal(hosted.configService.getToolsWorkspaceRoot(), workspaceRoot);
+    const generalProject = hosted.backend.projectService.get(GENERAL_PROJECT_ID);
+    assert.equal(generalProject.root_path, null);
+    assert.equal(generalProject.root_revision, 0);
+    const createdProject = hosted.backend.projectService.create({ name: 'Hosted child' });
+    assert.equal(createdProject.ok, true);
+    assert.equal(
+      hosted.backend.projectService.bindRoot(createdProject.project.id, path.join(workspaceRoot, 'tests')).ok,
+      true
+    );
+    assert.equal(
+      hosted.backend.projectService.bindRoot(createdProject.project.id, userDataPath).reason,
+      'invalid_root'
+    );
 
     const sidecarConfig = hosted.backend._buildManagedSidecarConfig();
     assert.equal(sidecarConfig.host_mode, 'server');
@@ -270,4 +285,26 @@ test('a replacement sidecar cannot pass chat readiness using the prior process p
     assert.equal(reconnects, 1);
     assert.equal(hosted.backend._hostedPolicyProcess, null);
   } finally { hosted.dispose(); removeTempUserDataPath(userDataPath); }
+});
+
+
+test('hosted runtime is composed by default and force-deny preserves inspection while blocking Start', async () => {
+  const prior = process.env.JENNY_ENABLE_SESSION_RUNTIME;
+  const userDataPath = makeTempUserDataPath(); let hosted;
+  try {
+    process.env.JENNY_ENABLE_SESSION_RUNTIME = '0';
+    hosted = createHostedBackend({ hostMode: 'server', userDataPath, repoRoot: path.resolve(__dirname, '../..'),
+      credentialService: createCredentialService(), modelEndpoint: { engine: 'replay', model: 'replay-model' },
+      featureFlags: { session_runtime: true }, sidecarManager: new SidecarHarness(),
+      ollamaManager: new EngineManagerHarness('ollama'), vllmManager: new EngineManagerHarness('vllm') });
+    const app = hosted.backend.runtimeApplicationService;
+    const view = app.getSnapshot(); assert.equal(view.ok, true); assert.equal(view.enabled, false);
+    const session = (await hosted.backend.createSession({ title: 'Inspect while off' })).data.id;
+    const result = await app.start({ session_id: session, idempotency_key: 'off_start', purpose: 'Inspect', prompt: 'Do work',
+      limits: { inference_requests: 1, input_tokens: 10, output_tokens: 10 } });
+    assert.equal(result.ok, false); assert.equal(hosted.backend.sessionRuntime.store.listReadyCandidates().length, 0);
+  } finally {
+    if (prior === undefined) delete process.env.JENNY_ENABLE_SESSION_RUNTIME; else process.env.JENNY_ENABLE_SESSION_RUNTIME = prior;
+    hosted?.dispose(); removeTempUserDataPath(userDataPath);
+  }
 });

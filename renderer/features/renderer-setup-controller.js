@@ -385,6 +385,13 @@
         var generation = lifecycleGeneration;
         var health = computeHealth(state.setup);
         if (health.state !== 'complete') {
+          // The cached snapshot can predate a model that finished loading; a
+          // fresh backend probe backfills its step before this refuses.
+          await refresh();
+          if (disposed || generation !== lifecycleGeneration) return state.setup;
+          health = computeHealth(state.setup);
+        }
+        if (health.state !== 'complete') {
           showShellErrorToast(
             jt('setup.controller.notReadyMessage', 'Choose a workspace root and configure at least one model route before finishing setup.'),
             { title: jt('setup.controller.notReadyTitle', 'Setup Not Ready') }
@@ -478,6 +485,7 @@
         chooseWorkspaceRoot: chooseWorkspaceRoot,
         stepModal: stepModal,
         applySnapshot: applySnapshot,
+        refreshState: refresh,
         markStep: markStep,
         applyAssistantIdentity: applyAssistantIdentity,
         closeModal: (overrides && overrides.closeModal) || closeModal,

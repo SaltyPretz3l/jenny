@@ -57,6 +57,22 @@ test('dispose terminates a session whose launch settles after shutdown begins',a
   assert.deepEqual(terminations.map(({reason})=>reason),['session_manager_disposed']);
   assert.deepEqual(manager.snapshot(),{active:0,pending:0,unusable:0});
 });
+test('backend quiescence fences a pending launch, terminates its exact session, and can reopen',async()=>{
+  let finishStart;const started=new Promise((resolve)=>{finishStart=resolve;});const reasons=[];
+  const manager=new HostSessionManager({startSession:async()=>started,
+    terminateSession:async(_session,reason)=>{reasons.push(reason);return {terminated:true,tree_empty:true};}});
+  const pending=manager.acquire({authority,contributionId:'late'});
+  const quiescing=manager.beginQuiesce('backend_stop');
+  assert.equal((await manager.acquire({authority,contributionId:'blocked'})).reason,
+    'session_manager_quiescing');
+  finishStart({ok:true,session:{id:'late-session'}});
+  assert.equal((await pending).reason,'session_manager_quiescing');
+  assert.deepEqual(await quiescing,{ok:true,terminated_count:0,unproven_count:0});
+  assert.deepEqual(reasons,['session_manager_quiescing']);
+  assert.deepEqual(manager.reopenAfterQuiesce(),{ok:true});
+  assert.equal((await manager.acquire({authority,contributionId:'fresh'})).ok,true);
+  await manager.dispose();
+});
 test('unexpected child exit reaps and removes the exact owned session',async()=>{
   const manager=new HostSessionManager({
     startSession:async()=>({ok:true,session:{session_id:'session-crash'}}),
@@ -89,6 +105,18 @@ test('unexpected child exit never reuses a dead session while cleanup remains un
   assert.deepEqual(manager.snapshot(),{active:0,pending:0,unusable:0});
   const replacement=await manager.acquire({authority,contributionId:'crash'});
   assert.equal(replacement.ok,true);assert.equal(replacement.reused,false);assert.equal(starts,2);
+  await manager.dispose();
+});
+test('a delayed child-exit callback cannot invalidate another session epoch',async()=>{
+  const manager=new HostSessionManager({
+    startSession:async()=>({ok:true,session:{session_id:'reused-id',session_epoch:2}}),
+    terminateSession:async()=>({terminated:true,tree_empty:true}),
+  });
+  const acquired=await manager.acquire({authority,contributionId:'exact'});
+  const stale=await manager.handleUnexpectedExit('reused-id','host_pipe_failed',async()=>{},1);
+  assert.equal(stale.reason,'host_session_not_found');
+  assert.equal((await manager.acquire({authority,contributionId:'exact'})).session,
+    acquired.session);
   await manager.dispose();
 });
 test('plugin cleanup drains every owned session and returns a bounded proof',async()=>{
@@ -161,11 +189,14 @@ test('policy revision tombstones a pending launch and preserves unproven cleanup
   });
   const pending=manager.acquire({authority,contributionId:'late',policyToken:{revision:1}});
   current=false;
-  release({ok:true,session:{session_id:'late'}});
+  release({ok:true,session:{session_id:'late',session_epoch:3}});
   assert.equal((await pending).reason,'managed_policy_revoked');
   assert.equal(unproven.length,1);
   assert.equal(unproven[0].reason,'managed_policy_revoked');
-  assert.deepEqual(manager.snapshot(),{active:0,pending:0,unusable:1});
+  assert.equal(unproven[0].session.session_id,'late');
+  assert.deepEqual(manager.snapshot(),{active:1,pending:0,unusable:1});
+  assert.deepEqual(manager.confirmTermination({session_id:'late',session_epoch:3}),
+    {ok:true,confirmed:true});
   await manager.dispose();
 });
 test('a proven pending-launch termination does not leave a permanent unusable marker',async()=>{
@@ -219,5 +250,128 @@ test('concurrent termination paths share one native termination result',async()=
   assert.deepEqual(termination,{terminated:true,tree_empty:true});
   assert.deepEqual(revocations,[{terminated:true,tree_empty:true}]);
   assert.deepEqual(unproven,[]);
+  await manager.dispose();
+});
+
+test('session accounting survives dispose while native output-reader cleanup is uncertain',async()=>{
+  const manager=new HostSessionManager({
+    startSession:async()=>({ok:true,session:{session_id:'reader-pending',session_epoch:1}}),
+    terminateSession:async()=>({ok:true,terminated:true,tree_empty:true,
+      output_readers_terminated:false,resource_cleanup:{required:true,cleanup:'uncertain'}}),
+  });
+  await manager.acquire({authority,contributionId:'reader'});
+  const termination=await manager.terminate({authority,contributionId:'reader'});
+  assert.equal(termination.resource_cleanup.cleanup,'uncertain');
+  assert.deepEqual(manager.snapshot(),{active:1,pending:0,unusable:1});
+  assert.deepEqual(await manager.dispose(),{active:1,pending:0,unusable:1});
+  assert.equal(manager.confirmTermination({session_id:'reader-pending',session_epoch:2}).reason,
+    'host_session_cleanup_identity_mismatch');
+  assert.deepEqual(manager.confirmTermination({session_id:'reader-pending',session_epoch:1}),
+    {ok:true,confirmed:true});
+  assert.deepEqual(manager.snapshot(),{active:0,pending:0,unusable:0});
+});
+
+test('cleanup reconciliation requires resource-owner confirmation when a lease was admitted',async()=>{
+  const persisted=[];
+  const cleanup=new CleanupReconciler({
+    reconcileReceipt:async(receipt)=>receipt.result,
+    persistReceipt:async(receipt)=>persisted.push(receipt.id),
+  });
+  const uncertain={id:'uncertain',result:{ok:true,terminated:true,tree_empty:true,
+    resource_cleanup:{required:true,cleanup:'uncertain'}}};
+  const confirmed={id:'confirmed',result:{ok:true,terminated:true,tree_empty:true,
+    output_readers_terminated:true,resource_cleanup:{required:true,cleanup:'confirmed',
+      process_tree_terminated:true,output_readers_terminated:true}}};
+  assert.equal((await cleanup.reconcile([uncertain])).ok,false);
+  assert.deepEqual(persisted,[]);
+  assert.equal((await cleanup.reconcile([confirmed])).ok,true);
+  assert.deepEqual(persisted,['confirmed']);
+});
+
+test('cleanup reconciliation retains its receipt when manager confirmation rejects identity',async()=>{
+  const persisted=[];
+  const cleanup=new CleanupReconciler({
+    reconcileReceipt:async()=>({ok:true,terminated:true,tree_empty:true,
+      resource_cleanup:{required:true,cleanup:'confirmed',process_tree_terminated:true,
+        output_readers_terminated:true}}),
+    onConfirmed:async()=>({ok:false,reason:'host_session_cleanup_identity_mismatch'}),
+    persistReceipt:async(receipt)=>persisted.push(receipt),
+  });
+  const result=await cleanup.reconcile([{session_id:'same',session_epoch:2}]);
+  assert.equal(result.ok,false);
+  assert.equal(result.outcomes[0].reason,'reconciliation_failed');
+  assert.deepEqual(persisted,[]);
+});
+
+test('an unpublished exact session survives a cleanup persistence failure',async()=>{
+  let current=true;let release;
+  const manager=new HostSessionManager({
+    isAuthorityCurrent:()=>current,
+    startSession:()=>new Promise((resolve)=>{release=resolve;}),
+    terminateSession:async()=>({ok:false,terminated:false,tree_empty:false,
+      reason:'tree_proof_unavailable'}),
+    onUnprovenTermination:async()=>({ok:false,reason:'receipt_capacity'}),
+  });
+  const pending=manager.acquire({authority,contributionId:'late',policyToken:{revision:1}});
+  current=false;
+  release({ok:true,session:{session_id:'unpublished',session_epoch:7}});
+  const result=await pending;
+  assert.equal(result.cleanup_persistence_failed,true);
+  assert.equal(result.termination.cleanup_persisted,false);
+  assert.deepEqual(manager.snapshot(),{active:1,pending:0,unusable:1});
+  assert.equal(manager.resolveSession('unpublished').reason,'host_session_not_found');
+  assert.equal(manager.confirmTermination({session_id:'unpublished',session_epoch:8}).reason,
+    'host_session_cleanup_identity_mismatch');
+  await manager.dispose();
+});
+
+test('effective native capacity limits launches before the start producer',async()=>{
+  let starts=0;let effective=1;
+  const manager=new HostSessionManager({limits:{global:2,perPlugin:2,perContribution:1},
+    getEffectiveGlobalLimit:()=>effective,
+    startSession:async({contributionId})=>{starts+=1;return {ok:true,session:{id:contributionId}};},
+    terminateSession:async()=>({terminated:true,tree_empty:true}),
+  });
+  assert.equal((await manager.acquire({authority,contributionId:'one',
+    descriptor:{publisher_id:'p1',plugin_id:'one'}})).ok,true);
+  assert.equal((await manager.acquire({authority,contributionId:'two',
+    descriptor:{publisher_id:'p2',plugin_id:'two'}})).reason,'host_session_global_limit');
+  assert.equal(starts,1);
+  effective=0;
+  await manager.terminate({authority,contributionId:'one'});
+  assert.equal((await manager.acquire({authority,contributionId:'three',
+    descriptor:{publisher_id:'p3',plugin_id:'three'}})).reason,'host_session_global_limit');
+  assert.equal(starts,1);
+  await manager.dispose();
+});
+
+test('supervisor loss marks only matching session epochs unusable before cleanup',async()=>{
+  let epoch=0;let releaseTermination;let terminationCalls=0;
+  const manager=new HostSessionManager({limits:{global:2,perPlugin:2,perContribution:1},
+    startSession:async({contributionId})=>({ok:true,session:{session_id:'shared',
+      session_epoch:++epoch,id:contributionId}}),
+    terminateSession:async()=>{terminationCalls+=1;return terminationCalls===1
+      ? new Promise((resolve)=>{releaseTermination=resolve;})
+      : {terminated:true,tree_empty:true};},
+  });
+  const firstAuthority={...authority,active_generation_id:'first'};
+  const secondAuthority={...authority,active_generation_id:'second'};
+  await manager.acquire({authority:firstAuthority,contributionId:'one',
+    descriptor:{publisher_id:'p1',plugin_id:'one'}});
+  await manager.acquire({authority:secondAuthority,contributionId:'two',
+    descriptor:{publisher_id:'p2',plugin_id:'two'}});
+  const matched=manager.markSupervisorSessionsUnusable([
+    {session_id:'shared',session_epoch:1},
+  ]);
+  assert.equal(matched.length,1);
+  assert.equal((await manager.acquire({authority:firstAuthority,contributionId:'one',
+    descriptor:{publisher_id:'p1',plugin_id:'one'}})).reason,'host_session_cleanup_pending');
+  assert.equal((await manager.acquire({authority:secondAuthority,contributionId:'two',
+    descriptor:{publisher_id:'p2',plugin_id:'two'}})).reused,true);
+  const cleanup=manager.handleSupervisorExit([{session_id:'shared',session_epoch:1}],
+    'supervisor_exited');
+  await new Promise((resolve)=>setImmediate(resolve));
+  releaseTermination({terminated:false,tree_empty:false});
+  assert.equal((await cleanup).ok,false);
   await manager.dispose();
 });

@@ -636,3 +636,147 @@ test('buildTurnViewModel/purity: calling the builder twice with the same turn yi
   assert.deepEqual(a, b);
 });
 
+
+// 2026-09-18 (Bonsai agent turn): live text segments default to final_answer,
+// so each preamble before a tool call read as the answer and every later
+// reasoning step rendered as a settled "Thought" row while it streamed.
+function liveAgentTurn({ trailingText }) {
+  const events = [
+    { kind: 'user_prompt', primary_message_id: 'user_live', sort_key: [0, 0, 0], payload: { content: 'Review it' } },
+    { kind: 'reasoning_phase', phase_id: 'phase_r1', primary_message_id: 'asst_live', sort_key: [1, 0, 0],
+      payload: { phase_id: 'phase_r1', entries: [{ text: 'Plan the review.' }] } },
+    { kind: 'assistant_text_segment', assistant_phase: 'final_answer', primary_message_id: 'asst_live',
+      sort_key: [2, 0, 0], payload: { text: 'Let me look.' } },
+    { kind: 'tool_use', tool_call_id: 'call_1', primary_message_id: 'tool_1', sort_key: [3, 0, 0],
+      payload: { tool_name: 'read_file' } },
+    { kind: 'tool_result', tool_call_id: 'call_1', primary_message_id: 'tool_1', sort_key: [4, 0, 0],
+      payload: { tool_name: 'read_file', success: true } },
+    { kind: 'reasoning_phase', phase_id: 'phase_r2', primary_message_id: 'asst_live_seg1', sort_key: [5, 0, 0],
+      payload: { phase_id: 'phase_r2', entries: [{ text: 'Now the next file.' }] } },
+  ];
+  if (trailingText) {
+    events.push({ kind: 'assistant_text_segment', assistant_phase: 'final_answer',
+      primary_message_id: 'asst_live_seg1', sort_key: [6, 0, 0], payload: { text: 'Found it.' } });
+  }
+  return buildTurnViewModel({ turn_id: 'turn_live', primary_assistant_message_id: 'asst_live', events });
+}
+
+test('buildTurnViewModel/phaseHint: reasoning newer than the last answer text is the live step', () => {
+  const viewModel = liveAgentTurn({ trailingText: false });
+  assert.equal(viewModel.assistant.hasFinalAnswer, true);
+  assert.equal(viewModel.phaseHint, 'reasoning');
+});
+
+test('buildTurnViewModel/phaseHint: answer text after the last reasoning stays final_answer', () => {
+  assert.equal(liveAgentTurn({ trailingText: true }).phaseHint, 'final_answer');
+});
+
+test('buildTurnViewModel/phaseHint: errored tool followed by newer reasoning is the live step', () => {
+  const turn = fabricateTurn('turn_error_then_reasoning', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+    reasoningEvent({ sort_key: [2, 0, 10] }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'reasoning');
+});
+
+test('buildTurnViewModel/phaseHint: denied tool followed by newer reasoning is the live step', () => {
+  const turn = fabricateTurn('turn_denied_then_reasoning', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', approval_state: 'denied' } }),
+    reasoningEvent({ sort_key: [2, 0, 10] }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'reasoning');
+});
+
+test('buildTurnViewModel/phaseHint: cancelled tool followed by newer reasoning is the live step', () => {
+  const turn = fabricateTurn('turn_cancelled_then_reasoning', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', approval_state: 'cancelled' } }),
+    reasoningEvent({ sort_key: [2, 0, 10] }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'reasoning');
+});
+
+test('buildTurnViewModel/phaseHint: errored tool as the last event stays errored', () => {
+  const turn = fabricateTurn('turn_error_last', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'errored');
+});
+
+test('buildTurnViewModel/phaseHint: completed tool settles only without newer reasoning', () => {
+  const toolEvents = [toolUseEvent(), toolResultEvent()];
+  const liveTurn = fabricateTurn('turn_completed_then_reasoning', [
+    ...toolEvents,
+    reasoningEvent({ sort_key: [2, 0, 10] }),
+  ]);
+  assert.equal(buildTurnViewModel(liveTurn, {}).phaseHint, 'reasoning');
+  assert.equal(buildTurnViewModel(fabricateTurn('turn_completed_last', toolEvents), {}).phaseHint, 'tool_settled');
+});
+
+// Astra batch review 2026-09-20: latest-activity gating must not hide a
+// genuinely terminal turn, and empty carries are not activity.
+test('buildTurnViewModel/phaseHint: an assistant_error after the live reasoning is terminal', () => {
+  const turn = fabricateTurn('turn_error_reasoning_assistant_error', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+    reasoningEvent({ sort_key: [2, 0, 10] }),
+    event({ event_id: 'assistant_error:0', kind: 'assistant_error', primary_message_id: 'msg_assistant_text',
+      source_message_ids: ['msg_assistant_text'], status: 'runtime_error', sort_key: [3, 0, 10],
+      payload: { stream_error: 'model generation failed' } }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'errored');
+});
+
+test('buildTurnViewModel/phaseHint: an empty commentary segment after an errored tool does not revive the turn', () => {
+  const turn = fabricateTurn('turn_error_then_empty_segment', [
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+    event({ event_id: 'assistant_text_segment:9', kind: 'assistant_text_segment', assistant_phase: 'commentary',
+      primary_message_id: 'msg_assistant_text', source_message_ids: ['msg_assistant_text'], status: 'completed',
+      sort_key: [2, 0, 10], payload: { text: '' } }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'errored');
+});
+
+test('buildTurnViewModel/phaseHint: a reused phase id resuming after an errored tool is the live step', () => {
+  const turn = fabricateTurn('turn_reused_phase_after_error', [
+    reasoningEvent({ sort_key: [0, 5, 10] }),
+    toolUseEvent(),
+    toolResultEvent({ payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+    reasoningEvent({ event_id: 'reasoning_phase:1', sort_key: [2, 0, 10],
+      payload: { phase_id: 'phase_reasoning_pre', thinking_id: 'think_0', entries: [{ text: 'Resumed after the failure.' }] } }),
+  ]);
+  const viewModel = buildTurnViewModel(turn, {});
+  assert.equal(viewModel.reasoning.length, 1, 'the reused phase id continues one group');
+  assert.equal(viewModel.phaseHint, 'reasoning');
+});
+
+// Codex second-model review 2026-09-20 (land step): the final_answer
+// comparison must use the reasoning group's latest contentful event, and an
+// empty final_answer carry is not an answer.
+test('buildTurnViewModel/phaseHint: a resumed reasoning phase newer than the preamble stays live after a failed tool', () => {
+  const turn = fabricateTurn('turn_resumed_after_preamble', [
+    reasoningEvent({ sort_key: [1, 0, 0] }),
+    event({ event_id: 'assistant_text_segment:1', kind: 'assistant_text_segment', assistant_phase: 'final_answer',
+      primary_message_id: 'msg_assistant_text', source_message_ids: ['msg_assistant_text'], status: 'completed',
+      sort_key: [2, 0, 0], payload: { text: 'Let me try the rename.' } }),
+    toolUseEvent({ sort_key: [3, 0, 0] }),
+    toolResultEvent({ sort_key: [4, 0, 0], payload: { tool_name: 'Read', output_text: 'failed', is_error: true } }),
+    reasoningEvent({ event_id: 'reasoning_phase:1', sort_key: [5, 0, 0],
+      payload: { phase_id: 'phase_reasoning_pre', thinking_id: 'think_0', entries: [{ text: 'Blocked; use another route.' }] } }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'reasoning');
+});
+
+test('buildTurnViewModel/phaseHint: an empty final_answer carry after live reasoning is not an answer', () => {
+  const turn = fabricateTurn('turn_empty_final_carry', [
+    reasoningEvent({ sort_key: [4, 0, 0] }),
+    event({ event_id: 'assistant_text_segment:2', kind: 'assistant_text_segment', assistant_phase: 'final_answer',
+      primary_message_id: 'msg_assistant_text', source_message_ids: ['msg_assistant_text'], status: 'completed',
+      sort_key: [5, 0, 0], payload: { text: '' } }),
+  ]);
+  assert.equal(buildTurnViewModel(turn, {}).phaseHint, 'reasoning');
+});

@@ -159,7 +159,7 @@ function normalizeTerminalMutations(messages, toolRepairs, identity, timestamp) 
       return { ok: false, reason: 'duplicate_terminal_message_id' };
     }
     messageIds.add(messageId);
-    normalizedMessages.push({ ...message, id: messageId });
+    normalizedMessages.push({ ...message, id: messageId, turn_id: identity.turnId });
   }
 
   const normalizedRepairs = [];
@@ -191,7 +191,7 @@ function normalizeTerminalMutations(messages, toolRepairs, identity, timestamp) 
     }
     if (!messageIds.has(resultMessage.id)) {
       messageIds.add(resultMessage.id);
-      normalizedMessages.push(resultMessage);
+      normalizedMessages.push({ ...resultMessage, turn_id: identity.turnId });
     }
     repairTurnEvents.push(turnEvent);
   }

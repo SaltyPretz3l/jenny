@@ -8,13 +8,21 @@ from unittest.mock import Mock
 
 import pytest
 
+from sidecar.ai.engines.engine_events import (
+    ENGINE_EVENT_TOOL_CALL_DELTA,
+    EngineEvent,
+    stream_item_to_engine_event,
+)
 from sidecar.ai.engines.openai_compatible import OpenAICompatibleEngine
 from sidecar.ai.engines.vllm_engine import VLLMEngine
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_INCOMPLETE,
     FINISH_REASON_PROVIDER_ERROR,
 )
-from sidecar.ai.tools.models import StreamingEvent
+from sidecar.ai.tools.models import (
+    STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS,
+    StreamingEvent,
+)
 from tests.sidecar.ai.engines import test_vllm_engine as vllm_test
 
 
@@ -167,6 +175,62 @@ def test_stream_does_not_log_enabled_provider_reasoning(
     ]
 
 
+def test_tool_stream_yields_liveness_while_tool_arguments_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Owner session 2026-09-19: a local model streamed a 7k-token create_artifact
+    # call at ~58 tok/s and the router's inactivity watchdog killed the turn as
+    # "engine stalled" because argument deltas never reached it.
+    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    fragments = ['{"title": "Badge', ' spec", "content": "# Ba', 'dge"}']
+
+    def _tool_delta(index: int, fragment: str) -> str:
+        call: dict[str, Any] = {"index": 0, "function": {"arguments": fragment}}
+        if index == 0:
+            call.update(id="call-1", type="function")
+            call["function"]["name"] = "create_artifact"
+        return vllm_test._sse_chunk({"tool_calls": [call]})  # noqa: SLF001
+
+    vllm_test._patch_stream_response(  # noqa: SLF001
+        monkeypatch,
+        vllm_test._FakeSSEStream(  # noqa: SLF001
+            [
+                *(_tool_delta(index, fragment) for index, fragment in enumerate(fragments)),
+                "data: "
+                + json.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+                "data: [DONE]",
+            ]
+        ),
+    )
+
+    chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+        engine.stream_with_tools(prompt="write it", tools=[])
+    )
+
+    # Gate B1 F19: each fragment is a typed tool_call_delta (call id, tool
+    # name, fragment), which both keeps the watchdog fed and lets the router
+    # emit tool_input_delta so the timeline can say which call is being
+    # written, instead of a payload-less liveness marker.
+    deltas = [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk, EngineEvent) and chunk.kind == ENGINE_EVENT_TOOL_CALL_DELTA
+    ]
+    assert [chunk.arguments_delta for chunk in deltas] == fragments
+    assert {chunk.tool_name for chunk in deltas} == {"create_artifact"}
+    assert not [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk, StreamingEvent)
+        and chunk.kind in ("content", STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS)
+    ]
+    assert [(call.tool_id, call.arguments) for call in result.tool_calls] == [
+        ("create_artifact", {"title": "Badge spec", "content": "# Badge"})
+    ]
+    assert {chunk.tool_call_id for chunk in deltas} == {result.tool_calls[0].call_id}
+    assert stream_item_to_engine_event(deltas[0]) is deltas[0]
+
+
 @pytest.mark.parametrize(
     ("lines", "expected_finish_reason"),
     [
@@ -277,3 +341,59 @@ def test_repetition_penalty_uses_provider_specific_payload_key(
     assert "repeat_penalty" not in vllm_payload
     assert openai_compatible_payload["repeat_penalty"] == 1.15
     assert "repetition_penalty" not in openai_compatible_payload
+
+
+def _terminal_gap_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if getattr(record, "event", "") == "ai.engines.vllm.stream_incomplete"
+    ]
+
+
+def test_tool_stream_logs_the_terminal_gap_with_the_provider_error_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    vllm_test._patch_stream_response(  # noqa: SLF001
+        monkeypatch,
+        vllm_test._FakeSSEStream(  # noqa: SLF001
+            [
+                vllm_test._sse_chunk({"content": "start"}),  # noqa: SLF001
+                'data: {"object":"error","message":"engine died"}',
+                "data: [DONE]",
+            ]
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+            engine.stream_with_tools(prompt="hi", tools=[])
+        )
+
+    assert result.finish_reason == FINISH_REASON_PROVIDER_ERROR
+    # Same actionable event as stream(): the provider's own words ride record.data.
+    gaps = _terminal_gap_records(caplog)
+    assert len(gaps) == 1
+    assert gaps[0].data["finish_reason"] == FINISH_REASON_PROVIDER_ERROR
+    assert gaps[0].data["inband_error"] == "engine died"
+
+
+def test_tool_stream_logs_the_terminal_gap_when_the_stream_ends_early(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    vllm_test._patch_stream_response(  # noqa: SLF001
+        monkeypatch,
+        vllm_test._FakeSSEStream([vllm_test._sse_chunk({"content": "partial"})]),  # noqa: SLF001
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+            engine.stream_with_tools(prompt="hi", tools=[])
+        )
+
+    assert result.finish_reason == FINISH_REASON_INCOMPLETE
+    assert [record.data["inband_error"] for record in _terminal_gap_records(caplog)] == [""]

@@ -11,12 +11,14 @@ from sidecar.ai.config_models import uses_minimal_system_prompt
 from sidecar.ai.context.builder import (
     looks_like_current_info_request,
     looks_like_source_architecture_request,
+    request_workspace_root_kwargs,
 )
 from sidecar.ai.context.token_budget import (
     apply_budget_check,
     build_tool_schema_budget_plan,
     check_budget,
     estimate_messages_tokens,
+    estimate_tool_schema_tokens,
     ordered_unique_names,
     tool_schema_cap_for_budget_level,
 )
@@ -121,6 +123,11 @@ def build_system_prompt_for_statuses(
             getattr(kernel._config, "tools_task_capsule_enabled", False)
         ),
     }
+    # The request authority's root (None = explicitly unbound) governs every
+    # workspace-derived prompt block; see request_workspace_root_kwargs.
+    kwargs.update(request_workspace_root_kwargs(
+        kernel._config, getattr(context.request_context, "execution_context", None),
+    ))
     if context.prompt_cache_enabled:
         return kernel._context_builder.build_system_prompt(
             kernel._config.system_prompt,
@@ -295,6 +302,9 @@ def _budget_pressure_for_tool_filter(
         context.kernel._config,
         context.kernel._engine,
         num_tools=num_tools,
+        tool_schema_tokens=(
+            estimate_tool_schema_tokens(result.tool_payload) if num_tools else None
+        ),
     )
     if budget is None:
         return _BudgetPressureProbe(status=None, system_prompt=system_prompt)

@@ -19,6 +19,7 @@
   let disposed = false;
   let modelObserver = null;
   let pointerdownHandler = null;
+  let lastUncatalogedRefreshKey = '';
 
   function modelListEntries(payload) {
     if (Array.isArray(payload?.data)) return payload.data;
@@ -32,6 +33,17 @@
 
   function selectedModelEntry(modelControl) {
     const modelId = String(modelControl?.value || '').trim();
+    if (!modelId) {
+      // "Use default" carries an empty value; the conversation then runs on the
+      // backend's model, which renderSettings stamps on the select. A blank
+      // value with NO selected option is a preferred model missing from the
+      // options, not "Use default": it must not borrow the backend's efforts.
+      if (!modelControl?.selectedOptions?.[0]) return { modelId: '', engineType: '' };
+      return {
+        modelId: String(modelControl?.dataset?.backendModel || '').trim(),
+        engineType: String(modelControl?.dataset?.backendEngineType || '').trim().toLowerCase(),
+      };
+    }
     const option = modelControl?.selectedOptions?.[0];
     return {
       modelId,
@@ -97,7 +109,10 @@
     const { modelId, engineType } = selectedModelEntry(modelControl);
     const capabilities = capabilitiesFor(modelId, engineType);
     const options = profiles.buildReasoningEffortOptions(modelId, capabilities);
-    const prior = profiles.normalizeReasoningEffort(select.value);
+    // The requested effort, not the select's value: options still built for
+    // the previous model leave a valid saved effort blank, and normalizing the
+    // blank would save Automatic over it.
+    const prior = profiles.normalizeReasoningEffort(requestedEffort(select, modelControl));
     const normalized = profiles.normalizeReasoningEffortForModel(prior, modelId, capabilities);
     replaceOptions(select, options, normalized);
     const supported = options.length > 1;
@@ -116,16 +131,44 @@
     return normalized;
   }
 
+  function isCataloged(modelId, engineType) {
+    return modelCapabilities.has(capabilityKey(modelId, engineType))
+      || modelCapabilities.has(capabilityKey(modelId));
+  }
+
+  // renderSettings assigns the saved effort to the select; a value with no
+  // matching option leaves it blank, so a stale effort would read as Automatic
+  // and never be saved back. Once the catalog knows the model, the requested
+  // value it carries is the one to normalize. Before that, a blank stays
+  // Automatic so a startup without a catalog cannot erase a valid choice.
+  function requestedEffort(select, modelControl) {
+    const value = String(select?.value || '');
+    if (value) return value;
+    const { modelId, engineType } = selectedModelEntry(modelControl);
+    return modelId && isCataloged(modelId, engineType)
+      ? String(select?.dataset?.requestedEffort || '')
+      : value;
+  }
+
+  // The backend can switch models (e.g. llama-server finishes loading) while
+  // the composer stays on "Use default"; nothing re-fetches the catalog then.
+  // Fetch once per model the catalog has not seen, never in a loop.
+  function refreshForUncatalogedModel(modelControl) {
+    const { modelId, engineType } = selectedModelEntry(modelControl);
+    if (!modelId || isCataloged(modelId, engineType)) return;
+    const key = capabilityKey(modelId, engineType);
+    if (lastUncatalogedRefreshKey === key) return;
+    lastUncatalogedRefreshKey = key;
+    void refreshModelCapabilities();
+  }
+
   function reconcile() {
     reconcileQueued = false;
     if (disposed) return;
     const composerModelControl = document.getElementById('composerModelSelect');
     const composerSelect = document.getElementById('composerEffortSelect');
-    const previous = profiles.normalizeReasoningEffort(composerSelect?.value);
-    const normalized = reconcileSelect(composerSelect, composerModelControl);
-    if (composerSelect && previous !== normalized) {
-      setTimeout(() => composerSelect.dispatchEvent(new Event('change', { bubbles: true })), 0);
-    }
+    refreshForUncatalogedModel(composerModelControl);
+    reconcileSelect(composerSelect, composerModelControl);
   }
 
   function queueReconcile() {

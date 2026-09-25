@@ -426,6 +426,43 @@ test('auxiliary IPC exposes the structured memory status snapshot', async () => 
   assert.deepEqual(await handlers.get('memory:status')({}), expected);
 });
 
+test('memory dismissal IPC forwards canonical-session and legacy General signatures', () => {
+  const calls = [];
+  const handlers = registerMinimalHandlers({
+    backendService: {
+      dismissMemorySuggestion(...args) {
+        calls.push(args);
+      },
+    },
+  });
+
+  handlers.get('memory:dismiss')({}, 'session-alpha', 'fingerprint');
+  handlers.get('memory:dismiss')({}, 'legacy-fingerprint');
+  assert.deepEqual(calls, [
+    ['session-alpha', 'fingerprint'],
+    ['legacy-fingerprint', undefined],
+  ]);
+});
+
+test('memory update and delete IPC forward project identity positionally', async () => {
+  const calls = [];
+  const handlers = registerMinimalHandlers({
+    backendService: {
+      async updateApprovedMemory(...args) { calls.push(['update', ...args]); },
+      async deleteApprovedMemory(...args) { calls.push(['delete', ...args]); },
+    },
+  });
+  const patch = { title: 'Project memory' };
+
+  await handlers.get('memory:update')({}, 7, patch, 'project_garden');
+  await handlers.get('memory:delete')({}, 7, 'project_garden');
+
+  assert.deepEqual(calls, [
+    ['update', 7, patch, 'project_garden'],
+    ['delete', 7, 'project_garden'],
+  ]);
+});
+
 test('setup.saveEndpoint forwards the candidate to the main-owned setup service', async () => {
   const calls = [];
   const expected = {

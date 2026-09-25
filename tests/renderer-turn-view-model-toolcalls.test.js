@@ -424,3 +424,25 @@ test('buildTurnViewModel/toolCalls: generated artifacts normalize and flow into 
   assert.equal(viewModel.artifacts[0].tool_call_id, 'call_art');
 });
 
+
+test('reopening a turn that failed after an approval request settles the call and its card (A4 F7)', () => {
+  const { projectTurn } = require('../renderer/chat/renderer-turn-row-projector');
+  const quiet = { stream_error: '', terminal_status: '', terminal_subcode: '', status: 'complete', parent_stream_id: '' };
+  const user = { ...quiet, id: 'user_stream_f7', role: 'user', content: 'Write a4-five.txt' };
+  const toolUse = { ...quiet, id: 'tool_use_stream_f7', role: 'assistant', kind: 'tool_use', content: '',
+    tool_call: { call_id: 'call_f7', tool_name: 'write_file', parent_stream_id: 'stream_f7',
+      status: 'pending_approval', approval_state: 'pending', input: { path: 'a4-five.txt' } } };
+  const failure = { ...quiet, id: 'assistant_stream_f7', role: 'assistant', streamId: 'stream_f7', content: '',
+    status: 'error', stream_error: 'Decision checkpoint publication failed',
+    terminal_status: 'runtime_error', terminal_subcode: 'CMP-CHAT-0002' };
+  const reopen = (messages) => {
+    const turn = projectTurnTree({ messages: normalizeChatMessages(messages) }).turns[0];
+    const { rows } = projectTurn(turn, {});
+    const stateOf = (kind) => rows.find((row) => row.kind === kind)?.payload?.state;
+    return { toolCall: stateOf('tool_call'), gap: stateOf('approval_gap') };
+  };
+
+  assert.deepEqual(reopen([user, toolUse, failure]), { toolCall: 'interrupted', gap: 'interrupted' });
+  // Still waiting: no failure followed the request, so the card stays answerable.
+  assert.deepEqual(reopen([user, toolUse]), { toolCall: 'awaiting_approval', gap: 'awaiting_approval' });
+});

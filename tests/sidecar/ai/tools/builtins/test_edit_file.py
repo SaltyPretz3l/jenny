@@ -916,6 +916,84 @@ def test_write_file_rejects_existing_binary_file_before_checkpoint(tmp_path: Pat
     assert backups == []
 
 
+def test_edit_file_refuses_change_during_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "notes.txt"
+    target.write_bytes(b"hello world\n")
+    snapshot = _full_read_snapshot(tmp_path, "notes.txt")
+    original_prepare = edit_module._prepare_edit_recovery
+
+    def prepare_with_external_edit(**kwargs: object) -> object:
+        result = original_prepare(**kwargs)
+        target.write_bytes(b"external edit\n")
+        return result
+
+    monkeypatch.setattr(edit_module, "_prepare_edit_recovery", prepare_with_external_edit)
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "notes.txt",
+            "old_string": "world",
+            "new_string": "earth",
+            "expected_read_snapshot": snapshot,
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_IO_FAILED
+    assert "changed after validation" in result.output.lower()
+    assert target.read_bytes() == b"external edit\n"
+
+
+def test_write_file_refuses_target_created_during_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "created-during-recovery.txt"
+    original_materialize = filesystem_module._materialize_write_checkpoint
+
+    def materialize_with_external_create(**kwargs: object) -> object:
+        result = original_materialize(**kwargs)
+        target.write_bytes(b"external create\n")
+        return result
+
+    monkeypatch.setattr(
+        filesystem_module,
+        "_materialize_write_checkpoint",
+        materialize_with_external_create,
+    )
+
+    result = filesystem_module.write_file_tool(
+        {"path": target.name, "content": "tool content\n"},
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_IO_FAILED
+    assert "changed after validation" in result.output.lower()
+    assert target.read_bytes() == b"external create\n"
+
+
+def test_write_file_still_replaces_unchanged_validated_preimage(tmp_path: Path) -> None:
+    target = tmp_path / "stable.txt"
+    target.write_bytes(b"before\n")
+
+    result = filesystem_module.write_file_tool(
+        {
+            "path": target.name,
+            "content": "after\n",
+            "expected_read_snapshot": _full_read_snapshot(tmp_path, target.name),
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is True
+    assert target.read_bytes() == b"after\n"
+
+
 def test_write_file_rejects_existing_oversized_file_before_checkpoint(tmp_path: Path) -> None:
     filesystem_module.configure_filesystem_tools({"tools_max_edit_file_bytes": 8})
     target = tmp_path / "notes.txt"

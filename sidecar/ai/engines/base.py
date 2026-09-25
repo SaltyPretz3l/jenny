@@ -280,8 +280,11 @@ class BaseEngine(ABC):
         response_format: Optional["ResponseFormat"] = None,
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
-    ) -> Generator["StreamChunk", None, "GenerationResult"]:
+    ) -> Generator["StreamChunk | EngineEvent", None, "GenerationResult"]:
         """Yield stream chunks, then return a terminal GenerationResult.
+
+        Engines may also yield ``EngineEvent`` records (e.g. tool-call
+        argument deltas); the routing stream consumes both shapes.
 
         Default implementation wraps ``generate_with_tools()`` as a single
         terminal yield.  Engines override for true token-level streaming.
@@ -331,6 +334,10 @@ class BaseEngine(ABC):
             f"{type(self).__name__} does not support vision input. "
             f"Supported modalities: {self.supported_modalities}"
         )
+
+    def get_inference_budget_context_length(self) -> Optional[int]:
+        """Enforceable provider context bound; catalog estimates do not qualify."""
+        return None
 
     def get_model_context_length(self) -> Optional[int]:
         """

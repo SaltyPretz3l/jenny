@@ -27,20 +27,44 @@ function createUnattendedGuard({
       if (!Number.isFinite(thresholdMinutes) || thresholdMinutes < 1) return;
 
       const backend = getBackendService();
+      const idleSeconds = powerMonitor.getSystemIdleTime();
+      if (!Number.isFinite(idleSeconds) || idleSeconds < thresholdMinutes * 60) return;
+
+      const store = backend?.sessionStore;
+      const records = typeof store?.listSessionRecords === 'function'
+        ? store.listSessionRecords()
+        : (store?.listSessions?.() || []);
+      const autoSessionIds = new Set(records.filter(record => record?.run_mode === 'auto')
+        .map(record => String(record?.id || '').trim()).filter(Boolean));
+      for (const sessionId of autoSessionIds) {
+        try {
+          const result = backend.sessionRuntime?.pausePending?.({
+            sessionId,
+            reason: 'unattended_idle',
+          });
+          if (Number(result?.paused || 0) > 0) {
+            log('INFO', 'unattended_guard.pending_paused', {
+              sessionId,
+              paused: result.paused,
+              idleSeconds,
+              thresholdMinutes,
+              checkedAtMs: now(),
+            });
+          }
+        } catch (error) {
+          log('WARN', 'unattended_guard.pending_pause_failed', {
+            sessionId,
+            message: String(error?.message || error).slice(0, 240),
+          });
+        }
+      }
+
       const activeStreams = backend?.activeStreams;
       if (!activeStreams || typeof activeStreams.has !== 'function') return;
       for (const streamId of pausedStreamIds) {
         if (!activeStreams.has(streamId)) pausedStreamIds.delete(streamId);
       }
       if (activeStreams.size === 0) return;
-
-      const idleSeconds = powerMonitor.getSystemIdleTime();
-      if (!Number.isFinite(idleSeconds) || idleSeconds < thresholdMinutes * 60) return;
-
-      const store = backend.sessionStore;
-      const records = typeof store?.listSessionRecords === 'function'
-        ? store.listSessionRecords()
-        : (store?.listSessions?.() || []);
       for (const streamId of activeStreams.keys()) {
         if (pausedStreamIds.has(streamId)) continue;
         const record = records.find((candidate) => {

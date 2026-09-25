@@ -1,0 +1,102 @@
+{
+  "schema_version": 21,
+  "session": {
+    "id": "session_v21_current",
+    "project_id": "project_general",
+    "title": "Failure retry reasoning v21",
+    "session_type": "chat",
+    "plugin_session": null,
+    "created_at": "2026-09-04T00:00:00.000Z",
+    "updated_at": "2026-09-04T00:00:00.000Z",
+    "session_incarnation": "inc_v21_chat",
+    "turn_generation": 4,
+    "runtime_continuations": { "schema_version": 1, "entries": [] },
+    "failure_retry_reasoning_snapshots": {
+      "user_invalid": {
+        "version": 1,
+        "user_message_id": "user_invalid",
+        "source_assistant_message_id": "assistant_invalid",
+        "source_turn_id": "turn_invalid",
+        "captured_at": "not-a-timestamp",
+        "cap_chars": 48000,
+        "char_count": 7,
+        "truncated": false,
+        "reasoning_entries": [
+          {
+            "id": "invalid_entry",
+            "text": "invalid",
+            "thinking_id": "thinking_invalid",
+            "timestamp": "2026-09-04T00:00:01.000Z"
+          }
+        ]
+      },
+      "user_valid": {
+        "version": 1,
+        "user_message_id": "user_valid",
+        "source_assistant_message_id": "assistant_failed",
+        "source_turn_id": "turn_v21",
+        "captured_at": "2026-09-04T00:00:02.000Z",
+        "cap_chars": 48000,
+        "char_count": 16,
+        "truncated": false,
+        "reasoning_entries": [
+          {
+            "id": "valid_entry",
+            "text": "fixture reasoning",
+            "thinking_id": "thinking_valid",
+            "timestamp": "2026-09-04T00:00:02.000Z"
+          }
+        ]
+      },
+      "user_capped": {
+        "version": 1,
+        "user_message_id": "user_capped",
+        "source_assistant_message_id": "assistant_capped",
+        "source_turn_id": "turn_capped",
+        "captured_at": "2026-09-04T00:00:03.000Z",
+        "cap_chars": 8,
+        "char_count": 12,
+        "truncated": false,
+        "reasoning_entries": [
+          {
+            "id": "capped_entry",
+            "text": "0123456789ab",
+            "thinking_id": "thinking_capped",
+            "timestamp": "2026-09-04T00:00:03.000Z"
+          }
+        ]
+      }
+    },
+    "messages": [
+      {
+        "id": "user_valid",
+        "role": "user",
+        "content": "Keep this v21 prompt",
+        "status": "complete",
+        "timestamp": "2026-09-04T00:00:00.000Z"
+      },
+      {
+        "id": "assistant_failed",
+        "role": "assistant",
+        "content": "Keep this failed reply",
+        "status": "runtime_error",
+        "parent_stream_id": "turn_v21",
+        "timestamp": "2026-09-04T00:00:01.000Z"
+      }
+    ],
+    "message_count": 2,
+    "message_seq_counter": 2,
+    "turn_event_log_version": 4,
+    "turn_event_seq_counter": 1,
+    "turn_events": [
+      {
+        "event_id": "turn_v21:user_bubble:0",
+        "turn_id": "turn_v21",
+        "kind": "user_bubble",
+        "primary_message_id": "user_valid",
+        "source_message_ids": ["user_valid"],
+        "payload": { "text": "Keep this v21 prompt" }
+      }
+    ]
+  }
+}

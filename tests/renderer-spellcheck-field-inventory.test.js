@@ -44,6 +44,10 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
     "textField:id:'homeScratchpadInput'",
     "textField:id:'homeScratchpadRename'",
   ],
+  // The Workspace DOCX editor surface is document prose.
+  'renderer/features/renderer-ide-docx-host.js': [
+    'runtime:container.setAttribute(spellcheck,true)',
+  ],
   'renderer/features/renderer-ide-map-overview.js': [
     "textField:id:'ide-map-overview-question'",
   ],

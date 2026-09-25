@@ -16,6 +16,7 @@ const {
 const {
   normalizeBranchOrigin,
 } = require('./session-store-migrations');
+const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
 const {
   PERSIST_ERROR_CODES,
 } = require('./error-codes');
@@ -207,6 +208,7 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
     exported_at: new Date().toISOString(),
     session: {
       title: session.title,
+      project_id: session.project_id,
       created_at: session.created_at,
       updated_at: session.updated_at,
       preferred_model: session.preferred_model,
@@ -295,6 +297,10 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
   const source = parsed.session;
   const requestedSessionId = String(options.restoredSessionId || '').trim();
   const preserveIdentity = options.trustedArchive === true && requestedSessionId.length > 0;
+  const trustedProjectRemap = normalizeProjectId(options.projectIdRemap);
+  if (options.projectIdRemap !== undefined && !trustedProjectRemap) {
+    throw createImportError('format_mismatch', 'Session import project remap is invalid.');
+  }
   if (preserveIdentity && !/^sess_[A-Za-z0-9_-]{1,154}$/.test(requestedSessionId)) {
     throw createImportError('format_mismatch', 'Session restore metadata contains an invalid identity.');
   }
@@ -368,6 +374,9 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
       title: preserveIdentity
         ? String(source.title || 'Restored Chat').trim()
         : `${String(source.title || 'Imported Chat').trim()} (imported)`,
+      project_id: trustedProjectRemap
+        || (preserveIdentity ? normalizeProjectId(source.project_id) : '')
+        || GENERAL_PROJECT_ID,
       preferred_model: source.preferred_model || '',
       reasoning_effort: source.reasoning_effort || 'default',
       lockdown: source.lockdown === true,

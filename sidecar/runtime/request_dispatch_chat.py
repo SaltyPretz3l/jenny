@@ -1,6 +1,6 @@
 """The chat.send request path for the request-dispatch runtime hub.
 
-Owns ``process_chat_send_request`` — the full chat.send orchestration: accept-version
+Owns ``process_chat_send_request`` -- the full chat.send orchestration: accept-version
 + semantic validation, workspace-root preflight, the
 pre-approval build, the interactive approval round-trip, and the approved resume.
 
@@ -45,6 +45,7 @@ from sidecar.ai.routing.loop_events import (
     PhaseStartedEvent,
 )
 from sidecar.ai.routing.plan_mode_transition import context_with_plan_decision
+from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 from sidecar.ai.tools.workspace_retention import touch_workspace_active_use
 from sidecar.protocol import CHAT_SEND_METHOD
 from sidecar.runtime.approval import ApprovalResolution
@@ -62,7 +63,11 @@ from sidecar.runtime.chat_tool_observations import (
 )
 from sidecar.runtime.diagnostics import diagnostics_context
 from sidecar.runtime.multiplexer import TurnCancellationHandle
-from sidecar.runtime.outcomes import ProcessOutcome, chat_error_outcome
+from sidecar.runtime.outcomes import (
+    ProcessOutcome,
+    chat_error_outcome,
+    continuation_paused_outcome,
+)
 from sidecar.runtime.request_dispatch_chat_support import (
     _approval_terminal_log_fields,
     _build_plugin_workflow_response,
@@ -86,6 +91,7 @@ from sidecar.runtime.turn_state import (
     TURN_STATE_RUNTIME_ERROR,
     TURN_STATE_TIMEOUT,
     build_turn_result,
+    current_live_run_mode_state,
 )
 
 
@@ -106,7 +112,26 @@ PROTOCOL_VERSION_MISMATCH = CMP_PROTO_VERSION_MISMATCH
 # server.py's independent copy) and is never a monkeypatch target, so binding it at
 # module load is byte-identical.
 TOOL_APPROVAL_TIMEOUT_SECONDS = 600.0
+UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS = 4 * 60 * 60.0
 MAX_REASON_CODE_LENGTH = 64
+
+
+def _pause_outcome_or_failure(
+    *, initialized: bool, message_id: Any, params: Any,
+    error: ToolLoopSuspended, logger: logging.Logger,
+) -> ProcessOutcome:
+    import sidecar.runtime.request_dispatch as hub
+
+    try:
+        return continuation_paused_outcome(
+            initialized=initialized, message_id=message_id, params=params,
+            error=error,
+        )
+    except ValueError:
+        return hub._chat_unexpected_failure_outcome(
+            initialized=initialized, message_id=message_id, params=params,
+            message="chat.send rejected an invalid continuation suspension", logger=logger,
+        )
 
 
 def _effective_approval_wait_timeout(
@@ -117,6 +142,9 @@ def _effective_approval_wait_timeout(
     """Return the human-interaction window, independent of model work time."""
 
     del approval_plan
+    live_run_mode = current_live_run_mode_state()
+    if live_run_mode is not None and live_run_mode.is_paused_unattended():
+        return UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS
     return max(0.0, float(configured_timeout_seconds))
 
 
@@ -319,7 +347,7 @@ def process_chat_send_request(
     #
     # Tools that require a workspace root are ALREADY dropped from the model's tool
     # list when no root is configured (sidecar/ai/tools/assembly.py), so a turn with
-    # tools enabled but no root degrades gracefully on its own — the model answers
+    # tools enabled but no root degrades gracefully on its own -- the model answers
     # without those tools. We therefore do NOT hard-fail the common case (default
     # config, no root yet); a fresh "Skip setup" first message must still get an
     # answer, not a config error. The only case worth failing fast is when the
@@ -369,8 +397,8 @@ def process_chat_send_request(
         # assembly silently drops every workspace-requiring tool from the model's list
         # (sidecar/ai/tools/assembly.py -> WORKSPACE_REQUIRED_REASON), so file/terminal
         # tools just do nothing this turn with no trace of why. Name the dropped tools
-        # — mode policy, config flags, and the request's enabled/disabled prefs applied,
-        # i.e. exactly what the assembly drops — and emit a structured, informational
+        # -- mode policy, config flags, and the request's enabled/disabled prefs applied,
+        # i.e. exactly what the assembly drops -- and emit a structured, informational
         # telemetry event so an automation driver or a user reading the Activity Log can
         # tell WHY. Building the catalog here is cheap (the tool manifest is cached) and
         # only runs while no root is configured. The paired user-facing remediation is
@@ -470,7 +498,7 @@ def process_chat_send_request(
                     message_id=message_id,
                     params=params,
                     # INVARIANT (W4.2, 2026-06-10): when interactive approval is on,
-                    # the FIRST pass always runs with approvals_pre_granted=False —
+                    # the FIRST pass always runs with approvals_pre_granted=False --
                     # side-effecting tools detour through ApprovalPlanCache and the
                     # approval/resume round-trip (approvals_pre_granted=True only on
                     # the approved resume below); read-only tools run inline as
@@ -496,6 +524,11 @@ def process_chat_send_request(
                         else ""
                     ),
                 )
+        except ToolLoopSuspended as error:
+            return _pause_outcome_or_failure(
+                initialized=initialized, message_id=message_id, params=params,
+                error=error, logger=logger,
+            )
         except ChatRequestError as error:
             return chat_error_outcome(
                 initialized=initialized,
@@ -621,23 +654,94 @@ def process_chat_send_request(
                 session_id=session_id,
                 canonical_seq_state=canonical_seq_state,
             )
+            from sidecar.runtime.decision_checkpoint import (  # noqa: PLC0415
+                prepare_approval_decision,
+            )
+
+            decision_snapshot = (
+                prepare_approval_decision(approval_plan, config=brain_container.stack.config)
+                if callable(approval_response_waiter_factory) else None
+            )
+            decision_request = dict(chat_response.approval_request)
+            if decision_snapshot is not None:
+                decision_request["runtime_decision"] = decision_snapshot.decision()
+
+            def _extra_approval_wait_seconds(
+                initial_timeout: float = approval_wait_timeout,
+                cached_plan: Any = approval_plan,
+                cached_call_id: str = call_id,
+            ) -> float:
+                live_run_mode = current_live_run_mode_state()
+                if (
+                    initial_timeout >= UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS
+                    or live_run_mode is None
+                    or not live_run_mode.is_paused_unattended()
+                ):
+                    return 0.0
+                if cached_plan is not None and cached_call_id:
+                    _rd_hub._APPROVAL_PLAN_CACHE.put(
+                        cached_plan,
+                        ttl_seconds=UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS,
+                    )
+                return UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS - initial_timeout
+
             approval_wait_started_at = monotonic()
             try:
                 raw_approval_resolution = _rd_hub.request_tool_approval(
-                    chat_response.approval_request,
+                    decision_request,
                     write_message=write_message,
                     read_message=read_approval_response,
                     response_reader_factory=approval_response_waiter_factory,
                     timeout_seconds=approval_wait_timeout,
                     logger=logger,
+                    extra_wait_seconds=_extra_approval_wait_seconds,
                     cancel_handle=cancel_handle,
                 )
             finally:
                 approval_wait_seconds = max(0.0, monotonic() - approval_wait_started_at)
+            if (isinstance(raw_approval_resolution, ApprovalResolution)
+                    and raw_approval_resolution.status.startswith("runtime_pause")):
+                _rd_hub._APPROVAL_PLAN_CACHE.evict(request_id, call_id)
+                try:
+                    if decision_snapshot is None:
+                        raise ValueError("decision_snapshot_unavailable")
+                    decision_snapshot.suspend(
+                        raw_approval_resolution.runtime_decision_pause,
+                        write_message=write_message,
+                        response_reader_factory=approval_response_waiter_factory,
+                        cancel_handle=cancel_handle,
+                    )
+                except ToolLoopSuspended as error:
+                    return _pause_outcome_or_failure(
+                        initialized=initialized, message_id=message_id, params=params,
+                        error=error, logger=logger,
+                    )
+                except Exception:  # noqa: BLE001 - invalidated consent cannot become denial.
+                    return _rd_hub._chat_unexpected_failure_outcome(
+                        initialized=initialized, message_id=message_id, params=params,
+                        message="Decision checkpoint publication failed", logger=logger,
+                    )
             approval_resolution = _normalize_approval_resolution(raw_approval_resolution)
+            if approval_resolution.status in {
+                "approved",
+                "approved_auto",
+                "accepted",
+                "denied",
+                "rejected",
+            }:
+                live_run_mode = current_live_run_mode_state()
+                if live_run_mode is not None:
+                    approval_mode, read_only = live_run_mode.snapshot()
+                    live_run_mode.update(
+                        approval_mode=approval_mode,
+                        read_only=read_only,
+                        paused_unattended=False,
+                    )
+                    if approval_resolution.approved:
+                        live_run_mode.reset_auto_approvals()
             if (
                 approval_tool_name != "exit_plan_mode"
-                and approval_resolution.decision in {"approved_auto", "rejected"}
+                and approval_resolution.decision in {"approved_auto", "accepted", "rejected"}
             ):
                 approval_resolution = ApprovalResolution(
                     approved=False,
@@ -790,6 +894,11 @@ def process_chat_send_request(
                         if isinstance(params, dict)
                         else ""
                     ),
+                )
+            except ToolLoopSuspended as error:
+                return _pause_outcome_or_failure(
+                    initialized=initialized, message_id=message_id, params=params,
+                    error=error, logger=logger,
                 )
             except ChatRequestError as error:
                 return chat_error_outcome(

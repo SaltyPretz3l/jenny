@@ -50,6 +50,14 @@ _BOOTSTRAP_DEADLINE: ContextVar[float | None] = ContextVar(
 )
 
 
+def managed_python_argv(python: str | os.PathLike[str]) -> list[str]:
+    """Disable the user site kept by embeddable ``._pth`` ``import site``.
+
+    ``-s`` gives bootstrap, validation, and the sandbox the same ``sys.path``.
+    """
+    return [str(python), "-s"]
+
+
 @contextmanager
 def bootstrap_deadline(deadline_monotonic: float | None) -> Iterator[None]:
     """Cap every ``run`` inside the block at the time left before the deadline.

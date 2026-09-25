@@ -3,7 +3,15 @@
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 
 const LIMITS = Object.freeze({ title: 120, summary: 1200, steps: 20, step: 300, notes: 4000, verification: 1200 });
-const DECISIONS = new Set(['approved', 'approved_auto', 'rejected']);
+// Every decision the plan card can send. Approval normalizers deny anything
+// outside this list: an unknown decision must never fall through to execute.
+const PLAN_DECISIONS = Object.freeze(['approved', 'approved_auto', 'accepted', 'rejected']);
+const DECISIONS = new Set(PLAN_DECISIONS);
+const ACCEPTED_CONTENT = 'Plan accepted. The user does not want it built yet. Reply in one or two short '
+  + "sentences confirming you'll hold, then stop. Do not call tools.";
+const REJECTED_CONTENT = 'The user did not approve this plan and chose Keep planning. Plan Mode stays on. '
+  + 'Revise the plan as the user asks, then submit it again with exit_plan_mode.';
+const NO_FEEDBACK = '<no feedback given>';
 const ELLIPSIS = '…';
 
 // Size limits protect the context budget and the renderer, and truncation
@@ -37,6 +45,17 @@ function normalizePlan(input) {
   return { title, summary, steps, notes, verification };
 }
 
+function renderEditedPlan(plan) {
+  const steps = plan.steps
+    .filter((step) => step)
+    .map((step, index) => `${index + 1}. ${step}`);
+  return [
+    'The user edited your proposed plan before deciding. This version replaces the plan in your exit_plan_mode call; follow it, including any exact wording it asks for.',
+    `Title: ${plan.title}`,
+    ...steps,
+  ].join('\n');
+}
+
 function failure(content, errorCode = TOOL_ERROR_CODES.EXECUTION_FAILED) {
   return {
     content,
@@ -49,7 +68,7 @@ function failure(content, errorCode = TOOL_ERROR_CODES.EXECUTION_FAILED) {
 
 module.exports = {
   name: 'exit_plan_mode',
-  description: 'Submit the completed implementation plan for review and, when approved, leave Plan Mode and continue execution in the same turn.',
+  description: 'Submit the completed implementation plan for review and, when approved, leave Plan Mode and continue execution in the same turn. The user may instead accept the plan without building it; then reply briefly and stop.',
   category: 'builtin',
   readOnly: true,
   sideEffecting: false,
@@ -70,6 +89,7 @@ module.exports = {
       : null;
     const plan = editedPlan || originalPlan;
     const planEdited = Boolean(editedPlan);
+    const editedPlanContent = planEdited ? `\n\n${renderEditedPlan(plan)}` : '';
     if (context.planMode !== true || context.readOnly !== true) {
       return failure('exit_plan_mode is only available while Plan Mode is active.', TOOL_ERROR_CODES.DISABLED);
     }
@@ -79,7 +99,7 @@ module.exports = {
       ? context.backendService._planDocumentsByStream.get(streamId)
       : null;
     if (activeProposal && String(activeProposal.callId || '') !== callId
-      && ['pending', 'approved', 'approved_auto'].includes(String(activeProposal.state || ''))) {
+      && ['pending', 'approved', 'approved_auto', 'accepted'].includes(String(activeProposal.state || ''))) {
       return failure('A plan proposal is already pending or approved for this turn.', TOOL_ERROR_CODES.DISABLED);
     }
     const decision = String(context.planDecision || '').trim();
@@ -87,14 +107,32 @@ module.exports = {
     const feedback = boundedString(context.planFeedback, 800) ?? '';
     if (decision === 'rejected') {
       return {
-        content: feedback || '<no feedback given>',
+        content: `${REJECTED_CONTENT}\n\nUser feedback: ${feedback || NO_FEEDBACK}${editedPlanContent}`,
         summary: 'Plan needs revision',
         isError: false,
         metadata: {
           result_kind: 'plan_mode_transition',
           plan_decision: decision,
-          plan_feedback: feedback || '<no feedback given>',
+          plan_feedback: feedback || NO_FEEDBACK,
           plan_mode_cleared: false,
+          plan,
+          ...(planEdited ? { plan_edited: true } : {}),
+        },
+      };
+    }
+    if (decision === 'accepted') {
+      // Accepted, not built: Plan Mode and run mode stay untouched and no
+      // execution authority is prepared. The sidecar allows one toolless reply.
+      return {
+        content: `${ACCEPTED_CONTENT}${editedPlanContent}`,
+        summary: 'Plan accepted',
+        isError: false,
+        metadata: {
+          result_kind: 'plan_mode_transition',
+          plan_decision: decision,
+          plan_feedback: feedback,
+          plan_mode_cleared: false,
+          turn_disposition: 'final_reply',
           plan,
           ...(planEdited ? { plan_edited: true } : {}),
         },
@@ -105,31 +143,32 @@ module.exports = {
     if (!sessionId || !service || typeof service.setSessionPreferences !== 'function') {
       return failure('Plan Mode could not be cleared because session persistence is unavailable.');
     }
+    let runModeRestored;
     try {
+      const commitAuthority = context.executionAuthority
+        ? service.sessionExecutionAuthority.preparePlanExit(context.executionAuthority, {
+          operationId: callId, arguments: input, decision,
+        }) : null;
       const preferencePatch = decision === 'approved_auto'
         ? { plan_mode: false, run_mode: 'auto' }
         : { plan_mode: false };
       const updated = await service.setSessionPreferences(sessionId, preferencePatch);
       if (!updated) return failure('Plan Mode could not be cleared because the session write was refused.');
+      // Use one persisted projection for both application authority and Python.
+      // A read-back failure degrades both owners to Ask together.
+      let restoredSession;
+      try { restoredSession = await Promise.resolve(service.sessionStore?.getSession?.(sessionId)); }
+      catch (_error) { restoredSession = null; }
+      runModeRestored = ['ask', 'auto'].includes(restoredSession?.run_mode)
+        ? restoredSession.run_mode : 'ask';
+      commitAuthority?.(runModeRestored);
     } catch (_error) {
       return failure('Plan Mode could not be cleared because the session write failed.');
     }
-    // The session write has already succeeded; a read-back miss must not fail
-    // the exit (that would strand the store out of Plan while telling the model
-    // the exit failed). Degrade to 'ask' — the renderer's own fallback direction.
-    let restoredSession;
-    try {
-      restoredSession = await Promise.resolve(service.sessionStore?.getSession?.(sessionId));
-    } catch (_error) {
-      restoredSession = null;
-    }
-    const runModeRestored = ['ask', 'auto'].includes(restoredSession?.run_mode)
-      ? restoredSession.run_mode
-      : 'ask';
     return {
-      content: decision === 'approved_auto'
+      content: `${decision === 'approved_auto'
         ? 'Plan approved. Continue building without ordinary approval prompts for the remainder of this run.'
-        : 'Plan approved. Continue building now under the normal approval policy.',
+        : 'Plan approved. Continue building now under the normal approval policy.'}${editedPlanContent}`,
       summary: 'Plan approved',
       isError: false,
       metadata: {
@@ -146,4 +185,5 @@ module.exports = {
 
   normalizePlan,
   LIMITS,
+  PLAN_DECISIONS,
 };

@@ -1,8 +1,8 @@
 const os = require('os');
-
 const { prepareAttachmentEntries } = require('../attachment-service');
 const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');
 const { registerLlamaServerIpcHandlers } = require('./llama-server-ipc-handlers');
+const { registerKnowledgeIpcHandlers } = require('./knowledge-ipc-handlers');
 const { getCachedOrGenerateSuggestions } = require('../backend/backend-suggestions');
 const { generateCommitMessage } = require('../backend/backend-commit');
 const {
@@ -44,6 +44,7 @@ const { WorkspacePtyService } = require('../workspace-pty-service');
 const { WorkspaceRunTaskService } = require('../workspace-run-task-service');
 const { createWorkspaceTestRunnerWiring } = require('./workspace-test-runner-wiring');
 const { getWorkspaceRootStatePayload } = require('../workspace-root-ipc');
+const { prepareProjectTarget } = require('../projects/workspace-project-switch');
 const { createWorkspaceRootRuntime } = require('../workspace-root-runtime');
 const {
   WorkspaceRootExternalTransitionBroker,
@@ -213,49 +214,16 @@ function persistAgentName(shellConfigService, value, logEvent) {
   }
 }
 
-function registerGuidanceIpcHandlers(ipcMainLike, skillService, tipService) {
+function registerGuidanceIpcHandlers(
+  ipcMainLike, skillService, tipService, { authorization = {} } = {}
+) {
   registerIpcInvokeHandlers(ipcMainLike, {
     'skills.getState': () => skillService.getState(),
     'skills.updateSettings': (_, patch) => skillService.updateSettings(patch),
     'skills.openScopeFolder': (_, scope) => skillService.openScopeFolder(scope),
     'tips.getState': () => tipService.getState(),
     'tips.updateSettings': (_, patch) => tipService.updateSettings(patch),
-  });
-}
-
-// knowledge_layer (default-off, internal): register the knowledge.* invoke
-// handlers ONLY when the flag is on. Flag-off leaves the channels unregistered
-// so a renderer invoke fails as an unknown channel (the intended byte-identical
-// -off posture); the service itself also stays inert regardless.
-function registerKnowledgeIpcHandlers(
-  ipcMainLike,
-  knowledgeService,
-  { enabled = false, dialog = null, getOwnerWindow = () => null } = {},
-) {
-  if (!enabled || !knowledgeService) {
-    return [];
-  }
-  return registerIpcInvokeHandlers(ipcMainLike, {
-    'knowledge.getState': () => knowledgeService.getStateSnapshot(),
-    'knowledge.addFolder': (_, payload) => knowledgeService.addFolder(payload || {}),
-    'knowledge.removeFolder': (_, payload) => knowledgeService.removeFolder(payload || {}),
-    // Native directory picker → addFolder in one round-trip (mirrors
-    // chooseWorkspaceRoot; the picked path still runs the full addFolder
-    // validation: realpath, sensitive-path block, is-directory, dedupe, cap).
-    'knowledge.chooseFolder': async () => {
-      if (!dialog || typeof dialog.showOpenDialog !== 'function') {
-        return { ok: false, reason: 'picker_unavailable' };
-      }
-      const result = await dialog.showOpenDialog(getOwnerWindow(), {
-        title: t('main.dialog.knowledge.addFolder', 'Add Knowledge Folder'),
-        properties: ['openDirectory'],
-      });
-      if (result.canceled || !Array.isArray(result.filePaths) || !result.filePaths[0]) {
-        return { ok: false, reason: 'canceled' };
-      }
-      return knowledgeService.addFolder({ path: result.filePaths[0] });
-    },
-  });
+  }, authorization);
 }
 
 function registerFeatureIpcHandlers(
@@ -265,6 +233,7 @@ function registerFeatureIpcHandlers(
     updateSettings = () => ({}),
     getWebSearchSecretStatus = null,
     setWebSearchSecret = null,
+    authorization = {},
   } = {}
 ) {
   registerFeatureIpcHandlersWithDeps({
@@ -273,6 +242,7 @@ function registerFeatureIpcHandlers(
     updateSettings,
     getWebSearchSecretStatus,
     setWebSearchSecret,
+    authorization,
   });
 }
 
@@ -341,6 +311,7 @@ function registerMainIpcHandlers({
   versionedTempRecoveryStarter = startVersionedWorkspaceTempRecovery,
   spellcheckSessionRef = null,
 } = {}) {
+  require('./ipc-handler-timing').installIpcHandlerTiming(ipcMain, { log });
   const modelTuningService = new ModelTuningService({
     shellConfigService,
     backendService,
@@ -358,8 +329,11 @@ function registerMainIpcHandlers({
       : createTrustedSenderAuthorizer({ getMainWindow, log }),
     unauthorizedResult: unauthorizedIpcResult,
   };
-  require('./command-sandbox-ipc-registration').registerCommandSandboxIpc(ipcMain, {
-    service: backendService.commandSandbox, authorization: workspaceAuthorization,
+  require('./tools-settings-ipc-registration').registerToolsSettingsIpc(ipcMain, {
+    backendService, authorization: workspaceAuthorization,
+  });
+  if (backendService.projectApplicationService) require('./session-runtime-ipc-registration').registerSessionRuntimeIpcHandlers(ipcMain, {
+    applicationService: backendService.projectApplicationService, runtimeApplicationService: backendService.runtimeApplicationService, authorization: workspaceAuthorization,
   });
   registerWorkspaceIpcHandlers(ipcMain, shellConfigService, {
     authorization: workspaceAuthorization,
@@ -460,12 +434,29 @@ function registerMainIpcHandlers({
   const workspaceTestRunnerService = createWorkspaceTestRunnerWiring({
     app,
     shellConfigService,
+    resourceAdmissionProvider: () => ({
+      broker: backendService.sessionRuntime?.resourceBroker,
+      pathResolver: backendService.sessionRuntime?.pathResolver,
+    }),
+    sidecarLaunchSpecProvider: () => {
+      const manager = backendService.sidecarManager;
+      const packaged = manager?.packagedSidecarLaunch;
+      const packagedLaunchPending = !packaged && typeof manager?._resolvePackagedLaunch === 'function';
+      if (!manager || packagedLaunchPending || (packaged && packaged.ok !== true)) return null;
+      return {
+        hostMode: backendService.hostMode,
+        launchCommand: packaged?.ok === true ? packaged.launchCommand : manager?.launchCommand,
+        launchArgs: packaged?.ok === true ? packaged.launchArgs : manager?.launchArgs || ['-m', 'sidecar'],
+        cwd: manager.repoRoot,
+      };
+    },
     featureFlagProvider: () => backendService.featureFlags,
     // S13: live run-state push to the Home widget (workspaceTestRunner.onStateChanged).
     sendBridgeEvent,
     log,
   });
   registerWorkspaceTestRunnerIpcHandlers(ipcMain, workspaceTestRunnerService, workspaceAuthorization);
+  backendService.workspaceTestRunnerService = workspaceTestRunnerService;
   // The model-facing `verify` tool runs the user's own saved Test Runner
   // configurations through this same service. It is created here, after
   // runtime-service-composition built the tool executor, so it is attached
@@ -544,6 +535,8 @@ function registerMainIpcHandlers({
   }
   versionedWorkspaceFileService = new VersionedWorkspaceFileService({
     rootContext: workspaceRootCoordinator,
+    resourceAdmissionProvider: () => ({ broker: backendService.sessionRuntime?.resourceBroker,
+      pathResolver: backendService.sessionRuntime?.pathResolver }),
     writeObserver: workspaceIdeWatcher.writeObserver,
     logger: log,
   });
@@ -560,6 +553,10 @@ function registerMainIpcHandlers({
     captureContext: () => workspaceRootCoordinator.captureContext(),
     prepareChoose: () => workspaceRootCoordinator.prepareChoose(),
     prepareClear: () => workspaceRootCoordinator.prepareClear(),
+    // Switch project: a project id from the renderer, the path from the store.
+    prepareProject: (payload) => prepareProjectTarget({
+      projectService: backendService.projectService, coordinator: workspaceRootCoordinator, payload,
+    }),
     commit: (payload) => workspaceRootCoordinator.commit(payload),
     cancel: (payload) => workspaceRootCoordinator.cancel(payload),
     respondExternalTransition: (payload) => workspaceRootExternalTransitionBroker.respond(payload),
@@ -591,11 +588,15 @@ function registerMainIpcHandlers({
     workspacePtyService,
     log,
   });
-  registerGuidanceIpcHandlers(ipcMain, skillsService, tipsService);
+  registerGuidanceIpcHandlers(
+    ipcMain, skillsService, tipsService, { authorization: workspaceAuthorization }
+  );
   registerKnowledgeIpcHandlers(ipcMain, knowledgeService, {
     enabled: backendService?.featureFlags?.knowledge_layer === true,
     dialog,
     getOwnerWindow: getMainWindow,
+    projectAuthority: backendService?.projectAuthority || null,
+    authorization: workspaceAuthorization,
   });
   registerOllamaTrayRemediationIpcHandlers(ipcMain, {
     backendService,
@@ -603,7 +604,7 @@ function registerMainIpcHandlers({
     enabled: backendService?.featureFlags?.ollama_tray_remediation === true,
   });
   registerLlamaServerIpcHandlers(ipcMain, {
-    getManager: getLlamaServerManager,
+    getManager: getLlamaServerManager, authorization: workspaceAuthorization,
     userDataPath: app.getPath('userData'),
     repoRoot: processRef.cwd(),
     getMainWindow,
@@ -670,6 +671,7 @@ function registerMainIpcHandlers({
     updateSettings: (patch) => applyFeatureSettingsPatch(patch),
     getWebSearchSecretStatus: () => buildWebSearchSecretStatus({ backendService }),
     setWebSearchSecret: (payload) => applyWebSearchSecret({ backendService, payload }),
+    authorization: workspaceAuthorization,
   });
   try {
     let sessionRef = spellcheckSessionRef;
@@ -803,7 +805,7 @@ function registerMainIpcHandlers({
       const model = String((payload && payload.model) || '').trim();
       // Ollama tags are case-insensitive and a bare name means `:latest`, so
       // the loaded model ("gemma3") must match its list id ("gemma3:latest")
-      // or the guard is defeatable. Mirrors renderer-model-library.js.
+      // or the guard is defeatable. Mirrors renderer-model-library-format-utils.js.
       const canonicalTag = (value) => {
         const tag = String(value || '').trim().toLowerCase();
         if (!tag) return '';
@@ -879,7 +881,7 @@ function registerMainIpcHandlers({
     'memory.contextFiles.getState': () => personalityWorkspace.getNotesState(),
     'memory.contextFiles.writeFile': (_, payload) => personalityWorkspace.writeNotes(payload),
     'memory.contextFiles.resetFile': () => personalityWorkspace.resetNotes(),
-  });
+  }, workspaceAuthorization);
 
   const { registerSaveFileHandler } = require('../save-file-handler');
   registerSaveFileHandler({
@@ -888,6 +890,7 @@ function registerMainIpcHandlers({
     getMainWindow,
     getProtectedRoots: () => [app.getPath('userData')],
     log,
+    authorization: workspaceAuthorization,
   });
 
   const dataLifecycleRuntime = require('./data-lifecycle-ipc-registration').registerDataLifecycleRuntime(ipcMain, {
@@ -979,9 +982,6 @@ function registerMainIpcHandlers({
     setOverlayRef(nextOverlayRef);
   });
 
-  // Surface the terminal child-process services so the caller can dispose them
-  // inside the awaited shutdown sequence (see the note by registerWorkspacePty-
-  // IpcHandlers above — disposal moved off the old will-quit hook).
   return {
     workspaceIdeService,
     workspaceFileMapService,

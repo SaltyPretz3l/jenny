@@ -4,6 +4,12 @@ const http = require('node:http');
 
 const CALLBACK_PATH = '/plugin-oauth/callback';
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
+const IGNORED_CALLBACK_FAILURES = new Set([
+  'oauth_callback_invalid',
+  'oauth_state_mismatch',
+  'oauth_code_invalid',
+  'oauth_issuer_mismatch',
+]);
 
 function failure(reason) {
   return { ok: false, reason, retryable: false };
@@ -35,7 +41,6 @@ function createLoopbackAuthorization({ oauthFlowService, openExternal,
         response.end('Authorization callback already handled.');
         return;
       }
-      callbackStarted = true;
       const address = server.address();
       const callbackUrl = `http://127.0.0.1:${address.port}${request.url}`;
       let result;
@@ -43,10 +48,13 @@ function createLoopbackAuthorization({ oauthFlowService, openExternal,
         result = await oauthFlowService.completeAuthorization({
           flow_id: settleCallback.flowId,
           callback_url: callbackUrl,
+          on_consumed: () => { callbackStarted = true; },
         });
       } catch (_error) {
         result = failure('oauth_callback_failed');
       }
+      const ignored = !callbackStarted && !result.ok
+        && IGNORED_CALLBACK_FAILURES.has(result.reason);
       response.writeHead(result.ok ? 200 : 400, {
         'content-type': 'text/plain; charset=utf-8',
         'cache-control': 'no-store',
@@ -54,7 +62,7 @@ function createLoopbackAuthorization({ oauthFlowService, openExternal,
       response.end(result.ok
         ? 'Jenny authorization complete. You can close this window.'
         : 'Jenny authorization failed. Return to Jenny and try again.');
-      settleCallback.close();
+      if (!ignored) settleCallback.close();
     });
     const close = () => {
       if (closed) return;

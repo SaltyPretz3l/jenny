@@ -18,6 +18,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_RICH_FILES_TOO_LARGE,
     CMP_TOOL_RICH_FILES_UNSUPPORTED,
 )
+from sidecar.ai.tools.builtins import file_state as file_state_module
 from sidecar.ai.tools.builtins.rich_files import (
     RichFileSource,
     RichInspectFailure,
@@ -27,6 +28,7 @@ from sidecar.ai.tools.builtins.rich_files import (
     rich_inspect_result_to_tool_result,
     validate_rich_file_source,
 )
+from sidecar.ai.tools.builtins.rich_files import base as rich_base_module
 from sidecar.ai.tools.builtins.rich_files.base import (
     MAX_RICH_INSPECT_OUTPUT_CHARS,
     build_dependency_missing_result,
@@ -56,6 +58,32 @@ def test_validate_returns_source_with_sha256_and_relative_posix(
     assert source.mime_type == "application/pdf"
     assert source.size_bytes == target.stat().st_size
     assert len(source.sha256) == 64  # hex digest length
+
+
+def test_validate_routes_hash_read_through_authorized_opener(
+    workspace: WorkspaceGuard,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "doc.pdf"
+    target.write_bytes(b"%PDF-1.4\n%fake content\n")
+    authorized_roots: list[Path | None] = []
+    original = file_state_module.open_regular_file
+
+    def _spy(path: Path, mode: str = "rb", *, authorized_root: Path | None = None, **kwargs):
+        authorized_roots.append(authorized_root)
+        return original(path, mode, authorized_root=authorized_root, **kwargs)
+
+    monkeypatch.setattr(rich_base_module, "open_regular_file", _spy)
+
+    validate_rich_file_source(
+        requested_path="doc.pdf",
+        workspace=workspace,
+        adapter="pdf",
+        expected_mime_prefix="application/pdf",
+    )
+
+    assert authorized_roots == [tmp_path.resolve()]
 
 
 def test_validate_uses_posix_separator_in_subdirectories(

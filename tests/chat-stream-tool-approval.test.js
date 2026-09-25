@@ -32,10 +32,125 @@ function findPendingApproval(pendingToolApprovals, { callId = '', streamId = '' 
 function loadToolHandlingWithMockedTimers() {
   const modulePath = require.resolve('../services/backend/chat-stream-tool-handling');
   delete require.cache[modulePath];
+  delete require.cache[require.resolve('../services/backend/chat-stream-tool-approval')];
   const loaded = require(modulePath);
   delete require.cache[modulePath];
   return loaded;
 }
+
+async function recordApprovalTimeoutDelay(t, unattendedPauseRequested) {
+  const delays = [];
+  t.mock.method(global, 'setTimeout', (_callback, delay) => {
+    delays.push(delay);
+    return { unref() {} };
+  });
+  t.mock.method(global, 'clearTimeout', () => {});
+  const { waitForToolApproval: waitWithRecordedTimer } = loadToolHandlingWithMockedTimers();
+  const mockService = {
+    sessionStore: {
+      appendMessage() {},
+      updateMessage() {},
+    },
+    emit() {},
+    pendingToolApprovals: new Map(),
+    currentModel: 'test-model',
+  };
+  const controller = new AbortController();
+  controller.unattendedPauseRequested = unattendedPauseRequested;
+  const resultPromise = waitWithRecordedTimer(mockService, 'stream-delay', 'session-delay', 'req-delay', {
+    tool_name: 'TestTool',
+    tool_call_id: 'call-delay',
+    tool_input: {},
+  }, controller);
+
+  controller.abort();
+  await resultPromise;
+  assert.equal(delays.length, 1);
+  return delays[0];
+}
+
+test('waitForToolApproval arms a four-hour timeout after an unattended pause', async (t) => {
+  assert.equal(await recordApprovalTimeoutDelay(t, true), 4 * 60 * 60 * 1000);
+});
+
+test('waitForToolApproval keeps the 600-second timeout for normal approvals', async (t) => {
+  assert.equal(await recordApprovalTimeoutDelay(t, false), 10 * 60 * 1000);
+});
+
+test('human approval clears the unattended pause before the next waiter', async (t) => {
+  const delays = [];
+  t.mock.method(global, 'setTimeout', (_callback, delay) => {
+    delays.push(delay);
+    return { unref() {} };
+  });
+  t.mock.method(global, 'clearTimeout', () => {});
+  const { waitForToolApproval: waitWithRecordedTimer } = loadToolHandlingWithMockedTimers();
+  const mockService = {
+    sessionStore: {
+      appendMessage() {},
+      updateMessage() {},
+    },
+    emit() {},
+    pendingToolApprovals: new Map(),
+    currentModel: 'test-model',
+  };
+  const controller = new AbortController();
+  controller.unattendedPauseRequested = true;
+  const firstPromise = waitWithRecordedTimer(
+    mockService, 'stream-reset-1', 'session-reset', 'req-reset-1', {
+      tool_name: 'TestTool', tool_call_id: 'call-reset-1', tool_input: {},
+      reason: 'Needs approval',
+    }, controller
+  );
+  const firstPending = findPendingApproval(mockService.pendingToolApprovals, {
+    callId: 'call-reset-1', streamId: 'stream-reset-1',
+  });
+  assert.match(firstPending.reason, /^Auto paused after keyboard or mouse inactivity\./);
+  firstPending.resolve(true, 'approved');
+  assert.equal(await firstPromise, true);
+
+  const secondPromise = waitWithRecordedTimer(
+    mockService, 'stream-reset-2', 'session-reset', 'req-reset-2', {
+      tool_name: 'TestTool', tool_call_id: 'call-reset-2', tool_input: {},
+    }, controller
+  );
+  assert.deepEqual(delays, [4 * 60 * 60 * 1000, 10 * 60 * 1000]);
+  controller.abort();
+  await secondPromise;
+});
+
+test('waitForToolApproval extends a pending normal approval when the idle guard pauses', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { waitForToolApproval: waitWithMockedTimer } = loadToolHandlingWithMockedTimers();
+  const mockService = {
+    sessionStore: {
+      appendMessage() {},
+      updateMessage() {},
+    },
+    emit() {},
+    pendingToolApprovals: new Map(),
+    currentModel: 'test-model',
+  };
+  const controller = new AbortController();
+  const resultPromise = waitWithMockedTimer(mockService, 'stream-late-idle', 'session-late-idle', 'req-late-idle', {
+    tool_name: 'TestTool',
+    tool_call_id: 'call-late-idle',
+    tool_input: {},
+  }, controller);
+  const PENDING = Symbol('pending');
+  let settledWith = PENDING;
+  resultPromise.then((value) => { settledWith = value; });
+
+  controller.unattendedPauseRequested = true;
+  t.mock.timers.tick(10 * 60 * 1000);
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  assert.equal(settledWith, PENDING);
+
+  t.mock.timers.tick((4 * 60 * 60 * 1000) - (10 * 60 * 1000));
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  assert.equal(await resultPromise, false);
+  assert.equal(mockService.pendingToolApprovals.size, 0);
+});
 
 test('waitForToolApproval resolves false when the production timeout timer fires', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -379,6 +494,62 @@ test('waitForToolApproval preserves policy_decision_id across tool_use and appro
   assert.equal(approvalEvents.length, 2);
   assert.equal(approvalEvents[0].payload.policy_decision_id, 'policy-decision-123');
   assert.equal(approvalEvents[1].payload.policy_decision_id, 'policy-decision-123');
+});
+
+test('waitForToolApproval threads one_off_only into the pending record, events and messages', async () => {
+  const appendCalls = [];
+  const emitted = [];
+  const collector = new CanonicalTurnEventCollector({
+    turnId: 'stream-one-off',
+    sessionId: 'session-one-off',
+  });
+  const mockService = {
+    sessionStore: {
+      appendMessage(_sessionId, message) {
+        appendCalls.push(message);
+      },
+      updateMessage() {},
+    },
+    emit(_channel, payload) {
+      emitted.push(payload);
+    },
+    pendingToolApprovals: new Map(),
+    currentModel: 'test-model',
+  };
+  const controller = new AbortController();
+  const resultPromise = waitForToolApproval(
+    mockService,
+    'stream-one-off',
+    'session-one-off',
+    'req-one-off',
+    {
+      tool_name: 'Write',
+      tool_call_id: 'call-one-off',
+      tool_input: { path: 'notes.md' },
+      one_off_only: true,
+    },
+    controller,
+    collector
+  );
+
+  const pending = findPendingApproval(mockService.pendingToolApprovals, {
+    callId: 'call-one-off',
+    streamId: 'stream-one-off',
+  });
+  assert.ok(pending);
+  assert.equal(pending.oneOffOnly, true);
+  pending.resolve(true, 'approved');
+  await resultPromise;
+
+  assert.equal(appendCalls[0].tool_call.one_off_only, true);
+  const needed = emitted.find((event) => event.type === 'tool_approval_needed');
+  assert.ok(needed);
+  assert.equal(needed.oneOffOnly, true);
+  const toolUseEvent = collector.capturedEvents.find((event) => event.kind === 'tool_use');
+  assert.equal(toolUseEvent.payload.one_off_only, true);
+  const requested = collector.capturedEvents.find((event) => event.kind === 'approval_requested');
+  assert.ok(requested);
+  assert.equal(requested.payload.one_off_only, true);
 });
 
 test('waitForToolApproval persists preempted status immediately when interrupted upstream', async () => {
@@ -770,7 +941,7 @@ test('inactivity cause survives the real approval timer into persisted and emitt
     tool_name: 'edit_file', tool_call_id: 'idle-call', tool_input: { file_path: 'a.txt' }, reason: 'Tool policy requires approval',
   }, controller);
   assert.match(emitted.find((event) => event.type === 'tool_approval_needed').reason, /keyboard or mouse inactivity/);
-  t.mock.timers.tick(600000);
+  t.mock.timers.tick(4 * 60 * 60 * 1000);
   assert.equal(await pending, false);
   const result = messages.find((message) => message.tool_result)?.tool_result;
   assert.equal(result.approval_state, 'timeout');

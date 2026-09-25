@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const attachmentUtils = require('../renderer/features/renderer-attachment-event-utils.js');
 const viewportUtils = require('../renderer/shell/renderer-viewport-utils.js');
 const composerHoloUtils = require('../renderer/chat/renderer-composer-holo-utils.js');
+const paneSurfaceUtils = require('../renderer/chat/renderer-chat-pane-surface-controllers.js');
+const paneRuntimeUtils = require('../renderer/chat/renderer-pane-runtime.js');
 const {
   loadRendererApp,
   waitForUi,
@@ -612,4 +614,97 @@ test('renderer app dispose is safe after lazy surfaces initialize once', async (
 
   await app.dispose();
   await app.dispose();
+});
+
+// Split view W0-1: the scroll coordinator, viewport controller and pin-to-top
+// observer for one chat pane are built as a cluster by
+// renderer/chat/renderer-chat-pane-surface-controllers.js. The extraction is
+// only invisible if the shell still builds exactly one of them and still tears
+// it down through the renderer cleanup registry, so assert both against a real
+// boot. The stub wraps the REAL factory (it must, or nothing scrolls) and only
+// records the cluster and its dispose.
+test('the chat pane surface cluster is built once and disposed with the renderer', async (t) => {
+  const built = [];
+  const disposedPaneIds = [];
+  const app = await loadRendererApp({
+    windowGlobals: {
+      rendererChatPaneSurfaceControllers: {
+        createChatPaneSurfaceControllers(options) {
+          const cluster = paneSurfaceUtils.createChatPaneSurfaceControllers(options);
+          const clusterDispose = cluster.dispose;
+          cluster.dispose = (...args) => {
+            disposedPaneIds.push(cluster.paneId);
+            return clusterDispose.apply(cluster, args);
+          };
+          built.push(cluster);
+          return cluster;
+        },
+      },
+    },
+  });
+  t.after(async () => { await app.dispose(); });
+  const { window } = app;
+
+  assert.equal(built.length, 1, 'the shell boots exactly one chat pane surface cluster');
+  assert.equal(built[0].paneId, 0, 'the single chat surface is pane 0 until split view lands');
+  assert.ok(built[0].scrollCoordinator, 'the cluster owns the live scroll coordinator');
+  assert.ok(built[0].viewport, 'the cluster owns the live viewport controller');
+  assert.ok(built[0].pinToTop, 'the cluster owns the live pin-to-top observer');
+  assert.deepEqual(disposedPaneIds, [], 'nothing is disposed while the shell is up');
+
+  await window.__disposeRenderer();
+
+  assert.deepEqual(disposedPaneIds, [0], 'renderer teardown disposes the pane surface cluster');
+});
+
+// Split view W0-6: renderer/app.js no longer mints a bare `{}` for the render
+// memos. It builds ONE shared session-cache store and pane 0's runtime over it,
+// and hands that runtime to the render pipeline and the shell bindings as
+// `runtime.uiRuntime`. Nothing the harness exposes reaches `uiRuntime`
+// directly (window.__rendererState is the app STATE), so wrap the global the
+// app calls at boot and assert on what it was asked for and what came back --
+// then prove the object actually reached the render pipeline by checking that
+// the boot's own renders memoized onto it.
+test('the shell mints one shared session store and pane 0\'s render runtime at boot', async (t) => {
+  const stores = [];
+  const paneRuntimeCalls = [];
+  const app = await loadRendererApp({
+    windowGlobals: {
+      rendererPaneRuntime: {
+        createSharedSessionStore(...args) {
+          const store = paneRuntimeUtils.createSharedSessionStore(...args);
+          stores.push(store);
+          return store;
+        },
+        createPaneRuntime(options) {
+          const runtime = paneRuntimeUtils.createPaneRuntime(options);
+          paneRuntimeCalls.push({ options, runtime });
+          return runtime;
+        },
+        SHARED_SESSION_CACHE_KEYS: paneRuntimeUtils.SHARED_SESSION_CACHE_KEYS,
+      },
+    },
+  });
+  t.after(async () => { await app.dispose(); });
+
+  assert.equal(stores.length, 1, 'the shell builds exactly one shared session-cache store');
+  assert.equal(paneRuntimeCalls.length, 1, 'the shell builds exactly one pane runtime until split view lands');
+
+  const [{ options, runtime }] = paneRuntimeCalls;
+  assert.equal(options.paneId, 0, 'the single chat surface is pane 0');
+  assert.equal(options.shared, stores[0], 'pane 0 is built over the shared store, not a private one');
+  assert.equal(runtime.paneId, 0);
+  for (const key of paneRuntimeUtils.SHARED_SESSION_CACHE_KEYS) {
+    assert.equal(runtime[key], stores[0][key], `pane 0's ${key} IS the shared store's Map`);
+  }
+
+  // The object has to be the one the render pipeline uses, or this slice wired
+  // nothing: a real boot renders, and every render memoizes onto uiRuntime.
+  const memoFields = Object.keys(runtime)
+    .filter((key) => key !== 'paneId' && !paneRuntimeUtils.SHARED_SESSION_CACHE_KEYS.includes(key));
+  assert.ok(
+    memoFields.length > 0,
+    'the booted renderer must have memoized onto pane 0\'s runtime; nothing was written, so the '
+    + 'render pipeline is holding a different object than the shell minted'
+  );
 });

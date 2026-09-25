@@ -168,7 +168,7 @@ test('preload exposes workspace-root IPC helpers on window.jennyShell', async ()
   assert.equal(listeners.has('workspace-root:external-transition-requested'), false);
 });
 
-test('preload exposes the generation-pinned workspace image reader', async () => {
+test('preload exposes generation-pinned workspace binary file methods', async () => {
   const invokes = [];
   let exposedApi = null;
   loadWithElectronMock('../preload.js', {
@@ -186,6 +186,14 @@ test('preload exposes the generation-pinned workspace image reader', async () =>
   });
 
   const result = await exposedApi.workspaceFs.readImage({ path: 'assets/logo.png' });
+  const readDocumentResult = await exposedApi.workspaceFs.readDocument({ path: 'report.pdf' });
+  const writeDocumentResult = await exposedApi.workspaceFs.writeDocument({
+    path: 'report.pdf',
+    base64: 'JVBERi0=',
+    format: 'pdf',
+    expectedGeneration: 7,
+    expectedFileVersion: 'vf2_open',
+  });
   const copyResult = await exposedApi.workspaceFs.copyEntry({
     from: 'notes.txt',
     to: 'notes.txt',
@@ -195,6 +203,20 @@ test('preload exposes the generation-pinned workspace image reader', async () =>
     channel: 'workspace-fs:read-image',
     args: [{ path: 'assets/logo.png' }],
   });
+  assert.deepEqual(readDocumentResult, {
+    channel: 'workspace-fs:read-document',
+    args: [{ path: 'report.pdf' }],
+  });
+  assert.deepEqual(writeDocumentResult, {
+    channel: 'workspace-fs:write-document',
+    args: [{
+      path: 'report.pdf',
+      base64: 'JVBERi0=',
+      format: 'pdf',
+      expectedGeneration: 7,
+      expectedFileVersion: 'vf2_open',
+    }],
+  });
   assert.deepEqual(copyResult, {
     channel: 'workspace-fs:copy-entry',
     args: [{ from: 'notes.txt', to: 'notes.txt', onCollision: 'auto-rename' }],
@@ -203,6 +225,20 @@ test('preload exposes the generation-pinned workspace image reader', async () =>
     {
       channel: 'workspace-fs:read-image',
       args: [{ path: 'assets/logo.png' }],
+    },
+    {
+      channel: 'workspace-fs:read-document',
+      args: [{ path: 'report.pdf' }],
+    },
+    {
+      channel: 'workspace-fs:write-document',
+      args: [{
+        path: 'report.pdf',
+        base64: 'JVBERi0=',
+        format: 'pdf',
+        expectedGeneration: 7,
+        expectedFileVersion: 'vf2_open',
+      }],
     },
     {
       channel: 'workspace-fs:copy-entry',

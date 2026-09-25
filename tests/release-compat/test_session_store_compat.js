@@ -7,7 +7,7 @@
 // to detect, so a regression in any cascade step surfaces here.
 //
 // App-version dimension: every fixture pins the assumption that
-// `package.json:version` is `1.1.1`. The lockstep_release policy
+// `package.json:version` is `1.2.0`. The lockstep_release policy
 // (services/backend/schema-version-registry.js) treats schema versions as
 // release-coupled; if the app version bumps without a matching
 // userdata-v<N> fixture being added, the release gate fails fast at
@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const {
   ElectronSessionStore,
 } = require('../../services/backend/electron-session-store');
+const { GENERAL_PROJECT_ID } = require('../../services/projects/project-schema');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -28,8 +29,8 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.1.1';
-const EXPECTED_SCHEMA_VERSION = 20;
+const EXPECTED_APP_VERSION = '1.2.0';
+const EXPECTED_SCHEMA_VERSION = 22;
 const FIXTURE_DIRS = [
   'userdata-v3',
   'userdata-v4',
@@ -47,6 +48,7 @@ const FIXTURE_DIRS = [
   'userdata-v18-current',
   'userdata-v19-current',
   'userdata-v20-current',
+  'userdata-v21-current',
 ];
 
 test.afterEach(async () => {
@@ -617,17 +619,48 @@ test('release-compat: v19 split payload adds empty tool overrides during migrati
   assert.equal(logs.entries.some((entry) => entry.level === 'ERROR'), false);
 });
 
-test('release-compat: v20 current split payload loads exact bounded tool overrides', () => {
+test('release-compat: v20 split payload gains General attribution and keeps tool overrides', () => {
   const { sessionsPath } = loadFixture('userdata-v20-current');
   const store = new ElectronSessionStore(sessionsPath);
-  assert.equal(store.hasPendingMigrations(), false);
-  assert.deepEqual(store.getSession('session_v20_current').tool_category_overrides, {
+  assert.equal(store.hasPendingMigrations(), true);
+  const session = store.getSession('session_v20_current');
+  assert.equal(session.project_id, GENERAL_PROJECT_ID);
+  assert.deepEqual(session.tool_category_overrides, {
     files: false,
     web: true,
     local_browser: false,
     python: false,
     terminal: true,
   });
+});
+
+test('release-compat: v21 split payload normalizes bounded failure-retry reasoning snapshots', async () => {
+  const { sessionsPath } = loadFixture('userdata-v21-current');
+  const logs = createLogCollector();
+  const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger });
+  assert.equal(store.hasPendingMigrations(), true);
+
+  const result = await store.runPendingMigrations({ batchSize: 1 });
+  assert.equal(result.ran, true);
+  assert.equal(result.success, true);
+  const session = store.getSession('session_v21_current');
+  assert.deepEqual(Object.keys(session.failure_retry_reasoning_snapshots).sort(), [
+    'user_capped',
+    'user_valid',
+  ]);
+  assert.equal(
+    session.failure_retry_reasoning_snapshots.user_capped.reasoning_entries[0].text,
+    '456789ab'
+  );
+  assert.equal(session.failure_retry_reasoning_snapshots.user_capped.char_count, 8);
+  assert.equal(session.failure_retry_reasoning_snapshots.user_capped.truncated, true);
+  assert.deepEqual(session.messages.map((message) => message.id), ['user_valid', 'assistant_failed']);
+  assert.deepEqual(session.turn_events.map((event) => event.event_id), ['turn_v21:user_bubble:0']);
+  assert.equal(readPersistedPayload(sessionsPath).schema_version, EXPECTED_SCHEMA_VERSION);
+  assert.equal(
+    logs.entries.find((entry) => entry.event === 'session_store.newer_schema_detected'),
+    undefined
+  );
 });
 
 test('release-compat: every fixture round-trips through the store without warnings', () => {

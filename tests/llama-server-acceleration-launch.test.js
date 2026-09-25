@@ -46,6 +46,8 @@ function offResult(reason) {
   };
 }
 
+const BINARY = path.join('G:', 'bin', 'llama-server.exe');
+
 function createResolutionFakes({
   resolverResult = offResult('fake'),
   ggufResult = { path: path.join('G:', 'models', 'resolved', 'model.gguf') },
@@ -54,7 +56,6 @@ function createResolutionFakes({
     probe: [],
     catalog: [],
     resolver: [],
-    binary: [],
     gguf: [],
   };
   return {
@@ -79,10 +80,6 @@ function createResolutionFakes({
         calls.resolver.push(options);
         return resolverResult;
       },
-      resolveBinaryPathImpl(options) {
-        calls.binary.push(options);
-        return path.join('G:', 'bin', 'llama-server.exe');
-      },
       resolveGgufPathImpl(options) {
         calls.gguf.push(options);
         return ggufResult;
@@ -96,7 +93,6 @@ function assertNoResolutionCalls(calls) {
     probe: [],
     catalog: [],
     resolver: [],
-    binary: [],
     gguf: [],
   });
 }
@@ -149,7 +145,6 @@ test('resolveLaunchAcceleration prefers profile acceleration and normalizes the 
     },
     shellAcceleration: { mode: 'ngram', draftNMax: 6 },
     repoRoot: 'repo-root',
-    resourcesPath: 'resources',
     userDataPath: 'user-data',
     ...fakes.impls,
   });
@@ -232,15 +227,39 @@ test('resolveLaunchAcceleration degrades a capability-probe exception to resolve
   const result = resolveLaunchAcceleration({
     featureFlags: { llama_server_acceleration: true },
     shellAcceleration: { mode: 'mtp' },
+    binaryPath: BINARY,
     ...fakes.impls,
   });
 
   assert.deepEqual(result, offResult('resolve_error'));
-  assert.equal(fakes.calls.binary.length, 1);
   assert.equal(fakes.calls.probe.length, 1);
   assert.equal(fakes.calls.catalog.length, 0);
   assert.equal(fakes.calls.resolver.length, 0);
   assert.equal(fakes.calls.gguf.length, 0);
+});
+
+test('the probe runs on the binary the launch will spawn, never a second resolution', () => {
+  // The manager resolves the executable once (env > the model's saved build >
+  // bundled); a stale env override in settings must not steer the probe.
+  const fork = path.join('G:', 'runtimes', 'llama-prism-b10683-cuda13.3', 'llama-server.exe');
+  const fakes = createResolutionFakes();
+  resolveLaunchAcceleration({
+    settings: { binaryOverride: BINARY },
+    binaryPath: fork,
+    featureFlags: { llama_server_acceleration: true },
+    shellAcceleration: { mode: 'mtp' },
+    ...fakes.impls,
+  });
+  assert.deepEqual(fakes.calls.probe, [{ binaryPath: fork }]);
+
+  // No executable found: the probe gets the empty path and fails closed.
+  const missing = createResolutionFakes();
+  resolveLaunchAcceleration({
+    featureFlags: { llama_server_acceleration: true },
+    shellAcceleration: { mode: 'mtp' },
+    ...missing.impls,
+  });
+  assert.deepEqual(missing.calls.probe, [{ binaryPath: '' }]);
 });
 
 test('shouldRetryWithoutAcceleration retries only eligible accelerated launch failures', () => {
@@ -273,6 +292,11 @@ test('shouldRetryWithoutAcceleration retries only eligible accelerated launch fa
     accelExtraArgs: ['--spec-type', 'draft-mtp'],
   }), false);
   // Child-exit / readiness-timeout failures stay retryable.
+  // An unreadable file may be the MTP drafter, which the retry leaves out.
+  assert.equal(shouldRetryWithoutAcceleration({
+    error: new Error('llama_server_model_unsupported:bundled'),
+    accelExtraArgs: ['--spec-type', 'draft-mtp'],
+  }), true);
   assert.equal(shouldRetryWithoutAcceleration({
     error: new Error('llama_server_exited:1'),
     accelExtraArgs: ['--spec-type', 'draft-mtp'],

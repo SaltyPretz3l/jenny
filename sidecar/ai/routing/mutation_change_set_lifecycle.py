@@ -62,7 +62,13 @@ def bind_run_context(run: Any) -> None:
     """Bind request identity before approval freezing or tool dispatch."""
 
     session_id = str(getattr(run, "session_id", "") or "").strip()
-    turn_id = str(getattr(run, "request_id", "") or "").strip()
+    runtime = getattr(run, "runtime", None)
+    turn_id = str(
+        getattr(run, "logical_turn_id", None)
+        or getattr(runtime, "logical_turn_id", None)
+        or getattr(run, "request_id", "")
+        or ""
+    ).strip()
     context = _RunAttribution(
         run=run,
         turn_id=turn_id,
@@ -71,6 +77,18 @@ def bind_run_context(run: Any) -> None:
     )
     token = _CURRENT_RUN.set(context)
     run._jenny_mutation_context_token = token
+
+
+def release_run_context(run: Any) -> None:
+    """Restore the context that preceded this run without settling its change set."""
+
+    token = getattr(run, "_jenny_mutation_context_token", None)
+    if not isinstance(token, Token):
+        return
+    try:
+        _CURRENT_RUN.reset(token)
+    finally:
+        run._jenny_mutation_context_token = None
 
 
 def current_run_change_set_id() -> str:
@@ -103,7 +121,14 @@ def inject_tool_attribution(  # noqa: C901, PLR0912 - ordered trust and context 
         else:
             config = getattr(getattr(context.run, "kernel", None), "_config", None)
             state_root = str(getattr(config, "electron_state_root", "") or "").strip()
-            workspace_root = str(getattr(config, "tools_workspace_root", "") or "").strip()
+            execution_context = getattr(
+                getattr(context.run, "request_context", None), "execution_context", None
+            )
+            workspace_root = str((
+                getattr(execution_context, "root_path", None)
+                if execution_context is not None
+                else getattr(config, "tools_workspace_root", "")
+            ) or "").strip()
             attribution: Mapping[str, object] = {}
             if state_root and workspace_root:
                 identity = workspace_identity(workspace_root)
@@ -172,7 +197,14 @@ def finish_run_change_set(run: Any, *, approval_paused: bool, reason: str) -> No
         change_set_id = str(getattr(run, "_jenny_change_set_id", "") or "").strip()
         config = getattr(getattr(run, "kernel", None), "_config", None)
         state_root = str(getattr(config, "electron_state_root", "") or "").strip()
-        workspace_root = str(getattr(config, "tools_workspace_root", "") or "").strip()
+        execution_context = getattr(
+            getattr(run, "request_context", None), "execution_context", None
+        )
+        workspace_root = str((
+            getattr(execution_context, "root_path", None)
+            if execution_context is not None
+            else getattr(config, "tools_workspace_root", "")
+        ) or "").strip()
         if not change_set_id or not state_root or not workspace_root:
             return
         lifecycle = MutationChangeSetLifecycle(
@@ -625,7 +657,7 @@ def _new_record(  # noqa: PLR0913 - journal identity plus the store-owned clock.
     }
 
 
-def _create_operation(  # noqa: PLR0913 - complete durable operation shape.
+def _create_operation(  # noqa: PLR0913, PLR0917 - complete durable operation shape.
     tool_name: str,
     relative_path: str,
     pre: PathSignature,
@@ -687,7 +719,7 @@ def _delete_operation(
     )
 
 
-def _move_operation(  # noqa: PLR0913 - complete source/destination preflight.
+def _move_operation(  # noqa: PLR0913, PLR0917 - complete source/destination preflight.
     source_relative: str,
     destination_relative: str,
     source_pre: PathSignature,
@@ -726,7 +758,7 @@ def _move_operation(  # noqa: PLR0913 - complete source/destination preflight.
     )
 
 
-def _operation(  # noqa: PLR0913 - schema fields remain explicit at construction.
+def _operation(  # noqa: PLR0913, PLR0917 - schema fields remain explicit at construction.
     tool_name: str,
     kind: str,
     source: dict[str, Any] | None,
@@ -770,7 +802,7 @@ def _endpoint(path: str, pre: PathSignature, post: PathSignature) -> dict[str, A
     }
 
 
-def _inverse(  # noqa: PLR0913 - schema fields remain explicit at construction.
+def _inverse(  # noqa: PLR0913, PLR0917 - schema fields remain explicit at construction.
     step_id: str,
     kind: str,
     source: str,

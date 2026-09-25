@@ -21,6 +21,24 @@
   function formatMessageTerminalTimestamp(value) {
     return formatDate(value, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }, '');
   }
+  function getTimelineEntryWeight(messages) {
+    let total = 0;
+    for (const message of Array.isArray(messages) ? messages : []) {
+      if (!message || typeof message !== 'object') continue;
+      const seen = new Set();
+      const entryGroups = [message.reasoning?.entries]
+        .concat((Array.isArray(message.reasoning_phases) ? message.reasoning_phases : []).map((phase) => phase?.entries));
+      total = Math.min(Number.MAX_SAFE_INTEGER, total + (typeof message.content === 'string' ? message.content.length : 0));
+      for (const entries of entryGroups) {
+        for (const entry of Array.isArray(entries) ? entries : []) {
+          if (!entry || typeof entry !== 'object' || seen.has(entry)) continue;
+          seen.add(entry);
+          total = Math.min(Number.MAX_SAFE_INTEGER, total + (typeof entry.text === 'string' ? entry.text.length : 0));
+        }
+      }
+    }
+    return total;
+  }
   function resolveModule(globalName, requirePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) {
       return globalThis[globalName];
@@ -284,6 +302,9 @@
         },
         getFeatureFlags: function readRendererFeatureFlags() {
           return (state && state.features && state.features.featureFlags) || {};
+        },
+        getApprovalCardState: function readApprovalCardState(ref) {
+          return globalThis.rendererApprovalBlock?.resolveApprovalCardState?.(state, ref) || null;
         },
       })
       : null;
@@ -657,7 +678,7 @@
       },
       rebuild() {
         if (!virtualizer) return;
-        virtualizer.rebuild();
+        virtualizer.rebuild(getTimelineEntryWeight(getCurrentVisibleMessages()));
         const longThreadBudgetStats = {
           ...(state.ui?.longThreadBudgetStats || {}),
           ...(uiRuntime.longThreadBudgetStats || {}),
@@ -883,5 +904,5 @@
       dispose: disposeRenderPipeline,
     };
   }
-  return { createRenderPipeline };
+  return { createRenderPipeline, getTimelineEntryWeight };
 });

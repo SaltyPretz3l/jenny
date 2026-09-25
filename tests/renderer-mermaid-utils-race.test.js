@@ -17,6 +17,7 @@ test('direct Mermaid rendering keeps the newest render when an older request res
   const dom = new JSDOM('<!doctype html><body><div id="host"></div>', {
     url: 'file:///app/index.html',
   });
+  dom.window.DOMPurify = { sanitize(markup) { return markup; } };
   global.window = dom.window;
   global.document = dom.window.document;
 

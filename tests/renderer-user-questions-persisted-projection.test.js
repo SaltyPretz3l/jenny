@@ -125,6 +125,36 @@ test('settled receipt renders when questions survive only on the persisted tool_
   assert.match(html, /Pick one/);
 });
 
+test('late persisted ask_user call owns its earlier execution before the answer', () => {
+  // Actual canonical-primary order when a provider emits execution without a
+  // call announcement: finalization backfills tool_use from the saved message.
+  const events = [
+    ['tool_executing', 'tool_use_c1', { tool_name: 'ask_user' }],
+    ['tool_result', 'tool_result_c1', {
+      tool_name: 'ask_user', output_text: 'Q: Pick one\nA: Alpha',
+      metadata: normalizePersistedToolResultMetadata(REAL_TOOL_METADATA),
+    }],
+    ['assistant_text_segment', 'assistant_final', { text: 'Alpha', assistant_phase: 'final_answer' }],
+    ['tool_use', 'tool_use_c1', { tool_name: 'ask_user', input: { questions: [] } }],
+  ].map(([kind, messageId, payload], index) => ({
+    event_id: `t:${kind}`, event_seq: index, turn_id: 't', kind,
+    primary_message_id: messageId, source_message_ids: [messageId],
+    sort_key: [index, 0, 0],
+    tool_call_id: kind === 'assistant_text_segment' ? '' : 'c1', payload,
+  }));
+  const rows = projectTurnRows(events);
+  assert.deepEqual(rows.map(row => row.kind), ['tool_call', 'tool_result', 'assistant_text']);
+  const call = rows[0];
+  assert.equal(call.tool_call_id, 'c1');
+  assert.equal(call.payload.state, 'completed');
+  assert.equal(call.payload.user_questions_result_kind, 'user_questions_answered');
+  assert.deepEqual(call.source_events, ['t:tool_executing', 't:tool_use']);
+  assert.deepEqual(rows.flatMap(row => row.source_events).sort(), events.map(event => event.event_id).sort());
+  assert.deepEqual(events.map(event => event.kind), [
+    'tool_executing', 'tool_result', 'assistant_text_segment', 'tool_use',
+  ], 'projection must not rewrite the canonical record');
+});
+
 test('a persisted stale demotion outranks the projector pending state on full re-render', () => {
   // Client-side liveness demotion never produces a tool_result event, so the
   // projector keeps deriving state='pending_user_input' from the unsettled

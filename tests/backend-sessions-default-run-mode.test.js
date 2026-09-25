@@ -11,11 +11,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createSession } = require('../services/backend/backend-sessions');
+const {
+  initializeApplicationProjects,
+} = require('../services/projects/application-project-scope');
+const {
+  cleanupTrackedResources,
+  createTrackedTempDir,
+} = require('./helpers/resource-cleanup');
+
+test.afterEach(async () => {
+  await cleanupTrackedResources();
+});
 
 function buildService({ defaultRunMode = 'auto', configService } = {}) {
   const captured = { preferences: null };
   const service = {
-    _normalizeManagedSessionPreferencePatch: (preferences) => ({ ...(preferences || {}) }),
+    _emitServiceLog() {},
     configService: configService !== undefined
       ? configService
       : { getState: () => ({ defaultRunMode }) },
@@ -26,6 +37,9 @@ function buildService({ defaultRunMode = 'auto', configService } = {}) {
       },
     },
   };
+  initializeApplicationProjects(service, {
+    userDataPath: createTrackedTempDir('jenny-session-run-mode-'),
+  });
   return { service, captured };
 }
 
@@ -54,13 +68,8 @@ test('a legacy caller plan_mode suppresses seeding (the store maps it)', async (
   assert.equal(captured.preferences.plan_mode, true);
 });
 
-test('null caller preferences pass the real normalizer untouched and still seed', async () => {
-  // backend-managed-reasoning's normalizeManagedSessionPreferencePatch returns a
-  // falsy `preferences` AS-IS (its `= {}` default only catches undefined), so the
-  // seeding seam must tolerate null without throwing - and a null-preferences
-  // session carries no explicit mode, so it seeds.
+test('null caller preferences still seed the configured mode', async () => {
   const { service, captured } = buildService({ defaultRunMode: 'auto' });
-  service._normalizeManagedSessionPreferencePatch = (preferences) => preferences;
   await createSession(service, { title: 'fresh', preferences: null });
   assert.equal(captured.preferences.run_mode, 'auto');
 });

@@ -158,12 +158,13 @@ function summarizeCompactionSnapshot(value) {
 function buildCompactionSnapshotFromResult(result, {
   boundaryMessageId,
   boundaryMessageCount,
+  canonicalMessages,
   createdAt = new Date().toISOString(),
 } = {}) {
   if (String(result?.status || '') !== 'ok' || result?.compacted !== true) {
     return null;
   }
-  return normalizeCompactionSnapshot({
+  const snapshotSource = {
     version: COMPACTION_SNAPSHOT_VERSION,
     origin: 'manual',
     created_at: createdAt,
@@ -173,7 +174,33 @@ function buildCompactionSnapshotFromResult(result, {
     boundary_message_id: boundaryMessageId,
     boundary_message_count: boundaryMessageCount,
     messages: result.messages,
-  });
+  };
+  // A full summary is followed by the latest round copied verbatim; the
+  // snapshot keeps only what precedes that tail, so tool rows the normalizer
+  // cannot hold stay canonical. A tail that is not the history's suffix fails
+  // closed. A result without a summary row keeps the whole-history boundary.
+  const resultMessages = Array.isArray(result.messages) ? result.messages : [];
+  const summaryIndex = resultMessages.findIndex(isCompactionSummaryMessage);
+  if (String(result.strategy || '').trim() === 'full' && Array.isArray(canonicalMessages) && summaryIndex >= 0) {
+    const tail = resultMessages.slice(summaryIndex + 1);
+    const boundaryCount = canonicalMessages.length - tail.length;
+    const tailMatches = boundaryCount >= 1
+      && tail.every((row, index) => {
+        const canonicalRow = canonicalMessages[boundaryCount + index] || {};
+        return String(row?.role) === String(canonicalRow.role || '')
+          && String(row?.content ?? '') === String(canonicalRow.content || '');
+      });
+    if (!tailMatches) {
+      return null;
+    }
+    return normalizeCompactionSnapshot({
+      ...snapshotSource,
+      boundary_message_id: canonicalMessages[boundaryCount - 1]?.id,
+      boundary_message_count: boundaryCount,
+      messages: resultMessages.slice(0, summaryIndex + 1),
+    });
+  }
+  return normalizeCompactionSnapshot(snapshotSource);
 }
 
 function buildAutomaticCompactionSnapshot({

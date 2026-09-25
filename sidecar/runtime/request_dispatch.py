@@ -389,6 +389,7 @@ def process_message(
     logger: logging.Logger,
     write_message: Callable[[dict[str, Any]], None],
     read_message: Callable[[], dict[str, Any]],
+    response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None = None,
 ) -> ProcessOutcome:
     method = message.get("method", "")
     message_id = message.get("id")
@@ -734,27 +735,26 @@ def process_message(
         if harness_outcome is not None:
             return harness_outcome
 
+        inference_args = (method, message_id, params, initialized, brain_container, logger)
         suggestions_outcome = process_suggestions_method(
-            method, message_id, params, initialized, brain_container, logger
+            *inference_args, write_message=write_message,
+            response_reader_factory=response_reader_factory,
         )
         if suggestions_outcome is not None:
             return suggestions_outcome
 
-        commit_outcome = process_commit_method(
-            method, message_id, params, initialized, brain_container, logger
-        )
+        commit_outcome = process_commit_method(*inference_args, write_message=write_message,
+            response_reader_factory=response_reader_factory)
         if commit_outcome is not None:
             return commit_outcome
 
-        compact_outcome = process_compact_method(
-            method, message_id, params, initialized, brain_container, logger
-        )
+        compact_outcome = process_compact_method(*inference_args, write_message=write_message,
+            response_reader_factory=response_reader_factory)
         if compact_outcome is not None:
             return compact_outcome
 
-        inline_outcome = process_inline_method(
-            method, message_id, params, initialized, brain_container, logger
-        )
+        inline_outcome = process_inline_method(*inference_args, write_message=write_message,
+            response_reader_factory=response_reader_factory)
         if inline_outcome is not None:
             return inline_outcome
 

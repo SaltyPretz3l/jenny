@@ -218,11 +218,17 @@ class ChatGPTSubscriptionEngine(BaseEngine):
             "text": "engine_default",
             "tool_calling": "engine_default",
             "vision": "provider_contract",
+            "thinking": "provider_contract",
         }
 
     @property
     def supported_modalities(self) -> set[ModelModality]:
         return {ModelModality.TEXT, ModelModality.VISION}
+
+    @property
+    def capabilities(self) -> dict[str, bool]:
+        # Runtime snapshots use this declaration when validating saved effort.
+        return {**super().capabilities, "thinking": True}
 
     @property
     def supports_tool_calling(self) -> bool:

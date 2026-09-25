@@ -174,6 +174,8 @@
     let unsubscribeErrorCenter = null;
     let unsubscribeRemote = null;
     let unsubscribeUnattendedPause = null;
+    let unsubscribeReminderFired = null;
+    let unsubscribeReminderOpen = null;
     /* Retry is latched once, in the shell status controller: the failure toast
      * and this popover both call the same function, so clicking both fires one
      * retryStart() instead of two. Absent injection, fall back to calling the
@@ -664,6 +666,47 @@
       } catch (_error) { /* toast presentation must not break the safety listener */ }
     }
 
+    function handleReminderFired(payload) {
+      if (state.disposed) return;
+      const reminderId = String(payload?.id || '').trim();
+      const label = String(payload?.label || '').trim() || jt('reminders.toast.title', 'Reminder');
+      const prompt = String(payload?.prompt || '').trim()
+        || jt('reminders.toast.due', 'This reminder is due.');
+      try {
+        showToastMessage(prompt, {
+          title: label,
+          tone: 'info',
+          sticky: true,
+          source: 'reminders.notifier',
+          dedupeKey: 'reminders:fired:' + reminderId,
+          actions: [{
+            id: 'reminder_snooze_10',
+            label: jt('reminders.toast.snooze10', 'Snooze 10 min'),
+            kind: 'secondary',
+            onClick: async () => {
+              const snooze = windowRef?.jennyShell?.reminders?.snooze;
+              if (typeof snooze !== 'function') {
+                throw new Error(jt('reminders.toast.snoozeUnavailable', 'Reminder snooze is unavailable.'));
+              }
+              await snooze.call(windowRef.jennyShell.reminders, reminderId, 10);
+              showToastMessage(
+                jt('reminders.toast.snoozed', 'Snoozed 10 min while Jenny stays open'),
+                {
+                  tone: 'success',
+                  source: 'reminders.notifier',
+                  dedupeKey: 'reminders:snoozed:' + reminderId,
+                }
+              );
+            },
+          }],
+        });
+      } catch (_error) { /* toast presentation must not break the reminder listener */ }
+    }
+
+    function handleReminderOpen() {
+      if (!state.disposed) invokeNavigation('home', null);
+    }
+
     function observeStreamPayload(payload) {
       if (!state.unattendedPause) return;
       try {
@@ -698,6 +741,11 @@
         try { unsubscribeUnattendedPause(); } catch (_error) { /* optional bridge cleanup */ }
         unsubscribeUnattendedPause = null;
       }
+      for (const unsubscribe of [unsubscribeReminderFired, unsubscribeReminderOpen]) {
+        try { unsubscribe?.(); } catch (_error) { /* optional bridge cleanup */ }
+      }
+      unsubscribeReminderFired = null;
+      unsubscribeReminderOpen = null;
       if (unsubscribeErrorCenter) {
         unsubscribeErrorCenter();
         unsubscribeErrorCenter = null;
@@ -764,6 +812,19 @@
           handleUnattendedPause
         );
         if (typeof unsubscribe === 'function') unsubscribeUnattendedPause = unsubscribe;
+      } catch (_error) { /* optional bridge */ }
+    }
+    const remindersApi = windowRef?.jennyShell?.reminders;
+    if (typeof remindersApi?.onFired === 'function') {
+      try {
+        const unsubscribe = remindersApi.onFired(handleReminderFired);
+        if (typeof unsubscribe === 'function') unsubscribeReminderFired = unsubscribe;
+      } catch (_error) { /* optional bridge */ }
+    }
+    if (typeof remindersApi?.onOpen === 'function') {
+      try {
+        const unsubscribe = remindersApi.onOpen(handleReminderOpen);
+        if (typeof unsubscribe === 'function') unsubscribeReminderOpen = unsubscribe;
       } catch (_error) { /* optional bridge */ }
     }
     globalThis.rendererHealthPillController = controller;

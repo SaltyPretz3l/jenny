@@ -98,7 +98,14 @@ def test_unknown_commands_need_approval(cmd: str) -> None:
         "git log --oneline",
         "git diff HEAD~2",
         "git show abc123",
+        "git rev-parse HEAD",
+        "git ls-files",
+        "git ls-tree HEAD",
         "git remote -v",
+        "git tag -l",
+        "git branch -a",
+        "git stash list",
+        "git config --get user.name",
         "git blame src/main.py",
     ],
 )
@@ -113,11 +120,12 @@ def test_git_read_subcommands_allowed(cmd: str) -> None:
 @pytest.mark.parametrize(
     "cmd",
     [
-        "git branch -a",
         "git fetch origin",
         "git stash",
-        "git stash list",
-        "git config --get user.name",
+        "git branch feature",
+        "git remote add demo https://example.invalid/repo",
+        "git tag v1",
+        "git config user.name demo",
         "git commit -m 'fix bug'",
         "git push origin main",
         "git merge feature-branch",
@@ -144,6 +152,73 @@ def test_git_global_options_skipped() -> None:
 
     result3 = classify_command("git -c user.name=test commit -m 'x'")
     assert result3.verdict is CommandVerdict.NEEDS_APPROVAL
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git status",
+        "git log --oneline",
+        "git diff HEAD",
+        "git show HEAD",
+        "git rev-parse HEAD",
+        "git ls-files",
+        "git ls-tree HEAD",
+        "git blame README.md",
+        "git describe --tags",
+        "git cat-file -t HEAD",
+        "git shortlog -s",
+        "git branch",
+        "git branch --list",
+        "git branch -r -v",
+        "git remote",
+        "git remote -v",
+        "git tag",
+        "git tag --list",
+        "git stash list",
+        "git config --get-all remote.origin.fetch",
+        "git config --list",
+        "git config -l",
+        "git -C repo -c color.ui=false status",
+    ],
+)
+def test_explicit_git_read_only_allowlist_stays_allowed(cmd: str) -> None:
+    assert classify_command(cmd).verdict is CommandVerdict.ALLOWED
+
+
+@pytest.mark.parametrize(
+    ("cmd", "detector"),
+    [
+        ("echo harmless >> audit.txt", None),
+        ("git tag audit-demo", None),
+        ("git remote add demo https://example.invalid/repo", None),
+        ('find . -exec python -c "print(1)" ;', None),
+        ('cmd /c "de^l audit.txt"', "opaque:caret-escape"),
+        ('start "" /b cmd /c "del audit.txt"', "del"),
+        (
+            'powershell -Command "Invoke-Expression (\'Remove-\'+\'Item audit.txt\')"',
+            "opaque:powershell-eval",
+        ),
+        ("echo x > f", None),
+        ("echo x >> f", None),
+    ],
+)
+def test_a7_measured_forms_need_approval_and_preserve_detection(
+    cmd: str,
+    detector: str | None,
+) -> None:
+    assert classify_command(cmd).verdict is CommandVerdict.NEEDS_APPROVAL
+    assert find_destructive_executable(cmd) == detector
+
+
+@pytest.mark.parametrize("redirect", [">", ">>", "1>>", "2>>", "&>>"])
+def test_output_redirects_need_approval(redirect: str) -> None:
+    assert classify_command(f"echo x {redirect} f").verdict is CommandVerdict.NEEDS_APPROVAL
+
+
+@pytest.mark.parametrize("action", ["-exec", "-execdir", "-ok", "-okdir", "-delete"])
+def test_find_execution_capable_arguments_need_approval(action: str) -> None:
+    assert classify_command(f"find . {action} echo {{}} ;").verdict is CommandVerdict.NEEDS_APPROVAL
 
 
 # ── Compound commands ─────────────────────────────────────────────────

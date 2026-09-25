@@ -236,6 +236,85 @@
 
     chatShellController?.bind?.();
     registerCleanup(() => chatShellController?.dispose?.());
+    /* The composer queue strip renders from the chrome module, which owns no
+     * teardown; its listeners are released with the rest of the chat shell
+     * (the sibling outbox strip is disposed inside the chat shell controller). */
+    registerCleanup(() => {
+      const queueHost = windowRef?.document?.getElementById?.('runtimeQueue');
+      globalThis.rendererRuntimeQueueView?.disposeRuntimeQueueRender?.(queueHost);
+    });
+    /* Pause sits beside Stop in the composer, built here through the inventory
+     * button primitive (index.html carries no markup for it). The chrome owns
+     * whether it shows and what it says; the durable-send controller owns every
+     * notice; this is only the control and its click, so both live and die with
+     * the chat shell. */
+    const turnPauseModule = root.rendererTurnPauseInteraction || {};
+    const pauseTurnButton = turnPauseModule.mountTurnPauseButton?.({
+      anchor: documentRef?.getElementById?.('stopStreamButton'),
+      actionButton: windowRef.inventoryActionButton,
+    }) || null;
+    const turnPauseInteraction = turnPauseModule.createTurnPauseInteraction?.({
+      button: pauseTurnButton,
+      state,
+      getCurrentSessionId: () => state.currentSessionId,
+      appendClientLog: callbacks.appendClientLog,
+    });
+    registerCleanup(() => {
+      turnPauseInteraction?.dispose?.();
+      pauseTurnButton?.remove?.();
+    });
+    /* The "Needs you" inbox: one pinned section at the top of the Chats panel
+     * listing every wait across every session, opened or not, plus its count
+     * badge beside the titlebar health pill (a sibling of that slot, because
+     * the pill rewrites its own innerHTML). It owns no clock -- the workspace
+     * chrome calls render() on the passes that already refresh the panel and
+     * the session strip. It lives on state so those passes can reach it. */
+    const attentionInboxController = root.rendererAttentionInbox?.createAttentionInboxController?.({
+      windowRef,
+      documentRef,
+      state,
+      host: documentRef?.getElementById?.('attentionInbox'),
+      badgeAnchor: documentRef?.getElementById?.('workbenchHealthPillSlot'),
+      actionButton: windowRef.inventoryActionButton,
+      facts: windowRef.toolCallUtils,
+      callbacks: {
+        openSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
+        setActiveView: (...a) => callbacks.setActiveView?.(...a),
+        setSidebarCollapsed: (...a) => callbacks.setSidebarCollapsed?.(...a),
+        appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
+        showComposerActionError: (...a) => callbacks.showComposerActionError?.(...a),
+      },
+    }) || null;
+    state.attentionInboxController = attentionInboxController;
+    attentionInboxController?.render?.();
+    registerCleanup(() => {
+      attentionInboxController?.dispose?.();
+      if (state.attentionInboxController === attentionInboxController) state.attentionInboxController = null;
+    });
+    /* The "While you were away" reader lives on state from boot, because Home
+     * may never be visited: the Chats panel's row marks and its arrival reads
+     * need it. The Home dashboard adopts this instance when it constructs. Its
+     * changes repaint the chat rows through one coalesced renderAll. */
+    const awayDigestModule = root.rendererDashboardWidgetAwayDigest;
+    const awayDigestReader = state.awayDigestReader || awayDigestModule?.createAwayDigestReader?.({
+      windowRef, documentRef, state, callbacks: { appendClientLog: (...a) => callbacks.appendClientLog?.(...a) },
+    }) || null;
+    if (awayDigestReader) {
+      const ownsAwayDigestReader = !state.awayDigestReader;
+      state.awayDigestReader = awayDigestReader;
+      let awayDigestRepaintQueued = false;
+      const unsubscribeAwayDigest = awayDigestReader.subscribe?.(() => {
+        if (awayDigestRepaintQueued) return;
+        awayDigestRepaintQueued = true;
+        Promise.resolve().then(() => { awayDigestRepaintQueued = false; try { callbacks.renderAll?.(); } catch (_err) { /* noop */ } });
+      });
+      registerCleanup(() => {
+        unsubscribeAwayDigest?.();
+        if (!ownsAwayDigestReader) return;
+        awayDigestReader.dispose?.();
+        if (state.awayDigestReader === awayDigestReader) state.awayDigestReader = null;
+      });
+    }
     registerCleanup(() => settingsShellController?.dispose?.());
     if (contextPanelController) {
       contextPanelController.bind();
@@ -324,18 +403,6 @@
         windowRef.rendererModelTuningDrawerController = null;
       }
     });
-    const modelLibraryController = (windowRef.rendererModelLibrary || {}).createModelLibraryController?.({
-      state,
-      windowRef,
-      documentRef: documentRef || windowRef.document,
-      appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
-      refreshModelPickers: () => { callbacks.refreshSnapshots?.().catch(() => null); },
-      openModelTuning: (modelId, restoreFocusTo, options) => modelTuningDrawerController?.open?.(modelId, restoreFocusTo, options),
-    }) || null;
-    modelLibraryController?.bind?.();
-    modelLibraryController?.render?.();
-    registerCleanup(() => modelLibraryController?.dispose?.());
-
     const modelLibrarySectionController = (windowRef.rendererSettingsModelLibrarySection || {})
       .createModelLibrarySectionController?.({
         state,
@@ -345,17 +412,10 @@
         showToastMessage: (...a) => callbacks.showToastMessage?.(...a),
         refreshModelPickers: () => Promise.resolve(callbacks.refreshSnapshots?.()).catch(() => null),
         openModelTuning: (modelId, restoreFocusTo, options) => modelTuningDrawerController?.open?.(modelId, restoreFocusTo, options),
-        openSettingsSection: (...a) => callbacks.openSettingsSection?.(...a),
       }) || null;
     modelLibrarySectionController?.bind?.();
     modelLibrarySectionController?.render?.();
     registerCleanup(() => modelLibrarySectionController?.dispose?.());
-    if (windowRef.jennyShell?.features?.onChanged) {
-      registerCleanup(windowRef.jennyShell.features.onChanged(() => {
-        modelLibraryController?.syncFeatureState?.();
-      }));
-    }
-
     // Flag-gated Settings sibling controllers (MCP servers + Knowledge folders
     // in the Tools card, Ollama engine health in the Models card): created +
     // bound in the sibling bindings file to keep this file under the line
@@ -368,7 +428,6 @@
       }) || null;
     ctx.controllers.reactivateSettingsSections = () => {
       settingsSectionsBinding?.reactivate?.();
-      modelLibraryController?.syncFeatureState?.();
       modelLibrarySectionController?.syncFeatureState?.();
     };
 
@@ -381,6 +440,10 @@
       state, windowRef,
       documentRef: documentRef || windowRef.document,
       appendClientLog: (...a) => callbacks.appendClientLog?.(...a), chooseWorkspaceRoot: (...a) => callbacks.chooseWorkspaceRoot?.(...a),
+      getProjectSwitcher: (...a) => callbacks.getProjectSwitcher?.(...a),
+      // "Use <folder>" adopts the workspace project; the list reload picks up
+      // the chat's new project attribution without a page reload.
+      refreshSessions: () => callbacks.loadSessions?.(state.currentSessionId, { skipOpenCurrent: true }),
     }) || null;
     controllers.workspaceRootNudgeController = workspaceRootNudgeController; workspaceRootNudgeController?.bind?.(); workspaceRootNudgeController?.render?.();
     const workspaceRootNudgePoller = (globalThis.rendererSettingsSnapshotPoll || {}).createSnapshotPoller?.({
@@ -390,7 +453,6 @@
         // Same tick keeps the Model library rows in sync with state.modelList
         // (refreshed by the shell's periodic refreshSnapshots) — cheap no-op
         // render-skip when nothing changed.
-        modelLibraryController?.syncFromState?.();
         modelLibrarySectionController?.syncFromState?.();
       },
       intervalMs: 15000,

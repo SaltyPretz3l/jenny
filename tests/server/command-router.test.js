@@ -23,10 +23,50 @@ class BackendHarness extends EventEmitter {
     this.pendingToolApprovals = new Map();
     this.pendingUserQuestions = new Map();
     this.startCalls = [];
+    this.workStreams = new Map();
+    // Router-only fixture. Real runtime scheduling and preparation fencing are
+    // covered by runtime-commands.test.js; this edge admits a controlled stream.
+    this.runtimeApplicationService = { submit: async (payload, { beforeCommit }) => {
+      beforeCommit();
+      const handle = await this.startChatStream({ sessionId: payload.session_id, prompt: payload.prompt,
+        preferredModel: payload.preferred_model, planMode: payload.plan_mode, approvalMode: payload.approval_mode });
+      const workId = `work_${handle.streamId}`;
+      this.workStreams.set(workId, handle.streamId);
+      return { ok: true, work_id: workId, turn_id: `turn_${handle.streamId}`,
+        session_id: payload.session_id, revision: 1, status: 'pending' };
+    } };
     this.failStart = false;
     this.renameGate = null;
     this.renameEntered = null;
     this.nextStream = 0;
+    this.projectCalls = [];
+    this.projectApplicationService = {
+      listProjects: () => ({
+        ok: true,
+        projects: [{
+          id: 'project_alpha', name: 'Alpha', root_path: '/workspace/alpha', root_revision: 1,
+          authority_key: `authority_${'a'.repeat(64)}`,
+        }],
+        storage: { read_only: false, reason: null },
+      }),
+      createProject: (params) => {
+        this.projectCalls.push(['create', params]);
+        return {
+          ok: true,
+          project: {
+            id: 'project_created', name: params.name, root_path: null, root_revision: 0,
+            authority_key: `authority_${'b'.repeat(64)}`,
+          },
+        };
+      },
+      assignSessionProject: ({ session_id: sessionId, project_id: projectId }) => {
+        this.projectCalls.push(['assign', { session_id: sessionId, project_id: projectId }]);
+        const session = this.sessionStore.updateSession(sessionId, { project_id: projectId });
+        return session ? { ok: true, session } : {
+          ok: false, error: { code: 'CMP-PROJECT-0002', reason: 'session_not_found' },
+        };
+      },
+    };
   }
 
   async listSessions() {
@@ -61,6 +101,8 @@ class BackendHarness extends EventEmitter {
     let settle;
     const pending = new Promise((resolve) => { settle = resolve; });
     this.activeStreams.set(streamId, { _pendingPromise: pending, settle, sessionId });
+    this.sessionStore.setActiveTurn(sessionId, { request_id: streamId, stream_id: streamId,
+      user_message_id: message.id, started_at: new Date().toISOString(), last_event_at: new Date().toISOString(), status: 'awaiting_assistant' });
     return { sessionId, streamId };
   }
 
@@ -75,6 +117,7 @@ class BackendHarness extends EventEmitter {
     const controller = this.activeStreams.get(streamId);
     if (!controller) return false;
     this.activeStreams.delete(streamId);
+    this.sessionStore.clearActiveTurn(controller.sessionId, { streamId });
     this.emit('chat-stream', { type, sessionId: controller.sessionId, streamId });
     controller.settle();
     return true;
@@ -106,6 +149,8 @@ function createFixture() {
     async close() { router.dispose(); backend.dispose(); fs.rmSync(root, { recursive: true, force: true }); },
   };
 }
+
+function admittedStream(f, ack) { return f.backend.workStreams.get(ack.work_id); }
 
 let sequence = 0;
 function command(auth, operation, params = {}, extra = {}) {
@@ -155,6 +200,75 @@ test('router composes authenticated control, bounded snapshot, and closed histor
   assert.equal((await acquire(fixture, sessionId, fixture.a, fixture.contextA)).client_id, fixture.a.client_id);
 });
 
+test('project commands require authentication while assignment also requires lease and revision', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.close());
+  const unauthenticated = { ...fixture.contextA, isAuthenticated: () => false };
+  const denied = await fixture.router.dispatch(
+    command(fixture.a, 'projects.list'), unauthenticated,
+  );
+  assert.equal(denied.error.reason, 'client_unauthorized');
+
+  const listed = await fixture.router.dispatch(
+    command(fixture.a, 'projects.list'), fixture.contextA,
+  );
+  assert.equal(listed.projects[0].authority_key, `authority_${'a'.repeat(64)}`);
+  const create = command(fixture.a, 'projects.create', { name: 'Created' });
+  const created = await fixture.router.dispatch(create, fixture.contextA);
+  assert.equal(created.project.id, 'project_created');
+  assert.deepEqual(await fixture.router.dispatch(create, fixture.contextA), created);
+  assert.equal(fixture.backend.projectCalls.filter(([name]) => name === 'create').length, 1);
+  assert.equal(
+    (await fixture.router.dispatch(create, unauthenticated)).error.reason,
+    'client_unauthorized'
+  );
+
+  const sessionId = await createSession(fixture);
+  const lease = await acquire(fixture, sessionId, fixture.a, fixture.contextA);
+  const revision = fixture.router.snapshot(sessionId).session.revision;
+  const assigned = await fixture.router.dispatch(command(
+    fixture.a,
+    'projects.assignSession',
+    { project_id: 'project_alpha' },
+    {
+      session_id: sessionId,
+      control_generation: lease.generation,
+      expected_revision: revision,
+    }
+  ), fixture.contextA);
+  assert.equal(assigned.ok, true);
+  assert.equal(assigned.session.project_id, 'project_alpha');
+  assert.notEqual(assigned.revision, revision);
+});
+
+test('project assignment reports indeterminate and advances revision when its lease expires during commit', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.close());
+  const sessionId = await createSession(fixture);
+  const lease = await acquire(fixture, sessionId, fixture.a, fixture.contextA);
+  const revision = fixture.router.snapshot(sessionId).session.revision;
+  const originalAssign = fixture.backend.projectApplicationService.assignSessionProject;
+  fixture.backend.projectApplicationService.assignSessionProject = (payload) => {
+    const result = originalAssign(payload);
+    fixture.leases.release(
+      sessionId,
+      fixture.a.client_id,
+      fixture.contextA.deviceId,
+      lease.generation
+    );
+    return result;
+  };
+  const request = command(fixture.a, 'projects.assignSession', { project_id: 'project_alpha' }, {
+    session_id: sessionId,
+    control_generation: lease.generation,
+    expected_revision: revision,
+  });
+  const result = await fixture.router.dispatch(request, fixture.contextA);
+  assert.equal(result.error.reason, 'operation_indeterminate');
+  assert.notEqual(fixture.router.snapshot(sessionId).session.revision, revision);
+  assert.equal(fixture.backend.sessionStore.getSession(sessionId).project_id, 'project_alpha');
+});
+
 test('snapshot paging is exclusive and live projection preserves bounded aggregate fields', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.close());
@@ -182,7 +296,7 @@ test('snapshot paging is exclusive and live projection preserves bounded aggrega
   assert.equal(page.live_projection.truncated, true);
 });
 
-test('foreground admission is synchronous, blocks a second device, and duplicate receipts join', async (t) => {
+test('durable receipt retries join and another controlled submission is accepted', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.close());
   const sessionId = await createSession(fixture);
@@ -202,10 +316,13 @@ test('foreground admission is synchronous, blocks a second device, and duplicate
     session_id: sessionId, control_generation: takeover.generation,
     expected_revision: fixture.router.snapshot(sessionId).session.revision,
   }), fixture.contextB);
-  assert.equal(busy.error.reason, 'foreground_busy');
-  assert.equal(fixture.backend.startCalls.length, 1);
-  assert.equal(fixture.router.snapshot(sessionId).messages.length, 1);
-  fixture.backend.finish(accepted.stream_id);
+  assert.equal(busy.ok, true);
+  assert.equal(busy.durable, true);
+  assert.equal(Object.hasOwn(busy, 'stream_id'), false);
+  assert.equal(fixture.backend.startCalls.length, 2);
+  assert.equal(fixture.router.snapshot(sessionId).messages.length, 2);
+  fixture.backend.finish(admittedStream(fixture, busy));
+  fixture.backend.finish(admittedStream(fixture, accepted));
 });
 
 test('takeover during an awaited mutation fences the receipt as indeterminate', async (t) => {
@@ -262,7 +379,7 @@ test('same-revision mutations serialize and only the first backend write commits
   assert.equal(fixture.router.snapshot(sessionId).session.title, 'First');
 });
 
-test('backend admission failure releases foreground while existing history remains readable', async (t) => {
+test('backend submission failure preserves readable history and permits a later submission', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.close());
   const sessionId = await createSession(fixture);
@@ -283,10 +400,10 @@ test('backend admission failure releases foreground while existing history remai
     expected_revision: snapshot.session.revision,
   }), fixture.contextA);
   assert.equal(next.ok, true);
-  fixture.backend.finish(next.stream_id);
+  fixture.backend.finish(admittedStream(fixture, next));
 });
 
-test('an admitted turn stays globally busy after takeover during preflight', async (t) => {
+test('accepted work survives takeover without blocking another conversation', async (t) => {
   const f = createFixture(); t.after(() => f.close());
   const sessionId = await createSession(f);
   const lease = await acquire(f, sessionId, f.a, f.contextA);
@@ -309,8 +426,9 @@ test('an admitted turn stays globally busy after takeover during preflight', asy
     session_id: other, control_generation: otherLease.generation,
     expected_revision: f.router.snapshot(other).session.revision,
   }), f.contextB);
-  assert.equal(blocked.error.reason, 'foreground_busy');
-  assert.equal(f.backend.startCalls.length, 1);
+  assert.equal(blocked.ok, true);
+  assert.equal(f.backend.startCalls.length, 2);
+  f.backend.finish(admittedStream(f, blocked));
   f.backend.finish('stream_1');
 });
 
@@ -328,7 +446,7 @@ test('exact committed retries use receipts after revisions advance', async (t) =
   const send = command(f.a, 'chat.send', { prompt: 'One prompt' }, { session_id: sessionId,
     control_generation: lease.generation, expected_revision: f.router.snapshot(sessionId).session.revision });
   const sent = await f.router.dispatch(send, f.contextA);
-  f.backend.finish(sent.stream_id);
+  f.backend.finish(admittedStream(f, sent));
   assert.deepEqual(await f.router.dispatch(send, f.contextA), sent);
   assert.equal(f.backend.startCalls.length, 1);
 });
@@ -343,12 +461,12 @@ test('cancellation binds session and stream, and synchronous settlement cannot i
     session_id: other, control_generation: otherLease.generation,
     expected_revision: f.router.snapshot(other).session.revision,
   }), f.contextB);
-  const denied = await f.router.dispatch(command(f.a, 'chat.cancel', { stream_id: sent.stream_id }, {
+  const denied = await f.router.dispatch(command(f.a, 'chat.cancel', { stream_id: admittedStream(f, sent) }, {
     session_id: sessionId, control_generation: lease.generation,
     expected_revision: f.router.snapshot(sessionId).session.revision,
   }), f.contextA);
   assert.equal(denied.error.reason, 'stream_session_mismatch');
-  assert.equal(f.backend.activeStreams.has(sent.stream_id), true);
+  assert.equal(f.backend.activeStreams.has(admittedStream(f, sent)), true);
   const { approveToolCall, denyToolCall } = require('../../services/backend/backend-chat-stream');
   f.backend.approveToolCall = (id, options) => approveToolCall(f.backend, id, options);
   f.backend.denyToolCall = (id) => denyToolCall(f.backend, id);
@@ -356,12 +474,12 @@ test('cancellation binds session and stream, and synchronous settlement cannot i
   for (const approved of [true, false]) {
     const approvalId = `approval_${approved}`;
     f.backend.pendingToolApprovals.set(approvalId, { approvalId, sessionId: other,
-      streamId: sent.stream_id, callId: 'call', toolName: 'write_file', resolve: () => {
+      streamId: admittedStream(f, sent), callId: 'call', toolName: 'write_file', resolve: () => {
         decisions++;
-        f.backend.emit('chat-stream', { sessionId: other, streamId: sent.stream_id, type: 'tool_use' });
+        f.backend.emit('chat-stream', { sessionId: other, streamId: admittedStream(f, sent), type: 'tool_use' });
       } });
     const snapshot = f.router.snapshot(other);
-    const resolve = command(f.b, 'approval.resolve', { stream_id: sent.stream_id, approval_id: approvalId,
+    const resolve = command(f.b, 'approval.resolve', { stream_id: admittedStream(f, sent), approval_id: approvalId,
       decision_revision: snapshot.pending_approvals[0].decision_revision, approved }, {
       session_id: other, control_generation: otherLease.generation, expected_revision: snapshot.session.revision,
     });
@@ -370,18 +488,18 @@ test('cancellation binds session and stream, and synchronous settlement cannot i
     assert.deepEqual(await f.router.dispatch(resolve, f.contextB), settled);
   }
   assert.equal(decisions, 2);
-  const stopped = await f.router.dispatch(command(f.b, 'chat.cancel', { stream_id: sent.stream_id }, {
+  const stopped = await f.router.dispatch(command(f.b, 'chat.cancel', { stream_id: admittedStream(f, sent) }, {
     session_id: other, control_generation: otherLease.generation,
     expected_revision: f.router.snapshot(other).session.revision,
   }), f.contextB);
   assert.equal(stopped.ok, true);
   assert.equal(stopped.awaiting_settlement, false);
-  const retried = await f.router.dispatch(command(f.b, 'chat.cancel', { stream_id: sent.stream_id }, {
+  const retried = await f.router.dispatch(command(f.b, 'chat.cancel', { stream_id: admittedStream(f, sent) }, {
     session_id: other, control_generation: otherLease.generation,
     expected_revision: stopped.revision || f.router.snapshot(other).session.revision,
   }), f.contextB);
   assert.deepEqual(retried, { ok: true, accepted: true, cancelled: true,
-    stream_id: sent.stream_id, awaiting_settlement: false });
+    stream_id: admittedStream(f, sent), awaiting_settlement: false });
 });
 
 test('successful deletion settles its receipt and exact retries do not repeat deletion', async (t) => {
@@ -415,16 +533,16 @@ test('cancel retries with new request ids are accepted without repeating backend
   let cancelCalls = 0;
   f.backend.cancelChatStream = () => { cancelCalls++; return true; };
   const expectedRevision = f.router.snapshot(sessionId).session.revision;
-  const cancel = () => f.router.dispatch(command(f.a, 'chat.cancel', { stream_id: sent.stream_id }, {
+  const cancel = () => f.router.dispatch(command(f.a, 'chat.cancel', { stream_id: admittedStream(f, sent) }, {
     session_id: sessionId, control_generation: lease.generation, expected_revision: expectedRevision,
   }), f.contextA);
   const first = await cancel();
   const retry = await cancel();
   assert.deepEqual(first, { ok: true, accepted: true, cancelled: true,
-    stream_id: sent.stream_id, awaiting_settlement: true });
+    stream_id: admittedStream(f, sent), awaiting_settlement: true });
   assert.deepEqual(retry, first);
   assert.equal(cancelCalls, 1);
-  f.backend.finish(sent.stream_id, 'cancelled');
+  f.backend.finish(admittedStream(f, sent), 'cancelled');
   const settledRetry = await cancel();
   assert.equal(settledRetry.ok, true);
   assert.equal(settledRetry.awaiting_settlement, false);

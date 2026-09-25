@@ -7,6 +7,7 @@
  */
 
 const { normalizeContextPreferences } = require('./context-preferences');
+const { normalizeProjectId } = require('../projects/project-schema');
 
 const MAX_TEMPLATES = 20;
 
@@ -32,6 +33,7 @@ function normalizeTemplate(input) {
     reasoning_effort: normalizeEffort(input.reasoning_effort),
     conversation_mode: normalizeConvMode(input.conversation_mode),
     linked_session_ids: normalizeLinkedIds(input.linked_session_ids),
+    project_id: normalizeProjectId(input.project_id),
     created_at: String(input.created_at || new Date().toISOString()),
   };
 }
@@ -125,6 +127,7 @@ class SessionTemplateStore {
 
     return sessionStore.createSession({
       title: `${template.name} session`,
+      ...(template.project_id ? { projectId: template.project_id } : {}),
       preferences: {
         preferred_model: template.preferred_model,
         reasoning_effort: template.reasoning_effort,

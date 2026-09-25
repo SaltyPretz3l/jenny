@@ -183,7 +183,7 @@ def _available_tool_names(tool_contract: Any | None) -> tuple[str, ...]:
 def _invalid_tool_output(message: str, tool_contract: Any | None = None) -> str:
     # Name the valid tools inline: small local models hallucinate near-miss
     # tool names (write_to_file for write_file) and will not re-derive the
-    # right one from the system prompt's tool block — without the list here
+    # right one from the system prompt's tool block -- without the list here
     # they conclude the capability is missing and tell the user so.
     base = (
         f"Error: {message}. Please check the available tools and try again "
@@ -600,15 +600,15 @@ def _summarize_failed_tool_outcomes(outcomes: list[Any]) -> str:
 def _quota_block_guidance(reason: str, cap: int) -> str:
     """Model-facing guidance for a resource-discipline quota block, keyed by scope.
 
-    The web budget gets explicit reassurance — it is per-turn, resets on the next reply,
-    and does NOT mean the network is unavailable — because the model otherwise misreads
+    The web budget gets explicit reassurance -- it is per-turn, resets on the next reply,
+    and does NOT mean the network is unavailable -- because the model otherwise misreads
     "exhausted for this request" as a session-wide network outage and tells the user the
     network is down or that a quota must be reset manually.
     """
     if reason == "web_per_turn":
         return (
             f"this turn's web-tool budget ({cap} calls) is used up. This is a per-turn "
-            "limit that resets on your next reply — the network is still available. Do "
+            "limit that resets on your next reply -- the network is still available. Do "
             "not tell the user the network is down or that a quota must be reset. Answer "
             "now with the results already gathered, or ask the user to continue if you "
             "need more web lookups."
@@ -967,11 +967,12 @@ def run_tool_loop(  # noqa: C901, PLR0912, PLR0915
         from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
             finish_run_change_set,
         )
+        from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended  # noqa: PLC0415
 
         try:
             finish_run_change_set(
                 run,
-                approval_paused=False,
+                approval_paused=isinstance(error, ToolLoopSuspended),
                 reason=f"exception:{type(error).__name__}",
             )
         except Exception as settle_error:  # noqa: BLE001 - preserve the original exception.

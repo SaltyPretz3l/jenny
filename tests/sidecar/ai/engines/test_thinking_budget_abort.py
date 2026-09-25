@@ -130,6 +130,11 @@ def _patch_vllm_stream(
     return engine, response
 
 
+# Sized so the guard's token-derived budget (65% of num_predict at the measured
+# 3.2 chars/token) lands between one and two 40,000-char reasoning chunks.
+_BUDGET_MAX_TOKENS = 20_000
+
+
 def _vllm_budget_lines() -> list[str]:
     return [
         _vllm_chunk({"reasoning_content": "a" * 40_000}),
@@ -216,26 +221,26 @@ def test_ollama_thinking_budget_abort_kill_switch_preserves_full_stream(
     assert finish_reason != "thinking_budget"
 
 
-def test_vllm_plain_stream_aborts_after_floored_thinking_budget(
+def test_vllm_plain_stream_aborts_after_the_thinking_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lines = _vllm_budget_lines()
     engine, response = _patch_vllm_stream(monkeypatch, lines)
 
-    events = list(engine.stream(prompt="hi", max_tokens=64))
+    events = list(engine.stream(prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
 
     assert response.consumed == 2
     assert events[-1].finish_reason == "thinking_budget"
 
 
-def test_vllm_tool_stream_aborts_after_floored_thinking_budget(
+def test_vllm_tool_stream_aborts_after_the_thinking_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lines = _vllm_budget_lines()
     engine, response = _patch_vllm_stream(monkeypatch, lines)
 
     _events, result = _drain(
-        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=64)
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=_BUDGET_MAX_TOKENS)
     )
 
     assert response.consumed == 2
@@ -256,7 +261,7 @@ def test_vllm_tool_stream_abort_preserves_visible_content_on_tripping_chunk(
     engine, response = _patch_vllm_stream(monkeypatch, lines)
 
     events, result = _drain(
-        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=64)
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=_BUDGET_MAX_TOKENS)
     )
 
     assert result.finish_reason == "thinking_budget"
@@ -274,13 +279,13 @@ def test_vllm_thinking_budget_abort_kill_switch_preserves_full_stream(
     lines = _vllm_budget_lines()
     engine, response = _patch_vllm_stream(monkeypatch, lines)
 
-    events = list(engine.stream(prompt="hi", max_tokens=64))
+    events = list(engine.stream(prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
 
     assert response.consumed == len(lines)
     assert events[-1].finish_reason != "thinking_budget"
 
 
-def test_vllm_small_max_tokens_uses_floored_thinking_budget(
+def test_vllm_reasoning_inside_the_budget_never_trips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lines = [
@@ -290,7 +295,86 @@ def test_vllm_small_max_tokens_uses_floored_thinking_budget(
     ]
     engine, response = _patch_vllm_stream(monkeypatch, lines)
 
-    events = list(engine.stream(prompt="hi", max_tokens=64))
+    events = list(engine.stream(prompt="hi", max_tokens=1_024))
 
     assert response.consumed == len(lines)
     assert events[-1].finish_reason != "thinking_budget"
+
+
+def test_vllm_small_max_tokens_trips_on_reasoning_past_its_own_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 64-token generation cannot hold 300 chars (~94 tokens) of reasoning.
+
+    The budget used to be floored at 65,536 chars regardless of ``max_tokens``,
+    so it sat above every cap it was meant to stay under and the guard could
+    never fire before the provider's own ``n_predict``.
+    """
+    lines = [
+        _vllm_chunk({"reasoning_content": "x" * 300}),
+        _vllm_chunk({"content": "answer"}),
+        "data: [DONE]",
+    ]
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events = list(engine.stream(prompt="hi", max_tokens=64))
+
+    assert response.consumed == 1
+    assert events[-1].finish_reason == "thinking_budget"
+
+# ---------------------------------------------------------------------------
+# Repetition first, then the budget (owner turn 2026-09-20): the guard's
+# repetition trip must not disarm the budget abort.
+# ---------------------------------------------------------------------------
+
+_REPEATED_REASONING = "Checking the request intent carefully. " * 50
+
+
+def _repetition_then_budget_lines() -> list[str]:
+    return [
+        *(_vllm_chunk({"reasoning_content": _REPEATED_REASONING}) for _ in range(3)),
+        _vllm_chunk({"reasoning_content": "a" * 40_000}),
+        _vllm_chunk({"reasoning_content": "b" * 40_000}),
+        _vllm_chunk({"content": "never reached"}),
+        "data: [DONE]",
+    ]
+
+
+def test_guard_repetition_then_budget_reports_char_limit() -> None:
+    guard = ThinkingRepetitionGuard(max_chars=len(_REPEATED_REASONING) * 4)
+    for _ in range(3):
+        guard.feed(_REPEATED_REASONING)
+    assert guard.stop_reason == "repetition"
+    assert guard.tripped_on_budget() is False
+
+    assert guard.feed("z" * (len(_REPEATED_REASONING) * 2)) is True
+    assert guard.stop_reason == "char_limit"
+    assert guard.tripped_on_budget() is True
+
+
+def test_vllm_tool_stream_repetition_then_budget_aborts_with_thinking_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repetition trip hides reasoning; the budget must still end the call."""
+    lines = _repetition_then_budget_lines()
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events, result = _drain(
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=_BUDGET_MAX_TOKENS)
+    )
+
+    assert result.finish_reason == "thinking_budget"
+    assert response.consumed < len(lines)
+    assert not [event for event in events if getattr(event, "kind", "") == "content"]
+
+
+def test_vllm_plain_stream_repetition_then_budget_aborts_with_thinking_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = _repetition_then_budget_lines()
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events = list(engine.stream(prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
+
+    assert events[-1].finish_reason == "thinking_budget"
+    assert response.consumed < len(lines)

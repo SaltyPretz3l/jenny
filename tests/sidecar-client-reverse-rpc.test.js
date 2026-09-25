@@ -41,6 +41,39 @@ test('approval denial is written in finally without an error listener', async ()
   assert.deepEqual(decode(writes[0]).result, { approved: false });
 });
 
+async function writtenPlanApproval(result) {
+  const client = new SidecarClient();
+  const { proc, writes } = recordingProcess();
+  client.attachProcess(proc);
+  client.approvalHandlers.set('req_plan_edit', () => result);
+  await client._handleApprovalRequest({
+    jsonrpc: '2.0', id: 10000012, method: 'tool.request_approval',
+    params: { request_id: 'req_plan_edit', tool_call_id: 'call_plan', tool_name: 'exit_plan_mode' },
+  });
+  assert.equal(writes.length, 1);
+  return decode(writes[0]).result;
+}
+
+test('an edited plan on a plan approval reaches the sidecar frame', async () => {
+  const editedPlan = { title: 'Edited', steps: ['First', 'Second'] };
+  assert.deepEqual(await writtenPlanApproval({
+    approved: true, decision: 'approved', feedback: '', edited_plan: editedPlan,
+  }), { approved: true, decision: 'approved', feedback: '', edited_plan: editedPlan });
+});
+
+test('an edited plan that is not a bounded plain object is dropped from the frame', async () => {
+  const cyclic = { title: 'Loop' };
+  cyclic.self = cyclic;
+  for (const editedPlan of [
+    ['step'], 'plan', null, new Map(), cyclic,
+    { title: 'Huge', steps: ['x'.repeat(16 * 1024)] },
+  ]) {
+    assert.deepEqual(await writtenPlanApproval({
+      approved: true, decision: 'approved', feedback: '', edited_plan: editedPlan,
+    }), { approved: true, decision: 'approved', feedback: '' });
+  }
+});
+
 test('oversized electron tool result becomes one bounded bridge error response', async () => {
   const logs = [];
   const client = new SidecarClient({

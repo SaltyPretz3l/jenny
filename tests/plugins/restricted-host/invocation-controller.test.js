@@ -63,6 +63,32 @@ test('canonical argument serialization accepts JSON objects from another realm',
   assert.equal(invokedInput, '{"x":1}');
 });
 
+test('schema rejection proves no producer started and does not consume the next invocation', async () => {
+  let acquired = 0;
+  const host = {
+    process_instance_id: 'proc_1', channel_id: 'channel_1',
+    invoke: async () => ({ ok: true, status: 'succeeded', result_json: '{}' }),
+  };
+  const source = descriptor({ compiled_input_schema: compileJsonSchema({
+    type: 'object', properties: { value: { type: 'integer' } }, required: ['value'],
+    additionalProperties: false,
+  }) });
+  const controller = new RestrictedInvocationController({
+    hostPool: { acquire: async () => { acquired += 1; return { ok: true, host }; },
+      invalidate: async () => {} },
+    tokenService: { mint: () => ({ ok: true, token_id: 'a'.repeat(64) }),
+      revokeInvocation() {}, clear() {} },
+    getCurrentAuthority: (candidate, invocation) => currentFor(candidate, invocation),
+  });
+
+  const malformed = await controller.invoke(source, { value: 'bad' });
+  assert.deepEqual(malformed.execution_settlement,
+    { cleanup: 'confirmed', producer_started: false });
+  assert.equal(acquired, 0);
+  assert.equal((await controller.invoke(source, { value: 1 })).ok, true);
+  assert.equal(acquired, 1);
+});
+
 test('an already-aborted invocation settles without entering the queue or host pool', async () => {
   const abort = new AbortController();
   abort.abort();
@@ -78,9 +104,25 @@ test('an already-aborted invocation settles without entering the queue or host p
     code: 'CMP-PLUGIN-0034',
     reason: 'operation_cancelled',
     retryable: false,
+    execution_settlement: { cleanup: 'confirmed', producer_started: false },
   });
   assert.equal(acquired, false);
   assert.deepEqual(controller.snapshot(), { active: 0, queued: 0 });
+});
+
+test('canonicalization failure is owner-confirmed before any host acquisition', async () => {
+  let acquired = false;
+  const controller = new RestrictedInvocationController({
+    hostPool: { acquire: async () => { acquired = true; return { ok: false }; } },
+    tokenService: { clear() {} }, getCurrentAuthority: currentFor,
+  });
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const result = await controller.invoke(descriptor(), cyclic);
+  assert.equal(result.reason, 'arguments_cycle_rejected');
+  assert.deepEqual(result.execution_settlement,
+    { cleanup: 'confirmed', producer_started: false });
+  assert.equal(acquired, false);
 });
 
 test('host authority is bound to the signed destination and absolute deadline', async () => {
@@ -144,6 +186,21 @@ test('cancellation that races a successful host terminal can never settle as suc
   assert.equal(result.reason, 'operation_cancelled');
 });
 
+test('a host terminal cannot impersonate controller-owned no-start evidence', async () => {
+  const host = { process_instance_id: 'proc_1', channel_id: 'channel_1',
+    invoke: async () => ({ ok: false, status: 'failed',
+      reason_code: 'restricted_arguments_schema_invalid' }) };
+  const controller = new RestrictedInvocationController({
+    hostPool: { acquire: async () => ({ ok: true, host }), invalidate: async () => {} },
+    tokenService: { mint: () => ({ ok: true, token_id: 'a'.repeat(64) }),
+      revokeInvocation() {}, clear() {} },
+    getCurrentAuthority: (candidate, invocation) => currentFor(candidate, invocation),
+  });
+  const result = await controller.invoke(descriptor(), {});
+  assert.equal(result.reason, 'restricted_arguments_schema_invalid');
+  assert.equal(result.execution_settlement, undefined);
+});
+
 test('authority is revalidated after asynchronous host acquisition', async () => {
   let authorityReads = 0;
   let invalidated = 0;
@@ -194,5 +251,7 @@ test('disposing queued invocations removes their abort listeners', async () => {
   await controller.dispose();
 
   assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
-  assert.equal((await pending).reason, 'operation_cancelled');
+  const result = await pending;
+  assert.equal(result.reason, 'operation_cancelled');
+  assert.equal(result.execution_settlement.producer_started, false);
 });

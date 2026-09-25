@@ -135,7 +135,7 @@
     }
 
     function matchesCurrentContext(request) {
-      return request.view !== 'change_diff' || (
+      return request.scoped !== true || (
         request.sessionId === String(getSessionId() || '')
         && request.workspaceId === String(getWorkspaceId() || '').toLowerCase()
       );
@@ -198,6 +198,13 @@
 
     function apply(request, { userInitiated = false } = {}) {
       if (disposed || !request) {
+        return;
+      }
+      if (!matchesCurrentContext(request)) {
+        appendClientLog('WARN', 'workspace_presentation.change_context_rejected', {
+          reason: 'identity_mismatch',
+        });
+        removeChip();
         return;
       }
       if (!userInitiated) {
@@ -326,17 +333,27 @@
       const sessionId = normalizeOpaqueId(payload.session_id);
       const workspaceId = normalizeOpaqueId(payload.workspace_id, 64).toLowerCase();
       const changeId = payload.change_id ? normalizeOpaqueId(payload.change_id) : '';
-      if (view === 'change_diff' && (!path || !sessionId
+      const scoped = Object.prototype.hasOwnProperty.call(payload, 'session_id')
+        || Object.prototype.hasOwnProperty.call(payload, 'workspace_id');
+      if ((scoped && (!sessionId || !/^root_[0-9a-f]{24}$/.test(workspaceId)))
+        || (view === 'change_diff' && (!path || !sessionId
         || !/^root_[0-9a-f]{24}$/.test(workspaceId)
-        || (payload.change_id && !changeId))) {
+        || (payload.change_id && !changeId)))) {
         appendClientLog('WARN', 'workspace_presentation.request_rejected', {
           view,
-          reason: 'invalid_change_diff',
+          reason: view === 'change_diff' ? 'invalid_change_diff' : 'invalid_context',
+        });
+        return;
+      }
+      const request = { view, path, sessionId, workspaceId, changeId, scoped };
+      if (!matchesCurrentContext(request)) {
+        appendClientLog('INFO', 'workspace_presentation.change_dropped', {
+          reason: 'context_changed',
         });
         return;
       }
       // Newest-request-wins coalescing within the window.
-      coalescedRequest = { view, path, sessionId, workspaceId, changeId };
+      coalescedRequest = request;
       if (!coalesceTimer) {
         coalesceTimer = windowRef.setTimeout(settle, COALESCE_MS);
       }

@@ -1,4 +1,7 @@
 const fs = require('node:fs');
+const {
+  SessionExecutionAuthority,
+} = require('../../services/backend/session-execution-authority');
 
 async function waitForDiagnosticDump(service, streamId, timeoutMs = 1000) {
   const deadline = Date.now() + timeoutMs;
@@ -82,9 +85,30 @@ function createManagedChatServiceStub(options = {}) {
     upsertFollowUp: [],
     resolveFollowUp: [],
   };
+  const authority = Object.freeze({
+    project_id: 'project_general',
+    root_path: null,
+    root_id: null,
+    root_revision: 0,
+    device_id: null,
+    inode: null,
+  });
+  const projectAuthority = {
+    captureSession: () => authority,
+    requireCurrent: () => authority,
+  };
+  const sessionExecutionAuthority = new SessionExecutionAuthority({
+    projectAuthority,
+    resolvePluginToolAuthority: options.resolvePluginToolAuthority,
+    permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: {}, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+  });
   return {
     activeStreams: new Map(),
     pendingToolApprovals: new Map(),
+    projectAuthority,
+    sessionExecutionAuthority,
     currentModel: 'mock-v1',
     personalityWorkspace: null,
     attachmentAssetStore: null,

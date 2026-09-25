@@ -276,10 +276,68 @@
       }
     }
 
+    /* Context-compacted notice disclosure.
+       Keyed by message id alone, not by session: the notice is live-only (it
+       never enters a persisted message record), so an id cannot outlive the
+       messages it belongs to. The flag has to live here rather than on the
+       node because the timeline re-renders by innerHTML — that is what used to
+       snap the old <details> shut when a second compaction landed mid-turn. */
+    function ensureContextCompactionExpandedSet() {
+      if (!isSetLike(state.ui.contextCompactionExpanded)) {
+        state.ui.contextCompactionExpanded = new Set();
+      }
+      return state.ui.contextCompactionExpanded;
+    }
+
+    function isContextCompactionExpanded(messageId) {
+      const resolvedMessageId = String(messageId || '').trim();
+      return Boolean(resolvedMessageId && ensureContextCompactionExpandedSet().has(resolvedMessageId));
+    }
+
+    /* Immediate feedback without a full timeline re-render, mirroring
+       syncInteractiveRecapRows. The state above is what the next render
+       stamps back. */
+    function syncContextCompactionRows(messageId, expanded) {
+      if (!chatTimeline) {
+        return;
+      }
+      // Filtered rather than selected by attribute value: message ids are
+      // opaque strings with no selector-safety guarantee.
+      const toggles = Array.from(chatTimeline.querySelectorAll('.context-compacted-notice-toggle'))
+        .filter((node) => String(node.dataset.messageId || '').trim() === messageId);
+      toggles.forEach((toggle) => {
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        const bodyId = String(toggle.getAttribute('aria-controls') || '').trim();
+        const body = (bodyId ? toggle.ownerDocument?.getElementById(bodyId) : null)
+          || toggle.parentElement?.querySelector('.context-compacted-notice-body')
+          || null;
+        if (body) {
+          body.hidden = !expanded;
+        }
+      });
+    }
+
+    function toggleContextCompactionDetails(messageId) {
+      const resolvedMessageId = String(messageId || '').trim();
+      if (!resolvedMessageId) {
+        return;
+      }
+      const expandedIds = ensureContextCompactionExpandedSet();
+      const expanded = !expandedIds.has(resolvedMessageId);
+      if (expanded) {
+        expandedIds.add(resolvedMessageId);
+      } else {
+        expandedIds.delete(resolvedMessageId);
+      }
+      syncContextCompactionRows(resolvedMessageId, expanded);
+    }
+
     return {
       isInteractiveRoundRecapExpanded,
       pruneInteractiveRoundRecapExpansionState,
       toggleInteractiveRoundRecap,
+      isContextCompactionExpanded,
+      toggleContextCompactionDetails,
     };
   }
 

@@ -28,7 +28,10 @@ from sidecar.ai.routing.provider_stream_normalizer import (
 )
 from sidecar.ai.tools.models import GenerationUsage
 from sidecar.runtime.diagnostics import emit_startup_audit_mark
-from sidecar.runtime.local_engine.request_context import current_diagnostics_store
+from sidecar.runtime.local_engine.request_context import (
+    consume_provider_call_purpose,
+    current_diagnostics_store,
+)
 
 # Ollama in-band error frames are top-level ``{"error": "..."}`` NDJSON lines,
 # not ``message`` envelopes. Bound the captured text so a provider stack trace
@@ -288,10 +291,16 @@ class _OllamaTelemetryMixin:
     ) -> None:
         store = current_diagnostics_store(self)
         request_id = self._request_id()
+        # Consumed before the guard: the tag is for THIS call whether or
+        # not it is recorded, never for the next one.
+        purpose = consume_provider_call_purpose(self) or "turn"
         context = self._current_request_context()
         trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
         if not request_id:
             return
+        # Per-call tagging and first-chunk latch: see the vLLM sibling.
+        if isinstance(context, dict):
+            context["first_chunk_logged"] = False
         logger.info(
             "Ollama request started.",
             extra={
@@ -341,6 +350,7 @@ class _OllamaTelemetryMixin:
             tool_capable=tool_capable,
             tool_payload_bytes=tool_payload_bytes,
             provider_sampler=diagnostic_sampler,
+            purpose=purpose,
         )
 
     def _record_first_chunk(self) -> None:
@@ -451,12 +461,12 @@ class _OllamaTelemetryMixin:
             provider_label="ollama",
         )
 
-    def _complete_provider_request(self) -> None:
+    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
         store = current_diagnostics_store(self)
         request_id = self._request_id()
         if store is None or not request_id or not hasattr(store, "complete_provider_request"):
             return
-        store.complete_provider_request(request_id=request_id)
+        store.complete_provider_request(request_id=request_id, outcome=outcome)
         latest_snapshot = store.snapshot() if hasattr(store, "snapshot") else None
         current_request_context = self._current_request_context()
         logger.info(

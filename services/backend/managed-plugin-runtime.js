@@ -4,6 +4,9 @@
 // services/plugins; the sole composition seam injects request/restart calls.
 
 const { PLUGIN_ERROR_CODES } = require('./error-codes');
+const {
+  capturePluginToolExecutionAuthority,
+} = require('./plugin-tool-execution-authority');
 
 const ADAPTER_STATE = new WeakMap();
 const RESTART_SUPPRESSED_REASONS = new Set(['runtime_startup_in_progress']);
@@ -306,6 +309,15 @@ function attachManagedPluginRuntime(owner, {
         active_generation_id,
       };
     },
+    captureExecutionToolAuthority(expectedAuthority) {
+      if (state.detached || state.status !== 'ready' || !state.committedEnvelope) {
+        throw new Error('Managed plugin runtime authority is unavailable.');
+      }
+      return capturePluginToolExecutionAuthority(
+        state.committedEnvelope,
+        expectedAuthority
+      );
+    },
     reconcileCurrent() {
       if (!state.committedEnvelope) {
         return Promise.resolve({ ok: false, reason: 'runtime_reconciliation_target_missing' });
@@ -336,6 +348,14 @@ function getManagedPluginRuntime(owner) {
   return state && !state.detached ? state.adapter : null;
 }
 
+function bindPluginExecutionAuthority(authorityService, binding, authority) {
+  if (typeof authorityService?.bindPluginTools === 'function') {
+    return authorityService.bindPluginTools(binding, authority);
+  }
+  if (authority?.mode === 'core_only') return true;
+  throw new Error('Plugin execution authority binder is unavailable.');
+}
+
 function isPluginAuthorityConflict(error) {
   const code = String(
     error?.error_code
@@ -346,10 +366,14 @@ function isPluginAuthorityConflict(error) {
   return code === PLUGIN_ERROR_CODES.EXPECTED_GENERATION_CONFLICT;
 }
 
-async function sendWithPluginRuntimeReconciliation(owner, send, { log = null } = {}) {
+async function sendWithPluginRuntimeReconciliation(owner, send, {
+  log = null,
+  bindAuthority = null,
+} = {}) {
   const adapter = getManagedPluginRuntime(owner);
   const firstAuthority = adapter?.getChatAuthority?.() || { mode: 'core_only' };
   try {
+    bindAuthority?.(firstAuthority);
     return await send(firstAuthority);
   } catch (error) {
     if (!adapter || !isPluginAuthorityConflict(error)) throw error;
@@ -372,6 +396,7 @@ async function sendWithPluginRuntimeReconciliation(owner, send, { log = null } =
         ? 'reconciled'
         : boundedReason(reconciled?.reason, 'core_only_fallback'),
     });
+    bindAuthority?.(authority);
     return send(authority);
   }
 }
@@ -380,6 +405,7 @@ module.exports = {
   boundedReason,
   authorityFromEnvelope,
   attachManagedPluginRuntime,
+  bindPluginExecutionAuthority,
   getManagedPluginRuntime,
   isPluginAuthorityConflict,
   sendWithPluginRuntimeReconciliation,

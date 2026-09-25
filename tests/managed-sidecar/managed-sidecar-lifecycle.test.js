@@ -89,6 +89,32 @@ test('refreshManagedConfig forwards the sign-out reconfiguration bounds into the
   ]);
 });
 
+test('workspace root refresh is deferred while captured request streams are active', async () => {
+  const observed = [];
+  const service = {
+    sidecarClient: {},
+    sidecarManager: { process: {} },
+    activeStreams: new Map([['stream-1', {}]]),
+    _emitServiceLog(level, event, details) { observed.push({ level, event, details }); },
+    async _initializeManagedSidecar() {
+      throw new Error('active request must not be reconfigured');
+    },
+  };
+
+  const result = await refreshManagedConfig(service, 'workspace_root_commit');
+
+  assert.equal(result, null);
+  assert.deepEqual(observed, [{
+    level: 'INFO',
+    event: 'sidecar.config_refresh_deferred',
+    details: {
+      reason: 'workspace_root_commit',
+      activeStreams: 1,
+      scope: 'request_execution_context',
+    },
+  }]);
+});
+
 test('a lazy managed boot (no startup model) pushes a final ready backend-status', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-lazy-ready-'));
   trackDirectory(userDataPath);

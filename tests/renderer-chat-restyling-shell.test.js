@@ -277,6 +277,10 @@ test('renderer splits assistant metadata notices and awaiting-approval tool rows
   assert.ok(turnEntry);
   assert.ok(toolEntry);
   assert.ok(turnEntry.querySelector('.chat-row[data-row-kind="system_notice"] .context-compacted-notice'));
+  assert.ok(
+    turnEntry.querySelector('.context-compacted-notice-toggle[data-action="context-compaction-details"]'),
+    'the compaction disclosure renders through the inventory action-button primitive'
+  );
   assert.ok(turnEntry.querySelector('.chat-row[data-row-kind="system_notice"] .agent-status-note'));
   assert.ok(
     toolEntry.querySelector('.chat-row[data-row-kind="tool_call"][data-tool-call-id="call_notice_turn"][data-row-state="awaiting_approval"]')

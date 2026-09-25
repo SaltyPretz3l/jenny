@@ -602,3 +602,23 @@ def test_receipt_is_bounded_non_authoritative_and_has_no_absolute_store_path(
     assert receipt["latest_change_set_id"] == record["change_set_id"]
     assert receipt["coverage"]["partially_undoable"] is True
     assert str(tmp_path / "recovery") not in receipt["authoritative_store"]
+
+
+def test_packaged_sidecar_reads_the_bundled_journal_schema(tmp_path, monkeypatch) -> None:
+    """The frozen sidecar has no source tree; the schema comes from sys._MEIPASS.
+
+    1.2.0 gate C1: every packaged write_file failed with "Workspace journal
+    schema is unavailable" because the loader only knew the source path.
+    """
+    from sidecar.ai.tools import workspace_mutation_journal_contract as contract
+
+    source = Path(contract.__file__).resolve().parents[3] / "config" / "workspace-mutation-journal-v1.schema.json"
+    bundled = json.loads(source.read_text(encoding="utf-8"))
+    bundled["$comment"] = "bundled copy"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "workspace-mutation-journal-v1.schema.json").write_text(
+        json.dumps(bundled), encoding="utf-8"
+    )
+    monkeypatch.setattr(contract.sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert contract.load_journal_schema()["$comment"] == "bundled copy"

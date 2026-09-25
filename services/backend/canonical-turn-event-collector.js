@@ -8,6 +8,7 @@ const {
   mergePromotedObservationsIntoTurnEvents,
 } = require('./tool-observation-promotion');
 const { normalizeSourceCitations } = require('./tool-result-source-metadata');
+const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-ownership');
 const {
   cloneJsonValue,
   normalizeId,
@@ -34,6 +35,7 @@ class CanonicalTurnEventCollector {
     store,
     logger = null,
     turnId = '',
+    attemptId = '',
     sessionId = '',
     journal = null,
     canonicalPrimary = false,
@@ -42,6 +44,7 @@ class CanonicalTurnEventCollector {
     this.store = store;
     this.logger = typeof logger === 'function' ? logger : null;
     this.turnId = normalizeId(turnId);
+    this.attemptId = normalizeId(attemptId);
     this.sessionId = normalizeId(sessionId);
     this.journal = journal;
     this.canonicalPrimary = canonicalPrimary === true;
@@ -107,7 +110,7 @@ class CanonicalTurnEventCollector {
     const prevalidated = options && typeof options === 'object' ? options.validation : null;
     const canonicalSource = Object.prototype.hasOwnProperty.call(rawSource, 'v')
       || Object.prototype.hasOwnProperty.call(rawSource, 'type')
-      ? normalizeCanonicalTurnEventForCapture(rawSource, this.logger, prevalidated)
+      ? normalizeCanonicalTurnEventForCapture(rawSource, this.logger, prevalidated, this.attemptId)
       : null;
     if ((Object.prototype.hasOwnProperty.call(rawSource, 'v')
       || Object.prototype.hasOwnProperty.call(rawSource, 'type')) && canonicalSource == null) {
@@ -152,7 +155,8 @@ class CanonicalTurnEventCollector {
     }
     attachStreamEnvelopeMetadata(payload, source.stream_envelope);
     const capturedEvent = {
-      event_id: normalizeId(source.event_id || source.eventId) || `${turnId}:${kind}:${ordinal}`,
+      event_id: normalizeId(source.event_id || source.eventId)
+        || `${turnId}:${kind}:${ordinal}${this.attemptId ? `:${this.attemptId}` : ''}`,
       turn_id: turnId,
       kind,
       status: normalizeId(source.status),
@@ -408,7 +412,13 @@ class CanonicalTurnEventCollector {
   buildFinalizedTurnEvents(turnId, messages) {
     const normalizedTurnId = normalizeId(turnId);
     const sourceMessages = Array.isArray(messages) ? messages : [];
-    const projection = projectTurnTree({ messages: sourceMessages });
+    // Earlier attempts already published their canonical prefix. Projecting
+    // their rows again at resumed settlement invents duplicate tool results.
+    const projectionMessages = this.canonicalPrimary && this.attemptId ? sourceMessages.filter(message => {
+      const owner = message.parent_stream_id || message.tool_call?.parent_stream_id || message.tool_result?.parent_stream_id;
+      return message.turn_id !== normalizedTurnId || message.role === 'user' || !owner || owner === this.attemptId;
+    }) : sourceMessages;
+    const projection = projectTurnTree({ messages: projectionMessages });
     const turn = Array.isArray(projection?.turns)
       ? projection.turns.find((entry) => normalizeId(entry?.turn_id) === normalizedTurnId)
       : null;
@@ -417,9 +427,9 @@ class CanonicalTurnEventCollector {
     }
     const messageById = buildMessageIndex(sourceMessages);
     const projectedEvents = Array.isArray(turn?.events) ? turn.events : [];
-    const rawCapturedLiveEvents = this.capturedEvents.filter((event) =>
+    const rawCapturedLiveEvents = resolveCanonicalTextMessageOwners(this.capturedEvents.filter((event) =>
       normalizeId(event?.turn_id) === normalizedTurnId && LIVE_CAPTURED_KINDS.has(normalizeId(event?.kind))
-    );
+    ), sourceMessages);
     settleCapturedReasoningFromProjection(rawCapturedLiveEvents, projectedEvents);
     const capturedLiveEvents = rawCapturedLiveEvents.filter((event) => {
       if (assistantTextPayloadHasUsableText(event)) {
@@ -438,6 +448,17 @@ class CanonicalTurnEventCollector {
       (Number(left?._capture_order) || 0) - (Number(right?._capture_order) || 0)
     );
     const capturedReplacementKeys = new Set();
+    // A continuation starts execution of an already-persisted request. Its
+    // new tool message is an execution anchor, not a second request.
+    if (this.canonicalPrimary && this.attemptId) {
+      for (const event of this.store?.getSessionTurnEvents?.(this.sessionId) || []) {
+        if (normalizeId(event.turn_id) === normalizedTurnId && event.kind === 'tool_use'
+          && event.payload?.canonical_event_type === 'tool_call_requested'
+          && normalizeId(event.tool_call_id)) {
+          capturedReplacementKeys.add(`tool_use:${normalizeId(event.tool_call_id)}`);
+        }
+      }
+    }
     for (const event of capturedLiveEvents) {
       const kind = normalizeId(event?.kind);
       const callId = normalizeId(event?.tool_call_id);

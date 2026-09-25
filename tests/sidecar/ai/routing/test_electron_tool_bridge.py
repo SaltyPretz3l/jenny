@@ -937,3 +937,54 @@ def test_preview_test_tool_requires_flag_and_electron_bridge(tmp_path) -> None:
         request_context=_request_context(tmp_path),
     )
     assert "preview_test" not in set(unavailable.available_names)
+
+
+@pytest.mark.parametrize("mode", ["pause", "publication_failure", "extra", "missing_snapshot", "wrong_tool"])
+def test_question_pause_closes_answer_reader_and_never_becomes_a_result(mode):
+    from sidecar.ai.routing.tool_resource_deferral import DecisionSuspensionError, ToolLoopSuspended
+    sent = []
+    closed = []
+    decision = {"kind": "user_questions", "decision_id": "decision_1",
+                "call_id": "question_1", "execution_started": True}
+    pause = {"schema_version": 1, "request_id": "stream_1", "decision": decision}
+
+    class Snapshot:
+        def decision(self):
+            return dict(decision)
+
+        def suspend(self, payload, **_kwargs):
+            assert closed == [True], "answer reader must close before checkpoint exchange"
+            assert payload == pause
+            if mode == "publication_failure":
+                raise ValueError("publication_failed")
+            raise ToolLoopSuspended({"checkpoint_id": "checkpoint_1"})
+
+    class Reader:
+        def __init__(self, expected_id):
+            self.expected_id = expected_id
+
+        def __call__(self, _timeout):
+            payload = {"runtime_decision_pause": pause}
+            if mode == "extra":
+                payload["success"] = True
+            return {"id": self.expected_id, "result": payload}
+
+        def close(self):
+            closed.append(True)
+
+    request = ElectronToolBridgeRequest(
+        tool_name="ask_user" if mode != "wrong_tool" else "exit_plan_mode",
+        arguments={"questions": [{"prompt": "Continue?"}]}, request_id="stream_1",
+        trace_id="trace_1", session_id="session_1", tool_call_id="question_1",
+        write_message=sent.append, read_message=None,
+        response_reader_factory=lambda expected_id, **_kwargs: Reader(expected_id),
+        decision_snapshot=None if mode == "missing_snapshot" else Snapshot(),
+    )
+    with pytest.raises(ToolLoopSuspended if mode == "pause" else DecisionSuspensionError):
+        execute_electron_tool(request)
+    assert closed == [True]
+    if mode in {"missing_snapshot", "wrong_tool"}:
+        assert "runtime_decision" not in sent[0]["params"]
+    else:
+        assert sent[0]["params"]["runtime_decision"] == decision
+    assert "runtime_decision" not in sent[0]["params"]["arguments"]

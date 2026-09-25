@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidecar.ai.app_profiles import canonicalize_model_name, resolve_profile
-
+from sidecar.ai.app_profiles import _REGISTRY, canonicalize_model_name, resolve_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CATALOG_PATH = REPO_ROOT / "config" / "model-acceleration-catalog.json"
@@ -17,7 +16,8 @@ def test_acceleration_catalog_matches_app_profile_registry() -> None:
 
     for entry in catalog["families"]:
         family = entry["family"]
-        family_profile = resolve_profile(family)
+        # A family key need not be a model alias (bonsai2 matches only its long forms).
+        family_profile = _REGISTRY.get(family)
         assert family_profile is not None
         assert family_profile.family == family
 

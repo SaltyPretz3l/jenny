@@ -213,6 +213,10 @@ def test_main_exits_when_shutdown_acknowledgement_hits_backpressure(monkeypatch,
     shutdown_calls = 0
 
     class FakeMultiplexer:
+        def send_control(self, _message: dict[str, object]) -> None: ...
+
+        def approval_reader_factory(self, *_args: object, **_kwargs: object) -> None: ...
+
         def read_request(self) -> dict[str, object]:
             nonlocal multiplexer_reads
             multiplexer_reads += 1
@@ -220,7 +224,9 @@ def test_main_exits_when_shutdown_acknowledgement_hits_backpressure(monkeypatch,
                 raise EOFError
             return shutdown_message
 
-    def dispatch(message: dict[str, object], _initialized: bool) -> ProcessOutcome:
+    def dispatch(
+        message: dict[str, object], _initialized: bool, **_transport: object
+    ) -> ProcessOutcome:
         method = str(message["method"])
         dispatched.append(method)
         return ProcessOutcome(method == "initialize", method == "shutdown", None, [])

@@ -45,6 +45,7 @@ from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_PROVIDER_ERROR,
     FINISH_REASON_THINKING_BUDGET,
     ProviderStreamNormalizer,
+    executable_native_tool_calls,
     record_counters_to_diagnostics,
 )
 from sidecar.ai.thinking_guard import (
@@ -367,16 +368,16 @@ def generate(
         engine._complete_provider_request()
         return content
     except urllib.error.URLError as error:
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise EngineConnectionError(engine._describe_url_error(error, "generation")) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise
     except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise GenerationError(f"Generation failed: {error}") from error
@@ -542,7 +543,7 @@ def stream(
         )
         yield StreamingEvent(kind="done", finish_reason=finish_reason, usage=done_usage)
     except urllib.error.URLError as error:
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -551,10 +552,10 @@ def stream(
             retryable=not isinstance(error, urllib.error.HTTPError),
         ) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise
     except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise_if_cancelled(cancel_handle)
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -843,9 +844,9 @@ def stream_with_tools(
         final_content = "".join(content_parts).strip()
         final_thinking = "".join(thinking_parts).strip()
         _request_id = _engine_request_id(engine)
+        executable = executable_native_tool_calls(raw_tool_calls, terminal_done_reason)
         tool_calls = tuple(
-            _native_tool_call_request(tc, i, _request_id)
-            for i, tc in enumerate(item for item in raw_tool_calls if isinstance(item, dict))
+            _native_tool_call_request(tc, i, _request_id) for i, tc in enumerate(executable)
         )
         inband_parse_failed = False
         if not tool_calls and final_content:
@@ -877,7 +878,7 @@ def stream_with_tools(
             inband_tool_call_parse_failed=inband_parse_failed,
         )
     except urllib.error.URLError as error:
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -886,10 +887,10 @@ def stream_with_tools(
             retryable=not isinstance(error, urllib.error.HTTPError),
         ) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise
     except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise_if_cancelled(cancel_handle)
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -964,16 +965,16 @@ def generate_with_tools_impl(
             inband_tool_call_parse_failed=inband_parse_failed,
         )
     except urllib.error.URLError as error:
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise EngineConnectionError(engine._describe_url_error(error, "generation")) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         raise
     except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request()
+        engine._complete_provider_request(outcome="failed")
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise GenerationError(f"Generation failed: {error}") from error

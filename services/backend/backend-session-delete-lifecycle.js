@@ -17,6 +17,9 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
     if (session.session_type === 'plugin' || session.plugin_session) return refused('plugin_session');
     if (typeof options.expectedUpdatedAt !== 'string'
       || session.updated_at !== options.expectedUpdatedAt) return refused('activity_changed');
+    if (service.sessionRuntime?.hasSessionWork?.(normalizedSessionId) === true) {
+      return refused('runtime_work_active');
+    }
   }
   const deletion = service.sessionTurnActors.beginDeletion(normalizedSessionId, {
     onlyIfIdle,
@@ -48,9 +51,29 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
         };
       }
     }
-    const quiescence = await service.sessionTurnActors.awaitQuiescence(
-      deletion, { timeoutMs: 5_000 }
-    );
+    let runtimeQuiescence = { ok: true };
+    let runtimeWait = null;
+    if (!onlyIfIdle && service.sessionRuntime) {
+      runtimeWait = typeof service.sessionRuntime.cancelSessionAndWait === 'function'
+        ? service.sessionRuntime.cancelSessionAndWait(normalizedSessionId, {
+          reason: 'session_deleted', timeoutMs: 5_000, deletionHandle: deletion,
+        })
+        : Promise.resolve({ ok: false, reason: 'runtime_cancellation_unavailable' });
+    }
+    const [quiescence, runtimeResult] = await Promise.all([
+      service.sessionTurnActors.awaitQuiescence(deletion, { timeoutMs: 5_000 }),
+      runtimeWait || Promise.resolve(runtimeQuiescence),
+    ]);
+    runtimeQuiescence = runtimeResult;
+    if (runtimeQuiescence?.ok !== true) {
+      service.sessionTurnActors.rollbackDeletion(deletion);
+      service._emitServiceLog('WARN', 'lifecycle.session_runtime_delete_not_quiescent', {
+        sessionId: normalizedSessionId,
+        reason: runtimeQuiescence?.reason || 'runtime_not_quiescent',
+        timedOut: runtimeQuiescence?.timedOut === true,
+      });
+      return refused(runtimeQuiescence?.reason || 'runtime_not_quiescent');
+    }
     if (!quiescence.ok) {
       service.sessionTurnActors.rollbackDeletion(deletion);
       service._emitServiceLog('WARN', 'lifecycle.session_delete_not_quiescent', {
@@ -68,6 +91,9 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
       () => {
         if (onlyIfIdle && service.sessionStore.getSession(normalizedSessionId)?.updated_at !== options.expectedUpdatedAt) {
           return refused('activity_changed');
+        }
+        if (onlyIfIdle && service.sessionRuntime?.hasSessionWork?.(normalizedSessionId) === true) {
+          return refused('runtime_work_active');
         }
         return deleteSession(service, normalizedSessionId);
       }

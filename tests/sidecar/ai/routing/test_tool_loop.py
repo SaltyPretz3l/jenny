@@ -14,13 +14,16 @@ from sidecar.ai.error_codes import (
     CMP_LOOP_ENGINE_STALLED,
     CMP_LOOP_INVALID_TOOL_CALL,
     CMP_LOOP_TOOL_INTERRUPTED,
+    CMP_STREAM_INCOMPLETE,
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_DISABLED,
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET
 from sidecar.ai.mcp.models import MCPToolDescriptor
+from sidecar.ai.routing import mutation_change_set_lifecycle as lifecycle_module
 from sidecar.ai.routing.loop_events import (
+    ContextCompactionStartedEvent,
     ContextCompactedEvent,
     StreamResetEvent,
     TokenDeltaEvent,
@@ -287,9 +290,13 @@ def test_tool_loop_compaction_event_carries_summary_and_coverage(
         "sidecar.ai.routing.tool_loop_compaction.estimate_messages_tokens",
         lambda *_args: 100,
     )
-    monkeypatch.setattr(
-        "sidecar.ai.routing.tool_loop_compaction.compact_context",
-        lambda *_args, **_kwargs: CompactionResult(
+    def _compact(*_args: Any, **_kwargs: Any) -> CompactionResult:
+        started = events[-1]
+        assert isinstance(started, ContextCompactionStartedEvent)
+        assert started.phase == "tool_loop"
+        assert started.tokens_before == 100
+        assert started.message_count == len(loop.working_messages)
+        return CompactionResult(
             messages=[summary_message],
             strategy="full",
             tokens_before=100,
@@ -297,7 +304,11 @@ def test_tool_loop_compaction_event_carries_summary_and_coverage(
             summary_status="created",
             summary_message=summary_message,
             covered_through_tool_call_id="call_7",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "sidecar.ai.routing.tool_loop_compaction.compact_context",
+        _compact,
     )
 
     assert compact_tool_loop_context(loop, num_tools=0) == 60
@@ -305,6 +316,10 @@ def test_tool_loop_compaction_event_carries_summary_and_coverage(
     compacted_event = next(
         event for event in events if isinstance(event, ContextCompactedEvent)
     )
+    started_event = next(
+        event for event in events if isinstance(event, ContextCompactionStartedEvent)
+    )
+    assert events.index(started_event) < events.index(compacted_event)
     assert compacted_event.summary_message == summary_message
     assert compacted_event.covered_through_tool_call_id == "call_7"
     assert compacted_event.input_complete is False
@@ -339,10 +354,12 @@ def test_stalled_compaction_retries_once_at_the_error_threshold(
     loop.working_messages = [{"role": "user", "content": "x" * 600}]
     tokens_before = estimate_messages_tokens(loop.working_messages, None)
     compact_calls = 0
+    last_ditch_used_while_compacting: list[bool] = []
 
     def _compact(*_args: Any, **_kwargs: Any) -> CompactionResult:
         nonlocal compact_calls
         compact_calls += 1
+        last_ditch_used_while_compacting.append(loop.compaction_last_ditch_used)
         return CompactionResult(
             messages=[{"role": "user", "content": "compacted"}],
             strategy="micro",
@@ -355,7 +372,7 @@ def test_stalled_compaction_retries_once_at_the_error_threshold(
     assert tokens_before >= 150
     assert compact_tool_loop_context(loop, num_tools=0) == tokens_before - 1
     assert compact_calls == 1
-    assert loop.compaction_last_ditch_used is True
+    assert last_ditch_used_while_compacting == [True]
 
 
 def test_stalled_compaction_does_not_retry_twice_at_the_error_threshold(
@@ -378,6 +395,40 @@ def test_stalled_compaction_does_not_retry_twice_at_the_error_threshold(
     assert tokens_before >= 150
     assert compact_tool_loop_context(loop, num_tools=0) == tokens_before
     assert compact_calls == 0
+
+
+def test_successful_last_ditch_compaction_ends_the_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = _tool_loop_compaction_fixture([], [])
+    loop.compaction_stalled = True
+    loop.working_messages = [{"role": "user", "content": "x" * 600}]
+    tokens_before = estimate_messages_tokens(loop.working_messages, None)
+    reduced_messages = [{"role": "user", "content": "x" * 400}]
+    tokens_after = estimate_messages_tokens(reduced_messages, None)
+    compact_calls = 0
+
+    def _compact(*_args: Any, **_kwargs: Any) -> CompactionResult:
+        nonlocal compact_calls
+        compact_calls += 1
+        return CompactionResult(
+            messages=[dict(message) for message in reduced_messages],
+            strategy="micro",
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
+        )
+
+    monkeypatch.setattr("sidecar.ai.routing.tool_loop_compaction.compact_context", _compact)
+
+    assert tokens_before >= 150
+    assert 50 < tokens_after < 150
+    assert compact_tool_loop_context(loop, num_tools=0) == tokens_after
+    assert compact_calls == 1
+
+    assert compact_tool_loop_context(loop, num_tools=0) == tokens_after
+    assert compact_calls == 2
+    assert loop.compaction_stalled is False
+    assert loop.compaction_last_ditch_used is False
 
 
 def test_tool_loop_compaction_stalls_once_when_no_tokens_are_freed(
@@ -672,7 +723,7 @@ def test_sub_agent_budget_stop_uses_reserved_constrained_report_iteration(
     )
     monkeypatch.setattr(
         "sidecar.ai.routing.chat_decision.apply_budget_check",
-        lambda messages, _config, _engine, *, num_tools=0, reasoning_effort=None: (
+        lambda messages, _config, _engine, **_kwargs: (
             messages,
             None,
             tracker,
@@ -2311,6 +2362,7 @@ def test_pre_dispatched_tool_calls_are_settled_when_cancelled_before_dispatch() 
 
 
 def test_approval_gate_does_not_pre_dispatch_unstarted_sibling_tools() -> None:
+    previous_run = lifecycle_module._CURRENT_RUN.get()
     engine = _ToolLoopEngine(
         plans=[
             _ToolPlan(
@@ -2385,6 +2437,7 @@ def test_approval_gate_does_not_pre_dispatch_unstarted_sibling_tools() -> None:
     assert [event for event in events if isinstance(event, ToolResultEvent)] == []
     assert runtime.pending_tool_executions() == ()
     assert mcp_client.executions == []
+    assert lifecycle_module._CURRENT_RUN.get() is previous_run
 
 
 def test_policy_deny_emits_failed_tool_result_without_approval() -> None:
@@ -4126,6 +4179,49 @@ def test_run_tool_loop_finalizes_engine_stall_as_terminal_error() -> None:
     assert "returned no output before finishing" not in failure_info.value.message
 
 
+def test_run_tool_loop_stall_message_does_not_blame_the_machine_when_the_engine_worked(
+) -> None:
+    """Owner session 2026-09-19: a local model decoded a 7k-token tool call at
+    ~58 tok/s and the turn died telling the user the model was "too large or
+    slow for this machine". When the engine kept reporting activity through the
+    silence, the machine is not the suspect.
+    """
+    engine = _ToolLoopEngine(
+        plans=[
+            _ToolPlan(
+                result=GenerationResult(
+                    content="Generation timed out due to engine inactivity.",
+                    finish_reason="timeout",
+                )
+            )
+        ]
+    )
+    router = _build_router(engine=engine)
+    runtime = LoopRuntime(
+        emit=lambda _e: None,
+        request_id="req_engine_active_stall",
+        max_iterations=4,
+    )
+    runtime.stall_phase = "inactivity"
+    runtime.stall_engine_was_active = True
+
+    with pytest.raises(ToolExecutionFailure) as failure_info:
+        router.build_chat_decision(
+            request_id="req_engine_active_stall",
+            messages=[{"role": "user", "content": "hello"}],
+            latest_user_content="hello",
+            mode="assist",
+            approvals_pre_granted=True,
+            runtime=runtime,
+        )
+
+    message = failure_info.value.message
+    assert failure_info.value.code == CMP_LOOP_ENGINE_STALLED
+    assert "still reporting activity" in message
+    assert "too large or slow for this machine" not in message
+    assert "Settings > Models > Model Library > Advanced" in message
+
+
 def test_run_tool_loop_describes_cloud_provider_stall_without_local_hardware_advice() -> None:
     engine = _ToolLoopEngine(
         plans=[
@@ -4487,3 +4583,50 @@ def test_merge_generation_usage_rejects_invalid_provider_cost(invalid_cost: obje
     )
     assert merged is not None
     assert merged.provider_cost_usd is None
+
+
+def test_tool_batch_from_an_incomplete_stream_is_not_dispatched() -> None:
+    descriptor = MCPToolDescriptor(
+        name="read_file",
+        description="Read one workspace file.",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+        side_effecting=False,
+        server_name="stub",
+    )
+    engine = _ToolLoopEngine(
+        plans=[
+            _ToolPlan(
+                result=GenerationResult(
+                    content="Reading.",
+                    finish_reason="incomplete",
+                    tool_calls=(
+                        ToolCallRequest(
+                            tool_id="read_file",
+                            arguments={"path": "README.md"},
+                            call_id="call_incomplete_batch",
+                        ),
+                    ),
+                )
+            ),
+        ]
+    )
+    mcp_client = _StubMCPClient((descriptor,))
+    router = _build_router(engine=engine, mcp_client=mcp_client)
+
+    decision = router.build_chat_decision(
+        request_id="req_incomplete_tool_batch",
+        messages=[{"role": "user", "content": "Read the notes."}],
+        latest_user_content="Read the notes.",
+        mode="assist",
+        approvals_pre_granted=True,
+        runtime=LoopRuntime(request_id="req_incomplete_tool_batch", max_iterations=4),
+    )
+
+    assert mcp_client.executions == []
+    assert not decision.tool_results
+    assert decision.terminal_error_code == CMP_STREAM_INCOMPLETE
+    assert "cut off before it finished" in decision.response_text

@@ -120,6 +120,7 @@ test('backend service forwards memory policy without request-time recall', async
   assert.deepEqual(chatSendRequest.params.memory_policy, {
     enabled: true,
     include_response_style: true,
+    project_id: 'project_general',
   });
   assert.equal(chatSendRequest.params.learning_context, undefined);
 });
@@ -806,6 +807,7 @@ test('backend service injects recalled tool-strategy memories without adding rec
   assert.deepEqual(chatSendRequest.params.memory_policy, {
     enabled: true,
     include_response_style: true,
+    project_id: 'project_general',
   });
   assert.equal(chatSendRequest.params.learning_context, undefined);
 });

@@ -36,6 +36,7 @@
       title: options.title || jt('chat.navigation.readyInAnotherChat', 'Ready in another chat'),
         tone: options.tone || 'info',
         source: options.source,
+        sessionId: targetSessionId,
         dedupeKey: options.dedupeKey,
         actions: [{
           id: `open-session-${String(targetSessionId || '').slice(0, 40)}`,

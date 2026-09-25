@@ -11,7 +11,15 @@ from sidecar.ai.engines.responses_descriptor_adapters import CORE_ADAPTERS
 from sidecar.ai.exceptions import GenerationError
 
 _REQUIRED_ADAPTERS = CORE_ADAPTERS
-_DESCRIPTOR_SCHEMA_VERSION = 5
+_REQUIRED_DESCRIPTOR_FIELDS = {
+    "descriptor_schema_version": 5,
+    "provider_id": "chatgpt",
+    "engine_type": "chatgpt",
+    "auth_profile": "chatgpt_subscription_oauth",
+    "request_template": "openai_responses_v1",
+    "input_template": "openai_responses_input_v1",
+    "tool_template": "openai_function_tools_v1",
+}
 _REQUIRED_HEADERS = {
     "Authorization": "Bearer {secret:access_token}",
     "ChatGPT-Account-ID": "{auth:account_id}",
@@ -109,36 +117,36 @@ def validate_responses_descriptor(raw: Mapping[str, Any] | None) -> dict[str, An
         for row in stream_rows if isinstance(row, Mapping)
     }
     model_ids = [str(row.get("id")) for row in model_catalog if isinstance(row, Mapping)]
-    models_valid = bool(model_catalog) and len(model_ids) == len(model_catalog) \
-        and len(set(model_ids)) == len(model_ids) and all(
+    models_valid = (
+        bool(model_catalog)
+        and len(model_ids) == len(model_catalog)
+        and len(set(model_ids)) == len(model_ids)
+        and all(
             isinstance(row.get("label"), str) and bool(row["label"].strip())
             and isinstance(row.get("context_length"), int)
             and not isinstance(row.get("context_length"), bool)
             and row["context_length"] > 0
             for row in model_catalog if isinstance(row, Mapping)
         )
-    if descriptor.get("descriptor_schema_version") != _DESCRIPTOR_SCHEMA_VERSION \
-            or descriptor.get("provider_id") != "chatgpt" \
-            or descriptor.get("engine_type") != "chatgpt" \
-            or descriptor.get("auth_profile") != "chatgpt_subscription_oauth" \
-            or descriptor.get("request_template") != "openai_responses_v1" \
-            or descriptor.get("input_template") != "openai_responses_input_v1" \
-            or descriptor.get("tool_template") != "openai_function_tools_v1" \
-            or endpoint != "https://chatgpt.com/backend-api/codex" \
-            or parsed.scheme != "https" or parsed.hostname != "chatgpt.com" \
-            or len(headers) != len(header_rows) \
-            or headers != _REQUIRED_HEADERS \
-            or len(lookup_tables) != len(lookup_rows) \
-            or lookup_tables != _REQUIRED_LOOKUP_TABLES \
-            or len(scalar_rules) != len(scalar_rows) \
-            or scalar_rules != _REQUIRED_SAFE_SCALARS \
-            or len(error_map) != len(error_rows) \
-            or error_map != _REQUIRED_ERROR_MAP \
-            or len(stream_map) != len(stream_rows) \
-            or stream_map != _REQUIRED_STREAM_MAP \
-            or not models_valid \
-            or len(descriptor.get("core_adapters", [])) != len(_REQUIRED_ADAPTERS) \
-            or set(descriptor.get("core_adapters", [])) != _REQUIRED_ADAPTERS:
+    )
+    if (
+        any(descriptor.get(key) != value for key, value in _REQUIRED_DESCRIPTOR_FIELDS.items())
+        or endpoint != "https://chatgpt.com/backend-api/codex"
+        or parsed.scheme != "https" or parsed.hostname != "chatgpt.com"
+        or len(headers) != len(header_rows)
+        or headers != _REQUIRED_HEADERS
+        or len(lookup_tables) != len(lookup_rows)
+        or lookup_tables != _REQUIRED_LOOKUP_TABLES
+        or len(scalar_rules) != len(scalar_rows)
+        or scalar_rules != _REQUIRED_SAFE_SCALARS
+        or len(error_map) != len(error_rows)
+        or error_map != _REQUIRED_ERROR_MAP
+        or len(stream_map) != len(stream_rows)
+        or stream_map != _REQUIRED_STREAM_MAP
+        or not models_valid
+        or len(descriptor.get("core_adapters", [])) != len(_REQUIRED_ADAPTERS)
+        or set(descriptor.get("core_adapters", [])) != _REQUIRED_ADAPTERS
+    ):
         raise ResponsesDescriptorError("provider descriptor rejected")
     return descriptor
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
@@ -13,13 +14,18 @@ from sidecar.ai.feature_flags import (
     FEATURE_CONTEXT_COMPACTION,
     is_feature_flag_enabled,
 )
-from sidecar.ai.routing.loop_events import ContextCompactedEvent
+from sidecar.ai.routing.loop_events import ContextCompactedEvent, ContextCompactionStartedEvent
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 
 
-def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
+def compact_tool_loop_context(
+    loop: Any,
+    *,
+    num_tools: int,
+    force: bool = False,
+) -> int:
     """Compact an expanded tool-loop history and return its current token count."""
     tracker = loop.budget_tracker
     preview_tokens = loop.runtime._preview_context_tokens(loop.working_messages)
@@ -33,7 +39,7 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         FEATURE_CONTEXT_COMPACTION,
     ):
         return tokens_before
-    if tokens_before <= budget.auto_compact_threshold(num_tools):
+    if not force and tokens_before <= budget.auto_compact_threshold(num_tools):
         return tokens_before
     if getattr(loop, "compaction_stalled", False):
         if tokens_before < budget.error_threshold(num_tools):
@@ -53,6 +59,13 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         request_id=loop.request_id,
         session_id=loop.session_id,
     )
+    loop.runtime.emit_safe(
+        ContextCompactionStartedEvent(
+            phase="tool_loop",
+            tokens_before=int(tokens_before),
+            message_count=len(loop.working_messages),
+        )
+    )
     result = compact_context(
         loop.working_messages,
         budget,
@@ -61,6 +74,7 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         system_context=str(loop.system_prompt),
         base_prompt=resolve_compaction_prompt(loop.kernel._config),
         circuit_breaker=loop.kernel._compaction_breakers.for_key(loop.session_id),
+        force=force,
         mode="mid_turn",
         task_content=str(getattr(loop, "latest_user_content", "") or "") or None,
         generate_fn=loop.kernel._build_compaction_generate_fn(
@@ -101,6 +115,9 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         )
         return tokens_before
 
+    # A compaction that freed tokens ends the stall so the turn may compact again.
+    loop.compaction_stalled = False
+    loop.compaction_last_ditch_used = False
     loop.working_messages[:] = list(result.messages)
     loop.runtime._preview_context_tokens(loop.working_messages)
     log_event(
@@ -141,3 +158,67 @@ def compact_tool_loop_context(loop: Any, *, num_tools: int) -> int:
         )
     )
     return max(0, int(result.tokens_after))
+
+
+def _apply_context_pressure(  # noqa: PLR0913
+    loop: Any,
+    result: Any,
+    *,
+    iteration: int,
+    force: bool,
+    num_tools: int,
+    wind_down: Callable[..., Any],
+) -> tuple[bool, Any | None]:
+    """Run the shared mid-turn budget check for a no-tool iteration."""
+    tracker = loop.budget_tracker
+    if tracker is None or iteration >= loop.iteration_total:
+        return False, None
+    messages_before = list(loop.working_messages)
+    current_context_tokens = compact_tool_loop_context(loop, num_tools=num_tools, force=force)
+    tracker.record_iteration(
+        result.usage.output_tokens if result.usage is not None else None,
+        current_context_tokens,
+    )
+    loop._emit_iteration_context_usage(
+        iteration=iteration,
+        result=result,
+        current_context_tokens=current_context_tokens,
+    )
+    compacted = loop.working_messages != messages_before
+    if tracker.check_should_continue():
+        return compacted, None
+    return compacted, wind_down(loop, result, reason=tracker.stop_reason() or "context_budget")
+
+
+def check_checkpoint_context(
+    loop: Any,
+    result: Any,
+    *,
+    iteration: int,
+    num_tools: int,
+    wind_down: Callable[..., Any],
+) -> Any | None:
+    """Apply context pressure after checkpoint messages expand the prompt."""
+    _compacted, terminal = _apply_context_pressure(
+        loop, result, iteration=iteration, force=False, num_tools=num_tools, wind_down=wind_down,
+    )
+    return terminal
+
+
+def recover_context_window_exhaustion(
+    loop: Any,
+    result: Any,
+    *,
+    iteration: int,
+    num_tools: int,
+    wind_down: Callable[..., Any],
+) -> Any | None:
+    """Compact a full prompt before another call, or stop without generating."""
+    compacted, terminal = _apply_context_pressure(
+        loop, result, iteration=iteration, force=True, num_tools=num_tools, wind_down=wind_down,
+    )
+    if terminal is not None:
+        return terminal
+    if compacted:
+        return None
+    return wind_down(loop, result, reason="context_budget")

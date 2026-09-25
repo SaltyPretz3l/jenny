@@ -8,7 +8,7 @@ import math
 import re
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
@@ -165,6 +165,9 @@ class ElectronToolBridgeRequest:
     plan_decision: str = ""
     plan_feedback: str = ""
     edited_plan: dict[str, Any] | None = None
+    decision_snapshot: Any = None
+    before_resource_start: Callable[[], None] | None = None
+    resource_start_token: str | None = None
 
 
 def electron_tool_request_message(params: dict[str, Any]) -> dict[str, Any]:
@@ -327,6 +330,8 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
             "plan_decision": request.plan_decision,
             "plan_feedback": request.plan_feedback[:800],
             **({"edited_plan": request.edited_plan} if request.edited_plan is not None else {}),
+            **_question_decision_fields(request),
+            **_resource_gate_fields(request),
         }
     )
     expected_id = int(request_message["id"])
@@ -400,15 +405,12 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                 )
             if response.get("id") != expected_id:
                 continue
-            if isinstance(response.get("error"), dict):
-                error_payload = response["error"]
-                data = error_payload.get("data")
-                data = data if isinstance(data, dict) else {}
-                raise MCPError(
-                    code=str(data.get("code") or CMP_TOOL_EXECUTION_FAILED),
-                    message=str(error_payload.get("message") or "Electron tool bridge failed."),
-                    retryable=data.get("retryable") is not False,
-                )
+            _raise_bridge_response_error(response)
+            payload = response.get("result")
+            if isinstance(payload, dict) and any(key in payload for key in (
+                "runtime_decision_pause", "runtime_resource_ready", "runtime_resource_wait",
+            )):
+                break
             result = _normalize_result_payload(
                 response.get("result"),
                 fallback_tool_name=request.tool_name,
@@ -433,3 +435,99 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                 },
             )
             return result
+
+    return _resolve_control_response(request, payload)
+
+
+def _resolve_control_response(request: ElectronToolBridgeRequest, payload: dict) -> MCPToolResult:
+    if "runtime_decision_pause" in payload:
+        _suspend_question(request, payload)
+    return _continue_resource_start(request, payload)
+
+
+def _resource_gate_fields(request: ElectronToolBridgeRequest) -> dict:
+    if not callable(request.before_resource_start):
+        return {}
+    gate = {"schema_version": 1, "phase": "prepare"}
+    if request.resource_start_token is not None:
+        gate.update(phase="start", token=request.resource_start_token)
+    return {"runtime_resource_gate": gate}
+
+
+def _continue_resource_start(request: ElectronToolBridgeRequest, payload: dict) -> MCPToolResult:
+    # Both responses are consumed with their reader closed before publication or
+    # the next exchange. Multiplexer readers accept exactly one response each.
+    from sidecar.ai.routing.tool_resource_deferral import (  # noqa: PLC0415
+        ToolResourceDeferred,
+        ToolResourceWait,
+    )
+    try:
+        if not callable(request.before_resource_start) or request.resource_start_token is not None:
+            raise ValueError("unexpected_resource_gate_response")
+        if set(payload) == {"runtime_resource_wait"}:
+            wait = payload["runtime_resource_wait"]
+            if (not isinstance(wait, dict) or set(wait) != {
+                "schema_version", "operation_id", "status", "resource_class", "dependency_id",
+            } or type(wait["schema_version"]) is not int or wait["schema_version"] != 1
+                    or wait["operation_id"] != request.tool_call_id or wait["status"] != "waiting"
+                    or wait["dependency_id"] is not None):
+                raise ValueError("resource_wait_response_invalid")
+            raise ToolResourceDeferred(ToolResourceWait(
+                operation_id=request.tool_call_id, resource_class=wait["resource_class"],
+                dependency_id=wait["dependency_id"],
+            ))
+        ready = payload.get("runtime_resource_ready")
+        if (set(payload) != {"runtime_resource_ready"} or not isinstance(ready, dict)
+                or set(ready) != {"schema_version", "operation_id", "token"}
+                or type(ready["schema_version"]) is not int or ready["schema_version"] != 1
+                or ready["operation_id"] != request.tool_call_id
+                or not isinstance(ready["token"], str)
+                or re.fullmatch(r"[a-f0-9-]{36}", ready["token"]) is None):
+            raise ValueError("resource_ready_response_invalid")
+    except (ValueError, TypeError) as error:
+        raise MCPError(
+            code=CMP_TOOL_EXECUTION_FAILED, message="Electron resource start response is invalid.",
+            retryable=False,
+        ) from error
+    request.before_resource_start()
+    return execute_electron_tool(replace(request, resource_start_token=ready["token"]))
+
+
+def _question_decision_fields(request: ElectronToolBridgeRequest) -> dict:
+    if request.tool_name == "ask_user" and request.decision_snapshot is not None:
+        return {"runtime_decision": request.decision_snapshot.decision()}
+    return {}
+
+
+def _suspend_question(request: ElectronToolBridgeRequest, payload: dict) -> None:
+    # Local import avoids auto_checkpoint -> electron bridge -> deferral cycle.
+    from sidecar.ai.routing.tool_resource_deferral import (  # noqa: PLC0415
+        DecisionSuspensionError,
+        ToolLoopSuspended,
+    )
+    try:
+        if (set(payload) != {"runtime_decision_pause"} or request.tool_name != "ask_user"
+                or request.decision_snapshot is None):
+            raise ValueError("question_pause_response_invalid")
+        request.decision_snapshot.suspend(
+            payload["runtime_decision_pause"], write_message=request.write_message,
+            response_reader_factory=request.response_reader_factory,
+            cancel_handle=request.cancel_handle,
+        )
+        raise ValueError("question_pause_publication_missing")
+    except ToolLoopSuspended:
+        raise
+    except Exception as error:
+        raise DecisionSuspensionError("question_pause_publication_failed") from error
+
+
+def _raise_bridge_response_error(response: dict) -> None:
+    if isinstance(response.get("error"), dict):
+        error_payload = response["error"]
+        data = error_payload.get("data")
+        data = data if isinstance(data, dict) else {}
+        raise MCPError(
+            code=str(data.get("code") or CMP_TOOL_EXECUTION_FAILED),
+            message=str(error_payload.get("message") or "Electron tool bridge failed."),
+            retryable=data.get("retryable") is not False,
+        )

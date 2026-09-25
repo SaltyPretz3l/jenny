@@ -1,9 +1,56 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
 
 const {
   projectTurnRows,
 } = require('./helpers/renderer-turn-row-projector-helpers');
+
+test('canonical runtime results preserve failure and output through history projection', () => {
+  for (const success of [false, true]) {
+    const output = success ? 'done' : 'script interpreter is unavailable: powershell/pwsh';
+    const events = ['tool_use', 'tool_result'].map((kind, index) => ({
+      event_id: `runtime:${kind}`, event_seq: index, turn_id: 'turn_runtime', kind,
+      tool_call_id: 'call_runtime', primary_message_id: `message_${index}`,
+      source_message_ids: [`message_${index}`], status: index ? (success ? 'completed' : 'error') : 'running',
+      payload: index ? {
+        tool_name: 'run_temp_script', success, tool_output_summary: output,
+        error_code: success ? '' : 'CMP-TOOL-0006',
+        canonical_event_type: success ? 'tool_execution_completed' : 'tool_execution_failed',
+      } : { tool_name: 'run_temp_script', input: { language: 'powershell' } },
+    }));
+    const before = JSON.stringify(events);
+    const tree = projectTurnTree({ messages: [], turn_event_log_version: 4, turn_events: events });
+    const rows = projectTurnRows(tree.turns[0].events, { mode: 'trace' });
+    const call = rows.find(row => row.kind === 'tool_call');
+    const result = rows.find(row => row.kind === 'tool_result');
+    assert.equal(call.payload.state, success ? 'completed' : 'errored');
+    assert.equal(result.payload.result_is_error, !success);
+    assert.equal(result.payload.output_text, output);
+    assert.equal(JSON.stringify(events), before, 'historical events remain unchanged');
+  }
+});
+
+test('resumed canonical calls share one row with their projected execution anchor', () => {
+  const events = [
+    { kind: 'tool_use', payload: { canonical_event_type: 'tool_call_requested', tool_name: 'read_file', tool_input: { path: 'sentinel.txt' } } },
+    { kind: 'tool_executing', payload: { canonical_event_type: 'tool_execution_started' } },
+    { kind: 'tool_result', payload: { canonical_event_type: 'tool_execution_completed', success: true, tool_output_summary: 'AUDIT-ALPHA' } },
+    { kind: 'tool_use', payload: { tool_name: 'read_file', input: { path: 'sentinel.txt' } } },
+  ].map((event, index) => ({ ...event, event_id: `event_${index}`, event_seq: index,
+    turn_id: 'turn_resume', tool_call_id: 'call_resume', primary_message_id: `message_${index}`,
+    source_message_ids: [`message_${index}`] }));
+  const before = JSON.stringify(events);
+  const tree = projectTurnTree({ messages: [], turn_event_log_version: 4, turn_events: events });
+  const rows = projectTurnRows(tree.turns[0].events);
+  const calls = rows.filter(row => row.kind === 'tool_call');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].payload.state, 'completed');
+  assert.deepEqual(calls[0].payload.input, { path: 'sentinel.txt' });
+  assert.equal(calls[0].source_events.length, 3);
+  assert.equal(rows.filter(row => row.kind === 'tool_result').length, 1);
+  assert.equal(JSON.stringify(events), before);
+});
 
 test('projectTurnRows clones tool input payloads so row projection stays pure', () => {
   const sourceInput = { path: 'notes.md' };
@@ -274,7 +321,7 @@ test('projectTurnRows emits separate tool_call and tool_result rows when a tool 
   assert.equal(resultRow.payload.output_text, 'done');
 });
 
-test('projectTurnRows anchors the tool_call on the visible tool_use even when approval and execution events sort ahead of it', () => {
+test('projectTurnRows associates approval and execution events preceding their tool_use', () => {
   const rows = projectTurnRows([
     {
       event_id: 'turn_edge2:user_prompt:0',
@@ -320,23 +367,35 @@ test('projectTurnRows anchors the tool_call on the visible tool_use even when ap
     },
   ]);
 
-  // TRACE never coalesces: tool-related events that sort ahead of the
-  // tool_use are already emitted as standalone (orphan) system_notice rows by
-  // the time the tool_use bucket scan runs, so the tool_call row anchors purely
-  // on the visible tool_use event. The running tool_use status still drives the
-  // interrupted state.
+  // Each lifecycle event belongs to the matching call or its approval gap even
+  // when the tool_use was backfilled later. The source partition stays exact.
   const toolRow = rows.find((row) => row.kind === 'tool_call');
   assert.ok(toolRow);
   assert.equal(toolRow.primary_message_id, 'tool_use_edge2');
   assert.equal(toolRow.row_id, 'row:turn_edge2:tool_use:0');
   assert.deepEqual(toolRow.first_event_sort_key, [3, 0, 40]);
-  assert.deepEqual(toolRow.source_events, ['turn_edge2:tool_use:0']);
-  assert.equal(toolRow.payload.state, 'interrupted');
+  assert.deepEqual(toolRow.source_events, ['turn_edge2:tool_executing:0', 'turn_edge2:tool_use:0']);
+  assert.equal(toolRow.payload.state, 'awaiting_approval');
 
   const noticeSubkinds = rows
     .filter((row) => row.kind === 'system_notice')
     .map((row) => row.payload.subkind);
-  assert.deepEqual(noticeSubkinds, ['orphan_approval_requested', 'orphan_tool_executing']);
+  assert.deepEqual(noticeSubkinds, []);
+  const gap = rows.find(row => row.kind === 'approval_gap');
+  assert.deepEqual(gap.source_events, ['turn_edge2:approval_requested:0']);
+  assert.equal(rows.flatMap(row => row.source_events).length, 4);
+});
+
+test('projectTurnRows retains unmatched and blank-id execution events as orphans', () => {
+  const events = [
+    ['tool_executing', 'unmatched'], ['tool_executing', ''], ['tool_use', 'known'],
+  ].map(([kind, callId], index) => ({
+    event_id: `orphan:${index}`, turn_id: 'orphan', kind, tool_call_id: callId,
+    sort_key: [index, 0, 0], payload: { tool_name: 'Read' },
+  }));
+  const rows = projectTurnRows([null, ...events]);
+  assert.deepEqual(rows.map(row => row.kind), ['system_notice', 'system_notice', 'tool_call']);
+  assert.deepEqual(rows.map(row => row.source_events), [['orphan:0'], ['orphan:1'], ['orphan:2']]);
 });
 
 test('projectTurnRows keeps tool row sort anchoring on the visible tool_use even when reasoning precedes it', () => {

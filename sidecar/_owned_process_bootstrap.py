@@ -27,6 +27,8 @@ SECURITY CONTRACT (unchanged by the module's location):
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import struct
 import subprocess
@@ -55,6 +57,7 @@ def encode_windows_bootstrap_payload(
     *,
     cwd: Path,
     env: Mapping[str, str] | None,
+    input_data: bytes | None = None,
 ) -> bytes:
     """Encode one bounded target-launch request for the trusted bootstrap."""
     normalized_argv = [str(argument) for argument in argv]
@@ -64,12 +67,18 @@ def encode_windows_bootstrap_payload(
         if env is None
         else {str(key): str(value) for key, value in env.items()}
     )
+    if input_data is not None and not isinstance(input_data, bytes):
+        raise TypeError("owned process input_data must be bytes or None")
+    input_data_b64 = (
+        None if input_data is None else base64.b64encode(input_data).decode("ascii")
+    )
     _validate_target_contract(normalized_argv, normalized_cwd, normalized_env)
     raw_payload = json.dumps(
         {
             "argv": normalized_argv,
             "cwd": normalized_cwd,
             "env": normalized_env,
+            "input_data_b64": input_data_b64,
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -97,7 +106,7 @@ def run_windows_owned_process_bootstrap(
     """Wait for a validated target request, launch it, and mirror its exit code."""
     stream = control_stream if control_stream is not None else sys.stdin.buffer
     try:
-        argv, cwd, env = _read_bootstrap_payload(stream)
+        argv, cwd, env, input_data = _read_bootstrap_payload(stream)
     except (OSError, TypeError, ValueError):
         _write_bootstrap_error("owned process bootstrap rejected control payload")
         return _BOOTSTRAP_REJECTED_EXIT_CODE
@@ -107,12 +116,24 @@ def run_windows_owned_process_bootstrap(
             _windows_target_launch_args(argv),
             cwd=cwd,
             env=env,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
         )
     except (OSError, ValueError):
         _write_bootstrap_error("owned process bootstrap target launch failed")
         return _BOOTSTRAP_LAUNCH_FAILED_EXIT_CODE
-    return int(target.wait())
+    if input_data is None:
+        return int(target.wait())
+    try:
+        target.communicate(input=input_data)
+    except (OSError, ValueError):
+        try:
+            target.kill()
+            target.wait()
+        except (OSError, ValueError):
+            pass
+        _write_bootstrap_error("owned process bootstrap target input failed")
+        return _BOOTSTRAP_LAUNCH_FAILED_EXIT_CODE
+    return int(target.returncode)
 
 
 def _windows_target_launch_args(argv: list[str]) -> list[str] | str:
@@ -130,20 +151,26 @@ def _windows_target_launch_args(argv: list[str]) -> list[str] | str:
 
 def _read_bootstrap_payload(
     control_stream: BinaryIO,
-) -> tuple[list[str], str, dict[str, str] | None]:
+) -> tuple[list[str], str, dict[str, str] | None, bytes | None]:
     header = _read_exact(control_stream, _BOOTSTRAP_HEADER.size)
     payload_size = _BOOTSTRAP_HEADER.unpack(header)[0]
     if payload_size <= 0 or payload_size > _BOOTSTRAP_MAX_PAYLOAD_BYTES:
         raise ValueError("invalid owned process bootstrap payload size")
     raw_payload = _read_exact(control_stream, payload_size)
     decoded = json.loads(raw_payload.decode("utf-8"))
-    if not isinstance(decoded, dict) or set(decoded) != {"argv", "cwd", "env"}:
+    if not isinstance(decoded, dict) or set(decoded) != {
+        "argv",
+        "cwd",
+        "env",
+        "input_data_b64",
+    }:
         raise ValueError("invalid owned process bootstrap payload shape")
 
     payload = cast(dict[str, object], decoded)
     raw_argv = payload["argv"]
     cwd = payload["cwd"]
     raw_env = payload["env"]
+    raw_input_data_b64 = payload["input_data_b64"]
     if not isinstance(raw_argv, list) or not all(
         isinstance(argument, str) for argument in raw_argv
     ):
@@ -158,11 +185,22 @@ def _read_bootstrap_payload(
         )
     ):
         raise ValueError("invalid owned process bootstrap environment")
+    if raw_input_data_b64 is None:
+        input_data = None
+    elif isinstance(raw_input_data_b64, str):
+        try:
+            input_data = base64.b64decode(
+                raw_input_data_b64.encode("ascii"), validate=True
+            )
+        except (UnicodeEncodeError, binascii.Error, ValueError) as error:
+            raise ValueError("invalid owned process bootstrap input_data") from error
+    else:
+        raise ValueError("invalid owned process bootstrap input_data")
 
     argv = cast(list[str], raw_argv)
     env = cast(dict[str, str] | None, raw_env)
     _validate_target_contract(argv, cwd, env)
-    return argv, cwd, env
+    return argv, cwd, env, input_data
 
 
 def _validate_target_contract(

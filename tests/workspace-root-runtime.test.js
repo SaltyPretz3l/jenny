@@ -67,6 +67,102 @@ test('runtime selects first, then atomically persists, refreshes, and follows a 
   ]);
 });
 
+test('a committed root provisions its workspace project after the managed refresh, and a failure there never rolls back', async () => {
+  for (const provisionerThrows of [false, true]) {
+    const config = createConfig();
+    const events = [];
+    const runtime = createWorkspaceRootRuntime({
+      configService: config,
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+      backendService: {
+        refreshManagedConfig: async (reason) => { events.push(['refresh', reason]); },
+        ensureWorkspaceProject: async (rootPath, reason) => {
+          events.push(['provision', rootPath, reason]);
+          if (provisionerThrows) throw new Error('store offline');
+          return { ok: true, created: true, project: { id: 'project_new' } };
+        },
+      },
+      coordinatorOptions: {
+      normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+        rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+      },
+    });
+
+    const prepared = await runtime.coordinator.prepareChoose();
+    const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId });
+    assert.equal(result.committed, true, `throws=${provisionerThrows}`);
+    assert.equal(result.rolledBack, false);
+    assert.equal(config.getToolsWorkspaceRoot(), 'G:/new');
+    // The managed refresh is kicked off in the background (2026-09-20): the
+    // commit never waits on it, so provisioning may land first.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events.slice().sort(), [
+      ['provision', 'G:/new', 'workspace_root_commit'],
+      ['refresh', 'workspace_root_commit'],
+    ]);
+  }
+});
+
+test('a commit does not wait for the managed sidecar refresh, and refreshes never overlap', async () => {
+  const config = createConfig();
+  const releases = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const runtime = createWorkspaceRootRuntime({
+    configService: config,
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+    backendService: {
+      refreshManagedConfig: () => new Promise((resolve) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        releases.push(() => { inFlight -= 1; resolve(null); });
+      }),
+    },
+    coordinatorOptions: {
+      normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+      rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+    },
+  });
+
+  const first = await runtime.coordinator.prepareChoose();
+  const committed = await runtime.coordinator.commit({ transitionId: first.transitionId });
+  assert.equal(committed.committed, true, 'the commit resolves while the refresh is still pending');
+  assert.equal(config.getToolsWorkspaceRoot(), 'G:/new');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.length, 1, 'the refresh was started');
+
+  const cleared = await runtime.coordinator.prepareClear();
+  const clearedResult = await runtime.coordinator.commit({ transitionId: cleared.transitionId });
+  assert.equal(clearedResult.committed, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.length, 1, 'the second refresh waits for the first to finish');
+  releases[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.length, 2);
+  assert.equal(maxInFlight, 1);
+  releases[1]();
+});
+
+test('clearing the root never asks for a project', async () => {
+  const config = createConfig();
+  const events = [];
+  const runtime = createWorkspaceRootRuntime({
+    configService: config,
+    backendService: {
+      ensureWorkspaceProject: async (...args) => { events.push(args); },
+    },
+    coordinatorOptions: {
+      normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+      rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+    },
+  });
+  const prepared = await runtime.coordinator.prepareClear();
+  const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId });
+  assert.equal(result.committed, true);
+  assert.deepEqual(events, []);
+});
+
 test('persistence refusal rolls back under the new generation', async () => {
   const config = createConfig();
   config.setToolsWorkspaceRoot = (value, options) => {
@@ -95,6 +191,36 @@ test('persistence refusal rolls back under the new generation', async () => {
     false,
     'already-restored old persistence is an idempotent rollback no-op'
   );
+});
+
+test('UI root transitions do not terminate session-owned test runs', async () => {
+ const config = createConfig();
+ const runtime = createWorkspaceRootRuntime({ configService: config,
+  dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+  testRunnerService: {
+   hasWorkspaceRun: () => false,
+   getState: () => ({ activeRun: 'session-owned-run' }),
+   abortAndWait: async () => assert.fail('UI selection must not cancel session work'),
+  },
+  coordinatorOptions: { normalizeRootPath: value => value, rootIdFactory: value => value },
+ });
+ const prepared = await runtime.coordinator.prepareChoose();
+ assert.equal((await runtime.coordinator.commit({ transitionId: prepared.transitionId })).committed, true);
+});
+
+test('root transition rechecks test ownership after another participant settles', async () => {
+ let uiRun = true;
+ let terminalActive = true;
+ const runtime = createWorkspaceRootRuntime({ configService: createConfig(),
+  dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+  terminalService: { hasSession: () => terminalActive, kill: async () => { uiRun = false; terminalActive = false; } },
+  testRunnerService: { hasWorkspaceRun: () => uiRun,
+   abortAndWait: async () => assert.fail('replacement session run must survive UI transition') },
+  coordinatorOptions: { normalizeRootPath: value => value, rootIdFactory: value => value },
+ });
+ const prepared = await runtime.coordinator.prepareChoose();
+ const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId, terminateProcesses: true });
+ assert.equal(result.committed, true);
 });
 
 test('runtime participants are blocked by default and terminated only on explicit commit consent', async () => {

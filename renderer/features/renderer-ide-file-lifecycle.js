@@ -20,6 +20,8 @@
   function openFailureMessage(error, path) {
     const name = String(path || '').split('/').pop() || String(path || '');
     const code = String(error?.code || '');
+    if (code.endsWith('0015')) return jt('ide.fileLifecycle.unsupportedDocument', '{name} could not be opened as a document.', { name });
+    if (code.endsWith('0016')) return jt('ide.fileLifecycle.documentTooLarge', '{name} is larger than the document size limit.', { name });
     if (code.endsWith('0010')) return jt('ide.fileLifecycle.binaryFile', "{name} is a binary file and can't be shown in the editor.", { name });
     if (code.endsWith('0011')) {
       const maxBytes = error?.details?.max_bytes;
@@ -126,7 +128,12 @@
 
     // Extension routing happens BEFORE the text read. Images use the narrow
     // versioned image authority; arbitrary binary never reaches this surface.
+    const DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx']);
     const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp']);
+
+    function isDocumentPath(path) {
+      return DOCUMENT_EXTENSIONS.has(ideStateUtils.fileExtensionOf?.(path) || '');
+    }
 
     function isImagePath(path) {
       return IMAGE_EXTENSIONS.has(ideStateUtils.fileExtensionOf?.(path) || '');
@@ -208,6 +215,17 @@
             normalized = read.payload.path;
             if (!editorHost.openImageDocument(read.payload)
               || !fileOperations.commitImageOpen(intent, read.payload)) return false;
+          } else if (isDocumentPath(normalized)) {
+            const read = await fileOperations.readDocumentForOpen(intent);
+            if (read.stale || !read.payload) return false;
+            normalized = read.payload.path;
+            let committedToken = null;
+            const applied = await editorHost.openBinaryDocument({
+              ...read.payload,
+              shouldApply: () => fileOperations.isOpenIntentCurrent(intent),
+              onApplied: () => { committedToken = fileOperations.commitBinaryDocumentOpen(intent, read.payload); },
+            });
+            if (!applied || !committedToken) return false;
           } else {
             const read = await fileOperations.readForOpen(intent);
             if (read.stale || !read.payload) return false;
@@ -374,6 +392,42 @@
       savingToken = operationToken;
       let hygieneOutcome = { formatStatus: 'disabled', formatReason: '' };
       try {
+        if (editorHost.getDocumentKind(path) === 'document') {
+          // Captured BEFORE the async export: any pane edit during export or
+          // write bumps editVersion (panes report every mutation through
+          // onDocumentEdit), so only the exported state is ever marked saved.
+          const editVersionBeforeWrite = fileOperations.getDocumentToken(path)?.editVersion;
+          const base64 = await editorHost.getDocumentBytes(path);
+          if (operationEpoch !== lifecycleEpoch
+            || savingToken !== operationToken
+            || !editorHost.hasDocument(path)
+            || !fileOperations.isDocumentCurrent(initialToken)) return false;
+          if (!base64) {
+            if (!unattended) {
+              showShellErrorToast(jt('ide.fileLifecycle.documentExportFailed', 'The document could not be prepared for saving.'), {
+                title: jt('ide.fileLifecycle.saveFailed', 'Save Failed'),
+                dedupeKey: `ide:save:${path}`,
+              });
+            }
+            return false;
+          }
+          const snapshot = fileOperations.captureDocumentSave(path, { base64 });
+          if (!snapshot) return false;
+          const result = await fileOperations.writeDocument(snapshot);
+          const accepted = fileOperations.acceptWrite(snapshot, result);
+          if (!accepted.current || !editorHost.hasDocument(path)) return false;
+          const editVersionAfterWrite = fileOperations.getDocumentToken(path)?.editVersion;
+          if (editVersionBeforeWrite === editVersionAfterWrite) {
+            editorHost.markSaved(path, { mtimeMs: result?.mtimeMs });
+          }
+          ideStateUtils.setTabStale?.(ide, path, false);
+          gitFeature?.requestRefresh();
+          renderTabs();
+          appendClientLog('INFO', 'ide.save_succeeded', {
+            format_status: 'disabled', format_reason: 'document', unattended,
+          });
+          return true;
+        }
         // Save-time hygiene (format-on-save / trim trailing whitespace / final
         // newline) mutates the live model BEFORE the snapshot so the written
         // content + savedVersionId reflect the cleaned buffer (otherwise format's
@@ -473,21 +527,31 @@
       const allowDirty = { allowDirty: true };
       try {
         const isImage = snapshot.documentKind === 'image';
+        const isDocument = snapshot.documentKind === 'document';
         const read = isImage
           ? await fileOperations.readImageForReload(snapshot)
-          : await fileOperations.readForReload(snapshot, allowDirty);
+          : isDocument
+            ? await fileOperations.readDocumentForReload(snapshot, allowDirty)
+            : await fileOperations.readForReload(snapshot, allowDirty);
+        const reloadOptions = isImage ? {} : allowDirty;
         const canApply = read?.stale !== true && read?.payload
-          && fileOperations.canCommitReload(snapshot, read.payload, isImage ? {} : allowDirty);
+          && fileOperations.canCommitReload(snapshot, read.payload, reloadOptions);
         if (!canApply) {
           ideStateUtils.setTabStale?.(getIde(), path, true); renderTabs(); return false;
         }
         const applied = isImage
           ? editorHost.openImageDocument(read.payload)
-          : await editorHost.openDocument({
-            ...read.payload,
-            shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload, allowDirty),
-            onApplied: () => fileOperations.commitReload(snapshot, read.payload, allowDirty),
-          });
+          : isDocument
+            ? await editorHost.openBinaryDocument({
+              ...read.payload,
+              shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload, allowDirty),
+              onApplied: () => fileOperations.commitReload(snapshot, read.payload, allowDirty),
+            })
+            : await editorHost.openDocument({
+              ...read.payload,
+              shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload, allowDirty),
+              onApplied: () => fileOperations.commitReload(snapshot, read.payload, allowDirty),
+            });
         if (!applied || (isImage && !fileOperations.commitReload(snapshot, read.payload))) {
           ideStateUtils.setTabStale?.(getIde(), path, true); renderTabs(); return false;
         }
@@ -529,6 +593,13 @@
       fileOperations?.reset(context);
     }
 
+    function noteDirty(path, dirty) {
+      if (dirty === true && editorHost?.getDocumentKind(path) === 'document') {
+        fileOperations?.noteEdit(path);
+      }
+      return fileOperations?.noteDirty(path, dirty);
+    }
+
     return {
       openFile,
       activateTab,
@@ -546,7 +617,7 @@
       fileOperations,
       getDocumentToken: (path) => fileOperations?.getDocumentToken(path) || null,
       isSaving: () => Boolean(savingToken),
-      noteDirty: (path, dirty) => fileOperations?.noteDirty(path, dirty),
+      noteDirty,
       noteEdit: (path) => fileOperations?.noteEdit(path),
       resetForRoot,
     };

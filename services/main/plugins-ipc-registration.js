@@ -30,6 +30,7 @@
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('../ipc-contract');
 const { t } = require('../i18n-main');
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
+const { waitForRuntimeSidecar, createStartupSafeRuntimeCoordinator } = require('./plugins-startup-runtime');
 const {
   createTrustedSenderAuthorizer,
   unauthorizedIpcResult,
@@ -105,44 +106,6 @@ const MIGRATION_SERIALIZED_METHODS = new Set([
   'plugins.rollback',
   'plugins.retryRecovery',
 ]);
-const STARTUP_RUNTIME_WAIT_MS = 30_000;
-
-function waitForDelay(delayMs, signal) {
-  return new Promise((resolve) => {
-    if (signal?.aborted) { resolve(); return; }
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener?.('abort', done);
-      resolve();
-    };
-    const timer = setTimeout(done, delayMs);
-    timer.unref?.();
-    signal?.addEventListener?.('abort', done, { once: true });
-  });
-}
-
-async function waitForRuntimeSidecar(getClient, {
-  timeoutMs = STARTUP_RUNTIME_WAIT_MS,
-  pollMs = 50,
-  now = Date.now,
-  signal = null,
-  wait = waitForDelay,
-} = {}) {
-  const deadline = now() + Math.max(1, Number(timeoutMs) || 1);
-  do {
-    if (signal?.aborted) return false;
-    const client = getClient?.();
-    if (client?.connected === true && typeof client.initialize === 'function') return true;
-    await wait(
-      Math.min(Math.max(1, Number(pollMs) || 1), Math.max(1, deadline - now())),
-      signal
-    );
-  } while (now() < deadline);
-  if (signal?.aborted) return false;
-  const client = getClient?.();
-  return client?.connected === true && typeof client.initialize === 'function';
-}
-
 function createStartupSafeRuntimeApply(backendService, { signal = null } = {}) {
   return async function requestRuntimeApply(envelope) {
     // Plugin store recovery is scheduled as soon as IPC registration finishes,
@@ -199,9 +162,15 @@ function refreshManagedConfigAfterProviderChange(
   buildOptions = () => ({}),
   change = {}
 ) {
+  // Initial engine setup can precede provider rehydration. Retry the saved
+  // selection once the plugin is applied, rather than initializing its fallback.
+  const restoreChatgpt = backendService?._providerRuntimeApplyPending?.('chatgpt') === true
+    && backendService?._lastEngineFallback?.requested_engine === 'chatgpt'
+    && backendService?.currentEngineType === 'mock'
+    && backendService?.configService?.getState?.()?.preferredEngineType === 'chatgpt';
   return backendService?.refreshManagedConfig?.(
     change.reason || 'plugin_provider_changed',
-    buildOptions()
+    buildOptions(restoreChatgpt ? 'chatgpt' : '')
   );
 }
 
@@ -398,10 +367,10 @@ function registerPluginsRuntime(ipcMainLike, {
     },
     log: (event, data) => log('INFO', event, data),
   });
-  const sidecarRuntimeCoordinator = createRuntimeApplyCoordinator({
+  const sidecarRuntimeCoordinator = createStartupSafeRuntimeCoordinator(backendService, createRuntimeApplyCoordinator({
     runtimeAdapter,
     log: (event, data) => log('INFO', event, data),
-  });
+  }), { signal: startupAbortController.signal });
   const resourcesRoot = app.isPackaged
     ? processRef.resourcesPath : nodePath.join(appRoot, 'build');
   const restrictedHostRoot = nodePath.join(resourcesRoot, 'restricted-host');
@@ -776,12 +745,17 @@ function registerPluginsRuntime(ipcMainLike, {
   const previousStage6Service = backendService._pluginStage6ControlPlane;
   const previousStage7Service = backendService._pluginStage7ControlPlane;
   const previousStage8Service = backendService._pluginStage8ControlPlane;
+  const previousStage8Lifecycle = backendService._pluginStage8Lifecycle;
   const agentMode = /^(1|true|yes|on)$/i.test(String(process.env.JENNY_AGENT_DEV || '').trim());
   const previousStage8OwnerDrill = globalThis.__jennyStage8OwnerDrill;
   backendService._pluginStage5ControlPlane = stage5Service;
   backendService._pluginStage6ControlPlane = stage6Service;
   backendService._pluginStage7ControlPlane = stage7Service;
   if (stage8Registration.service) backendService._pluginStage8ControlPlane = stage8Registration.service;
+  backendService._pluginStage8Lifecycle = Object.freeze({
+    beginBackendShutdown: stage8Registration.beginBackendShutdown,
+    reopenAfterBackendStart: stage8Registration.reopenAfterBackendStart,
+  });
   if (sessionProviderBroker) backendService._pluginSessionProviderBroker = sessionProviderBroker;
   if (agentMode) {
     globalThis.__jennyStage8OwnerDrill = Object.freeze({
@@ -905,6 +879,11 @@ function registerPluginsRuntime(ipcMainLike, {
     if (backendService._pluginStage8ControlPlane === stage8Registration.service) {
       if (previousStage8Service === undefined) delete backendService._pluginStage8ControlPlane;
       else backendService._pluginStage8ControlPlane = previousStage8Service;
+    }
+    if (backendService._pluginStage8Lifecycle?.beginBackendShutdown
+      === stage8Registration.beginBackendShutdown) {
+      if (previousStage8Lifecycle === undefined) delete backendService._pluginStage8Lifecycle;
+      else backendService._pluginStage8Lifecycle = previousStage8Lifecycle;
     }
     if (backendService._pluginSessionProviderBroker === sessionProviderBroker) {
       delete backendService._pluginSessionProviderBroker;

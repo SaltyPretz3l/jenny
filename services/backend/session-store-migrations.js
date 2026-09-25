@@ -1,4 +1,4 @@
-// v1..v19 migration chain for the Electron session store payload.
+// v1..v22 migration chain for the Electron session store payload.
 //
 // Each repair function takes a single session record and returns the upgraded
 // version. `migrateStorePayload` runs the chain over every session in a
@@ -13,6 +13,7 @@
 
 const {
   normalizeActiveTurn,
+  normalizeSessionProjectId,
   normalizeToolCategoryOverrides,
 } = require('./session-normalizers');
 const {
@@ -24,6 +25,7 @@ const {
 const {
   normalizeContextPreferences,
 } = require('./context-preferences');
+const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 const {
   createOfficialImagePluginSession,
   enforcePluginOperationMetadataBudget,
@@ -47,8 +49,10 @@ const STALE_PENDING_APPROVAL_TERMINAL_STATE = 'cancelled';
 // sessions and a bounded provider binding while retaining readable history.
 // v19 retires research context and upgrades compaction snapshots to the
 // bounded origin-aware v2 contract. v20 adds bounded per-session tool
-// category overrides.
-const STORE_SCHEMA_VERSION = 20;
+// category overrides. v21 adds durable project attribution plus bounded
+// canonical runtime-continuation records; legacy project rows belong to General.
+// v22 adds bounded failure-retry reasoning snapshots.
+const STORE_SCHEMA_VERSION = 22;
 // The highest schema version that lived in the legacy monolithic sessions.json
 // file. Anything <= this number triggers a monolithic -> split migration on
 // first read.
@@ -559,6 +563,8 @@ const SESSION_MIGRATION_STEPS = [
   [18, repairSessionForV18],
   [19, repairSessionForV19],
   [20, repairSessionForV20],
+  [21, repairSessionForV21],
+  [22, repairSessionForV22],
 ];
 
 // v16 introduces `compaction_snapshot` (JCA-003 manual-compaction ownership).
@@ -705,6 +711,28 @@ function repairSessionForV20(session = {}) {
   };
 }
 
+function repairSessionForV21(session = {}) {
+  const source = session && typeof session === 'object' && !Array.isArray(session)
+    ? session : {};
+  return {
+    ...source,
+    project_id: normalizeSessionProjectId(source.project_id, { legacyFallback: true }),
+    runtime_continuations: Object.hasOwn(source, 'runtime_continuations')
+      ? source.runtime_continuations : { schema_version: 1, entries: [] },
+  };
+}
+
+function repairSessionForV22(session = {}) {
+  const source = session && typeof session === 'object' && !Array.isArray(session)
+    ? session : {};
+  return {
+    ...source,
+    failure_retry_reasoning_snapshots: normalizeFailureRetryReasoningSnapshots(
+      source.failure_retry_reasoning_snapshots
+    ),
+  };
+}
+
 function migrateStorePayload(payload, { normalizeMessage } = {}) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   const observedVersion = Number(source.schema_version);
@@ -782,6 +810,8 @@ module.exports = {
   repairSessionForV18,
   repairSessionForV19,
   repairSessionForV20,
+  repairSessionForV21,
+  repairSessionForV22,
   migrateLegacyImageOperationMessage,
   repairStalePendingApprovalToolUse,
   summarizeMessage,

@@ -8,12 +8,14 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from sidecar.ai.engines.admitted import InferenceAdmissionError
 from sidecar.ai.error_codes import CMP_RESOURCE_EXCEEDED
 from sidecar.protocol import (
     CHAT_COMPACT_METHOD,
     COMMIT_GENERATE_MESSAGE_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
+    INLINE_COMPLETE_METHOD,
     MCP_INSPECT_METHOD,
     MEMORY_LIST_METHOD,
     MODELS_LIST_METHOD,
@@ -23,9 +25,12 @@ from sidecar.protocol import (
     SUGGESTIONS_GENERATE_METHOD,
     WORKSPACE_ABANDON_RESTORE_METHOD,
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
+    WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_LIST_CHANGE_SETS_METHOD,
     WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
     WORKSPACE_PREFLIGHT_UNDO_METHOD,
+    WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
+    WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
     WORKSPACE_UNDO_CHANGE_SET_METHOD,
 )
@@ -55,6 +60,7 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     HARDWARE_VRAM_USAGE_METHOD: "probe",
     SUGGESTIONS_GENERATE_METHOD: "inference",
     COMMIT_GENERATE_MESSAGE_METHOD: "inference",
+    INLINE_COMPLETE_METHOD: "inference",
     WORKSPACE_LIST_CHANGE_SETS_METHOD: "workspace_recovery",
     WORKSPACE_PREFLIGHT_UNDO_METHOD: "workspace_recovery",
     WORKSPACE_UNDO_CHANGE_SET_METHOD: "workspace_recovery",
@@ -65,6 +71,9 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     WORKSPACE_LIST_RECOVERY_REVIEW_METHOD: "workspace_recovery",
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD: "workspace_recovery",
     WORKSPACE_ABANDON_RESTORE_METHOD: "workspace_recovery",
+    WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD: "workspace_recovery",
+    WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD: "workspace_recovery",
+    WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD: "workspace_recovery",
 }
 DEFAULT_MAX_WORKERS_BY_FAMILY: dict[str, int] = {
     "models": 2,
@@ -81,7 +90,7 @@ AUXILIARY_WORKER_METHODS = frozenset((
     MCP_INSPECT_METHOD,
     *AUXILIARY_FAMILY_BY_METHOD,
 ))
-RequestRunner = Callable[[dict[str, Any], bool], ProcessOutcome]
+RequestRunner = Callable[..., ProcessOutcome]
 OutcomeSender = Callable[..., None]
 
 
@@ -130,6 +139,59 @@ class AuxiliaryWorkerGate:
                 self._inflight_deliveries -= 1
 
 
+def create_process_message_runner(  # noqa: PLR0913 -- explicit server dependencies
+    *,
+    brain_container: Callable[[], Any],
+    request_runner: Callable[[], RequestRunner],
+    logger: logging.Logger,
+    write_message: Callable[[dict[str, Any]], None],
+    read_message: Callable[[], dict[str, Any]],
+) -> RequestRunner:
+    """Bind server I/O while keeping auxiliary admission failures request-scoped."""
+
+    def process_message(
+        message: dict[str, Any],
+        initialized: bool,
+        *,
+        write_frame: Callable[[dict[str, Any]], None] | None = None,
+        response_reader_factory: Any | None = None,
+    ) -> ProcessOutcome:
+        try:
+            return request_runner()(
+                message,
+                initialized,
+                brain_container=brain_container(),
+                logger=logger,
+                write_message=write_frame or write_message,
+                read_message=read_message,
+                response_reader_factory=response_reader_factory,
+            )
+        except InferenceAdmissionError as error:
+            return ProcessOutcome(
+                initialized=initialized,
+                shutdown_requested=False,
+                response=error_response(
+                    message.get("id"),
+                    code=-32000,
+                    message="inference attempt was not admitted",
+                    data={"reason": error.reason},
+                ),
+                notifications=[],
+            )
+
+    return process_message
+
+
+def process_message_transport_options(transport: Any | None) -> dict[str, Any]:
+    """Return the reverse-RPC transport ports for an admitted auxiliary request."""
+    if transport is None:
+        return {}
+    return {
+        "write_frame": transport.send_control,
+        "response_reader_factory": transport.approval_reader_factory,
+    }
+
+
 def _prune_finished_workers(worker_threads: set[Any]) -> None:
     for thread in [candidate for candidate in worker_threads if not candidate.is_alive()]:
         worker_threads.discard(thread)
@@ -150,9 +212,34 @@ def _make_auxiliary_worker(  # noqa: PLR0913
         try:
             if shutdown_gate.closed:
                 return
-            outcome = request_runner(message, True)
+            params = message.get("params")
+            if isinstance(params, dict) and "inference_context" in params:
+                outcome = request_runner(
+                    message,
+                    True,
+                    write_frame=transport.send_control,
+                    response_reader_factory=getattr(
+                        transport, "approval_reader_factory", None
+                    ),
+                )
+            else:
+                outcome = request_runner(message, True)
             shutdown_gate.deliver(
                 lambda: outcome_sender(outcome, multiplexer=transport)
+            )
+        except InferenceAdmissionError as error:
+            if shutdown_gate.closed or message.get("id") is None:
+                return
+            reason = error.reason
+            shutdown_gate.deliver(
+                lambda: transport.send_control(
+                    error_response(
+                        message.get("id"),
+                        code=-32000,
+                        message="inference attempt was not admitted",
+                        data={"reason": reason},
+                    )
+                )
             )
         except Exception as error:  # noqa: BLE001
             if shutdown_gate.closed:
@@ -389,7 +476,7 @@ def route_auxiliary_request(  # noqa: PLR0913 -- explicit server-loop wiring
         )
     if method == CHAT_COMPACT_METHOD:
         # JCA-004 active-session guard: never summarize a session whose live turn
-        # is still mutating history — the summary would be computed from a
+        # is still mutating history -- the summary would be computed from a
         # snapshot the turn is about to invalidate. Structured result (not a
         # JSON-RPC error) preserves the chat.compact never-throws contract.
         if multiplexer is not None and multiplexer.has_active_session_turn(
@@ -456,7 +543,7 @@ def start_compact_worker_if_allowed(  # noqa: PLR0913
     max_active_workers: int = DEFAULT_MAX_ACTIVE_COMPACT_WORKERS,
     shutdown_gate: AuxiliaryWorkerGate | None = None,
 ) -> bool:
-    """JCA-004: chat.compact runs a blocking model inference — off the loop."""
+    """JCA-004: chat.compact runs a blocking model inference -- off the loop."""
     return start_auxiliary_worker_if_allowed(
         method_label="chat.compact",
         limit_event="sidecar.runtime.chat_compact_worker_limit_exceeded",

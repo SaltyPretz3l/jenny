@@ -31,6 +31,9 @@
       openSettingsSection,
       updateSkillsSettings,
       handleOfflineModeChange,
+      handleWorkspaceRootChoose,
+      clearWorkspaceRoot,
+      renderSessions,
     } = callbacks;
     const {
       TOAST_SOURCE = {},
@@ -104,6 +107,75 @@
     }
 
     let remoteSection = null;
+    let sessionRuntimeController = null;
+    function bindRuntime(_registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      const runtimeDom = getLazySectionDom('runtime');
+      sessionRuntimeController = sessionRuntimeController
+        || windowRef.rendererSettingsSessionRuntime?.createSessionRuntimeSettingsController?.({
+          state,
+          windowRef,
+          documentRef: windowRef.document,
+          host: runtimeDom.sessionRuntimeSettingsMount,
+          openSession: callbacks.openSession,
+          setActiveView: callbacks.setActiveView,
+          showError: showSessionActionError,
+          chooseWorkspaceRoot: handleWorkspaceRootChoose,
+          clearWorkspaceRoot,
+          renderSessions,
+        })
+        || null;
+      sessionRuntimeController?.bind?.();
+      context.addCleanup?.(() => sessionRuntimeController?.dispose?.());
+      context.markSectionBound?.();
+      return finalizeSectionBindings();
+    }
+
+    // Developer > Runtime limits: the work ledger + per-lane limits console. Its
+    // two scripts load on first bind (never at startup); a failed load leaves a
+    // retry button in the mount. Disposal during load drops the late arrival.
+    let orchestrationController = null;
+    function bindRuntimeLimits(_registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      const host = getLazySectionDom('runtimeLimits').sessionOrchestrationMount || null;
+      let disposed = false;
+      let loading = false;
+      const button = (config) => (typeof windowRef.inventoryActionButton === 'function' ? windowRef.inventoryActionButton(config) : '');
+      async function load() {
+        if (disposed || orchestrationController || loading || !host) return;
+        loading = true;
+        try {
+          for (const [name, src] of [
+            ['rendererOrchestrationView', 'renderer/shell/renderer-orchestration-view.js'],
+            ['rendererOrchestrationController', 'renderer/shell/renderer-orchestration-controller.js'],
+          ]) {
+            const loaded = windowRef[name] || await windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef[name]) });
+            if (disposed) return;
+            if (!loaded || !windowRef[name]) throw new Error('runtime_view_unavailable');
+          }
+          orchestrationController = windowRef.rendererOrchestrationController.createController({
+            state, windowRef, host, openSession: callbacks.openSession, setActiveView: callbacks.setActiveView,
+            isVisible: () => state.ui?.activeView === 'settings' && state.ui?.activeSettingsSection === 'runtimeLimits',
+          });
+          orchestrationController.bind();
+        } catch (_error) {
+          if (!disposed) host.innerHTML = button({ id: 'runtime-load-retry',
+            label: jt('runtime.ui.loadRetry', 'Load runtime controls'), ariaLabel: jt('runtime.ui.loadRetry', 'Load runtime controls') });
+        } finally { loading = false; }
+      }
+      const retry = (event) => { if (event?.target?.closest?.('[data-action="runtime-load-retry"]')) void load(); };
+      host?.addEventListener?.('click', retry);
+      void load();
+      context.addCleanup?.(() => {
+        disposed = true;
+        host?.removeEventListener?.('click', retry);
+        orchestrationController?.dispose?.();
+        orchestrationController = null;
+      });
+      context.markSectionBound?.();
+      return finalizeSectionBindings();
+    }
+
     function bindRemote(_registerSectionListener, finalizeSectionBindings, context = {}) {
       const windowRef = deps.windowRef || globalThis;
       remoteSection = remoteSection || windowRef.rendererSettingsRemoteSection?.createRemoteSettingsSection?.({
@@ -256,6 +328,8 @@
       remote: bindRemote,
       personality: bindPersonality,
       memories: bindMemories,
+      runtime: bindRuntime,
+      runtimeLimits: bindRuntimeLimits,
     });
 
     function bindSection(sectionId, context) {

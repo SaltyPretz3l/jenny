@@ -207,7 +207,7 @@ def _requirements_fingerprint(packages: tuple[str, ...] = RUNTIME_PACKAGES) -> s
 
 def _interpreter_identity(venv_python: Path) -> str:
     completed = bootstrap_subprocess.run(
-        [str(venv_python), "-c", "import sys; print(sys.version.split()[0])"],
+        [*bootstrap_subprocess.managed_python_argv(venv_python), "-c", "import sys; print(sys.version.split()[0])"],
         timeout=10,
         check=True,
     )
@@ -229,7 +229,7 @@ def _validate_runtime_imports(
     import_statement = "; ".join(f"import {module}" for module in modules)
     try:
         bootstrap_subprocess.run(
-            [str(venv_python), "-c", import_statement],
+            [*bootstrap_subprocess.managed_python_argv(venv_python), "-c", import_statement],
             timeout=RUNTIME_IMPORT_VALIDATION_TIMEOUT_SECONDS,
             check=True,
         )
@@ -604,7 +604,7 @@ def _install_from_wheelhouse(venv_python: Path, wheelhouse: Path) -> None:
         _ensure_offline_pip(venv_python, wheelhouse)
     bootstrap_subprocess.run(
         [
-            str(venv_python),
+            *bootstrap_subprocess.managed_python_argv(venv_python),
             "-m",
             "pip",
             "install",
@@ -702,7 +702,7 @@ def _install_via_uv(venv_python: Path) -> bool:
 def _install_via_network_pip(venv_python: Path) -> None:
     bootstrap_subprocess.run(
         [
-            str(venv_python),
+            *bootstrap_subprocess.managed_python_argv(venv_python),
             "-m",
             "pip",
             "install",

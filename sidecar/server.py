@@ -42,6 +42,7 @@ from sidecar.runtime.message_reader import BackgroundMessageReader
 from sidecar.runtime.multiplexer import StdioTransportMultiplexer, TransportBackpressureError
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.parent_watchdog import start_parent_death_watchdog
+from sidecar.runtime.pipe_stdin import shared_gated_stdin
 from sidecar.runtime.request_dispatch import (
     process_chat_send_request as runtime_process_chat_send_request,
 )
@@ -86,7 +87,7 @@ def configure_logging() -> None:
 def read_message() -> dict[str, Any]:
     """Read one Content-Length framed JSON-RPC payload from stdin."""
     return read_framed_message(
-        stdin_buffer=sys.stdin.buffer,
+        stdin_buffer=shared_gated_stdin(sys.stdin.buffer),
         content_length_header=CONTENT_LENGTH_HEADER,
         max_content_length_bytes=MAX_CONTENT_LENGTH_BYTES,
     )
@@ -112,16 +113,10 @@ def write_message_body(body: bytes) -> None:
         )
 
 
-def process_message(message: dict[str, Any], initialized: bool) -> ProcessOutcome:
-    """Process a JSON-RPC message in the default non-interactive mode."""
-    return runtime_process_message(
-        message,
-        initialized,
-        brain_container=_BRAIN_CONTAINER,
-        logger=logger,
-        write_message=write_message,
-        read_message=read_message,
-    )
+process_message = _aux_workers.create_process_message_runner(
+    brain_container=lambda: _BRAIN_CONTAINER, request_runner=lambda: runtime_process_message,
+    logger=logger, write_message=write_message, read_message=read_message,
+)
 
 
 def _batch4_transport_enabled() -> bool:
@@ -265,7 +260,11 @@ def main() -> None:
                     )
                     continue
                 else:
-                    outcome = process_message(message, initialized)
+                    outcome = process_message(
+                        message,
+                        initialized,
+                        **_aux_workers.process_message_transport_options(multiplexer),
+                    )
 
                 initialized = outcome.initialized
                 shutdown_requested = outcome.shutdown_requested

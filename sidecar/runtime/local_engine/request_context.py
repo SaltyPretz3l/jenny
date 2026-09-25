@@ -322,3 +322,30 @@ def scoped_chat_request_context(
             request_id=str(getattr(request_context, "request_id", "") or "").strip(),
         )
         _ACTIVE_REQUEST_BINDING.set(previous)
+
+
+_PROVIDER_CALL_PURPOSE_KEY = "provider_call_purpose"
+
+
+def set_next_provider_call_purpose(engine: Any, purpose: str) -> None:
+    """Tag the NEXT provider call this engine makes for turn diagnostics.
+
+    Consumed once by the engine's ``_record_provider_request``; a turn's
+    internal reasoning summary or checkpoint continuation is then recorded as
+    such instead of masquerading as the user-visible answer. No-op without an
+    active request binding (unit tests, non-local engines).
+    """
+    binding = _current_binding(engine)
+    if binding is None:
+        return
+    binding.context[_PROVIDER_CALL_PURPOSE_KEY] = str(purpose or "").strip()
+
+
+def consume_provider_call_purpose(engine: Any) -> str | None:
+    """Pop the purpose set by :func:`set_next_provider_call_purpose`, if any."""
+    binding = _current_binding(engine)
+    if binding is None:
+        return None
+    value = binding.context.pop(_PROVIDER_CALL_PURPOSE_KEY, None)
+    text = str(value or "").strip()
+    return text or None

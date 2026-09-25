@@ -297,6 +297,7 @@
       storage: 'config',
       default: false,
       helpText: jt('settings.tools.imageRead.description', 'Allow read_file to expose image and PDF page-read affordances.'),
+      addonNote: jt('settings.tools.imageRead.pdfAddonNote', 'PDF pages need the PDF reading add-on.'),
       configFlag: 'tools_image_read_enabled',
       toolIds: Object.freeze(['read_file']),
     }),
@@ -317,6 +318,7 @@
       storage: 'config',
       default: true,
       helpText: jt('settings.tools.richFiles.description', 'Allow read_file to return bounded structured inspection for PDF, spreadsheet, document, presentation, and notebook files.'),
+      addonNote: jt('settings.tools.richFiles.pdfAddonNote', 'PDFs need the PDF reading add-on.'),
       configFlag: 'tools_rich_files_enabled',
       toolIds: Object.freeze(['read_file']),
     }),
@@ -430,6 +432,7 @@
       storage: field.storage,
       default: field.default === true,
       helpText: field.helpText,
+      addonNote: field.addonNote || '',
       configFlag: field.configFlag,
       toolIds: [...(field.toolIds || [])],
     };
@@ -454,9 +457,7 @@
       return null;
     }
     const label = normalizeString(rawField.label);
-    if (!label) {
-      return null;
-    }
+    if (!label) return null;
     const fieldType = normalizeString(readMetadataField(rawField, ['fieldType', 'field_type'])) || 'toggle';
     const storage = normalizeString(rawField.storage) || 'config';
     if (fieldType !== 'toggle' || storage !== 'config') {
@@ -475,6 +476,7 @@
       storage,
       default: rawField.default === true,
       helpText: normalizeString(readMetadataField(rawField, ['helpText', 'help_text'])),
+      addonNote: DEFAULT_TOOL_CONFIG_FIELDS.find((entry) => entry.key === key)?.addonNote || '', // Renderer-owned copy (F24).
       configFlag: normalizeString(readMetadataField(rawField, ['configFlag', 'config_flag'])),
       toolIds: normalizeToolIds(readMetadataField(rawField, ['toolIds', 'tool_ids'])),
     };
@@ -531,12 +533,14 @@
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
     return SAFETY_MODES.includes(normalized) ? normalized : 'normal';
   }
-  function normalizeUnattendedGuardMinutes(value) {
-    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return 0;
+  function normalizeBoundedCount(value, max, fallback) {
+    if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return fallback;
     const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) return 0;
-    return parsed === 0 ? 0 : Math.min(120, Math.max(1, Math.trunc(parsed)));
+    if (!Number.isFinite(parsed)) return fallback;
+    return parsed <= 0 ? 0 : Math.min(max, Math.max(fallback === 0 ? 1 : 0, Math.trunc(parsed)));
   }
+  const normalizeUnattendedGuardMinutes = (value) => normalizeBoundedCount(value, 120, 0);
+  const normalizeAutoApproveStreakCap = (value) => normalizeBoundedCount(value, 500, 50);
   function buildUiLanguageFieldMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     const selectField = typeof source.selectField === 'function' ? source.selectField : getInventoryFn('selectField', 'inventorySelectField');
@@ -580,7 +584,12 @@
       step: 1, fallback: 10, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'unattended-guard-minutes': 'true' } })
       + `<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
   }
-
+  function buildAutoApproveStreakCapFieldMarkup(options) {
+    const source = isPlainObject(options) ? options : {}, numberInput = source.numberInput || getInventoryFn('numberInput', 'inventoryNumberInput');
+    if (typeof numberInput !== 'function') return '';
+    const copy = getFieldCopy('autoApproveStreakCapInput'), label = copy?.label || jt('settings.autoApproveStreakCap.label', 'Auto-approval streak cap'), hint = copy?.description || jt('settings.autoApproveStreakCap.description', 'In Auto mode, ask once after this many consecutive automatic approvals in a turn. 0 turns the cap off.');
+    return `<div class="settings-group settings-group--flush">${numberInput({ id: 'autoApproveStreakCapInput', label, value: normalizeAutoApproveStreakCap(source.value), min: 0, max: 500, step: 1, fallback: 50, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'auto-approve-streak-cap': 'true' } })}<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
+  }
   function buildDefaultRunModeFieldMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     const selectField = typeof source.selectField === 'function'
@@ -638,6 +647,7 @@
     const target = event?.target?.closest?.('[data-unattended-guard-minutes]');
     return target && !target.disabled ? { value: normalizeUnattendedGuardMinutes(target.value) } : null;
   }
+  const resolveAutoApproveStreakCapChangeEvent = (event) => { const target = event?.target?.closest?.('[data-auto-approve-streak-cap]'); return target ? { value: normalizeAutoApproveStreakCap(target.value) } : null; };
 
   function encodeToolConfigToggleKey(key) {
     return encodeURIComponent(String(key || ''));
@@ -681,8 +691,9 @@
       if (disabled) {
         noteParts.push(jt('settings.tools.blockedByRuntime', 'Currently blocked by runtime availability.'));
       }
+      const addonNote = field.addonNote ? ` <span class="tools-config-field-addon-note">${escapeHtml(field.addonNote)}</span>` : '';
       const noteMarkup = noteParts.length
-        ? `<div class="settings-note tools-config-field-help">${escapeHtml(noteParts.join(' '))}</div>`
+        ? `<div class="settings-note tools-config-field-help">${escapeHtml(noteParts.join(' '))}${addonNote}</div>`
         : '';
       return `
         <article class="tools-config-field-row" data-tool-config-key="${escapeHtml(field.key)}">
@@ -967,6 +978,7 @@
     buildUiLanguageFieldMarkup,
     buildSafetyModeFieldMarkup,
     buildUnattendedGuardFieldMarkup,
+    buildAutoApproveStreakCapFieldMarkup,
     buildDefaultRunModeFieldMarkup,
     buildToolConfigFieldListMarkup,
     buildSettingsToggleListMarkup,
@@ -978,9 +990,11 @@
     normalizeUiLanguageTag,
     normalizeSafetyMode,
     normalizeUnattendedGuardMinutes,
+    normalizeAutoApproveStreakCap,
     resolveUiLanguageChangeEvent,
     resolveSafetyModeChangeEvent,
     resolveUnattendedGuardChangeEvent,
+    resolveAutoApproveStreakCapChangeEvent,
     resolveDefaultRunModeChangeEvent,
     normalizeFeatureState,
     normalizeWorkspaceRootState,

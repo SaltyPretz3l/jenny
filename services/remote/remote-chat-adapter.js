@@ -316,23 +316,38 @@ function createRemoteChatAdapter(deps = {}) {
       };
       const validated = validateChatStartPayload(backendPayload);
       if (!validated?.ok) return failure('invalid_request', validated?.error?.reason || validated?.reason);
+      if (input.isEpochLive?.() === false) return failure('epoch_invalid');
+      const currentLease = leases?.leaseFor?.(authorization.sessionId, deviceId);
+      if (input.isAuthorized?.() === false
+        || !policy.canSend(authorization.session, authorization.flags, currentLease, deviceId)) {
+        return failure('unauthorized');
+      }
       const cancellation = cancellations?.create?.({ sessionId, deviceId });
       try {
         const started = await backendService.startChatStream(validated.value || backendPayload, { cancellation });
         const streamId = String(started?.streamId || started?.stream_id || started || '').trim();
         const startedSessionId = String(started?.sessionId || started?.session_id || authorization.sessionId);
-        if (!streamId) {
-          cancellation?.cancel?.('start_failed');
-          return failure('not_reachable', 'chat start returned no stream id', true);
-        }
-        cancellation?.bindStream?.(streamId);
+        if (streamId) cancellation?.bindStream?.(streamId);
         if (input.isEpochLive?.() === false) {
           cancellation?.cancel?.('remote_disabled');
           return failure('epoch_invalid');
         }
+        const liveLease = leases?.leaseFor?.(authorization.sessionId, deviceId);
+        if (cancellation?.signal?.aborted === true || input.isAuthorized?.() === false
+          || !policy.canSend(authorization.session, authorization.flags, liveLease, deviceId)) {
+          cancellation?.cancel?.('remote_disabled');
+          return failure('unauthorized');
+        }
+        if (!streamId) {
+          cancellation?.cancel?.('start_failed');
+          return failure('not_reachable', 'chat start returned no stream id', true);
+        }
         return { ok: true, data: { session_id: startedSessionId, stream_id: streamId } };
       } catch (error) {
+        const authorityWithdrawn = cancellation?.signal?.aborted === true
+          || input.isAuthorized?.() === false;
         cancellation?.cancel?.('start_failed');
+        if (authorityWithdrawn) return failure('unauthorized');
         const busy = error?.code === 'session_busy' || error?.category === 'session_busy'
           || /turn is already running/i.test(String(error?.message || ''));
         return busy

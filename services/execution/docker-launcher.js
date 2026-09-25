@@ -49,14 +49,18 @@ class DockerLauncher {
     this.command = platform === 'win32' && fs.existsSync(windowsDocker) ? windowsDocker : 'docker';
     this.endpoint = null;
     this.volumeName = 'jenny-command-' + ownerId;
+    this.pendingCommands = new Set();
   }
+  hasPendingCommands() { return this.pendingCommands.size > 0; }
   async _run(args, { input = null, timeoutMs = 15000, maxBytes = 4 * 1024 * 1024, endpoint = true } = {}) {
     const prefix = endpoint ? ['--host', this.endpoint] : [];
     if (endpoint && !localEndpoint(this.endpoint)) throw sandboxError('docker_endpoint_invalid');
+    if (this.pendingCommands.size >= 32) throw sandboxError('docker_command_capacity');
     return new Promise((resolve, reject) => {
       const child = this.spawn(this.command, [...prefix, ...args], {
         shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: this.env,
       });
+      this.pendingCommands.add(child);
       const chunks = [];
       let bytes = 0;
       let stderrBytes = 0;
@@ -81,7 +85,10 @@ class DockerLauncher {
         if (stderrBytes > maxBytes) finish(sandboxError('docker_output_limit'));
       });
       child.stdin.on('error', () => { /* close/error supplies the outcome */ });
-      child.on('close', (code) => finish(code === 0 ? null : sandboxError('docker_operation_failed'), Buffer.concat(chunks)));
+      child.on('close', (code) => {
+        this.pendingCommands.delete(child);
+        finish(code === 0 ? null : sandboxError('docker_operation_failed'), Buffer.concat(chunks));
+      });
       child.stdin.end(input);
     });
   }
@@ -194,6 +201,11 @@ class DockerLauncher {
       { input, timeoutMs: 7000, maxBytes: 3 * 1024 * 1024 });
   }
   async stopAndRemove(id) {
+    if (!ID.test(id)) throw sandboxError('docker_container_identity_invalid');
+    const present = (await this._run(['container', 'ls', '-a', '--no-trunc', '--filter', 'id=' + id,
+      '--format', '{{.ID}}'])).toString().trim().split(/\r?\n/u).filter(Boolean);
+    if (present.some(value => value !== id)) throw sandboxError('docker_container_identity_invalid');
+    if (!present.length) return { cleanupConfirmed: true };
     const before = await this.inspect(id);
     if (before.State.Running || before.State.Restarting) {
       await this._run(['container', 'stop', '--time', '10', id], { timeoutMs: 20000 });

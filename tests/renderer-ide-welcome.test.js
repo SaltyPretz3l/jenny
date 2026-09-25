@@ -116,7 +116,7 @@ test('welcome preserves the no-root copy + Choose Folder action contract', async
   const dom = harness.getDom();
   assert.equal(
     dom.ideEmptyStateCopy.textContent,
-    'Choose a workspace folder to start editing files.'
+    'Pick a folder and Jenny makes it a project: file tools work inside it and new chats start there.'
   );
   const action = dom.ideEmptyStateAction.querySelector('[data-ide-choose-root]');
   assert.ok(action, 'no-root state still offers the primary Choose Folder button');

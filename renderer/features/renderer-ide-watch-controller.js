@@ -96,6 +96,22 @@
           }
           if (!editorHost.openImageDocument(read.payload)
             || !fileOperations.commitReload(snapshot, read.payload)) return;
+        } else if (editorHost.getDocumentKind(path) === 'document') {
+          if (!fileOperations) return;
+          const snapshot = fileOperations.captureReload(path);
+          if (!snapshot) return;
+          const read = await fileOperations.readDocumentForReload(snapshot);
+          if (read.stale || !read.payload || !fileOperations.canCommitReload(snapshot, read.payload)) {
+            ideStateUtils.setTabStale?.(ide, path, true); renderTabs(); return;
+          }
+          const applied = await editorHost.openBinaryDocument({
+            ...read.payload,
+            shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload),
+            onApplied: () => fileOperations.commitReload(snapshot, read.payload),
+          });
+          if (!applied) {
+            ideStateUtils.setTabStale?.(ide, path, true); renderTabs(); return;
+          }
         } else {
           if (!fileOperations) return;
           const snapshot = fileOperations?.captureReload(path);

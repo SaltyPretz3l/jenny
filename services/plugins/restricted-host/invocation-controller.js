@@ -24,6 +24,10 @@ function cancellation() {
   };
 }
 
+function noInvocation(result) {
+  return { ...result, execution_settlement: { cleanup: 'confirmed', producer_started: false } };
+}
+
 function isJsonPlainObject(value) {
   if (!value || typeof value !== 'object'
     || Object.prototype.toString.call(value) !== '[object Object]') return false;
@@ -76,35 +80,39 @@ class RestrictedInvocationController {
   _queuedFor(key) { return this._queue.filter((item) => item.key === key).length; }
   _canRun(key) { return this._active.size < MAX_GLOBAL_ACTIVE && this._activeFor(key) < MAX_HOST_ACTIVE; }
 
-  invoke(descriptor, args, { signal = null, sessionId = '' } = {}) {
-    if (this._disposed) return Promise.resolve(refusal('restricted_runtime_disposed'));
+  invoke(descriptor, args, { signal = null, sessionId = '', requireCurrent = null } = {}) {
+    if (this._disposed) return Promise.resolve(noInvocation(refusal('restricted_runtime_disposed')));
     let inputJson;
-    try { inputJson = canonicalJson(args); } catch (error) { return Promise.resolve(refusal(error.message)); }
-    if (Buffer.byteLength(inputJson, 'utf8') > MAX_ARGUMENT_BYTES) return Promise.resolve(refusal('restricted_arguments_too_large'));
+    try { inputJson = canonicalJson(args); }
+    catch (error) { return Promise.resolve(noInvocation(refusal(error.message))); }
+    if (Buffer.byteLength(inputJson, 'utf8') > MAX_ARGUMENT_BYTES) {
+      return Promise.resolve(noInvocation(refusal('restricted_arguments_too_large')));
+    }
     if (!descriptor?.compiled_input_schema
       || !validateSchemaInstance(descriptor.compiled_input_schema, args).ok) {
-      return Promise.resolve(refusal('restricted_arguments_schema_invalid'));
+      return Promise.resolve(noInvocation(refusal('restricted_arguments_schema_invalid')));
     }
     const key = `${descriptor.publisher_id}\0${descriptor.plugin_id}\0${descriptor.contribution_id}`;
     if (!this._canRun(key) && (this._queue.length >= MAX_GLOBAL_QUEUE || this._queuedFor(key) >= MAX_HOST_QUEUE)) {
-      return Promise.resolve(refusal('restricted_queue_limit_exceeded', true));
+      return Promise.resolve(noInvocation(refusal('restricted_queue_limit_exceeded', true)));
     }
     return new Promise((resolve) => {
-      const item = { key, descriptor, inputJson, signal, sessionId: String(sessionId || '').trim(), resolve,
-        id: Symbol(key), abort: null, host: null, settled: false };
+      const item = { key, descriptor, inputJson, signal, sessionId: String(sessionId || '').trim(),
+        requireCurrent, resolve,
+        id: Symbol(key), abort: null, host: null, hostInvoked: false, settled: false };
       item.abort = () => {
         const index = this._queue.indexOf(item);
         if (index >= 0) {
           this._queue.splice(index, 1);
           item.settled = true;
-          resolve(cancellation());
+          resolve(noInvocation(cancellation()));
         } else if (this._active.has(item.id)) {
           item.host?.cancel?.();
         }
       };
       if (signal?.aborted) {
         item.settled = true;
-        resolve(cancellation());
+        resolve(noInvocation(cancellation()));
         return;
       }
       signal?.addEventListener('abort', item.abort, { once: true });
@@ -121,6 +129,7 @@ class RestrictedInvocationController {
     const cancellationId = `cancel_${crypto.randomUUID().replace(/-/g, '')}`.slice(0, 64);
     let result;
     try {
+      await item.requireCurrent?.();
       let current = await this._getCurrentAuthority(descriptor, { argument_hash: argumentHash });
       const mismatch = authorityMismatch(descriptor, current, argumentHash);
       if (mismatch) result = refusal(mismatch);
@@ -129,6 +138,7 @@ class RestrictedInvocationController {
         if (!hostResult.ok) result = refusal(hostResult.reason, hostResult.reason?.includes('limit'));
         else {
           item.host = hostResult.host;
+          await item.requireCurrent?.();
           current = await this._getCurrentAuthority(descriptor, { argument_hash: argumentHash });
           const finalMismatch = authorityMismatch(descriptor, current, argumentHash);
           if (finalMismatch) {
@@ -147,6 +157,7 @@ class RestrictedInvocationController {
             if (!token.ok) result = refusal(token.reason);
             else if (item.signal?.aborted) result = cancellation();
             else {
+              item.hostInvoked = true;
               const terminal = await hostResult.host.invoke(
                 item.inputJson,
                 timeoutMs,
@@ -178,6 +189,7 @@ class RestrictedInvocationController {
     finally {
       this._tokenService.revokeInvocation(invocationId);
       this._active.delete(item.id); item.signal?.removeEventListener('abort', item.abort);
+      if (!item.hostInvoked && !result?.execution_settlement) result = noInvocation(result);
       if (!item.settled) item.resolve(result);
       item.settled = true;
       this._drain();
@@ -204,7 +216,7 @@ class RestrictedInvocationController {
     this._secretHandleBroker?.revokeGeneration?.(generationId);
     return this._hostPool.revokeGeneration(generationId);
   }
-  async dispose() { this._disposed = true; for (const item of this._queue.splice(0)) { item.signal?.removeEventListener('abort', item.abort); item.settled = true; item.resolve(cancellation()); } this._tokenService.clear(); this._secretHandleBroker?.clear?.(); await this._hostPool.dispose(); }
+  async dispose() { this._disposed = true; for (const item of this._queue.splice(0)) { item.signal?.removeEventListener('abort', item.abort); item.settled = true; item.resolve(noInvocation(cancellation())); } this._tokenService.clear(); this._secretHandleBroker?.clear?.(); await this._hostPool.dispose(); }
 }
 
 module.exports = {

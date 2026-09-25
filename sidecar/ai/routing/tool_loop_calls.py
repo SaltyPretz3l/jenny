@@ -19,13 +19,13 @@ from sidecar.ai.error_codes import (
 from sidecar.ai.routing import (
     context_usage_events,
     plan_mode_transition,
+    tool_explicit_pause,
     tool_loop_cycle_recovery,
+    tool_resource_deferral,
 )
 from sidecar.runtime.turn_state import current_live_run_mode_state
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
-
-
 class _ToolCallPhasesMixin:
     """P7: the tool-call branch of the loop, plus its cycle-state helpers."""
 
@@ -98,12 +98,12 @@ class _ToolCallPhasesMixin:
     quota_registry: Any
 
     if TYPE_CHECKING:
-        # Hub-owned methods (defined on ``_ToolLoopRun`` in tool_loop_run.py).
-        # Never executed -- ``TYPE_CHECKING`` is False at runtime -- so these
-        # cannot shadow the hub's real implementations.
+        # Hub methods (``_ToolLoopRun``, tool_loop_run.py) plus the sibling
+        # ``_FinalResponseMixin._defers_empty_final``. ``TYPE_CHECKING``
+        # is False at runtime, so these never shadow the real implementations.
         def _finish(self, loop_result: Any, *, reason: str) -> Any: ...
-
         def _settle_unfinished_tool_results(self, reason: str) -> int: ...
+        def _defers_empty_final(self, result: Any) -> bool: ...
 
     def _request_sub_agent_budget_finalization(
         self,
@@ -159,8 +159,8 @@ class _ToolCallPhasesMixin:
         if tool_cap_result := cap_final(self, result):
             return tool_cap_result
         if (
-            self.outcomes
-            and not str(result.content or "").strip()
+            self.outcomes and not str(result.content or "").strip()
+            and not self._defers_empty_final(result)
             and not self.post_tool_continuation_attempted
             and _iteration < self.iteration_total
         ):
@@ -168,7 +168,6 @@ class _ToolCallPhasesMixin:
         return super()._handle_final_response(result, _iteration)  # type: ignore[misc]
 
     # -- Closure conversions (910-1090) -----------------------------------
-
     def _append_failed_tool_context_if_needed(self) -> None:
         import sidecar.ai.routing.tool_loop as _tl_hub
 
@@ -674,6 +673,7 @@ class _ToolCallPhasesMixin:
         # never counted by _record_allowed, so they must be outside the refund slice.
         outcomes_len_before_tool_phase = len(self.outcomes)
 
+        execution_context = getattr(self.request_context, "execution_context", None)
         policy_filter = kernel._filter_tool_calls_by_policy(
             result.tool_calls,
             mode=self.mode_policy.mode,
@@ -683,6 +683,7 @@ class _ToolCallPhasesMixin:
             plan_mode=self.plan_mode,
             read_only=self.read_only,
             request_disabled_tools=self.request_disabled_tools,
+            policy_snapshot=getattr(execution_context, "tool_policy_snapshot", None),
         )
         audit_metadata_by_call = policy_filter.audit_metadata_by_call
         if policy_filter.denied:
@@ -759,9 +760,7 @@ class _ToolCallPhasesMixin:
             )
             runtime.raise_if_cancelled()
             approval_tool_calls = _tl_hub._bind_missing_approval_call_id(
-                result.tool_calls,
-                approval.tool_call_id,
-            )
+                result.tool_calls, approval.tool_call_id)
             approval_result = (
                 replace(result, tool_calls=approval_tool_calls)
                 if approval_tool_calls != result.tool_calls
@@ -773,12 +772,14 @@ class _ToolCallPhasesMixin:
                     session_id=session_id,
                     read_snapshot_cache=self.read_snapshot_cache,
                     tool_contract=self.tool_contract,
-                    plan_mode=self.plan_mode,
-                    read_only=self.read_only,
+                    plan_mode=self.plan_mode, read_only=self.read_only,
+                    execution_context=execution_context,
+                    turn_id=runtime.logical_turn_id or request_id,
                 )
                 for call in approval_tool_calls
             )
             approval_plan = _tl_hub.build_approval_plan(
+                quota_state_json=tool_resource_deferral._freeze_loop_quota(self),
                 approved_call_id=str(approval.tool_call_id or "").strip(),
                 request_context=self.request_context,
                 latest_user_content=self.latest_user_content,
@@ -832,20 +833,10 @@ class _ToolCallPhasesMixin:
             )
         tool_calls_to_execute = result.tool_calls
         iteration_calls: list[Any] = []
-        if tool_calls_to_execute:
-            _tl_hub.loop_event_emit.pre_dispatch_emit_executing(
-                runtime=runtime,
-                tool_calls=tool_calls_to_execute,
-                request_id=request_id,
-            )
-            if runtime.streaming:
-                self.streamed_event_types.add("tool.executing")
-        # -- Pre-filter deferred / coerced calls (shared) -----------
         from sidecar.ai.routing.tool_call_execution import (
             execute_tool_calls_sequentially,
             pre_filter_tool_calls,
         )
-
         _remaining, self.outcome_index = pre_filter_tool_calls(
             tool_calls_to_execute,
             kernel=kernel,
@@ -864,18 +855,18 @@ class _ToolCallPhasesMixin:
             streamed_event_types=self.streamed_event_types,
             outcome_index=self.outcome_index,
         )
+        allow_resource_deferral = tool_explicit_pause.prepare_tool_continuation(
+                self, current_iteration=_iteration,
+                outcomes_before_batch=outcomes_len_before_tool_phase,
+                remaining_calls=_remaining, ordered_calls=tool_calls_to_execute)
         # Auto-checkpoint immediately before the canonical in-order dispatcher.
         _tl_hub.maybe_create_auto_checkpoint(self, _remaining)
-
         if _remaining:
             try:
                 execute_tool_calls_sequentially(
                     indexed_calls=_remaining,
-                    runtime=runtime,
-                    kernel=kernel,
-                    result=result,
-                    request_id=request_id,
-                    session_id=session_id,
+                    runtime=runtime, kernel=kernel, result=result,
+                    request_id=request_id, session_id=session_id,
                     tool_resolution_context=self.tool_resolution_context,
                     tool_contract=self.tool_contract,
                     read_snapshot_cache=self.read_snapshot_cache,
@@ -889,7 +880,16 @@ class _ToolCallPhasesMixin:
                     audit_metadata_by_call=audit_metadata_by_call,
                     approvals_pre_granted=self.approvals_pre_granted,
                     scan_approval_mode=scan_approval_mode,
+                    allow_resource_deferral=allow_resource_deferral,
+                    on_resource_deferral=tool_explicit_pause.resource_callback(self, _iteration),
                 )
+            except tool_resource_deferral.ToolResourceDeferred as error:
+                raise tool_resource_deferral.suspend_loop_for_resource(
+                    self, error, ordered_calls=tool_calls_to_execute,
+                    current_iteration=_iteration) from error
+            except (tool_resource_deferral.ToolLoopSuspended,
+                    tool_resource_deferral.DecisionSuspensionError):
+                raise
             except Exception:  # noqa: BLE001 - pair any pre-dispatch event before re-raising
                 self._settle_unfinished_tool_results("sequential_execution_interrupted")
                 raise

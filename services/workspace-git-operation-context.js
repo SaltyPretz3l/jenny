@@ -2,6 +2,10 @@
 
 const { workspaceRootId } = require('./workspace-root-identity');
 
+// UI and session-bound service instances address the same physical workspace.
+// Keep only outstanding tails; settling the final operation removes its key.
+const PROCESS_WRITE_TAILS = new Map();
+
 function normalizeRoot(value) {
   return String(value || '').trim();
 }
@@ -45,7 +49,7 @@ class WorkspaceGitOperationContext {
       ? rootContextProvider
       : () => null;
     this._rootProvider = typeof rootProvider === 'function' ? rootProvider : () => '';
-    this._writeTails = new Map();
+    this._writeTails = PROCESS_WRITE_TAILS;
   }
 
   acquire({ kind = 'read', signal = null } = {}) {

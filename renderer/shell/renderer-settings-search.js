@@ -77,6 +77,7 @@
         sectionId: hostId,
         rawSectionId: section.id,
         sectionLabel: sectionLabel(hostId),
+        keywords: Array.isArray(section.keywords) ? section.keywords : [],
       });
     }
     var fields = typeof copy.listSettingsFieldCopyEntries === 'function' ? copy.listSettingsFieldCopyEntries() : [];

@@ -204,7 +204,9 @@ class MCPClient:
         pending_replay_error: MCPError | None = None
         while True:
             client_support.raise_if_cancelled(cancel_handle)
-            remaining_timeout = client_support.remaining_tool_timeout(deadline, timeout_seconds)
+            remaining_timeout = client_support.remaining_tool_timeout(
+                deadline, timeout_seconds, spent_error=pending_replay_error
+            )
             with self._transport_registry_lock:
                 descriptor = self._resolve_tool_descriptor(current_tool_name)
                 transport = (
@@ -776,9 +778,14 @@ class MCPClient:
         reconnected = False
         if decision.reconnect:
             client_support.raise_if_cancelled(cancel_handle)
-            remaining_timeout = client_support.remaining_tool_timeout(
-                deadline, timeout_seconds
-            )
+            try:
+                remaining_timeout = client_support.remaining_tool_timeout(
+                    deadline, timeout_seconds
+                )
+            except MCPError:
+                # A transport timeout always spends the whole budget; the
+                # caller re-raises the original error with its evidence.
+                return None, False
             reconnected = self._reconnect_transport(
                 descriptor.server_name,
                 request_timeout_seconds=remaining_timeout,

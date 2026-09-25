@@ -56,7 +56,10 @@
 
     function buildTurnEventFromStreamPayload(payload, context) {
       const settings = context && typeof context === 'object' ? context : {};
-      const turnId = normalizeId(settings.turn_id || payload && payload.streamId || payload && payload.requestId || payload && payload.request_id);
+      const turnId = normalizeId(settings.turn_id)
+        || normalizeId(payload && payload.turnId)
+        || normalizeId(payload && payload.turn_id)
+        || normalizeId(payload && (payload.streamId || payload.requestId || payload.request_id));
       const primaryUserMessageId = normalizeId(settings.primary_user_message_id);
       const assistantMessageId = normalizeId(settings.primary_assistant_message_id);
       const toolUseMessageId = normalizeId(settings.primary_tool_message_id);
@@ -198,6 +201,7 @@
               ? { policy_consequence: String(payload.policyConsequence || payload.policy_consequence).trim() }
               : {}),
             ...(String(payload && payload.reason || '').trim() ? { reason: String(payload.reason).trim() } : {}),
+            ...(payload && (payload.oneOffOnly === true || payload.one_off_only === true) ? { one_off_only: true } : {}),
             input: payload && payload.input && typeof payload.input === 'object' && !Array.isArray(payload.input) ? deepCloneJsonValue(payload.input) : {},
             input_json: JSON.stringify(payload && payload.input && typeof payload.input === 'object' && !Array.isArray(payload.input) ? payload.input : {}),
             summary: String(payload && payload.summary || ''),
@@ -224,6 +228,7 @@
                 ? { policy_consequence: String(payload.policyConsequence || payload.policy_consequence).trim() }
                 : {}),
               ...(String(payload && payload.reason || '').trim() ? { reason: String(payload.reason).trim() } : {}),
+              ...(payload && (payload.oneOffOnly === true || payload.one_off_only === true) ? { one_off_only: true } : {}),
             },
           });
         } else if (status === 'pending_user_input') {
@@ -305,6 +310,7 @@
               ? { policy_consequence: String(payload.policyConsequence || payload.policy_consequence).trim() }
               : {}),
             ...(String(payload && payload.reason || '').trim() ? { reason: String(payload.reason).trim() } : {}),
+            ...(payload && (payload.oneOffOnly === true || payload.one_off_only === true) ? { one_off_only: true } : {}),
             // The approval can beat its tool_use event to the reducer; carrying
             // the tool name, summary and input here lets the gap row name the
             // tool and quote the command in that race instead of rendering

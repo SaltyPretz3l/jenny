@@ -2,6 +2,8 @@
 const { TOOL_ERROR_CODES } = require('../backend/error-codes');
 const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { digest, sandboxError } = require('./sandbox-errors');
+const { captureSandboxAuthority } = require('./sandbox-project-authority');
+const { createToolResourceClaim, projectToolResourceWait } = require('../tools/tool-resource-execution');
 const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board']);
 function sandboxEnabled(service) {
   return service?.commandSandbox?.enabled === true
@@ -13,19 +15,19 @@ function normalizeCommand(input) {
   return { command: input.command, cwd: input.cwd ?? '.', timeoutSeconds: input.timeout_seconds ?? 10,
     expectedExitCodes: input.expected_exit_codes ?? [0] };
 }
-function authorizationPolicy(service, input) {
+function authorizationPolicy(service, input, authority) {
   let snapshot;
-  try { snapshot = service.toolPermissionStore?.getSnapshot?.(); } catch { /* unavailable means ask */ }
+  try { snapshot = service.toolPermissionStore?.getSnapshot?.(authority); } catch { /* unavailable fails closed below */ }
   const decision = evaluatePolicy({
     descriptor: { name: 'run_command', read_only: false, side_effecting: true, tool_family: 'shell', source_kind: 'builtin' },
     args: input, mode: '', snapshot: snapshot || {},
   });
   const paranoid = service.configService?.getState?.()?.safetyMode === 'paranoid';
-  return { decision: decision.decision === 'deny' ? 'deny' : (paranoid || !snapshot ? 'ask' : decision.decision),
+  return { decision: !snapshot || decision.decision === 'deny' ? 'deny' : (paranoid ? 'ask' : decision.decision),
     digest: digest([snapshot || {}, paranoid, decision.decision]), id: decision.id || '' };
 }
 async function executeSandboxCommand(service, { input, sessionId, streamId, callId, abortSignal,
-  readOnly, planMode, authorize, canonicalReadOnly = true }) {
+  readOnly, planMode, authorize, canonicalReadOnly = true, projectAuthority, executionAuthority, beforeProducer = null }) {
   const sandbox = service.commandSandbox;
   const failure = (reason) => ({
     tool_name: 'run_command', success: false, content_type: 'text', generated_artifacts: [],
@@ -40,16 +42,22 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
     return failure('sandbox_policy_unacknowledged');
   }
   try {
+    const scope = captureSandboxAuthority(service, sessionId, projectAuthority);
     const args = normalizeCommand(input);
-    const policy = authorizationPolicy(service, input);
+    const policy = authorizationPolicy(service, input, scope.authority);
     if (policy.decision === 'deny') return failure('sandbox_policy_denied');
+    const resourceClaim = createToolResourceClaim({ binding: executionAuthority,
+      operationId: callId, toolName: 'run_command', input,
+      required: !!service.sessionRuntime });
     const result = await sandbox.execute(args, {
-      sessionId, streamId, callId, signal: abortSignal, readOnly, planMode,
+      sessionId, streamId, callId, signal: abortSignal, readOnly, planMode, projectAuthority: scope.authority,
+      resourceClaim, beforeProducer,
       isLive: () => service.activeStreams?.has(streamId) === true
         && service._desktopPolicyProcess === service.sidecarManager?.process,
     }, async (binding, assertLive, approvalSignal) => {
       assertLive();
-      const current = authorizationPolicy(service, input);
+      scope.assertCurrent();
+      const current = authorizationPolicy(service, input, scope.authority);
       if (current.decision === 'deny') return { approved: false };
       const approved = current.decision === 'auto' || await authorize({
         tool_name: 'run_command', tool_call_id: callId, tool_input: input,
@@ -57,13 +65,15 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
         policy_decision_id: current.id,
       }, approvalSignal);
       assertLive();
-      const final = authorizationPolicy(service, input);
+      scope.assertCurrent();
+      const final = authorizationPolicy(service, input, scope.authority);
       if (approved !== true || final.decision === 'deny'
         || (final.digest !== current.digest && !(current.decision === 'ask' && final.decision === 'auto'))) return { approved: false };
       return { approved: true, digest: digest([binding, final.digest]),
         validate: () => {
           assertLive();
-          if (authorizationPolicy(service, input).digest !== final.digest) throw sandboxError('sandbox_policy_changed');
+          scope.assertCurrent();
+          if (authorizationPolicy(service, input, scope.authority).digest !== final.digest) throw sandboxError('sandbox_policy_changed');
         } };
     });
     return {
@@ -75,6 +85,7 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
         cleanup_confirmed: result.cleanup_confirmed === true, workspace: 'disposable_copy' } },
     };
   } catch (error) {
+    if (projectToolResourceWait(error)) throw error;
     const reason = /^[a-z_]{1,100}$/u.test(error?.reason || '') ? error.reason : 'sandbox_execution_failed';
     return failure(reason);
   }

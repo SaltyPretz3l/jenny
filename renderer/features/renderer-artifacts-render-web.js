@@ -170,14 +170,14 @@
   function renderSvgArtifactKind(ctx) {
     const sanitizer = resolveSvgSanitizer();
     const purify = resolveDOMPurify();
-    // Fail CLOSED like the html kind: sanitizeMermaidSvgMarkup degrades to a
-    // regex strip without DOMPurify (fine for mermaid's own trusted-ish
-    // output, not for arbitrary artifact SVG — SMIL <set>/<animate> vectors
-    // survive the regex path). No DOMPurify -> no preview, source fallback.
+    // Fail CLOSED like the html kind: sanitizeMermaidSvgMarkup returns the
+    // empty result without DOMPurify, and the artifact path hands it the
+    // instance it resolved so the sanitizer never has to find one on the
+    // global window. No DOMPurify -> no preview, source fallback.
     const sanitizeSvg = sanitizer
       && typeof sanitizer.sanitizeMermaidSvgMarkup === 'function'
       && purify && typeof purify.sanitize === 'function'
-      ? (source) => sanitizer.sanitizeMermaidSvgMarkup(source)
+      ? (source) => sanitizer.sanitizeMermaidSvgMarkup(source, { DOMPurify: purify })
       : () => '';
     // An svg carrying <script> is executable and may route to the sandbox
     // iframe (flag-gated); inert svg always stays on this inline path.

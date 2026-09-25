@@ -13,6 +13,7 @@ from typing import Any, Iterator
 
 BOOTSTRAP_LOCK_TIMEOUT_SECONDS = 300
 BOOTSTRAP_LOCK_POLL_SECONDS = 0.2
+BOOTSTRAP_LOCK_PUBLISH_GRACE_SECONDS = 5
 # A lock (or a retained staging tree) older than this is reclaimed even when
 # its owner pid is alive, because a pid can be reused. It must therefore
 # exceed the longest bootstrap a live owner may legitimately run --
@@ -106,7 +107,18 @@ def _should_recover_bootstrap_lock(
         # Definitely alive (see _read_bootstrap_lock) — never reclaim.
         return False
     if metadata is None:
-        return True
+        should_recover = False
+        try:
+            modified_at = lock_path.stat().st_mtime
+        except FileNotFoundError:
+            should_recover = True
+        except OSError:
+            pass
+        else:
+            should_recover = (
+                time.time() - modified_at
+            ) >= BOOTSTRAP_LOCK_PUBLISH_GRACE_SECONDS
+        return should_recover
     pid, created_at = metadata
     if pid is not None:
         if same_process_lock_acquired and pid == os.getpid():
@@ -143,18 +155,32 @@ def _unlink_lock_best_effort(lock_path: Path) -> None:
 
 
 @contextmanager
-def _bootstrap_thread_lock(lock_path: Path) -> Iterator[None]:
+def _bootstrap_thread_lock(
+    lock_path: Path,
+    *,
+    deadline_monotonic: float | None = None,
+) -> Iterator[None]:
     """Serialize same-process contenders before they inspect the file lock."""
+    deadline = time.monotonic() + BOOTSTRAP_LOCK_TIMEOUT_SECONDS
+    if deadline_monotonic is not None:
+        deadline = min(deadline, deadline_monotonic)
     key = os.path.normcase(str(lock_path.resolve()))
     with _BOOTSTRAP_THREAD_LOCKS_GUARD:
         entry = _BOOTSTRAP_THREAD_LOCKS.get(key)
         lock, users = entry if entry is not None else (threading.Lock(), 0)
         _BOOTSTRAP_THREAD_LOCKS[key] = (lock, users + 1)
-    lock.acquire()
+    acquired = False
     try:
+        remaining = max(0.0, deadline - time.monotonic())
+        acquired = lock.acquire(timeout=remaining)
+        if not acquired:
+            raise TimeoutError(
+                f"Timed out waiting for python runtime bootstrap lock: {lock_path}"
+            )
         yield
     finally:
-        lock.release()
+        if acquired:
+            lock.release()
         with _BOOTSTRAP_THREAD_LOCKS_GUARD:
             current = _BOOTSTRAP_THREAD_LOCKS.get(key)
             if current is not None and current[0] is lock:
@@ -226,10 +252,13 @@ def _bootstrap_lock(
 ) -> Iterator[None]:
     # Avoid the Windows reader/unlink race between threads in this process;
     # the file lock still provides exclusion across distinct processes.
-    with _bootstrap_thread_lock(lock_path):
+    deadline = time.monotonic() + BOOTSTRAP_LOCK_TIMEOUT_SECONDS
+    if deadline_monotonic is not None:
+        deadline = min(deadline, deadline_monotonic)
+    with _bootstrap_thread_lock(lock_path, deadline_monotonic=deadline):
         with _bootstrap_file_lock(
             lock_path,
             same_process_lock_acquired=True,
-            deadline_monotonic=deadline_monotonic,
+            deadline_monotonic=deadline,
         ):
             yield

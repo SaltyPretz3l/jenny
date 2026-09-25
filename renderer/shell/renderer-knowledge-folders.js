@@ -25,7 +25,7 @@
   // MUST be card-scoped: the settings NAV items carry the same
   // data-settings-section attribute (renderer-settings-nav-utils.js) and
   // precede the cards in the DOM, so a bare attribute selector mounts the
-  // group into the nav sidebar. Same scoping renderer-model-library.js uses.
+  // group into the nav sidebar. Same scoping renderer-ollama-health.js uses.
   var TOOLS_SECTION_SELECTOR = '.settings-card[data-settings-section="tools"]';
   var CONFIRM_MODAL_ID = 'knowledge-folders-confirm-remove';
 
@@ -50,6 +50,11 @@
   function resolveAsyncFence() {
     return (root && root.rendererAsyncFence)
       || (typeof require === 'function' ? require('../shared/async-fence') : null);
+  }
+
+  function resolveKnowledgeScope() {
+    return (root && root.rendererKnowledgeScope)
+      || (typeof require === 'function' ? require('./renderer-knowledge-scope') : null);
   }
 
   var escapeHtml = resolveStringUtils().escapeHtml || function fallbackEscapeHtml(value) {
@@ -222,14 +227,9 @@
 
     var unsubscribeChanged = null;
     var confirmRemoveId = '';
+    var bound = false;
 
-    var view = {
-      roots: [],
-      pendingRemoveId: '',
-      addBusy: false,
-      addInputValue: '',
-      errorMessage: '',
-    };
+    var view = resolveKnowledgeScope().createKnowledgeView();
 
     function isFeatureEnabled() {
       return Boolean(
@@ -243,6 +243,20 @@
     function knowledgeBridge() {
       return (windowRef.jennyShell && windowRef.jennyShell.knowledge) || null;
     }
+
+    var scopeRuntime = resolveKnowledgeScope().createKnowledgeScopeRuntime({
+      state: state,
+      view: view,
+      getBridge: knowledgeBridge,
+      disposalFence: disposalFence,
+      normalizeRoots: normalizeRoots,
+      render: render,
+      onScopeChanged: function () { confirmRemoveId = ''; },
+      onSnapshotApplied: function () {
+        if (confirmRemoveId && !confirmTarget()) confirmRemoveId = '';
+      },
+      appendClientLog: appendClientLog,
+    });
 
     function findToolsCard() {
       if (!documentRef || typeof documentRef.querySelector !== 'function') {
@@ -275,6 +289,17 @@
       if (!isFeatureEnabled()) {
         removeExistingGroup();
         return;
+      }
+      var scope = scopeRuntime.capture();
+      if (!scope) {
+        removeExistingGroup();
+        return;
+      }
+      if (!scopeRuntime.isView(scope)) {
+        scopeRuntime.prepare(scope);
+        if (bound && !scopeRuntime.isLoading(scope)) {
+          void scopeRuntime.refresh(scope);
+        }
       }
       var card = findToolsCard();
       if (!card) {
@@ -314,44 +339,17 @@
       documentRef.body.insertAdjacentHTML('beforeend', html);
     }
 
-    function applySnapshot(snapshot) {
-      view.roots = normalizeRoots(snapshot);
-      if (confirmRemoveId && !confirmTarget()) {
-        confirmRemoveId = '';
-      }
+    function refreshFromService(scope) {
+      return scopeRuntime.refresh(scope);
     }
 
-    function loadState() {
-      var bridge = knowledgeBridge();
-      if (!bridge || typeof bridge.getState !== 'function') {
-        return Promise.resolve();
-      }
-      return Promise.resolve()
-        .then(disposalFence.guard(function () {
-          return bridge.getState();
-        }))
-        .then(disposalFence.guard(function (snapshot) {
-          applySnapshot(snapshot);
-        }))
-        .catch(disposalFence.guard(function (error) {
-          appendClientLog('WARN', 'knowledge_folders.get_state_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        }));
-    }
-
-    function refreshFromService() {
-      return loadState().then(disposalFence.guard(function () {
-        render();
-      }));
-    }
-
-    function applyAddResult(result) {
+    function applyAddResult(result, scope) {
+      if (!scopeRuntime.isCurrent(scope) || !scopeRuntime.isView(scope)) return null;
       view.addBusy = false;
       if (result && result.ok === true) {
         view.addInputValue = '';
         view.errorMessage = '';
-        return refreshFromService();
+        return refreshFromService(scope);
       }
       var reason = result && result.reason;
       if (reason === 'canceled') {
@@ -359,12 +357,14 @@
         return null;
       }
       view.errorMessage = mapAddFolderReason(reason);
+      if (reason === 'stale_revision') return refreshFromService(scope);
       render();
       return null;
     }
 
     function handleAddTyped() {
       var bridge = knowledgeBridge();
+      var scope = scopeRuntime.capture();
       var input = documentRef && documentRef.getElementById('knowledgeFolderPathInput');
       var typedPath = input ? String(input.value || '').trim() : '';
       view.addInputValue = typedPath;
@@ -378,12 +378,21 @@
         render();
         return;
       }
+      if (!scope || !scopeRuntime.isView(scope) || !Number.isSafeInteger(view.revision)) {
+        if (scope) void refreshFromService(scope);
+        return;
+      }
+      var expectedRevision = view.revision;
       view.addBusy = true;
       view.errorMessage = '';
       render();
-      Promise.resolve(bridge.addFolder({ path: typedPath }))
-        .then(disposalFence.guard(applyAddResult))
+      Promise.resolve(bridge.addFolder(scopeRuntime.payload(scope, {
+        path: typedPath,
+        expected_revision: expectedRevision,
+      })))
+        .then(disposalFence.guard(function (result) { return applyAddResult(result, scope); }))
         .catch(disposalFence.guard(function (error) {
+          if (!scopeRuntime.isCurrent(scope) || !scopeRuntime.isView(scope)) return;
           view.addBusy = false;
           view.errorMessage = mapAddFolderReason('');
           appendClientLog('WARN', 'knowledge_folders.add_failed', {
@@ -395,15 +404,24 @@
 
     function handleBrowse() {
       var bridge = knowledgeBridge();
+      var scope = scopeRuntime.capture();
       if (!bridge || typeof bridge.chooseFolder !== 'function') {
         return;
       }
+      if (!scope || !scopeRuntime.isView(scope) || !Number.isSafeInteger(view.revision)) {
+        if (scope) void refreshFromService(scope);
+        return;
+      }
+      var expectedRevision = view.revision;
       view.addBusy = true;
       view.errorMessage = '';
       render();
-      Promise.resolve(bridge.chooseFolder())
-        .then(disposalFence.guard(applyAddResult))
+      Promise.resolve(bridge.chooseFolder(scopeRuntime.payload(scope, {
+        expected_revision: expectedRevision,
+      })))
+        .then(disposalFence.guard(function (result) { return applyAddResult(result, scope); }))
         .catch(disposalFence.guard(function (error) {
+          if (!scopeRuntime.isCurrent(scope) || !scopeRuntime.isView(scope)) return;
           view.addBusy = false;
           view.errorMessage = mapAddFolderReason('');
           appendClientLog('WARN', 'knowledge_folders.choose_failed', {
@@ -431,24 +449,36 @@
         return;
       }
       var bridge = knowledgeBridge();
+      var scope = scopeRuntime.capture();
       if (!bridge || typeof bridge.removeFolder !== 'function') {
         render();
         return;
       }
+      if (!scope || !scopeRuntime.isView(scope) || !Number.isSafeInteger(view.revision)) {
+        if (scope) void refreshFromService(scope);
+        return;
+      }
+      var expectedRevision = view.revision;
       view.pendingRemoveId = rootId;
       render();
-      Promise.resolve(bridge.removeFolder({ id: rootId }))
+      Promise.resolve(bridge.removeFolder(scopeRuntime.payload(scope, {
+        id: rootId,
+        expected_revision: expectedRevision,
+      })))
         .then(disposalFence.guard(function (result) {
+          if (!scopeRuntime.isCurrent(scope) || !scopeRuntime.isView(scope)) return null;
           view.pendingRemoveId = '';
           if (result && result.ok === true) {
             view.errorMessage = '';
-            return refreshFromService();
+            return refreshFromService(scope);
           }
           view.errorMessage = mapRemoveFolderReason(result && result.reason);
+          if (result && result.reason === 'stale_revision') return refreshFromService(scope);
           render();
           return null;
         }))
         .catch(disposalFence.guard(function (error) {
+          if (!scopeRuntime.isCurrent(scope) || !scopeRuntime.isView(scope)) return;
           view.pendingRemoveId = '';
           view.errorMessage = jt('knowledge.removeFolderFailed', 'That folder could not be removed right now.');
           appendClientLog('WARN', 'knowledge_folders.remove_failed', {
@@ -514,11 +544,10 @@
       if (!unsubscribeChanged && bridge && typeof bridge.onChanged === 'function') {
         // Changed pushes carry the snapshot — no getState round-trip needed.
         unsubscribeChanged = bridge.onChanged(disposalFence.guard(function (snapshot) {
-          applySnapshot(snapshot);
-          render();
+          scopeRuntime.applyChanged(snapshot);
         }));
       }
-      refreshFromService();
+      refreshFromService(scopeRuntime.capture());
     }
 
     function bind() {
@@ -527,11 +556,13 @@
       }
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('keydown', handleKeydown);
+      bound = true;
       syncFeatureState();
     }
 
     function dispose() {
       if (!disposalFence.dispose()) return;
+      bound = false;
       if (typeof unsubscribeChanged === 'function') {
         try {
           unsubscribeChanged();

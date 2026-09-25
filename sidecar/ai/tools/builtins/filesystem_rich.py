@@ -35,6 +35,8 @@ def read_rich_file(
 
         if "pages" in arguments:
             delegated_arguments["pages"] = arguments["pages"]
+        if "cursor" in arguments:
+            delegated_arguments["cursor"] = arguments["cursor"]
         return pdf_inspect_tool(delegated_arguments, workspace)
     if kind == "document":
         from sidecar.ai.tools.builtins.rich_files.document import (  # noqa: PLC0415

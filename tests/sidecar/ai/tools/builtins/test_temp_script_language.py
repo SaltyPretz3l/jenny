@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from sidecar.ai.error_codes import CMP_TOOL_COERCED_ARGS_REJECTED
+from sidecar.ai.tools.builtins import temp_script as temp_script_module
 from sidecar.ai.tools.builtins.temp_script import run_temp_script_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -128,16 +129,16 @@ def test_raw_mode_without_heredoc_is_unchanged(tmp_path: Path) -> None:
 def test_missing_interpreter_reports_unavailable_class(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import sidecar.ai.tools.builtins.temp_script as temp_script_module
-
     monkeypatch.setattr(temp_script_module.shutil, "which", lambda _name: None)
-    with pytest.raises(ToolExecutionFailure) as excinfo:
-        run_temp_script_tool(
-            {"script": "console.log(1)", "language": "javascript"},
-            _guard(tmp_path),
-        )
-    assert "node" in excinfo.value.message
-    assert excinfo.value.to_error_data().get("failure_class") == "unavailable"
+    result = run_temp_script_tool(
+        {"script": "console.log(1)", "language": "javascript"},
+        _guard(tmp_path),
+    )
+    assert not result.success
+    assert "node" in result.output
+    assert result.metadata["failure_class"] == "unavailable"
+    assert result.metadata["effects"] == "none"
+    assert result.metadata["resource_cleanup"]["cleanup"] == "confirmed"
 
 
 def test_language_manifest_declares_the_enum() -> None:

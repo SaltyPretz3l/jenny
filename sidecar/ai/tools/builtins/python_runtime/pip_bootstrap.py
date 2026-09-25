@@ -41,7 +41,12 @@ def _probe_pip(python_executable: Path, *, timeout: float) -> tuple[bool, str]:
     """
     try:
         completed = bootstrap_subprocess.run(
-            [str(python_executable), "-m", "pip", "--version"],
+            [
+                *bootstrap_subprocess.managed_python_argv(python_executable),
+                "-m",
+                "pip",
+                "--version",
+            ],
             timeout=timeout,
             check=False,
         )

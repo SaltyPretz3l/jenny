@@ -184,11 +184,15 @@ class OAuthFlowService {
       expires_at: new Date(expiresAtMs).toISOString(), authority };
   }
 
-  async completeAuthorization({ flow_id: flowId, callback_url: callbackUrl }) {
+  async completeAuthorization({ flow_id: flowId, callback_url: callbackUrl,
+    on_consumed: onConsumed }) {
     this._prune();
     const flow = this._flows.get(flowId);
     if (!flow) return failure('oauth_flow_not_found');
-    this._flows.delete(flowId);
+    const consume = () => {
+      this._flows.delete(flowId);
+      try { onConsumed?.(); } catch (_error) { /* internal notification only */ }
+    };
     let callback;
     try { callback = new URL(callbackUrl); } catch (_error) { return failure('oauth_callback_invalid'); }
     const expected = new URL(flow.redirect_uri);
@@ -198,14 +202,19 @@ class OAuthFlowService {
     }
     if (callback.origin !== expected.origin || callback.pathname !== expected.pathname
       || callback.searchParams.get('state') !== flow.state) return failure('oauth_state_mismatch');
-    if (callback.searchParams.has('error')) return failure('oauth_authorization_denied');
-    const code = callback.searchParams.get('code');
-    if (!code || Buffer.byteLength(code, 'utf8') > 4096) return failure('oauth_code_invalid');
     const responseIssuer = callback.searchParams.get('iss');
     const issuerRequired = flow.metadata.authorization_response_iss_parameter_supported === true;
-    if ((issuerRequired && !responseIssuer) || (responseIssuer && responseIssuer !== flow.issuer)) {
-      return failure('oauth_issuer_mismatch');
+    const issuerMismatch = (issuerRequired && !responseIssuer)
+      || (responseIssuer && responseIssuer !== flow.issuer);
+    if (callback.searchParams.has('error')) {
+      if (issuerMismatch) return failure('oauth_issuer_mismatch');
+      consume();
+      return failure('oauth_authorization_denied');
     }
+    const code = callback.searchParams.get('code');
+    if (!code || Buffer.byteLength(code, 'utf8') > 4096) return failure('oauth_code_invalid');
+    if (issuerMismatch) return failure('oauth_issuer_mismatch');
+    consume();
     const form = new URLSearchParams({
       grant_type: 'authorization_code', code, redirect_uri: flow.redirect_uri,
       client_id: flow.registration.client_id, code_verifier: flow.verifier,

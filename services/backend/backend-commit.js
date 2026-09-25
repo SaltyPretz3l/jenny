@@ -1,4 +1,5 @@
 const { API_VERSION } = require('./sidecar-client');
+const { requestRuntimeInference } = require('./backend-runtime-inference');
 
 // Generate a Conventional Commit message from a staged diff via a one-shot,
 // off-transcript local-model call. Mirrors backend-suggestions' readiness
@@ -28,7 +29,7 @@ async function generateCommitMessage(service, payload) {
   }
 
   try {
-    const result = await service.sidecarClient.request('commit.generate_message', {
+    const result = await requestRuntimeInference(service, 'commit.generate_message', {
       accept_version: API_VERSION,
       diff,
     });

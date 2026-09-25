@@ -226,6 +226,36 @@
       return anchorIndex === -1 ? -1 : anchorIndex + 1;
     }
 
+    // F18 (gate A4): a paused leg gets no terminal of its own, so its blank
+    // live shell stays 'streaming' after the resumed stream of the same turn
+    // settles and releases it. Preserved, that dead shell joins the turn (the
+    // hydrated fold now keeps the paused leg's events) and blanks the footer.
+    // Only a shell whose reasoning hydration already holds is blank; one with
+    // unsaved reasoning or tool steps keeps its local content.
+    function buildReleasedLegShellCheck(list, hydratedMessages, options) {
+      const terminalStreamId = normalizeId(options.streamId);
+      const pendingStreams = options.pendingStreams;
+      if (!terminalStreamId || !pendingStreams || typeof pendingStreams.has !== 'function') return () => false;
+      const terminalTurnIds = new Set(list
+        .filter((message) => readMessageAssociatedStreamId(message) === terminalStreamId)
+        .map((message) => normalizeId(message?.turn_id))
+        .filter(Boolean));
+      const hydratedEntryIds = new Set(hydratedMessages
+        .flatMap((message) => message?.reasoning?.entries || [])
+        .map((entry) => normalizeId(entry?.id))
+        .filter(Boolean));
+      return (message) => {
+        const streamId = readMessageAssociatedStreamId(message);
+        return Boolean(streamId && streamId !== terminalStreamId && !pendingStreams.has(streamId)
+          && terminalTurnIds.has(normalizeId(message?.turn_id))
+          && String(message?.role || '') === 'assistant'
+          && String(message?.status || '') === 'streaming'
+          && !String(message?.content || '').trim()
+          && !(message?.tool_steps?.length || message?.visible_segments?.length)
+          && (message?.reasoning?.entries || []).every((entry) => hydratedEntryIds.has(normalizeId(entry?.id))));
+      };
+    }
+
     // Merge a store-hydrated snapshot with the renderer's current live list,
     // preserving local-only messages at their ORIGINAL relative position
     // (anchored to the nearest preceding hydrated-known message) rather than
@@ -259,12 +289,14 @@
       // reconciliation below (not the cardinality compare) tells local-only
       // apart from matched/consumed, so it must always run.
       const hydratedUserContentCounts = buildHydratedUserContentCounts(hydratedMessages);
+      const isReleasedLegShell = buildReleasedLegShellCheck(list, hydratedMessages, options);
       const localOnlyMessages = list.filter((message) => {
         const messageId = normalizeId(message?.id);
         if (
           !messageId
           || hydratedIds.has(messageId)
           || isTerminalStreamLocalArtifact(message, options.streamId)
+          || isReleasedLegShell(message)
         ) {
           return false;
         }

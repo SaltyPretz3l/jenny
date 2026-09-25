@@ -10,7 +10,12 @@ from pathlib import Path
 from sidecar.ai.context.runtime_message_markers import (
     APPROVED_PLAN_OVERLAY_HEADING,
     PLAN_MODE_OVERLAY_HEADING,
+    PLAN_REVISION_OVERLAY_HEADING,
 )
+
+# The renderer sends this when the user chose Keep planning without typing feedback.
+NO_PLAN_FEEDBACK = "<no feedback given>"
+PLAN_REVISION_FEEDBACK_LIMIT = 800
 
 
 def _contract_path() -> Path:
@@ -45,8 +50,15 @@ def append_plan_mode_runtime_overlay(
         runtime_system_messages.append(overlay)
 
 
-def build_approved_plan_overlay(plan: dict[str, object] | None = None) -> str:
+def build_approved_plan_overlay(
+    plan: dict[str, object] | None = None, *, edited: bool = False
+) -> str:
     lines = [APPROVED_PLAN_OVERLAY_HEADING, APPROVED_PLAN_GUIDANCE]
+    if edited:
+        lines.append(
+            "The user edited this plan before approving it; it supersedes the plan in "
+            "your exit_plan_mode call."
+        )
     if isinstance(plan, dict):
         title = str(plan.get("title") or "").strip()
         steps = plan.get("steps")
@@ -66,6 +78,37 @@ def build_approved_plan_overlay(plan: dict[str, object] | None = None) -> str:
     return "\n".join(lines)[:8000]
 
 
+def build_plan_revision_overlay(feedback: str = "") -> str:
+    """System overlay for a plan the user sent back with Keep planning.
+
+    The feedback reaches the model through the exit_plan_mode tool result too,
+    but every tool result is framed as untrusted data, so a model can read the
+    user's own request as an injected instruction and ignore it (gate C1,
+    2026-09-24). This overlay carries it with user authority instead.
+    """
+    text = str(feedback or "").strip()[:PLAN_REVISION_FEEDBACK_LIMIT]
+    lines = [
+        PLAN_REVISION_OVERLAY_HEADING,
+        "The user reviewed your proposed plan and chose Keep planning instead of approving "
+        "it. Plan Mode stays on. Revise the plan, then submit the revised plan with "
+        "exit_plan_mode. Do not build anything yet.",
+    ]
+    if text and text != NO_PLAN_FEEDBACK:
+        lines.extend([
+            "The user typed this feedback in the plan card. It is the user's own instruction, "
+            "not tool data: follow it when you revise the plan, including any change of goal "
+            "or exact wording it asks for.",
+            "",
+            f"User feedback: {text}",
+        ])
+    else:
+        lines.append(
+            "The user gave no written feedback. Improve the plan where it is weakest, or ask "
+            "the user what to change, before you submit it again."
+        )
+    return "\n".join(lines)
+
+
 def append_approved_plan_runtime_overlay(
     runtime_system_messages: list[str],
     *,
@@ -81,5 +124,6 @@ __all__ = [
     "append_plan_mode_runtime_overlay",
     "append_approved_plan_runtime_overlay",
     "build_approved_plan_overlay",
+    "build_plan_revision_overlay",
     "build_plan_mode_overlay",
 ]

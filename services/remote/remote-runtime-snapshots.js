@@ -118,6 +118,7 @@ function createRuntimePeerLifecycle(options = {}) {
     snapshotFor,
     currentRevision,
     hasGrant,
+    isPluginActive = () => true,
     sendAuthorized,
     closePeer,
     revokeDeviceLeases,
@@ -142,7 +143,7 @@ function createRuntimePeerLifecycle(options = {}) {
     safe(notify);
     Promise.resolve(snapshotFor(peer)).then((snapshot) => {
       if (!snapshot || !peerAuthority(peer)) return;
-      const authorized = () => peerAuthority(peer)
+      const authorized = () => safe(isPluginActive) === true && peerAuthority(peer)
         && currentRevision() === snapshot.revision
         && snapshot.sessions.every((session) => hasGrant(session.session_id));
       const event = {

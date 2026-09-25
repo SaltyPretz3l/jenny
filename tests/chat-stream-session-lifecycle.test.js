@@ -585,7 +585,7 @@ test('shadow session store upgrades legacy payloads and round-trips additive Bat
   const payload = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
   const [message] = store.getMessages('session_shadow_batch6');
 
-  assert.equal(payload.schema_version, 8);
+  assert.equal(payload.schema_version, 9);
   assert.equal(message.parent_stream_id, 'stream_shadow_batch6');
   assert.equal(message.reasoning.source, 'provider');
   assert.equal(message.reasoning.entries[0].id, 'reason_shadow');

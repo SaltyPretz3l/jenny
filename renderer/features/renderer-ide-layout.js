@@ -31,7 +31,7 @@
   const VIEWPORT_MIN_EDITOR_WIDTH = 360;
   const RAIL_WIDTH_FLOOR = 200;
   const SECONDARY_WIDTH_FLOOR = 160;
-  const CHAT_DOCK_WIDTH_FLOOR = 280;
+  const CHAT_DOCK_WIDTH_FLOOR = 320;
   const CHAT_DOCK_VIEWPORT_RATIO = 0.65;
 
   function computeViewportWidthLimits(ide, viewportWidth, { fontScale = 1 } = {}) {

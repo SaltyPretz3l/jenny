@@ -196,8 +196,15 @@ test('buildManagedSidecarChatSendOptions re-arms idle watchdog before handling e
 test('buildManagedSidecarChatSendOptions pauses idle watchdog during approval wait and re-arms after', async () => {
   const calls = [];
   const controller = new AbortController();
+  const executionAuthority = {};
   const options = buildManagedSidecarChatSendOptions({
-    service: { _emitServiceLog() {} },
+    service: {
+      _emitServiceLog() {},
+      sessionExecutionAuthority: {
+        requireCurrent: () => ({}),
+        noteApproved: () => true,
+      },
+    },
     controller,
     streamId: 'stream_unit',
     resolvedSessionId: 'session_unit',
@@ -215,6 +222,7 @@ test('buildManagedSidecarChatSendOptions pauses idle watchdog during approval wa
     noteStreamActivity: () => calls.push('activity'),
     pauseStreamIdleTimer: () => calls.push('pause'),
     timeoutMs: 1000,
+    executionAuthority,
   });
 
   const result = await options.onApprovalRequest({ tool_name: 'read_file' });

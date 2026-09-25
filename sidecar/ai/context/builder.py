@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.context.builder_render import _BuilderRenderMixin
 from sidecar.ai.context.builder_shared import (
+    _UNSET_ROOT as _UNSET_ROOT,
+)
+from sidecar.ai.context.builder_shared import (
     BOOTSTRAP_DIRNAME as BOOTSTRAP_DIRNAME,
 )
 from sidecar.ai.context.builder_shared import (
@@ -19,12 +22,18 @@ from sidecar.ai.context.builder_shared import (
     LOGGER as LOGGER,
 )
 from sidecar.ai.context.builder_shared import (
-    MAX_BOOTSTRAP_FILE_BYTES,
-    MAX_BOOTSTRAP_PROMPT_BYTES,
     MAX_WORKSPACE_CONTEXT_PROMPT_BYTES,
+    REASONING_STATUS_BLOCK_LEGACY,
+    REASONING_STATUS_BLOCK_V2,
 )
 from sidecar.ai.context.builder_shared import (
     MAX_WORKSPACE_INSTRUCTION_BYTES as MAX_WORKSPACE_INSTRUCTION_BYTES,
+)
+from sidecar.ai.context.builder_shared import (
+    REASONING_STATUS_MAX_WORDS as REASONING_STATUS_MAX_WORDS,
+)
+from sidecar.ai.context.builder_shared import (
+    REASONING_STATUS_MIN_WORDS as REASONING_STATUS_MIN_WORDS,
 )
 from sidecar.ai.context.builder_shared import (
     RUNTIME_SYSTEM_MESSAGE_HEADINGS as RUNTIME_SYSTEM_MESSAGE_HEADINGS,
@@ -57,18 +66,33 @@ from sidecar.ai.context.builder_shared import (
     looks_like_source_architecture_request as looks_like_source_architecture_request,
 )
 from sidecar.ai.context.builder_skills import _BuilderSkillsMixin
+from sidecar.ai.context.builder_workspace_files import _BuilderWorkspaceFilesMixin
 from sidecar.ai.context.context_io import (
     bound_workspace_context_sources,
-    read_bounded_context_text,
-    truncate_utf8,
 )
+from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.runtime.diagnostics import log_event  # noqa: F401
 
 if TYPE_CHECKING:
     from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 
+def request_workspace_root_kwargs(config: Any, execution_context: Any | None) -> dict[str, Any]:
+    """Prompt-build kwargs carrying the request authority's root.
 
-class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
+    Shared by every prompt-build call site so the precedence has one owner:
+    a captured ``ExecutionContext`` supplies ``request_workspace_root`` (its
+    ``root_path``, ``None`` when the project is unbound); a request without
+    that carrier passes nothing and keeps the builder root. Hosted policy is
+    the deliberate exception -- the container already hides the builder root
+    there, and the request root must not become prompt/bootstrap context
+    either -- so an enforced host policy also passes nothing.
+    """
+    if execution_context is None or host_policy_is_enforced(config):
+        return {}
+    return {"request_workspace_root": getattr(execution_context, "root_path", None)}
+
+
+class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderRenderMixin):
     def __init__(
         self,
         workspace_root: Path | None,
@@ -101,6 +125,22 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
     def workspace_root(self) -> Path | None:
         return self._workspace_root
 
+    def _effective_workspace_root(self, request_workspace_root: Any) -> Path | None:
+        """Resolve the root every workspace-derived prompt block reads from.
+
+        The captured request authority wins when the caller supplies one --
+        including an explicitly unbound (``None``) root, which renders no
+        bootstrap, ``agentj.md``, manifest, or task-capsule block at all. Only
+        a caller that passes nothing falls back to the process-wide root, so
+        the global ``tools_workspace_root`` can never leak into a session whose
+        project has no folder bound.
+        """
+        if request_workspace_root is _UNSET_ROOT:
+            return self._workspace_root
+        if request_workspace_root is None:
+            return None
+        return Path(str(request_workspace_root)).expanduser()
+
     def workspace_status(self) -> WorkspaceStatus:
         root = self._workspace_root
         if root is None:
@@ -130,6 +170,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         learned_lessons: list[LearnedLesson] | None = None,
         include_reasoning_status_markers: bool = False,
         *,
+        reasoning_status_v2: bool = False,
         cache_aware: bool = False,
         session_start_date: str | None = None,
         current_date: str | None = None,
@@ -140,6 +181,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         include_bootstrap: bool = True,
         workspace_manifest_enabled: bool = False,
         task_capsule_enabled: bool = False,
+        request_workspace_root: Any = _UNSET_ROOT,
     ) -> str | "StructuredSystemPrompt":
         """Build the system prompt from workspace content.
 
@@ -147,11 +189,18 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         :class:`StructuredSystemPrompt` with cacheable/non-cacheable
         section metadata.  Otherwise returns a plain ``str`` (backward
         compatible default).
+
+        *request_workspace_root* is the request authority's root
+        (``ExecutionContext.root_path``); ``None`` means explicitly unbound.
+        See :meth:`_effective_workspace_root`.
         """
-        bootstrap_blocks = self._load_bootstrap_blocks() if include_bootstrap else []
+        workspace_root = self._effective_workspace_root(request_workspace_root)
+        bootstrap_blocks = (
+            self._load_bootstrap_blocks(workspace_root) if include_bootstrap else []
+        )
         current_date_block = self._render_pinned_current_date_block(current_date)
         skills_block = self._render_skills(tool_statuses=tool_statuses) if include_skills else ""
-        workspace_instruction_block = self._load_workspace_instruction_block()
+        workspace_instruction_block = self._load_workspace_instruction_block(workspace_root)
         bounded_context = bound_workspace_context_sources(
             bootstrap_blocks,
             skills_block,
@@ -195,11 +244,13 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
             prompt_blocks.append(workspace_instruction_block)
         workspace_manifest_block = self._render_workspace_manifest_block(
             enabled=workspace_manifest_enabled,
+            workspace_root=workspace_root,
         )
         if workspace_manifest_block:
             prompt_blocks.append(workspace_manifest_block)
         task_capsule_block = self._render_task_capsule_block(
             enabled=task_capsule_enabled,
+            workspace_root=workspace_root,
             latest_user_content=latest_user_content,
             tool_statuses=tool_statuses,
         )
@@ -214,11 +265,14 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         workspace_source_block = self._render_workspace_source_guidance(
             tool_statuses=tool_statuses,
             latest_user_content=latest_user_content,
+            workspace_root=workspace_root,
         )
         if workspace_source_block:
             prompt_blocks.append(workspace_source_block)
         if include_reasoning_status_markers:
-            prompt_blocks.append(self._reasoning_status_block())
+            prompt_blocks.append(
+                self._reasoning_status_block(reasoning_status_v2=reasoning_status_v2)
+            )
         learned_lessons_block = self._render_learned_lessons(learned_lessons or [])
         if learned_lessons_block:
             prompt_blocks.append(learned_lessons_block)
@@ -333,7 +387,9 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
             sections.append(
                 CacheSection(
                     name="reasoning_status",
-                    content=self._reasoning_status_block(),
+                    content=self._reasoning_status_block(
+                        reasoning_status_v2=reasoning_status_v2
+                    ),
                     cacheable=True,
                 )
             )
@@ -352,25 +408,10 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         )
 
     @staticmethod
-    def _reasoning_status_block() -> str:
-        return (
-            "## Reasoning Status Markers\n"
-            "When using your internal thinking/reasoning process, signal each new logical "
-            "phase with a status marker on its own line:\n\n"
-            "\u27e8STATUS: 3-5 word summary\u27e9\n\n"
-            "IMPORTANT: These markers belong ONLY in your internal thinking output. "
-            "Never include \u27e8STATUS:\u27e9 markers in your visible response to the user.\n\n"
-            "Examples (for your thinking blocks only):\n\n"
-            "\u27e8STATUS: Analyzing user constraints\u27e9\n"
-            "\u27e8STATUS: Comparing implementation options\u27e9\n"
-            "\u27e8STATUS: Drafting final response\u27e9\n\n"
-            "Constraints:\n"
-            "- Use exactly the characters \u27e8 (U+27E8) and \u27e9 (U+27E9) as delimiters\n"
-            "- Keep the summary between 2 and 6 words with no terminal punctuation\n"
-            "- One marker per logical phase - do not over-annotate\n"
-            "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
-            "- If unsure whether to add a marker, omit it\n\n"
-        )
+    def _reasoning_status_block(*, reasoning_status_v2: bool = False) -> str:
+        if reasoning_status_v2:
+            return REASONING_STATUS_BLOCK_V2
+        return REASONING_STATUS_BLOCK_LEGACY
 
     @staticmethod
     def is_skills_system_message(content: Any) -> bool:
@@ -420,127 +461,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderRenderMixin):
         # accepted. A provider failure must abort that turn before output.
         values = provider()
         return tuple(value for value in values if isinstance(value, str) and value.strip())
-
-    def _load_bootstrap_blocks(self) -> list[str]:
-        with self._cache_lock:
-            return self._load_bootstrap_blocks_locked()
-
-    def _load_bootstrap_blocks_locked(self) -> list[str]:
-        root = self._workspace_root
-        if root is None:
-            return []
-        mtime_key = self._bootstrap_mtime_key(root)
-        if mtime_key == self._cached_bootstrap_mtime and self._cached_bootstrap_blocks is not None:
-            return self._cached_bootstrap_blocks
-        blocks: list[str] = []
-        used_bytes = 0
-        for filename in BOOTSTRAP_FILES:
-            path = root / BOOTSTRAP_DIRNAME / filename
-            if not path.exists():
-                continue
-            read_result = read_bounded_context_text(
-                path,
-                authorized_root=root,
-                max_bytes=MAX_BOOTSTRAP_FILE_BYTES,
-                truncate=True,
-            )
-            if read_result.text is None:
-                self._log_partial_context(
-                    source_kind="bootstrap",
-                    source_name=filename,
-                    reason=read_result.reason or "read_failed",
-                )
-                continue
-            content = _sanitize_bootstrap_content(
-                read_result.text,
-                source_name=filename,
-            )
-            if content:
-                separator_bytes = 2 if blocks else 0
-                remaining = MAX_BOOTSTRAP_PROMPT_BYTES - used_bytes - separator_bytes
-                if remaining <= 0:
-                    self._log_partial_context(
-                        source_kind="bootstrap",
-                        source_name=filename,
-                        reason="aggregate_budget",
-                    )
-                    break
-                block, aggregate_truncated = truncate_utf8(
-                    f"### {filename}\n{content}",
-                    remaining,
-                    suffix="\n[bootstrap context truncated]",
-                )
-                blocks.append(block)
-                used_bytes += separator_bytes + len(block.encode("utf-8"))
-                if read_result.truncated or aggregate_truncated:
-                    self._log_partial_context(
-                        source_kind="bootstrap",
-                        source_name=filename,
-                        reason=(
-                            "aggregate_budget" if aggregate_truncated else "file_budget"
-                        ),
-                    )
-                if aggregate_truncated:
-                    break
-        self._cached_bootstrap_blocks = blocks
-        self._cached_bootstrap_mtime = mtime_key
-        return blocks
-
-    def _load_workspace_instruction_block(self) -> str:
-        with self._cache_lock:
-            return self._load_workspace_instruction_block_locked()
-
-    def _load_workspace_instruction_block_locked(self) -> str:
-        root = self._workspace_root
-        if root is None:
-            return ""
-        path = root / WORKSPACE_INSTRUCTION_FILENAME
-        mtime_key = self._workspace_instruction_mtime_key(path)
-        if (
-            mtime_key == self._cached_workspace_instruction_mtime
-            and self._cached_workspace_instruction_block is not None
-        ):
-            return self._cached_workspace_instruction_block
-        block = ""
-        read_result = read_bounded_context_text(
-            path,
-            authorized_root=root,
-            max_bytes=MAX_WORKSPACE_INSTRUCTION_BYTES,
-            truncate=True,
-        )
-        normalized = str(read_result.text or "").strip()
-        if path.exists() and (read_result.text is None or read_result.truncated):
-            self._log_partial_context(
-                source_kind="workspace_instruction",
-                source_name=WORKSPACE_INSTRUCTION_FILENAME,
-                reason=(
-                    read_result.reason
-                    or ("file_budget" if read_result.truncated else "read_failed")
-                ),
-            )
-        if normalized:
-            block = f"## Workspace Instructions ({WORKSPACE_INSTRUCTION_FILENAME})\n{normalized}"
-        self._cached_workspace_instruction_block = block
-        self._cached_workspace_instruction_mtime = mtime_key
-        return block
-
-    @staticmethod
-    def _bootstrap_mtime_key(root: Path) -> str:
-        parts: list[str] = []
-        for filename in BOOTSTRAP_FILES:
-            path = root / BOOTSTRAP_DIRNAME / filename
-            try:
-                parts.append(str(path.stat().st_mtime_ns))
-            except OSError:
-                parts.append("0")
-        return ":".join(parts)
-
-    @staticmethod
-    def _workspace_instruction_mtime_key(path: Path) -> str:
-        try:
-            return str(path.stat().st_mtime_ns)
-        except OSError:
-            return "0"
 
     @staticmethod
     def _log_partial_context(*, source_kind: str, source_name: str, reason: str) -> None:

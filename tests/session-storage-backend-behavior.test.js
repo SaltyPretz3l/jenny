@@ -363,6 +363,30 @@ test('flushAsync drains a persist:false dirty session to disk', async () => {
   assert.equal(onDisk.session.title, 'AsyncPending', 'the async-flushed file carries the record');
 });
 
+test('mutations after dispose are dropped without recreating storage and warn once', async () => {
+  const rootDir = makeTempRoot('disposed-upsert');
+  const logger = makeRecordingLogger();
+  const backend = makeBackend(rootDir, { logger });
+
+  backend.upsertSession('sess_existing', { title: 'Existing' });
+  backend.dispose();
+  fs.rmSync(rootDir, { recursive: true });
+
+  assert.equal(backend.upsertSession('sess_late', { title: 'Late' }), false);
+  assert.equal(backend.upsertSession('sess_later', { title: 'Later' }), false);
+  assert.equal(backend.deleteSession('sess_existing'), false);
+  assert.equal(backend.flushSession('sess_existing'), false);
+  assert.equal(backend.restoreSessionSnapshot('sess_existing', { title: 'Restored' }), false);
+  assert.deepEqual(await backend.runPendingMigrations(), {
+    ran: false, success: true, storeName: 'session_store', reason: 'none',
+  });
+  assert.equal(fs.existsSync(rootDir), false);
+  const warnings = logger.find('session_store.mutation_after_dispose');
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].level, 'WARN');
+  assert.equal(warnings[0].data.method, 'upsertSession');
+});
+
 // ---- runPendingMigrations: no-op when nothing queued ---------------------
 
 test('runPendingMigrations is a no-op when no migration is queued', async () => {

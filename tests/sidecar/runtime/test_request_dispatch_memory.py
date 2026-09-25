@@ -49,7 +49,7 @@ def make_brain() -> SimpleNamespace:
         stack=SimpleNamespace(
             memory_store=MEMORY_STORE_SENTINEL,
             memory_service=SimpleNamespace(
-                status=lambda: {
+                status=lambda **_kwargs: {
                     "available": True,
                     "schema_version": 7,
                     "counts": {"approved": 0},
@@ -94,8 +94,34 @@ def test_memory_status_returns_content_free_health_payload() -> None:
     }
 
 
+def test_memory_status_scope_all_requests_every_project() -> None:
+    captured: list[dict[str, Any]] = []
+
+    def _status(**kwargs: Any) -> dict[str, object]:
+        captured.append(dict(kwargs))
+        return {"available": True, "schema_version": 7, "counts": {"approved": 0}}
+
+    brain = make_brain()
+    brain.stack.memory_service = SimpleNamespace(status=_status)
+    for params in (accept_params(), accept_params(scope="all")):
+        outcome = rdm.process_memory_method(
+            method=MEMORY_STATUS_METHOD,
+            message_id=43,
+            params=params,
+            initialized=True,
+            brain_container=brain,
+            logger=LOGGER,
+        )
+        assert outcome is not None
+        assert "error" not in outcome.response
+    assert captured == [
+        {"project_id": "project_general", "all_projects": False},
+        {"project_id": "project_general", "all_projects": True},
+    ]
+
+
 def test_memory_status_contains_unexpected_database_failure(caplog: pytest.LogCaptureFixture) -> None:
-    def _fail_status() -> dict[str, object]:
+    def _fail_status(**_kwargs: Any) -> dict[str, object]:
         raise RuntimeError("database path and row content must not escape")
 
     with caplog.at_level(logging.WARNING):
@@ -182,6 +208,7 @@ def approved_memory() -> SimpleNamespace:
         provenance="pv",
         created_at="2026-01-01",
         updated_at="2026-01-02",
+        project_id="project_general",
     )
 
 
@@ -281,6 +308,7 @@ def test_suggest_success_threads_store_and_returns_suggestions(
     assert spy.calls[0]["session_id"] == "s1"
     assert spy.calls[0]["messages"] == [{"role": "user"}]
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0]["project_id"] == "project_general"
 
 
 def test_suggest_value_error_returns_invalid_params(
@@ -325,7 +353,9 @@ def test_save_success_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         rdm, "emit_log_event", lambda *a, **k: emit_calls.append(k)
     )
-    params = accept_params(session_id="s9", candidate={"title": "x"})
+    params = accept_params(
+        session_id="s9", candidate={"title": "x"}, project_id="project_alpha"
+    )
     outcome = run(MEMORY_SAVE_METHOD, 20, params)
     result = outcome.response["result"]
     assert result["created"] is True
@@ -334,8 +364,25 @@ def test_save_success_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     assert spy.calls[0]["session_id"] == "s9"
     assert spy.calls[0]["candidate"] == {"title": "x"}
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0]["project_id"] == "project_alpha"
     # No warning code/detail -> the family-unresolved log must NOT be emitted.
     assert emit_calls == []
+
+
+def test_list_rejects_malformed_explicit_project_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spy = Recorder(return_value={"memories": [], "next_cursor": None})
+    monkeypatch.setattr(rdm, "list_memories_page", spy)
+
+    outcome = run(
+        MEMORY_LIST_METHOD,
+        19,
+        accept_params(project_id="invalid project"),
+    )
+
+    assert outcome.response["error"]["code"] == rdm.INVALID_PARAMS_CODE
+    assert spy.calls == []
 
 
 def test_save_success_with_warning_emits_log(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -396,12 +443,34 @@ def test_save_store_error_returns_internal_error(
 
 
 def test_list_success_returns_memories(monkeypatch: pytest.MonkeyPatch) -> None:
-    spy = Recorder(return_value={"memories": [{"id": 5}], "next_cursor": "100"})
+    spy = Recorder(
+        return_value={
+            "memories": [{"id": 5, "project_id": "project_alpha"}],
+            "next_cursor": "100",
+        }
+    )
     monkeypatch.setattr(rdm, "list_memories_page", spy)
-    outcome = run(MEMORY_LIST_METHOD, 30, accept_params())
-    assert outcome.response["result"]["memories"] == [{"id": 5}]
+    outcome = run(
+        MEMORY_LIST_METHOD,
+        30,
+        accept_params(scope="all", project_id="ignored-with-all-projects"),
+    )
+    assert outcome.response["result"]["memories"] == [
+        {"id": 5, "project_id": "project_alpha"}
+    ]
     assert outcome.response["result"]["next_cursor"] == "100"
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0].get("all_projects") is True
+
+
+def test_list_rejects_invalid_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = Recorder(return_value={"memories": [], "next_cursor": None})
+    monkeypatch.setattr(rdm, "list_memories_page", spy)
+
+    outcome = run(MEMORY_LIST_METHOD, 30, accept_params(scope="workspace"))
+
+    assert outcome.response["error"]["code"] == rdm.INVALID_PARAMS_CODE
+    assert spy.calls == []
 
 
 def test_list_store_error_returns_internal_error(
@@ -427,9 +496,10 @@ def test_pending_list_success_returns_candidates(
 ) -> None:
     spy = Recorder(return_value={"candidates": [{"fp": "abc"}], "next_cursor": None})
     monkeypatch.setattr(rdm, "list_pending_memories_page", spy)
-    outcome = run(MEMORY_PENDING_LIST_METHOD, 40, accept_params())
+    outcome = run(MEMORY_PENDING_LIST_METHOD, 40, accept_params(scope="all"))
     assert outcome.response["result"]["candidates"] == [{"fp": "abc"}]
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0].get("all_projects") is True
 
 
 def test_pending_list_store_error_returns_internal_error(
@@ -611,12 +681,29 @@ def test_recall_success_threads_query_and_limit(
 ) -> None:
     spy = Recorder(return_value=[{"id": 7}])
     monkeypatch.setattr(rdm, "recall_memories", spy)
-    params = accept_params(query="hello", limit=3)
+    params = accept_params(query="hello", limit=3, include_general=True)
     outcome = run(MEMORY_RECALL_METHOD, 80, params)
     assert outcome.response["result"]["memories"] == [{"id": 7}]
     assert spy.calls[0]["query"] == "hello"
     assert spy.calls[0]["limit"] == 3
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0].get("include_general") is True
+
+
+def test_recall_rejects_non_boolean_include_general(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spy = Recorder(return_value=[])
+    monkeypatch.setattr(rdm, "recall_memories", spy)
+
+    outcome = run(
+        MEMORY_RECALL_METHOD,
+        80,
+        accept_params(query="hello", include_general=1),
+    )
+
+    assert outcome.response["error"]["code"] == rdm.INVALID_PARAMS_CODE
+    assert spy.calls == []
 
 
 def test_recall_value_error_returns_invalid_params(
@@ -653,12 +740,13 @@ def test_recall_recent_success_threads_lesson_kind_and_limit(
 ) -> None:
     spy = Recorder(return_value=[{"id": 9}])
     monkeypatch.setattr(rdm, "recall_recent_memories", spy)
-    params = accept_params(lesson_kind="bugfix", limit=2)
+    params = accept_params(lesson_kind="bugfix", limit=2, include_general=True)
     outcome = run(MEMORY_RECALL_RECENT_METHOD, 90, params)
     assert outcome.response["result"]["memories"] == [{"id": 9}]
     assert spy.calls[0]["lesson_kind"] == "bugfix"
     assert spy.calls[0]["limit"] == 2
     assert spy.calls[0]["memory_store"] is MEMORY_STORE_SENTINEL
+    assert spy.calls[0].get("include_general") is True
 
 
 def test_recall_recent_value_error_returns_invalid_params(

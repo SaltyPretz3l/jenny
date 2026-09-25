@@ -45,6 +45,9 @@ BUNDLED_DATA_FILES: tuple[tuple[Path, str], ...] = (
     # exactly like catalog.py reads the manifest; the packaged sidecar failed
     # initialize with FileNotFoundError when this entry was missing.
     (ROOT / "services" / "tools" / "plan-mode-contract.json", "services/tools"),
+    # Every journaled workspace write validates against this schema; without it
+    # the packaged write_file failed "Workspace journal schema is unavailable".
+    (ROOT / "config" / "workspace-mutation-journal-v1.schema.json", "config"),
 )
 PYINSTALLER_EXCLUDED_MODULES: tuple[str, ...] = (
     # These optional stacks may be installed in a dev environment, but the
@@ -52,12 +55,21 @@ PYINSTALLER_EXCLUDED_MODULES: tuple[str, ...] = (
     # from bundling dev-only ML/audio dependencies into the local-first sidecar.
     "accelerate",
     "av",
+    "cv2",
     "ctranslate2",
     "datasets",
     "diffusers",
     "faster_whisper",
+    # PyMuPDF is AGPL-3.0 and never bundled: the user installs it as the optional
+    # PDF reading add-on (config/pdf-addon-manifest.json), which the sidecar adds to
+    # sys.path at start. A dev venv has it, and pdf_ocr_rapid imports it statically.
+    "fitz",
     "huggingface_hub",
+    "numpy",
     "onnxruntime",
+    "PIL",
+    "pymupdf",
+    "rapidocr",
     "safetensors",
     "sentence_transformers",
     "sentencepiece",
@@ -68,6 +80,9 @@ PYINSTALLER_EXCLUDED_MODULES: tuple[str, ...] = (
     "torchvision",
     "transformers",
 )
+# RapidOCR loads from the media site, so PyInstaller cannot discover this
+# requests dependency from RapidOCR's excluded import graph.
+PYINSTALLER_HIDDEN_IMPORTS: tuple[str, ...] = ("http.cookies",)
 
 
 def _artifact_name_for_platform(platform_name: str) -> str:
@@ -241,6 +256,14 @@ def _pyinstaller_tool_import_args() -> list[str]:
 
     modules = sorted({handler.lazy_target[0] for handler in lazy_tool_handlers()})
     return [arg for module in modules for arg in ("--hidden-import", module)]
+
+
+def _pyinstaller_runtime_import_args() -> list[str]:
+    return [
+        arg
+        for module in PYINSTALLER_HIDDEN_IMPORTS
+        for arg in ("--hidden-import", module)
+    ]
 
 
 def _create_temp_build_run_dir() -> Path:
@@ -451,6 +474,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(spec_path),
         *add_data_args,
         *_pyinstaller_exclude_args(),
+        *_pyinstaller_runtime_import_args(),
         *_pyinstaller_tool_import_args(),
         str(ENTRYPOINT),
     ]

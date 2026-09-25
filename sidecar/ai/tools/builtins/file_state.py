@@ -5,15 +5,17 @@ from __future__ import annotations
 import codecs
 import hashlib
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
+    CMP_TOOL_OUTSIDE_WORKSPACE,
     CMP_TOOL_READ_SNAPSHOT_REQUIRED,
     CMP_TOOL_STALE_READ_SNAPSHOT,
 )
@@ -23,7 +25,12 @@ from sidecar.ai.tools.builtins.markdown_sections import (
     parse_requested_headings,  # noqa: F401 - filesystem compatibility re-export.
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_regular_file
+from sidecar.ai.tools.hosted_file_io import (
+    hosted_file_io_enabled,
+)
+from sidecar.ai.tools.hosted_file_io import (
+    open_regular_file as open_hosted_regular_file,
+)
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity
 
 MAX_BINARY_SCAN_BYTES = 8_192
@@ -40,6 +47,127 @@ _UNSUPPORTED_BOMS = (
     codecs.BOM_UTF32_LE,
     codecs.BOM_UTF32_BE,
 )
+
+
+def workspace_root_from_relative_path(resolved: Path, relative_path: str) -> Path | None:
+    """Recover the guard root paired with a workspace-relative display path."""
+
+    relative = Path(relative_path)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        return None
+    try:
+        return resolved.parents[len(relative.parts) - 1]
+    except IndexError:
+        return None
+
+
+@contextmanager
+def open_regular_file(
+    resolved: Path,
+    mode: str = "rb",
+    *,
+    authorized_root: Path | None = None,
+    **kwargs: Any,
+) -> Iterator[Any]:
+    """Open a file and bind desktop access to the handle's final path."""
+
+    if hosted_file_io_enabled():
+        with open_hosted_regular_file(resolved, mode, **kwargs) as handle:
+            yield handle
+        return
+
+    with open(resolved, mode, **kwargs) as handle:
+        if authorized_root is not None:
+            _verify_authorized_handle(handle, resolved, authorized_root)
+        yield handle
+
+
+def _verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path) -> None:
+    try:
+        # The handle's final path is fully resolved; compare against the root's
+        # final form too so a workspace that itself sits under a junction, symlink
+        # or substituted drive is not refused.
+        authorized_root = Path(os.path.realpath(authorized_root))
+        handle_stat = os.fstat(handle.fileno())
+        if os.name == "nt":
+            final_path = _windows_final_path(handle.fileno())
+            matches = _path_is_within(final_path, authorized_root, casefold=True)
+        elif Path("/proc/self/fd").is_dir():
+            descriptor_path = f"/proc/self/fd/{handle.fileno()}"
+            if not os.path.lexists(descriptor_path):
+                raise OSError("opened file descriptor is unavailable through /proc")
+            final_path = Path(os.path.realpath(descriptor_path))
+            matches = _path_is_within(final_path, authorized_root)
+        else:
+            final_path = Path(os.path.realpath(resolved))
+            matches = _path_is_within(final_path, authorized_root)
+            final_stat = os.stat(final_path)
+            matches = matches and (
+                final_stat.st_dev,
+                final_stat.st_ino,
+            ) == (
+                handle_stat.st_dev,
+                handle_stat.st_ino,
+            )
+    except ToolExecutionFailure:
+        raise
+    except Exception as error:
+        raise _workspace_containment_failure() from error
+    if not matches:
+        raise _workspace_containment_failure()
+
+
+def _windows_final_path(fd: int) -> Path:
+    import ctypes  # noqa: PLC0415 - unavailable Windows APIs are loaded only on Windows.
+    import msvcrt  # noqa: PLC0415 - unavailable on POSIX.
+    from ctypes import wintypes  # noqa: PLC0415 - Windows-only definitions.
+
+    get_final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+    get_final_path.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    get_final_path.restype = wintypes.DWORD
+    os_handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    capacity = 1024
+    while True:
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = get_final_path(os_handle, buffer, capacity, 0)
+        if length == 0:
+            error_code = ctypes.get_last_error()
+            raise OSError(error_code, ctypes.FormatError(error_code))
+        if length < capacity:
+            return Path(_strip_windows_device_prefix(buffer.value))
+        capacity = length + 1
+
+
+def _strip_windows_device_prefix(path: str) -> str:
+    if path.casefold().startswith("\\\\?\\unc\\"):
+        return "\\\\" + path[8:]
+    if path.casefold().startswith("\\\\?\\"):
+        return path[4:]
+    return path
+
+
+def _path_is_within(candidate: Path, root: Path, *, casefold: bool = False) -> bool:
+    candidate_parts = Path(os.path.normpath(candidate)).parts
+    root_parts = Path(os.path.normpath(root)).parts
+    if casefold:
+        candidate_parts = tuple(part.casefold() for part in candidate_parts)
+        root_parts = tuple(part.casefold() for part in root_parts)
+    return len(candidate_parts) >= len(root_parts) and (
+        candidate_parts[: len(root_parts)] == root_parts
+    )
+
+
+def _workspace_containment_failure() -> ToolExecutionFailure:
+    return ToolExecutionFailure(
+        code=CMP_TOOL_OUTSIDE_WORKSPACE,
+        message="resolved path escapes tools workspace root",
+        retryable=False,
+    )
 
 
 def _bounded_utf8_chunk_chars(remaining_budget: int) -> int:
@@ -399,6 +527,7 @@ def read_capped_bytes(
     *,
     max_bytes: int,
     relative_path: str,
+    authorized_root: Path | None = None,
 ) -> tuple[os.stat_result, bytes]:
     """Read at most ``max_bytes`` (+1, to positively detect an over-cap file) from
     ``resolved`` via a single opened handle, refusing if the file's identity changes
@@ -420,7 +549,8 @@ def read_capped_bytes(
         ) from error
     pre_identity = NodeIdentity.from_stat(pre_stat)
     try:
-        with open_regular_file(resolved, "rb") as fh:
+        root = authorized_root or workspace_root_from_relative_path(resolved, relative_path)
+        with open_regular_file(resolved, "rb", authorized_root=root) as fh:
             open_stat = os.fstat(fh.fileno())
             if not NodeIdentity.from_stat(open_stat).same_object(pre_identity):
                 raise ToolExecutionFailure(

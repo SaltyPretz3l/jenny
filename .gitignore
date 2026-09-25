@@ -142,3 +142,8 @@ tests/.run-node-tests-safe-history.json
 # Private hosted deployment inputs; never source or image build inputs.
 /config/host.json
 /secrets/
+
+# Opt-in SWE-bench data, trajectories and separate official grading runtime.
+/.swebench-data/
+/.swebench-runs/
+/.swebench-grader/

@@ -1,0 +1,101 @@
+/* styles/settings-projects.css - Settings > Projects list (Projects v2, 2026-09-20).
+ * Plain rows separated by the settings-group hairline; no cards, no accent bars.
+ * Buttons come from the shared .btn primitive through action-button.js. */
+
+.projects-list {
+  list-style: none;
+  margin: var(--space-6) 0 0;
+  padding: 0;
+}
+
+.projects-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
+}
+
+.projects-row:first-child {
+  border-top: 0;
+}
+
+.projects-row-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.projects-row-folder {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-row-meta {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.projects-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.projects-tag {
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-kicker-sm);
+  text-transform: uppercase;
+}
+
+.projects-tag--muted {
+  color: var(--text-muted);
+}
+
+.projects-tag--danger {
+  color: var(--text-danger-emphasis);
+}
+
+/* Inline rename: the name field takes the row's first column. */
+.projects-row-rename {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+
+.projects-row-rename .inv-text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Delete confirm sits under its row, in the same column, with no box. */
+.projects-confirm {
+  grid-column: 1 / -1;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+
+.projects-confirm p {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1.55;
+}
+
+.projects-confirm .settings-actions {
+  margin-top: var(--space-4);
+}

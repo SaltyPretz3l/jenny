@@ -25,6 +25,7 @@ async function stopRuntimeWithDependencies({
     if (unattendedGuard) {
       unattendedGuard.stop();
     }
+    systemStats?.reminderNotifier?.stop();
     if (systemStats) {
       systemStats.stop();
     }
@@ -33,7 +34,16 @@ async function stopRuntimeWithDependencies({
     }
     clearSuggestionCacheImpl(suggestionCacheValue);
     if (backendService) {
-      await backendService.commandSandbox?.close();
+      // Sandbox reconciliation failure must not skip the graceful backend
+      // stop below (stream drain + sidecar shutdown); its receipts survive
+      // for the next start to reconcile.
+      try {
+        await backendService.commandSandbox?.close();
+      } catch (sandboxError) {
+        logImpl('WARN', 'command_sandbox.close_failed', {
+          message: String(sandboxError?.reason || sandboxError?.message || sandboxError),
+        });
+      }
       await backendService.stop({
         ollamaShutdownScope: 'any_local',
         onProgress: (phase, detail) => {

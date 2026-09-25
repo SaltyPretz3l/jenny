@@ -37,7 +37,7 @@
   // NOT the secondary-sidebar values; the dock hosts the composer, which needs
   // a wider floor. Mirrors services/workspace-ide-config-schema.js (UMD
   // can't-import-services precedent, same as SECONDARY_WIDTH_*).
-  const CHAT_DOCK_WIDTH_MIN = 280;
+  const CHAT_DOCK_WIDTH_MIN = 320;
   const CHAT_DOCK_WIDTH_MAX = 2400;
   const CHAT_DOCK_WIDTH_DEFAULT = 380;
   const CHAT_DOCK_SIDES = ['left', 'right'];

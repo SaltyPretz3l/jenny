@@ -31,7 +31,7 @@
   // Mirror the renderer-ide-state.js clamp bounds (UMD module can't import it,
   // same precedent as the secondary sidebar's clamp mirror). These are the
   // dock's OWN design bounds, not the secondary sidebar's.
-  const MIN_CHAT_DOCK_WIDTH = 280;
+  const MIN_CHAT_DOCK_WIDTH = 320;
   const MAX_CHAT_DOCK_WIDTH = 2400;
   const KEYBOARD_RESIZE_STEP = 24;
 

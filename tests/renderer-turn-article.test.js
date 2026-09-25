@@ -762,29 +762,57 @@ test('F8 hardening: token meta cache refreshes when same message array is mutate
   assert.match(second.innerHtml, /data-meta-label="meta:assistant_cache · ~1 tokens est\. · ~4 cumulative text tokens est\."/);
 });
 
-test('context compaction notice renders single-event savings without a count chip', () => {
+test('context compaction notice renders one latest pair and no count token for a single event', () => {
   const renderer = createTranscriptThinkingRenderer({ escapeHtml });
   const html = renderer.renderContextCompactedNotice({
+    id: 'msg_cc_single',
     context_compacted: {
       summaryStatus: 'created', phase: 'preflight', tokensBefore: 5000, tokensAfter: 3200,
       summaryPersisted: true,
     },
   });
+  const document = new JSDOM(html).window.document;
 
-  assert.match(html, /5,000 → 3,200 tokens · 1,800 saved/);
-  assert.doesNotMatch(html, /context-compacted-notice-count/);
+  const metas = [...document.querySelectorAll('.context-compacted-notice-status .context-compacted-notice-meta')]
+    .map((node) => node.textContent);
+  assert.deepEqual(metas, ['5,000 → 3,200 tokens'], 'the status line carries the latest pair and nothing else');
+  // F2: the summed "saved" figure mixed deltas measured at different moments,
+  // so it no longer rides the line beside a single latest pair.
+  assert.doesNotMatch(document.querySelector('.context-compacted-notice-status')?.textContent || '', /saved/);
   assert.match(html, /Summarized older context with the model/);
   assert.match(html, /Before sending the request/);
   assert.match(html, /Summary saved for future turns/);
   assert.match(html, /Your transcript is intact\. Compaction only changes what is sent to the model\./);
 });
 
-test('context compaction notice aggregates three events and renders an ordered disclosure breakdown', () => {
+test('context compaction notice drops the rail-era count chip, icon span and details element', () => {
   const renderer = createTranscriptThinkingRenderer({ escapeHtml });
   const html = renderer.renderContextCompactedNotice({
+    id: 'msg_cc_chrome',
+    context_compacted: { summaryStatus: 'created', phase: 'preflight', tokensBefore: 9000, tokensAfter: 4000 },
+  });
+  const document = new JSDOM(html).window.document;
+
+  // F3: the icon span painted nothing — no CSS rule for it existed anywhere.
+  assert.equal(document.querySelector('.context-compacted-notice-icon'), null);
+  assert.equal(document.querySelector('.context-compacted-notice-count'), null);
+  assert.equal(document.querySelector('details'), null, 'the collapsing <details> is gone');
+  assert.equal(document.querySelector('.context-compacted-notice-breakdown'), null);
+  // The rail lived on an inline border, so nothing may carry one back in.
+  assert.doesNotMatch(html, /border-inline-start/);
+  assert.doesNotMatch(html, /style=/);
+});
+
+test('context compaction notice pluralises the count and renders one body row per compaction', () => {
+  const renderer = createTranscriptThinkingRenderer({ escapeHtml });
+  const html = renderer.renderContextCompactedNotice({
+    id: 'msg_cc_many',
     context_compacted: { tokensBefore: 3000, tokensAfter: 2500 },
     context_compactions: [
-      { summaryStatus: 'created', phase: 'preflight', tokensBefore: 5000, tokensAfter: 4000 },
+      {
+        summaryStatus: 'created', phase: 'preflight', tokensBefore: 5000, tokensAfter: 4000,
+        occurredAt: '2026-09-19T13:41:07.000Z',
+      },
       { summaryStatus: 'not_applicable', phase: 'tool_loop', tokensBefore: 4000, tokensAfter: 3000 },
       {
         summaryStatus: 'failed', phase: 'tool_loop', tokensBefore: 3000, tokensAfter: 2500,
@@ -792,12 +820,18 @@ test('context compaction notice aggregates three events and renders an ordered d
       },
     ],
   });
+  const document = new JSDOM(html).window.document;
 
-  const dom = new JSDOM(html);
-  assert.equal(dom.window.document.querySelector('.context-compacted-notice-count')?.textContent, '×3');
-  assert.match(html, /3,000 → 2,500 tokens · 2,500 saved/);
-  assert.ok(dom.window.document.querySelector('details.context-compacted-notice-details'));
-  assert.equal(dom.window.document.querySelectorAll('.context-compacted-notice-breakdown-item').length, 3);
+  const metas = [...document.querySelectorAll('.context-compacted-notice-status .context-compacted-notice-meta')]
+    .map((node) => node.textContent);
+  assert.deepEqual(metas, ['3 compactions', '3,000 → 2,500 tokens'], 'count token, then the latest pair only');
+  const rows = [...document.querySelectorAll('.context-compacted-notice-row')];
+  assert.equal(rows.length, 3, 'one body row per compaction');
+  assert.equal(rows[2].querySelector('.context-compacted-notice-key')?.textContent, 'Compaction 3 (latest)');
+  // F4: the timestamped row goes through a translatable pattern, never a
+  // hardcoded English " at ".
+  assert.match(rows[0].querySelector('.context-compacted-notice-value')?.textContent || '', /^Compaction 1: /);
+  assert.doesNotMatch(html, / at \d/);
   assert.match(html, /Summarizer failed; used a bounded fallback/);
   assert.match(html, /Mid-task, inside the tool loop/);
   assert.match(html, /Folded 7 messages \/ 2,048 bytes/);
@@ -805,9 +839,75 @@ test('context compaction notice aggregates three events and renders an ordered d
   assert.match(html, /Your transcript is intact\. Compaction only changes what is sent to the model\./);
 });
 
+test('context compaction toggle is an inventory button wired to the body it controls', () => {
+  const renderer = createTranscriptThinkingRenderer({ escapeHtml });
+  const collapsed = new JSDOM(renderer.renderContextCompactedNotice({
+    id: 'msg_cc_toggle',
+    context_compacted: { summaryStatus: 'created', phase: 'preflight', tokensBefore: 9000, tokensAfter: 4000 },
+  })).window.document;
+
+  const toggle = collapsed.querySelector('.context-compacted-notice-toggle');
+  const body = collapsed.querySelector('.context-compacted-notice-body');
+  assert.equal(toggle?.tagName, 'BUTTON');
+  assert.equal(toggle?.getAttribute('type'), 'button');
+  assert.equal(toggle?.getAttribute('data-action'), 'context-compaction-details');
+  assert.equal(toggle?.dataset.messageId, 'msg_cc_toggle');
+  assert.equal(toggle?.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle?.getAttribute('aria-controls'), body?.id);
+  assert.equal(body?.getAttribute('role'), 'region');
+  assert.equal(body?.hasAttribute('hidden'), true);
+
+  // Expansion is stamped from renderer state, so the same message renders open
+  // when the state says it is open.
+  const expandedRenderer = createTranscriptThinkingRenderer({
+    escapeHtml,
+    isContextCompactionExpanded: (messageId) => messageId === 'msg_cc_toggle',
+  });
+  const expanded = new JSDOM(expandedRenderer.renderContextCompactedNotice({
+    id: 'msg_cc_toggle',
+    context_compacted: { summaryStatus: 'created', phase: 'preflight', tokensBefore: 9000, tokensAfter: 4000 },
+  })).window.document;
+
+  assert.equal(expanded.querySelector('.context-compacted-notice-toggle')?.getAttribute('aria-expanded'), 'true');
+  assert.equal(expanded.querySelector('.context-compacted-notice-body')?.hasAttribute('hidden'), false);
+});
+
+test('an expanded compaction body survives a re-render that appends a second compaction', () => {
+  // F1 regression gate: the old <details> lost its preservation-registry
+  // identity when the breakdown text changed, so the panel snapped shut.
+  const expandedIds = new Set(['msg_cc_live']);
+  const renderer = createTranscriptThinkingRenderer({
+    escapeHtml,
+    isContextCompactionExpanded: (messageId) => expandedIds.has(messageId),
+  });
+  const first = { summaryStatus: 'created', phase: 'preflight', tokensBefore: 5000, tokensAfter: 4000 };
+  const second = { summaryStatus: 'created', phase: 'tool_loop', tokensBefore: 4600, tokensAfter: 2100 };
+
+  const before = new JSDOM(renderer.renderContextCompactedNotice({
+    id: 'msg_cc_live',
+    context_compactions: [first],
+  })).window.document;
+  assert.equal(before.querySelector('.context-compacted-notice-body')?.hasAttribute('hidden'), false);
+  assert.equal(before.querySelectorAll('.context-compacted-notice-row').length, 2);
+
+  const after = new JSDOM(renderer.renderContextCompactedNotice({
+    id: 'msg_cc_live',
+    context_compactions: [first, second],
+  })).window.document;
+  assert.equal(
+    after.querySelector('.context-compacted-notice-body')?.hasAttribute('hidden'),
+    false,
+    'the body stays open after the second compaction rewrites the breakdown'
+  );
+  assert.equal(after.querySelector('.context-compacted-notice-toggle')?.getAttribute('aria-expanded'), 'true');
+  assert.equal(after.querySelectorAll('.context-compacted-notice-row').length, 2);
+  assert.match(after.querySelector('.context-compacted-notice-status')?.textContent || '', /4,600 → 2,100 tokens/);
+});
+
 test('context compaction notice escapes untrusted values in its single root status element', () => {
   const renderer = createTranscriptThinkingRenderer({ escapeHtml });
   const html = renderer.renderContextCompactedNotice({
+    id: 'msg_cc_escape',
     context_compacted: {
       strategy: 'narrowed', reasonCode: '<img src=x>', historyScopeFallback: '<img src=x>',
       summaryStatus: 'unknown', phase: 'preflight',
@@ -818,12 +918,29 @@ test('context compaction notice escapes untrusted values in its single root stat
 
   assert.equal(document.body.children.length, 1);
   assert.equal(document.body.firstElementChild?.className, 'context-compacted-notice');
-  // The live region is the one-line status only; the <details> breakdown sits
-  // outside it so an atomic re-announcement never reads the whole list.
+  // The live region is the one-line status only; the toggle and the body sit
+  // outside it so an atomic re-announcement never reads the whole breakdown.
   const status = document.querySelector('.context-compacted-notice-status');
   assert.equal(status?.getAttribute('role'), 'status');
   assert.equal(status?.getAttribute('aria-live'), 'polite');
   assert.equal(document.body.firstElementChild?.getAttribute('role'), null);
-  assert.equal(status?.querySelector('details'), null, 'the disclosure is not inside the live region');
+  assert.equal(status?.querySelector('button'), null, 'the toggle is not inside the live region');
+  assert.equal(status?.querySelector('.context-compacted-notice-body'), null, 'the body is not inside the live region');
   assert.equal(document.querySelector('img'), null);
+});
+
+test('context compaction body id survives a message id that is not selector-safe', () => {
+  const renderer = createTranscriptThinkingRenderer({ escapeHtml });
+  const html = renderer.renderContextCompactedNotice({
+    id: 'turn "x"/1:system_notice',
+    context_compacted: { summaryStatus: 'created', phase: 'preflight', tokensBefore: 9000, tokensAfter: 4000 },
+  });
+  const document = new JSDOM(html).window.document;
+
+  const toggle = document.querySelector('.context-compacted-notice-toggle');
+  const body = document.querySelector('.context-compacted-notice-body');
+  assert.equal(toggle?.dataset.messageId, 'turn "x"/1:system_notice');
+  assert.equal(body?.id, 'cc-body-turn--x--1:system_notice');
+  assert.equal(toggle?.getAttribute('aria-controls'), body?.id);
+  assert.match(body?.id || '', /^[A-Za-z][A-Za-z0-9_.:-]*$/);
 });

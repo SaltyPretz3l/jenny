@@ -394,7 +394,7 @@ test('toggle flips [data-chatdock-open] + the state.ui.ideChatDockOpen mirror an
   assert.equal(byId('chatThreadStage').parentElement.id, 'chatView', 'close() restores');
 });
 
-test('the resizer clamps 280-2400, is side-aware, and writes the width var', () => {
+test('the resizer clamps 320-2400, is side-aware, and writes the width var', () => {
   const { byId, ide, dock, dom, calls } = setupDock({ width: 380 });
   dock.reconcile();
   dock.bindEvents();
@@ -422,7 +422,7 @@ test('the resizer clamps 280-2400, is side-aware, and writes the width var', () 
   resizer.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
   assert.equal(ide.chatDockWidth, MIN_CHAT_DOCK_WIDTH + 24);
 
-  assert.equal(MIN_CHAT_DOCK_WIDTH, 280);
+  assert.equal(MIN_CHAT_DOCK_WIDTH, 320);
   assert.equal(MAX_CHAT_DOCK_WIDTH, 2400);
 });
 
@@ -433,9 +433,17 @@ test('viewport maximum clamps display without overwriting a wider persisted pref
   const resizer = byId('ideChatDockResizer');
   assert.equal(shell.style.getPropertyValue('--ide-chat-dock-width'), '760px');
   assert.equal(ide.chatDockWidth, 1800, 'display clamp preserves the persisted request');
-  assert.equal(resizer.getAttribute('aria-valuemin'), '280');
+  assert.equal(resizer.getAttribute('aria-valuemin'), '320');
   assert.equal(resizer.getAttribute('aria-valuemax'), '760');
   assert.equal(resizer.getAttribute('aria-valuenow'), '760');
+});
+
+test('a persisted width below the minimum clamps up when read for display', () => {
+  const { byId, ide, dock } = setupDock({ width: 300 });
+  dock.reconcile();
+  assert.equal(byId('ideShell').style.getPropertyValue('--ide-chat-dock-width'), '320px');
+  assert.equal(byId('ideChatDockResizer').getAttribute('aria-valuenow'), '320');
+  assert.equal(ide.chatDockWidth, 300, 'the read clamp does not overwrite the persisted preference');
 });
 
 test('the featherweight header renders the active session picker + new-chat + collapse', () => {
@@ -621,6 +629,86 @@ const DOCK_CSS = fs.readFileSync(path.join(ROOT, 'styles', 'ide-chat-dock.css'),
   // gradients) as prose, so guardrail scans must only see code.
   .replace(/\/\*[\s\S]*?\*\//g, '');
 
+function findDockRuleBody(selector) {
+  const bodies = [];
+  for (const match of DOCK_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = match[1].split(',').map((item) => item.trim());
+    if (selectors.includes(selector)) bodies.push(match[2]);
+  }
+  return bodies.join('\n');
+}
+
+test('dock composer toolbar is two deterministic rows with a single shrinking model slot', () => {
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /display:\s*flex;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /flex-wrap:\s*wrap;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /gap:\s*var\(--space-2\) var\(--space-2\);/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-left'), /display:\s*contents;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-right'), /display:\s*contents;/);
+
+  const breakBody = findDockRuleBody('.ide-chat-dock-body .composer-toolbar::after');
+  assert.match(breakBody, /content:\s*'';/);
+  assert.match(breakBody, /flex-basis:\s*100%;/);
+  assert.match(breakBody, /height:\s*0;/);
+  assert.match(breakBody, /order:\s*10;/);
+
+  const expectedOrders = new Map([
+    ['composerAttachShortcut', 1],
+    ['composerTerminalShortcut', 2],
+    ['composerRunModeSlot', 4],
+    ['composerModelPillSlot', 5],
+    ['composerToolToggleSlot', 6],
+    ['composerContextUsageSlot', 11],
+    ['composerPlanUsageSlot', 12],
+    ['composerSettingsButton', 13],
+    ['stopStreamButton', 14],
+    ['sendButton', 15],
+    ['composerSendDisabledReason', 16],
+  ]);
+  for (const [id, order] of expectedOrders) {
+    assert.match(
+      findDockRuleBody(`.ide-chat-dock-body #${id}`),
+      new RegExp(`order:\\s*${order};`),
+      `#${id} has order ${order}`
+    );
+  }
+
+  const modelSlot = findDockRuleBody('.ide-chat-dock-body #composerModelPillSlot');
+  assert.match(modelSlot, /flex:\s*1 1 0;/, 'zero basis so line collection ignores the model name width');
+  assert.match(modelSlot, /min-width:\s*0;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-model-pill'), /max-width:\s*100%;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-model-pill .inv-chip-label'), /max-width:\s*none;/);
+  assert.match(
+    findDockRuleBody('.ide-chat-dock-body #composerProjectPillSlot'),
+    /display:\s*none;/,
+    'project pill does not fit row 1 at the 320px floor'
+  );
+  assert.match(
+    findDockRuleBody('.ide-chat-dock-body #composerRunModeSlot .composer-run-mode-chip'),
+    /min-width:\s*0;/
+  );
+
+  const sendBody = findDockRuleBody('.ide-chat-dock-body .composer-send');
+  assert.match(sendBody, /width:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
+  assert.match(sendBody, /height:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
+  const stopBody = findDockRuleBody('.ide-chat-dock-body .composer-stop-button');
+  assert.match(stopBody, /width:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
+  assert.match(stopBody, /height:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
+  const gearBody = findDockRuleBody('.ide-chat-dock-body .composer-gear');
+  assert.match(gearBody, /width:\s*calc\(28px \* var\(--chat-zoom-factor, 1\)\);/);
+  assert.match(gearBody, /height:\s*calc\(28px \* var\(--chat-zoom-factor, 1\)\);/);
+});
+
+test('dock composer second row stays right-aligned when either usage slot is empty', () => {
+  const selectors = [
+    '.ide-chat-dock-body #composerContextUsageSlot:not(:empty)',
+    '.ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:not(:empty)',
+    '.ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:empty + #composerSettingsButton',
+  ];
+  for (const selector of selectors) {
+    assert.match(findDockRuleBody(selector), /margin-inline-start:\s*auto;/, selector);
+  }
+});
+
 test('grid matrix: all 8 open variants present, dock outermost, gated on data-chatdock-open', () => {
   const areas = [
     '"main rail chatdock"',
@@ -725,7 +813,7 @@ test('simplified-dock suppression: sprite and terminal shortcut hidden (§7 + §
 
 test('holo + palette guardrails: no composer holo suppression, no gradients, no raw hex, no bottom-panel coupling', () => {
   assert.ok(!DOCK_CSS.includes('box-shadow'), 'no box-shadow anywhere — the composer holo ring is untouched');
-  assert.ok(!/composer[^\n{]*::after/.test(DOCK_CSS), 'no rule targets the composer ::after holo ring');
+  assert.ok(!DOCK_CSS.includes('.ide-chat-dock-body .composer::after'), 'no rule targets the composer ::after holo ring');
   assert.ok(!DOCK_CSS.includes('data-composer-holo'), 'holo state attribute never keyed on');
   assert.ok(!/gradient\(/.test(DOCK_CSS), 'no gradients');
   assert.ok(!/#[0-9a-fA-F]{3}\b|#[0-9a-fA-F]{6}\b/.test(DOCK_CSS), 'no hardcoded hex colors (palette vars only)');

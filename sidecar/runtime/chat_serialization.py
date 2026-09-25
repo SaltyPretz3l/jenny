@@ -12,6 +12,7 @@ from sidecar.ai.routing.loop_events import (
     ApprovalRequestedEvent,
     ApprovalResolvedEvent,
     ContextCompactedEvent,
+    ContextCompactionStartedEvent,
     ContextUsageEvent,
     HeartbeatEvent,
     IterationStartEvent,
@@ -36,6 +37,7 @@ from sidecar.protocol import (
     CHAT_THINKING_METHOD,
     CHAT_TOKEN_METHOD,
     CONTEXT_COMPACTED_METHOD,
+    CONTEXT_COMPACTION_STARTED_METHOD,
     CONTEXT_USAGE_METHOD,
     TOOL_EXECUTING_METHOD,
     TOOL_OUTPUT_CHUNK_METHOD,
@@ -95,6 +97,37 @@ def _serialize_context_compacted(
             event.covered_through_tool_call_id
         )[:128]
     return notification(CONTEXT_COMPACTED_METHOD, compacted_payload)
+
+
+def _serialize_tool_result(  # noqa: PLR0913
+    event: ToolResultEvent, ctx: dict[str, Any], *, request_id: str,
+    trace_id: str | None, session_id: str | None,
+    payload_externalizer: IpcPayloadExternalizer | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        **ctx, "tool_name": event.tool_name, "tool_call_id": event.call_id,
+        "success": event.success, "output": event.content,
+        "content_type": event.content_type, "tool_input": event.tool_input,
+    }
+    if event.ui_payload is not None:
+        payload["ui_payload"] = event.ui_payload
+    if event.generated_artifacts:
+        payload["generated_artifacts"] = [dict(item) for item in event.generated_artifacts]
+    if event.error_code:
+        payload["error_code"] = event.error_code
+    if event.metadata:
+        payload["metadata"] = event.metadata
+    if event.duration_ms is not None:
+        payload["duration_ms"] = event.duration_ms
+    if event.trusted_attachments:
+        # Live notification is the only surface carrying full bounded payloads.
+        payload["trusted_attachments"] = [dict(item) for item in event.trusted_attachments]
+    if payload_externalizer is not None:
+        payload = payload_externalizer.harden_tool_notification(
+            method=TOOL_RESULT_METHOD, params=payload, request_id=request_id,
+            trace_id=trace_id, session_id=session_id,
+        )
+    return notification(TOOL_RESULT_METHOD, payload)
 
 
 def _serialize_loop_event(
@@ -208,42 +241,10 @@ def _serialize_loop_event(
             },
         )
     if isinstance(event, ToolResultEvent):
-        result_payload: dict[str, Any] = {
-            **ctx,
-            "tool_name": event.tool_name,
-            "tool_call_id": event.call_id,
-            "success": event.success,
-            "output": event.content,
-            "content_type": event.content_type,
-            "tool_input": event.tool_input,
-        }
-        if event.ui_payload is not None:
-            result_payload["ui_payload"] = event.ui_payload
-        if event.generated_artifacts:
-            result_payload["generated_artifacts"] = [
-                dict(item) for item in event.generated_artifacts
-            ]
-        if event.error_code:
-            result_payload["error_code"] = event.error_code
-        if event.metadata:
-            result_payload["metadata"] = event.metadata
-        if event.duration_ms is not None:
-            result_payload["duration_ms"] = event.duration_ms
-        if event.trusted_attachments:
-            # WIDE-019: the live notification is the ONLY surface carrying full
-            # attachment payloads (already admission-gated and byte-bounded).
-            result_payload["trusted_attachments"] = [
-                dict(item) for item in event.trusted_attachments
-            ]
-        if payload_externalizer is not None:
-            result_payload = payload_externalizer.harden_tool_notification(
-                method=TOOL_RESULT_METHOD,
-                params=result_payload,
-                request_id=request_id,
-                trace_id=trace_id,
-                session_id=session_id,
-            )
-        return notification(TOOL_RESULT_METHOD, result_payload)
+        return _serialize_tool_result(
+            event, ctx, request_id=request_id, trace_id=trace_id,
+            session_id=session_id, payload_externalizer=payload_externalizer,
+        )
     if isinstance(event, HeartbeatEvent):
         return notification(
             CHAT_THINKING_METHOD,
@@ -272,6 +273,16 @@ def _serialize_loop_event(
             CHAT_THINKING_METHOD,
             stop_payload,
         )
+    if isinstance(event, ContextCompactionStartedEvent):
+        return notification(
+            CONTEXT_COMPACTION_STARTED_METHOD,
+            {
+                **ctx,
+                "phase": event.phase,
+                "tokens_before": int(event.tokens_before),
+                "message_count": int(event.message_count),
+            },
+        )
     if isinstance(event, ContextCompactedEvent):
         return _serialize_context_compacted(event, ctx)
     if isinstance(event, ContextUsageEvent):
@@ -296,13 +307,14 @@ def _serialize_loop_event(
     return None
 
 
-def _serialize_turn_event(
+def _serialize_turn_event(  # noqa: PLR0913
     event: Any,
     request_id: str,
     *,
     trace_id: str | None,
     session_id: str | None,
     seq: int,
+    turn_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Convert a typed domain event to an additive canonical ``turn.event``.
 
@@ -326,10 +338,16 @@ def _serialize_turn_event(
         event_id=parts.event_id,
         tool_call_id=parts.tool_call_id,
     )
-    return notification(TURN_EVENT_METHOD, canonical.to_payload())
+    # Event/part identity belongs to the physical attempt; only turn ownership
+    # spans attempts. Reusing logical-turn sequence IDs would collide on resume.
+    canonical_payload = canonical.to_payload()
+    canonical_payload["turn_id"] = turn_id or request_id
+    return notification(TURN_EVENT_METHOD, canonical_payload)
 
 
 def _turn_event_parts(event: Any, request_id: str) -> _TurnEventParts | None:
+    if isinstance(event, ContextCompactionStartedEvent):
+        return None
     for build_parts in (
         _status_or_text_turn_event_parts,
         _approval_turn_event_parts,

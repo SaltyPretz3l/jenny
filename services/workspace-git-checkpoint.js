@@ -181,6 +181,8 @@ function createCheckpointTransactionRunner({
   notARepo,
   notToplevel,
   execFailure,
+  runWithResources = async (_operation, handler) => handler(),
+  isResourceError = () => false,
 }) {
   return async function runTransaction(op, handler, { signal = null } = {}) {
     if (!gitEnabled()) return unavailable(op, 'feature_disabled');
@@ -188,21 +190,28 @@ function createCheckpointTransactionRunner({
     if (!operation.acquired) return unavailable(op, operation.code);
     try {
       return await runSerialized(operation.context?.rootId || operation.root, async () => {
-        if (!operation.isCurrent()) return unavailable(op, 'root_changed');
-        const detect = await detectScope(operation.root, {
-          signal: operation.signal,
-          isCurrent: operation.isCurrent,
-        });
-        if (detect.stale || !operation.isCurrent()) return unavailable(op, 'root_changed');
-        if (detect.failure) return execFailure(op, detect.failure);
-        if (!detect.isRepo) return notARepo(op);
-        if (!detect.isToplevel) return notToplevel(op);
-        return handler({
-          root: operation.root,
-          signal: operation.signal,
-          isCurrent: () => operation.isCurrent(),
-          stale: () => unavailable(op, 'root_changed'),
-        });
+        try {
+          return await runWithResources(operation, async () => {
+            if (!operation.isCurrent()) return unavailable(op, 'root_changed');
+            const detect = await detectScope(operation.root, {
+              signal: operation.signal,
+              isCurrent: operation.isCurrent,
+            });
+            if (detect.stale || !operation.isCurrent()) return unavailable(op, 'root_changed');
+            if (detect.failure) return execFailure(op, detect.failure);
+            if (!detect.isRepo) return notARepo(op);
+            if (!detect.isToplevel) return notToplevel(op);
+            return handler({
+              root: operation.root,
+              signal: operation.signal,
+              isCurrent: () => operation.isCurrent(),
+              stale: () => unavailable(op, 'root_changed'),
+            });
+          });
+        } catch (error) {
+          if (isResourceError(error)) return unavailable(op, error.reason);
+          throw error;
+        }
       });
     } finally {
       operation.release();

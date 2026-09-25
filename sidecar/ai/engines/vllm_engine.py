@@ -20,6 +20,7 @@ from sidecar.ai.engines.model_name import (
 )
 from sidecar.ai.engines.provider_http import ProviderHttpService
 from sidecar.ai.engines.vllm_engine_generation import _VLLMGenerationMixin
+from sidecar.ai.engines.vllm_engine_telemetry import _VLLMTelemetryMixin
 from sidecar.runtime.local_engine.reasoning import (
     create_request_reasoning_parser as _create_shared_reasoning_parser,
 )
@@ -38,7 +39,6 @@ from sidecar.runtime.local_engine.request_context import (
 from sidecar.runtime.local_engine.request_context import (
     current_app_profile_behavior as _shared_current_app_profile_behavior,
 )
-from sidecar.runtime.local_engine.request_context import current_diagnostics_store
 from sidecar.runtime.local_engine.request_context import (
     current_request_context as _shared_current_request_context,
 )
@@ -105,7 +105,7 @@ def _model_matches(requested: str, served: str) -> bool:
     return canonical_model_token(requested) == canonical_model_token(served)
 
 
-class VLLMEngine(_VLLMGenerationMixin, BaseEngine):
+class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
     """vLLM inference engine using the OpenAI-compatible REST API."""
 
     # Provider identity — subclasses may override to reuse this engine's
@@ -320,7 +320,7 @@ class VLLMEngine(_VLLMGenerationMixin, BaseEngine):
 
     def get_model_context_length(self) -> int | None:
         return self._context_length
-
+    get_inference_budget_context_length = get_model_context_length
     # -- internal helpers --------------------------------------------------
 
     def _current_request_context(self) -> dict[str, Any] | None:
@@ -389,117 +389,6 @@ class VLLMEngine(_VLLMGenerationMixin, BaseEngine):
             engine_type=self._ENGINE_TYPE,
             model_name=self.model_name,
         )
-
-    def _record_provider_request(
-        self,
-        *,
-        think_enabled: bool,
-        num_predict: int | None,
-        temperature: float,
-        message_count: int,
-        tool_count: int,
-        tool_capable: bool,
-        tool_payload_bytes: int = 0,
-        provider_sampler: dict[str, Any] | None = None,
-    ) -> None:
-        request_id = self._request_id()
-        if not request_id:
-            return
-        context = self._current_request_context()
-        trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
-        logger.info(
-            "%s request started.",
-            self._DISPLAY_NAME,
-            extra={
-                "request_id": request_id,
-                "trace_id": trace_id or request_id,
-                "model": self.model_name,
-                "think_enabled": think_enabled,
-                "num_predict": num_predict,
-                "temperature": temperature,
-                "message_count": message_count,
-                "tool_count": tool_count,
-                "tool_capable": tool_capable,
-                "tool_payload_bytes": tool_payload_bytes,
-            },
-        )
-        store = current_diagnostics_store(self)
-        if store is None or not hasattr(store, "record_provider_request"):
-            return
-        store.record_provider_request(
-            request_id=request_id,
-            think_enabled=think_enabled,
-            num_predict=num_predict,
-            temperature=temperature,
-            message_count=message_count,
-            tool_count=tool_count,
-            tool_capable=tool_capable,
-            tool_payload_bytes=tool_payload_bytes,
-            provider_sampler=provider_sampler,
-        )
-
-    def _record_first_chunk(self) -> None:
-        request_id = self._request_id()
-        if not request_id:
-            return
-        context = self._current_request_context()
-        if isinstance(context, dict):
-            if context.get("first_chunk_logged") is True:
-                return
-            context["first_chunk_logged"] = True
-        store = current_diagnostics_store(self)
-        if store is None or not hasattr(store, "record_first_chunk"):
-            return
-        store.record_first_chunk(request_id=request_id)
-
-    def _record_visible_output(self, text: str) -> None:
-        request_id = self._request_id()
-        if not request_id:
-            return
-        store = current_diagnostics_store(self)
-        if store is None or not hasattr(store, "record_visible_output"):
-            return
-        store.record_visible_output(request_id=request_id, text=text)
-
-    def _record_provider_usage(self, body: dict[str, Any] | None) -> None:
-        """Extract OpenAI-style usage metrics from a vLLM completion body.
-
-        vLLM's non-streaming ``/chat/completions`` response carries a
-        ``usage`` object in OpenAI's shape: ``prompt_tokens``,
-        ``completion_tokens``, ``total_tokens``, and optionally a
-        ``prompt_tokens_details`` sub-object containing ``cached_tokens``
-        when the prefix cache is enabled on the server. This hook merges
-        those into the turn diagnostic so the dump exposes cache hit-rate
-        and tokens-per-second alongside the Ollama-shaped fields.
-        """
-
-        if not isinstance(body, dict):
-            return
-        usage = body.get("usage")
-        if not isinstance(usage, dict):
-            return
-        store = current_diagnostics_store(self)
-        request_id = self._request_id()
-        if store is None or not request_id or not hasattr(store, "record_provider_usage"):
-            return
-        details = usage.get("prompt_tokens_details")
-        cached_tokens: Any = None
-        if isinstance(details, dict):
-            cached_tokens = details.get("cached_tokens")
-        store.record_provider_usage(
-            request_id=request_id,
-            prompt_eval_count=usage.get("prompt_tokens"),
-            eval_count=usage.get("completion_tokens"),
-            cached_tokens=cached_tokens,
-            provider_label=self._PROVIDER_LABEL,
-        )
-
-    def _complete_provider_request(self) -> None:
-        request_id = self._request_id()
-        store = current_diagnostics_store(self)
-        if store is None or not request_id or not hasattr(store, "complete_provider_request"):
-            return
-        store.complete_provider_request(request_id=request_id)
 
     def _log_reasoning_parser_fallback(
         self,

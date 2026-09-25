@@ -135,6 +135,22 @@ test('picker failure renders a bounded status message', async () => {
   harness.controller.dispose();
 });
 
+test('a network folder says how to use it and saves nothing', async (t) => {
+  const harness = createHarness({
+    chooseLibraryFolder: async () => ({ ok: false, reason: 'network_path' }),
+  });
+  t.after(() => harness.controller.dispose());
+  harness.controller.render();
+  click(harness, '[data-model-library-folder-action="add"]');
+  await flush();
+
+  assert.deepEqual(harness.calls, []);
+  assert.equal(
+    harness.dom.window.document.querySelector('.model-library-folders-status').textContent,
+    "Jenny can't use network locations here. Map the share to a drive letter, then choose it from that drive."
+  );
+});
+
 test('dispose ignores a late picker result', async () => {
   const picker = deferred();
   const harness = createHarness({ chooseLibraryFolder: () => picker.promise });

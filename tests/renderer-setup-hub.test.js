@@ -49,13 +49,28 @@ function buildHarness(t, options = {}) {
   const disposals = [];
   let snapshot = payload(options);
   let completeCalls = 0;
+  let getStateCalls = 0;
+  let freshProbeApplied = false;
+  let releaseFreshProbe = null;
+  const freshProbeHeld = options.holdFreshProbe
+    ? new Promise((resolve) => { releaseFreshProbe = resolve; })
+    : null;
   let releaseCompleteDelay = null;
   const completeDelay = options.completeDelay
     ? new Promise((resolve) => { releaseCompleteDelay = resolve; })
     : null;
   const state = {};
   const setupService = {
-    async getState() { return snapshot; },
+    async getState() {
+      getStateCalls += 1;
+      // A later backend probe can see what init's probe could not (a model that finished loading).
+      if (options.freshProbe && !freshProbeApplied && getStateCalls > Number(options.freshProbeAfterCalls || 1)) {
+        if (freshProbeHeld) await freshProbeHeld;
+        freshProbeApplied = true;
+        snapshot = payload({ ...options, ...options.freshProbe });
+      }
+      return snapshot;
+    },
     async updateState(patch) {
       patches.push(patch);
       if (options.updateStateReject) throw new Error('update failed');
@@ -85,6 +100,7 @@ function buildHarness(t, options = {}) {
       }
       snapshot = payload({
         ...options,
+        ...(freshProbeApplied ? options.freshProbe : {}),
         firstRunCompleted: true,
         setupComplete: true,
         completedAt: '2026-08-31T12:00:00.000Z',
@@ -131,6 +147,8 @@ function buildHarness(t, options = {}) {
       release();
     },
     get completeCalls() { return completeCalls; },
+    get getStateCalls() { return getStateCalls; },
+    releaseFreshProbe() { if (releaseFreshProbe) releaseFreshProbe(); },
   };
 }
 
@@ -288,6 +306,7 @@ test('degraded finish gate names the workspace consequence, opens the fix, and F
   assert.match(h.root.querySelector('.setup-hub-health').textContent, /0 of 2 required steps complete/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
   assert.match(h.root.querySelector('.setup-hub-finish-warning').textContent,
     /No workspace root set — file tools will be off until you set one\./);
   h.root.querySelector('[data-action="fixRequired"]').click();
@@ -295,6 +314,7 @@ test('degraded finish gate names the workspace consequence, opens the fix, and F
   h.sceneDeps.workspaceRoot.closeModal();
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
   h.root.querySelector('[data-action="finishAnyway"]').click();
   await settle();
   assert.ok(h.patches.some((patch) => patch.firstRunCompleted === true));
@@ -309,6 +329,7 @@ test('finish gate names the local-chat consequence when only model access is unr
   });
   await h.controller.init();
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
 
   const warning = h.root.querySelector('.setup-hub-finish-warning');
   assert.match(warning.textContent, /No model configured — chats can't run locally\./);
@@ -320,6 +341,7 @@ test('Escape dismisses finishGateCancel before it reaches Finish later', async (
   const h = buildHarness(t);
   await h.controller.init();
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
 
   h.document.dispatchEvent(new h.document.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(h.root.querySelector('.setup-hub-finish-warning'), null);
@@ -471,4 +493,105 @@ test('flag-off Run-setup-again is not auto-finished out from under the user', as
 
   assert.equal(h.completeCalls, 0, 'the auto-finish stood down for the flag-off Resume');
   assert.equal(h.state.setup.setupComplete, false, 'the reset the user asked for survives');
+});
+
+// F1 (1.2.0 gate C1): Ornith finished loading after app init, so init's probe
+// saw no model; the hub must re-probe instead of trusting that snapshot.
+const MODEL_LOADED_PROBE = {
+  steps: { ...DEFAULT_STEPS, workspace_root: 'done', local_model: 'done', endpoint: 'done' },
+  readiness: {
+    workspace_root: { ready: true, configured: true },
+    local_model: { ready: true, model_count: 1 },
+    endpoint: { ready: true, engine_type: 'ollama' },
+  },
+};
+
+test('the hub re-probes on open and shows the model step an active model already satisfies', async (t) => {
+  const h = buildHarness(t, {
+    steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
+    workspaceRoot: 'C:/dev/jenny',
+    freshProbe: MODEL_LOADED_PROBE,
+  });
+  await h.controller.init();
+  await settle();
+
+  assert.ok(h.getStateCalls >= 2, 'the hub asked the backend for a fresh probe');
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
+  const modelRow = h.root.querySelector('[data-setup-step-id="localModel"]');
+  assert.equal(modelRow.querySelector('.setup-hub-glyph').getAttribute('aria-label'), 'Done');
+});
+
+test('Finish setup re-probes a stale snapshot and completes once an active model satisfies the step', async (t) => {
+  const h = buildHarness(t, {
+    steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
+    workspaceRoot: 'C:/dev/jenny',
+    freshProbe: MODEL_LOADED_PROBE,
+    // init and the on-open refresh both predate the model load.
+    freshProbeAfterCalls: 2,
+  });
+  await h.controller.init();
+  await settle();
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /1 of 2 required steps complete/);
+
+  h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
+
+  assert.equal(h.root.querySelector('.setup-hub-finish-warning'), null, 'no "Setup is not ready" gate');
+  assert.equal(h.completeCalls, 1);
+  assert.equal(h.state.setup.setupComplete, true);
+});
+
+test('Finish setup still gates when the fresh probe finds no model', async (t) => {
+  const h = buildHarness(t, {
+    steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
+    workspaceRoot: 'C:/dev/jenny',
+  });
+  await h.controller.init();
+  await settle();
+  const callsBeforeFinish = h.getStateCalls;
+
+  h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
+  await settle();
+
+  assert.equal(h.getStateCalls, callsBeforeFinish + 1, 'Finish setup re-probed once');
+  assert.match(h.root.querySelector('.setup-hub-finish-warning').textContent, /No model configured/);
+  assert.equal(h.completeCalls, 0);
+});
+
+test('completeSetup re-probes a stale snapshot before refusing, then completes', async (t) => {
+  const h = buildHarness(t, {
+    omitHub: true,
+    steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
+    workspaceRoot: 'C:/dev/jenny',
+    freshProbe: MODEL_LOADED_PROBE,
+  });
+  await h.controller.init();
+  assert.equal(h.getStateCalls, 1);
+
+  await h.controller.completeSetup();
+
+  assert.equal(h.getStateCalls, 2, 'completeSetup asked for a fresh probe');
+  assert.equal(h.completeCalls, 1);
+  assert.equal(h.state.setup.setupComplete, true);
+  assert.equal(h.logs.some((entry) => entry.event === 'setup.complete_blocked'), false);
+});
+
+test('a rerender from the on-open probe keeps focus on the control the user was on', async (t) => {
+  const h = buildHarness(t, {
+    steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
+    workspaceRoot: 'C:/dev/jenny',
+    freshProbe: MODEL_LOADED_PROBE,
+    holdFreshProbe: true,
+  });
+  await h.controller.init();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  h.root.querySelector('[data-action="openStep"][data-step-id="personality"]').focus();
+
+  h.releaseFreshProbe();
+  await settle();
+
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
+  const focused = h.document.activeElement;
+  assert.equal(focused.getAttribute('data-action'), 'openStep');
+  assert.equal(focused.getAttribute('data-step-id'), 'personality');
 });

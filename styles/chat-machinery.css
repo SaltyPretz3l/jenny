@@ -124,6 +124,13 @@
   animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
 }
 
+.reasoning-row-main.reasoning-row-main--live-status {
+  flex: 0 1 auto;
+  margin-inline-end: auto;
+  font-weight: var(--tl-weight-label);
+  color: var(--text-primary);
+}
+
 /* .tool-call-main wraps name+summary in the block family; flatten it so the
  * grammar's flex line stays a single row. */
 .tool-call-main {
@@ -472,6 +479,7 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
@@ -516,8 +524,7 @@
 
 /* Phantom activity row: ephemeral tail row for silent arg-generation phases
    (renderer-stream-activity-row.js). Wears the machinery one-liner grammar so
-   the real tool row reads as the same object upgrading in place; removed by
-   the first stream event, so it never coexists with authoritative content. */
+   typed events update it in place until authoritative content takes over. */
 .turn-activity-row {
   display: flex;
   align-items: center;
@@ -535,6 +542,46 @@
   height: var(--tl-dot-size);
   animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
 }
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot {
+  position: relative;
+  /* The trailing fold dot sits 1.6 dots past this one; reserve that space so
+     it never paints over the label. */
+  margin-inline-end: calc(var(--tl-dot-size) * 1.6);
+  background: var(--tl-status-active);
+  animation: none;
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  border-radius: 50%;
+  background: var(--tl-status-active);
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
+  inset-inline-start: calc(var(--tl-dot-size) * -1.6);
+  animation: turn-activity-fold-left var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  inset-inline-start: calc(var(--tl-dot-size) * 1.6);
+  animation: turn-activity-fold-right var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
+}
+[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
+  animation-name: turn-activity-fold-right;
+}
+[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  animation-name: turn-activity-fold-left;
+}
+.turn-activity-name {
+  flex: none;
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.turn-activity-name[hidden] { display: none; }
 .turn-activity-label {
   flex: 0 1 auto;
   min-width: 0;
@@ -546,6 +593,7 @@
   color: var(--text-muted);
   animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
 }
+.turn-activity-label--path { font-family: var(--font-family-mono); }
 .turn-activity-elapsed {
   flex: none;
   margin-inline-start: auto;
@@ -562,6 +610,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .turn-activity-row > .status-dot,
+  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
+  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after,
   .turn-activity-label {
     animation: none;
   }
@@ -868,9 +918,17 @@
 
 .plan-document__decision [data-plan-actions] {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: var(--space-2);
   align-items: end;
+}
+
+.plan-document__actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .plan-document__decision {
@@ -918,7 +976,30 @@
   font-size: 11px;
   text-transform: uppercase;
 }
+
+.plan-document-receipt__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plan-document-receipt__build {
+  color: var(--text-link);
+}
 .chat-inline-path:focus-visible {
   outline: 1px solid var(--accent, currentColor);
   outline-offset: 1px;
+}
+
+/* CMP-TOOL-0047 "Set up PDF reading": a quiet link under the failed row's header. */
+.tool-call-row--minimal .tool-call-row-action {
+  padding: var(--space-1) 0 0 var(--space-2);
+}
+
+.tool-call-row--minimal .tool-call-row-link {
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }

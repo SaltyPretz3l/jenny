@@ -112,7 +112,7 @@ function retargetSettledSliceReasoning(ctx, messageId) {
     .map((phase) => String(phase?.phase_id || ''))
     .filter(Boolean);
   if (!phaseIds.length) return 0;
-  return collector.retargetCapturedEvents(ctx.streamId, { phaseIds, messageId: targetId });
+  return collector.retargetCapturedEvents(ctx.turnId || ctx.streamId, { phaseIds, messageId: targetId });
 }
 
 async function settleManagedAssistantCompletion(ctx) {
@@ -133,6 +133,7 @@ async function settleManagedAssistantCompletion(ctx) {
     phases: ctx.transcriptCollector.slice.phases,
     visibleSegments: ctx.transcriptCollector.slice.visibleSegments,
     toolSteps: ctx.transcriptCollector.slice.toolSteps,
+    contextCompactions: ctx.transcriptCollector.slice.contextCompactions,
     model: ctx.model,
     normalizedPreferences: ctx.normalizedPreferences,
     normalizedInteractiveResponse: ctx.normalizedInteractiveResponse,
@@ -215,12 +216,20 @@ async function settleManagedFailureTerminal(ctx, errorPayload, terminal) {
         phases: ctx.transcriptCollector.slice.phases,
         visibleSegments: ctx.transcriptCollector.slice.visibleSegments,
         toolSteps: ctx.transcriptCollector.slice.toolSteps,
+        contextCompactions: ctx.transcriptCollector.slice.contextCompactions,
         model: ctx.model,
         terminalStatus: terminal.status,
         terminalSubcode: terminal.terminalSubcode,
+        exchangeTitle: ctx.exchangeTitle,
         timestamp,
       })
-    : { messages: [], preferencePatch: {}, title: null };
+    // Nothing to persist, but the prompt-derived title still applies: the turn
+    // reached a terminal, and the user's own words named the chat.
+    : {
+        messages: [],
+        preferencePatch: {},
+        title: String(ctx.exchangeTitle || '').trim() || null,
+      };
   const canonicalAssistant = mutation.messages[0] || null;
   const repairMessage = canonicalAssistant && String(ctx.assistantText || '').trim()
     ? { ...canonicalAssistant, content: ctx.assistantText }

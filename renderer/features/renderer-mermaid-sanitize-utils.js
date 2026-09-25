@@ -180,27 +180,24 @@
     if (!raw) return '';
     var purifyHost = windowRef || (typeof window !== 'undefined' ? window : null);
     var purify = purifyHost && purifyHost.DOMPurify ? purifyHost.DOMPurify : null;
-    if (purify && typeof purify.sanitize === 'function') {
-      try {
-        // The svg/svgFilters profiles already strip every HTML element
-        // inside foreignObject (only text survives — mermaid label text is
-        // kept, active content is not). The FORBID list makes that
-        // contract explicit so a future profile widening cannot silently
-        // reopen script/style/embedding vectors.
-        return purify.sanitize(raw, {
-          USE_PROFILES: { svg: true, svgFilters: true },
-          ADD_TAGS: ['foreignObject'],
-          FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'base'],
-          FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover', 'onfocus', 'onmouseenter', 'onmouseleave'],
-        });
-      } catch (_err) {
-        // Fall through to conservative strip.
-      }
+    if (!purify || typeof purify.sanitize !== 'function') {
+      return '';
     }
-    return raw
-      .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-      .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-      .replace(/(href|xlink:href|src)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi, '');
+    try {
+      // The svg/svgFilters profiles already strip every HTML element
+      // inside foreignObject (only text survives — mermaid label text is
+      // kept, active content is not). The FORBID list makes that
+      // contract explicit so a future profile widening cannot silently
+      // reopen script/style/embedding vectors.
+      return purify.sanitize(raw, {
+        USE_PROFILES: { svg: true, svgFilters: true },
+        ADD_TAGS: ['foreignObject'],
+        FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'base'],
+        FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover', 'onfocus', 'onmouseenter', 'onmouseleave'],
+      });
+    } catch (_err) {
+      return '';
+    }
   }
 
   return {

@@ -16,6 +16,21 @@ test('multiple sends preserve immutable FIFO order', () => {
   assert.equal(outbox.peek('s1').id, first.id, 'removing a later exact item cannot disturb the head');
 });
 
+test('first dispatchable entry handles empty, parked, and failed-under-retry heads', () => {
+  const outbox = createSendOutbox(state());
+  assert.equal(outbox.firstDispatchable('s1'), null);
+
+  const parked = outbox.enqueue('s1', { prompt: 'parked', status: 'needs_review' });
+  const ready = outbox.enqueue('s1', { prompt: 'ready', status: 'ready' });
+  assert.equal(outbox.firstDispatchable('s1').id, ready.id);
+
+  const failed = outbox.replace(parked, {
+    status: 'failed',
+    failure: { reason: 'dispatch_failed', autoRetryCount: 1 },
+  });
+  assert.equal(outbox.firstDispatchable('s1').id, failed.id);
+});
+
 test('exact item revision is required for transitions and clearing', () => {
   const outbox = createSendOutbox(state());
   const original = outbox.enqueue('s1', { prompt: 'draft', status: 'ready' });

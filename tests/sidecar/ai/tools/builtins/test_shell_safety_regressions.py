@@ -100,10 +100,54 @@ def test_powershell_encoded_command_is_decoded_and_scanned(switch: str) -> None:
     ["powershell -EncodedCommand not-valid!", "powershell -EncodedCommand"],
 )
 def test_invalid_powershell_encoded_command_fails_closed(command: str) -> None:
+    assert find_destructive_executable(command) == "opaque:powershell-eval"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "Invoke-Expression ('Remove-'+'Item audit.txt')",
+        "iex ('Remove-'+'Item audit.txt')",
+        "&('Remove-'+'Item audit.txt')",
+        "& ('Remove-'+'Item audit.txt')",
+        ". ('Remove-'+'Item audit.txt')",
+        "[scriptblock]::Create(('Remove-'+'Item audit.txt'))",
+        "Invoke-Command -ScriptBlock ('Remove-'+'Item audit.txt')",
+        "Invoke-Command -ScriptBlock $scriptText",
+    ],
+)
+def test_powershell_dynamic_evaluation_returns_opaque_marker(payload: str) -> None:
+    command = f'powershell -Command "{payload}"'
+    assert find_destructive_executable(command) == "opaque:powershell-eval"
+
+
+@pytest.mark.parametrize("switch", ["-EncodedCommand", "-enc", "-e"])
+def test_powershell_encoded_evaluation_returns_opaque_marker(switch: str) -> None:
+    encoded = base64.b64encode("Write-Output safe".encode("utf-16-le")).decode("ascii")
     assert (
-        find_destructive_executable(command)
-        == "powershell -EncodedCommand"
+        find_destructive_executable(f"powershell {switch} {encoded}")
+        == "opaque:powershell-eval"
     )
+
+
+def test_unparseable_start_payload_returns_opaque_marker() -> None:
+    assert (
+        find_destructive_executable('start "" /b cmd /c "del audit.txt')
+        == "opaque:start"
+    )
+
+
+def test_unsupported_start_option_returns_opaque_marker() -> None:
+    assert find_destructive_executable("start /unsupported cmd /c del audit.txt") == "opaque:start"
+
+
+def test_cmd_payload_caret_before_first_letter_returns_opaque_marker() -> None:
+    assert find_destructive_executable('cmd /c "^del audit.txt"') == "opaque:caret-escape"
+
+
+def test_start_options_are_unwrapped_before_rescanning() -> None:
+    command = 'start "" /b /d "work dir" /wait /min cmd /c "del audit.txt"'
+    assert find_destructive_executable(command) == "del"
 
 
 @pytest.mark.parametrize(

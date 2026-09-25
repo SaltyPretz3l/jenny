@@ -107,6 +107,7 @@
     const calendarModule = deps.modules?.dashboardCalendar
       || windowRef.rendererDashboardCalendar
       || null;
+    const awayDigestModule = deps.modules?.dashboardAwayDigest || windowRef.rendererDashboardWidgetAwayDigest || null;
     const remindersModule = deps.modules?.dashboardCalendarReminders || windowRef.rendererDashboardCalendarReminders || null;
     const scratchpadModule = deps.modules?.dashboardWidgetsScratchpad
       || windowRef.rendererDashboardWidgetsScratchpad
@@ -198,7 +199,22 @@
     let focusHotkeyHandler = null;
     let lifecycleFlushHandler = null;
     let visibilityFlushHandler = null;
+    let awayDigestRepaintScheduled = false;
+    let awayDigestWidget = null;
     const unsubscribes = [];
+
+    function scheduleAwayDigestRepaint() {
+      if (awayDigestRepaintScheduled) return;
+      awayDigestRepaintScheduled = true;
+      Promise.resolve().then(() => { awayDigestRepaintScheduled = false; if (!fence.isDisposed()) repaintIfHomeActive(); });
+    }
+    // The shell creates the reader at boot (Home may never be visited); this
+    // manager adopts it, or builds its own when it is constructed standalone.
+    const ownsAwayDigestReader = !state.awayDigestReader;
+    const awayDigestReader = state.awayDigestReader
+      || awayDigestModule?.createAwayDigestReader?.({ windowRef, documentRef, state, callbacks: { appendClientLog } }) || null;
+    state.awayDigestReader = awayDigestReader;
+    if (awayDigestReader?.subscribe) unsubscribes.push(awayDigestReader.subscribe(scheduleAwayDigestRepaint));
 
     // Reminder persistence, kept live after the reminders widget was cut from
     // Home: the Daybook agenda consumes these next to own reminder CRUD.
@@ -330,6 +346,14 @@
           },
           onAiPayload: applyHomeAiPayload, // undo returns fresh journal + reminders
         }),
+        // Finished background work sits under the week, before open loops.
+        (awayDigestWidget = awayDigestReader && awayDigestModule?.createAwayDigestWidget?.({
+          reader: awayDigestReader, actionButton: windowRef.inventoryActionButton,
+          tooltip: windowRef.inventory?.tooltip || null, documentRef, setTimeoutImpl, clearTimeoutImpl,
+          callbacks: { appendClientLog, showComposerActionError: null,
+            // Same route as continue-session: activate, then leave Home for the chat.
+            openSession: async (sessionId) => { clearPendingOrigin(); await activateWorkspaceSession?.(sessionId); setActiveView('chat'); renderAll(); } },
+        }) || null),
         loopsModule?.createOpenLoopsWidget?.(),
       ].filter(Boolean);
       for (const widget of defaultWidgets) {
@@ -920,6 +944,11 @@
 
     async function dispose() {
       if (!fence.dispose()) return;
+      awayDigestWidget?.dispose?.();
+      if (ownsAwayDigestReader) {
+        awayDigestReader?.dispose?.();
+        if (state.awayDigestReader === awayDigestReader) state.awayDigestReader = null;
+      }
       // Start the scratchpad's final flush first — it clears its own save timer
       // synchronously and hands back the write promise — then tear the rest
       // down while that write is in flight and await it at the end, so a caller
@@ -974,6 +1003,7 @@
       bind,
       render,
       refreshDashboardState,
+      refreshAwayDigest: () => Promise.resolve(awayDigestReader?.refresh?.() ?? false),
       registry,
       // Reachable for the Daybook agenda wave, which becomes their only caller.
       reminderActions,

@@ -663,8 +663,12 @@
 }
 
 /* Right-aligned flex items otherwise size their content to an unwrapped code
-   line and spill left of the transcript, beyond its scrollable area. */
-.chat-entry.user > .chat-message-content {
+   line and spill left of the transcript, beyond its scrollable area. User
+   prompts render through .turn-row-list, whose nowrap hover-row meta ("~N tokens
+   est. · ...") sets a ~400px min-content: in a narrow chat dock it overflowed
+   the capped article and clipped the bubble's left edge. */
+.chat-entry.user > .chat-message-content,
+.chat-entry.user > .turn-row-list {
   max-width: 100%;
 }
 

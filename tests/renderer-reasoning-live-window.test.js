@@ -93,13 +93,48 @@ test('resolveLiveWindowStart keeps everything under the window and the trailing 
   assert.equal(resolveLiveWindowStart([], 0), 0);
 });
 
-test('resolveLiveWindowStart never retracts: the previous start is a floor, clamped to the tail', () => {
-  assert.equal(resolveLiveWindowStart(makeUnits(40), 12), 12, 'a larger previous start wins');
-  assert.equal(resolveLiveWindowStart(makeUnits(10), 4), 4, 'shrinking below the window keeps the floor');
-  assert.equal(resolveLiveWindowStart(makeUnits(5), 40), 0, 'a re-chunk below the start resets the floor');
-  assert.equal(resolveLiveWindowStart(makeUnits(40), 40), 8, 'a start at the unit count resets, not pins');
+test('resolveLiveWindowStart preserves the elided character floor and clamps it before the tail', () => {
+  assert.equal(resolveLiveWindowStart(makeUnits(40), 0, { previousElidedChars: 12 * 1024 }), 12);
+  assert.equal(resolveLiveWindowStart(makeUnits(10), 0, { previousElidedChars: 4 * 1024 }), 4);
+  assert.equal(resolveLiveWindowStart(makeUnits(5), 40, { previousElidedChars: 40 * 1024 }), 4,
+    'a re-chunk below the old start elides as much as possible without hiding the tail');
+  assert.equal(resolveLiveWindowStart(makeUnits(40), 40, { previousElidedChars: 40 * 1024 }), 39);
   assert.equal(resolveLiveWindowStart(makeUnits(40), -3), 8);
   assert.equal(resolveLiveWindowStart(makeUnits(40), 0, { windowChars: 10 * 1024 }), 30);
+});
+
+test('a re-chunk preserves the previously elided character budget', () => {
+  const previousUnits = makeUnits(40);
+  const previousStart = resolveLiveWindowStart(previousUnits, 0);
+  const previousElidedChars = previousUnits
+    .slice(0, previousStart)
+    .reduce((total, unit) => total + unit.html.length, 0);
+  const rechunkedUnits = makeUnits(5, 4 * 1024);
+  const start = resolveLiveWindowStart(rechunkedUnits, previousStart, { previousElidedChars });
+
+  assert.equal(previousStart, 8);
+  assert.equal(start, 2);
+  assert.ok(start < rechunkedUnits.length, 'the tail unit stays live');
+});
+
+test('a single oversized re-chunk keeps its only tail unit live', () => {
+  const units = [{ html: 'a'.repeat(LIVE_WINDOW_CHARS + 5) }];
+  assert.equal(resolveLiveWindowStart(units, 8, { previousElidedChars: 8 * 1024 }), 0);
+});
+
+test('growing and re-chunked frames never decrease the elided character count', () => {
+  let previousStart = 0;
+  let previousElidedChars = 0;
+  for (let frame = 0; frame < 30; frame += 1) {
+    const unitCount = [40, 17, 29][frame % 3];
+    const units = makeUnits(unitCount, Math.floor((40 * 1024 + frame * 4 * 1024) / unitCount));
+    const start = resolveLiveWindowStart(units, previousStart, { previousElidedChars });
+    const elidedChars = units.slice(0, start).reduce((total, unit) => total + unit.html.length, 0);
+    assert.ok(elidedChars >= previousElidedChars, `frame ${frame} retained the character floor`);
+    assert.ok(start < units.length, `frame ${frame} kept the tail live`);
+    previousStart = start;
+    previousElidedChars = elidedChars;
+  }
 });
 
 test('streaming markup elides leading units past the window and carries the note on the last elided unit', () => {
@@ -135,15 +170,15 @@ test('streaming markup under the window and the settled render both carry the fu
   assert.match(settled, /settled body/);
 });
 
-test('the window start is threaded through the stream cache so it never retracts across frames', () => {
+test('the elided character count is threaded through the stream cache across frames', () => {
   const unitsRef = { units: makeUnits(40) };
   const renderer = makeRenderer(unitsRef);
   assert.equal(unitsOf(renderer.renderThinkingWidget(message('streaming', 'a'), 'live_window_message'))[7].fp, LIVE_WINDOW_NOTE_FINGERPRINT);
-  // A retraction re-chunks the tail into fewer, smaller units: the floor holds.
-  unitsRef.units = makeUnits(34, 512);
+  // Fewer, larger units retain the same 8 KB character floor despite the new indices.
+  unitsRef.units = makeUnits(5, 4 * 1024);
   const units = unitsOf(renderer.renderThinkingWidget(message('streaming', 'ab'), 'live_window_message'));
-  assert.equal(units[7].fp, LIVE_WINDOW_NOTE_FINGERPRINT);
-  assert.equal(units[8].fp, 'fp_8');
+  assert.equal(units[1].fp, LIVE_WINDOW_NOTE_FINGERPRINT);
+  assert.equal(units[2].fp, 'fp_2');
   // Growth past the window advances it.
   unitsRef.units = makeUnits(41);
   assert.equal(unitsOf(renderer.renderThinkingWidget(message('streaming', 'abc'), 'live_window_message'))[8].fp, LIVE_WINDOW_NOTE_FINGERPRINT);
@@ -185,4 +220,21 @@ test('reconcileStreamUnits empties newly elided units in place and leaves the li
   assert.match(container.children[7].textContent, /Earlier thinking/);
   assert.equal(container.children[39].getAttribute('data-su-fp'), 'fp_39');
   dom.window.close();
+});
+
+// Astra batch review 2026-09-20: a frame whose single tail unit exceeds the
+// window elides nothing by necessity; the next multi-unit frame must still
+// honour the historical floor rather than the dip.
+test('the cached elided budget keeps its historical maximum across a tail-clamped frame', () => {
+  const unitsRef = { units: makeUnits(40) };
+  const renderer = makeRenderer(unitsRef);
+  const messageId = 'live_window_max_floor';
+  const floorMessage = { ...message('streaming', 'body'), id: messageId };
+  const elidedCount = (html) => unitsOf(html).filter((unit) => unit.fp === LIVE_WINDOW_ELIDED_FINGERPRINT || unit.fp === LIVE_WINDOW_NOTE_FINGERPRINT).length;
+
+  assert.equal(elidedCount(renderer.renderThinkingWidget(floorMessage, messageId)), 8, 'frame 1 elides 8 KiB');
+  unitsRef.units = [{ html: 'a'.repeat(20 * 1024), fingerprint: 'fp_single' }];
+  assert.equal(elidedCount(renderer.renderThinkingWidget(floorMessage, messageId)), 0, 'frame 2 cannot elide its only unit');
+  unitsRef.units = makeUnits(20);
+  assert.equal(elidedCount(renderer.renderThinkingWidget(floorMessage, messageId)), 8, 'frame 3 restores the 8 KiB floor');
 });

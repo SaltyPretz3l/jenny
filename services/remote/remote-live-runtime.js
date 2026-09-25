@@ -153,6 +153,7 @@ function createLiveRuntime(options = {}) {
   }
   const signalLeaseChange = () => safe(notify);
   function revokeDeviceLeases(deviceId) {
+    cancelMatching((scope, token) => scope.deviceId === deviceId && !token.boundStreamId);
     if (leases.revokeDevice(deviceId) > 0) signalLeaseChange();
   }
   function markBackpressure(peer) {
@@ -161,17 +162,22 @@ function createLiveRuntime(options = {}) {
     safe(() => peer.close('backpressure'));
   }
   async function sendAuthorized(peer, value, authorized) {
+    const stillAuthorized = () => safe(
+      () => isPluginActive() === true && authorized() === true
+    );
+    if (!stillAuthorized()) return false;
     let sent;
     try {
-      sent = await peer.sendPlaintext(value, { authorized });
+      sent = await peer.sendPlaintext(value, { authorized: stillAuthorized });
     } catch (_error) {
       sent = false;
     }
-    if (sent !== true && authorized()) markBackpressure(peer);
+    if (sent !== true && stillAuthorized()) markBackpressure(peer);
     return sent;
   }
   function eventAuthorization(peer, sessionId, revision) {
-    return () => admitted && grantRevision === revision && peerHasGrant(peer, sessionId);
+    return () => safe(isPluginActive) === true && admitted
+      && grantRevision === revision && peerHasGrant(peer, sessionId);
   }
   function emitProjected(source) {
     try {
@@ -350,7 +356,7 @@ function createLiveRuntime(options = {}) {
         const fenced = contracts.buildError(
           command.request_id, 'not_reachable', 'not_reachable', true,
         );
-        await sendAuthorized(peer, fenced, () => peerAuthority(peer));
+        await peer.sendPlaintext(fenced, { authorized: () => peerAuthority(peer) });
         return;
       }
       let result = await router.handle({ peer, command, isAuthorized });
@@ -439,6 +445,7 @@ function createLiveRuntime(options = {}) {
     return result;
   }
   function takeControl(sessionId) {
+    cancelRemoteSession(sessionId);
     const revoked = leases.revokeSession(sessionId);
     emitLifecycleEvent({
       type: 'control_changed',
@@ -461,12 +468,12 @@ function createLiveRuntime(options = {}) {
     admitted = false;
     grantsSuppressed = true;
     grantRevision += 1;
+    cancelMatching(() => true);
     leases.revokeAll();
     for (const peer of [...peerMap.values()]) {
       peerMap.delete(peer.connectionId);
       safe(() => peer.close(reason));
     }
-    cancelMatching(() => true);
     safe(notify);
     return true;
   }
@@ -474,6 +481,7 @@ function createLiveRuntime(options = {}) {
     if (disposePromise) return disposePromise;
     denyAdmission('remote_disabled');
     disposePromise = Promise.resolve().then(() => {
+      safe(() => unsubscribePluginAuthority?.());
       safe(() => projector.dispose?.());
       safe(() => backendService.off?.('chat-stream', onTerminalStream)
         || backendService.removeListener?.('chat-stream', onTerminalStream));
@@ -545,6 +553,7 @@ function createLiveRuntime(options = {}) {
     snapshotFor: (peer) => snapshotFor(peer),
     currentRevision: () => grantRevision,
     hasGrant,
+    isPluginActive,
     sendAuthorized,
     closePeer,
     revokeDeviceLeases,
@@ -573,6 +582,9 @@ function createLiveRuntime(options = {}) {
     safe(() => buffer.clear());
     throw error;
   }
+  const unsubscribePluginAuthority = isPluginActive.onAuthorityWithdrawn?.(
+    () => cancelMatching((_scope, token) => !token.boundStreamId)
+  );
   const peers = Object.freeze({
     get size() {
       return peerMap.size;

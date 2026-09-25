@@ -5,7 +5,7 @@ const { buildLinkedSessionContext } = require('../services/backend/linked-sessio
 
 function createSessionStore(sessions, messagesBySession = {}) {
   return {
-    getSession(sessionId) {
+    getSessionSummary(sessionId) {
       return sessions[sessionId] || null;
     },
     getSessionMessages(sessionId) {
@@ -16,7 +16,7 @@ function createSessionStore(sessions, messagesBySession = {}) {
 
 test('linked session recall returns null when the active session has no links', () => {
   const store = createSessionStore({
-    active: { id: 'active', linked_session_ids: [] },
+    active: { id: 'active', project_id: 'project_general', linked_session_ids: [] },
   });
   assert.equal(buildLinkedSessionContext(store, 'active', 'plan this', []), null);
 });
@@ -24,8 +24,8 @@ test('linked session recall returns null when the active session has no links', 
 test('linked session recall excludes tool kinds and combines adjacent user assistant turns', () => {
   const store = createSessionStore(
     {
-      active: { id: 'active', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
-      linked: { id: 'linked', title: 'Linked Notes', updated_at: '2026-03-19T09:00:00.000Z' },
+      active: { id: 'active', project_id: 'project_general', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
+      linked: { id: 'linked', project_id: 'project_general', title: 'Linked Notes', updated_at: '2026-03-19T09:00:00.000Z' },
     },
     {
       linked: [
@@ -48,8 +48,8 @@ test('linked session recall excludes tool kinds and combines adjacent user assis
 test('linked session recall indexes interactive question batches and answer recaps', () => {
   const store = createSessionStore(
     {
-      active: { id: 'active', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
-      linked: { id: 'linked', title: 'Interactive Notes', updated_at: '2026-03-19T09:00:00.000Z' },
+      active: { id: 'active', project_id: 'project_general', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
+      linked: { id: 'linked', project_id: 'project_general', title: 'Interactive Notes', updated_at: '2026-03-19T09:00:00.000Z' },
     },
     {
       linked: [
@@ -107,8 +107,8 @@ test('linked session recall indexes interactive question batches and answer reca
 test('linked session recall ranks tied BM25 matches by newer timestamp deterministically', () => {
   const store = createSessionStore(
     {
-      active: { id: 'active', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
-      linked: { id: 'linked', title: 'Ranking', updated_at: '2026-03-19T09:00:00.000Z' },
+      active: { id: 'active', project_id: 'project_general', linked_session_ids: ['linked'], updated_at: '2026-03-19T10:00:00.000Z' },
+      linked: { id: 'linked', project_id: 'project_general', title: 'Ranking', updated_at: '2026-03-19T09:00:00.000Z' },
     },
     {
       linked: [
@@ -129,9 +129,9 @@ test('linked session recall clips long excerpts and caps the formatted block at 
   const longText = 'alpha beta gamma delta '.repeat(40);
   const store = createSessionStore(
     {
-      active: { id: 'active', linked_session_ids: ['linked_a', 'linked_b'], updated_at: '2026-03-19T10:00:00.000Z' },
-      linked_a: { id: 'linked_a', title: 'Long A', updated_at: '2026-03-19T09:00:00.000Z' },
-      linked_b: { id: 'linked_b', title: 'Long B', updated_at: '2026-03-19T08:00:00.000Z' },
+      active: { id: 'active', project_id: 'project_general', linked_session_ids: ['linked_a', 'linked_b'], updated_at: '2026-03-19T10:00:00.000Z' },
+      linked_a: { id: 'linked_a', project_id: 'project_general', title: 'Long A', updated_at: '2026-03-19T09:00:00.000Z' },
+      linked_b: { id: 'linked_b', project_id: 'project_general', title: 'Long B', updated_at: '2026-03-19T08:00:00.000Z' },
     },
     {
       linked_a: [
@@ -149,4 +149,29 @@ test('linked session recall clips long excerpts and caps the formatted block at 
   assert.ok(message);
   assert.ok(message.content.length <= 1200);
   assert.match(message.content, /\.\.\./);
+});
+
+test('linked session recall rejects cross-project and unknown links before transcript reads', () => {
+  const messageReads = [];
+  const store = createSessionStore({
+    active: {
+      id: 'active', project_id: 'project_alpha', linked_session_ids: ['same', 'foreign', 'missing'],
+    },
+    same: { id: 'same', project_id: 'project_alpha', title: 'Same project' },
+    foreign: { id: 'foreign', project_id: 'project_beta', title: 'Foreign project' },
+  }, {
+    same: [{ role: 'assistant', content: 'shared target', timestamp: '2026-09-09T00:00:00.000Z' }],
+    foreign: [{ role: 'assistant', content: 'foreign target', timestamp: '2026-09-09T00:00:00.000Z' }],
+  });
+  const getMessages = store.getSessionMessages;
+  store.getSessionMessages = (sessionId) => {
+    messageReads.push(sessionId);
+    return getMessages(sessionId);
+  };
+
+  const context = buildLinkedSessionContext(store, 'active', 'target', []);
+  assert.match(context.content, /Same project/);
+  assert.doesNotMatch(context.content, /Foreign project|foreign target/);
+  assert.deepEqual(messageReads, ['same']);
+  assert.equal(buildLinkedSessionContext(store, 'unknown', 'target', []), null);
 });

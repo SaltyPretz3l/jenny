@@ -8,6 +8,7 @@
  * / prompt / status / state always; tool_name / tool_display_name only when known
  * — plus an additive `approval_id` so the live Allow/Deny buttons target the exact
  * approval. The `22-approval-pending` corpus scenario enforces presence parity.
+ * A turn sealed by sealTurnRows keeps its gap row as a settled `interrupted` receipt.
  *
  * Pure factory — no module-scope mutable state. It consumes the parent reducer's
  * row/normalization helpers via `deps` and operates on the `turn` passed in.
@@ -100,6 +101,7 @@
       if (initialPolicyScope) payload.policy_scope = initialPolicyScope;
       if (initialPolicyConsequence) payload.policy_consequence = initialPolicyConsequence;
       if (initialReason) payload.reason = initialReason;
+      if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) payload.one_off_only = true;
       const toolName = normalizeId(body.tool_name) || normalizeId(callPayload.tool_name);
       if (toolName) {
         payload.tool_name = toolName;
@@ -244,6 +246,9 @@
       }
       if (reason) {
         gapRow.payload.reason = reason;
+      }
+      if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) {
+        gapRow.payload.one_off_only = true;
       }
       // The plan variant usually arrives on the tool_approval_needed event
       // AFTER the pending tool_use created the gap row — stamp it on sync too

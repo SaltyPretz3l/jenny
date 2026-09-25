@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -78,6 +79,12 @@ def test_sync_shell_high_volume_capture_is_bounded_and_counted(tmp_path: Path) -
         if body.get("exit_code") == 0:
             break
     assert body.get("exit_code") == 0, body
+    assert result.metadata["resource_cleanup"] == {
+        "cleanup": "confirmed",
+        "process_tree_terminated": True,
+        "output_readers_terminated": True,
+        "reason": None,
+    }
 
     counters = body.get("output_counters")
     assert isinstance(counters, dict), body
@@ -379,6 +386,136 @@ def test_windows_bootstrap_preserves_target_contract(
     assert observed["stdin"] == subprocess.DEVNULL
 
 
+def test_windows_bootstrap_delivers_input_to_target_stdin_after_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed: dict[str, object] = {}
+
+    class _TargetProcess:
+        returncode = 19
+
+        def communicate(self, *, input: bytes) -> None:
+            observed["input"] = input
+
+    def _popen(argv: list[str], **kwargs: object) -> _TargetProcess:
+        observed["argv"] = argv
+        observed.update(kwargs)
+        return _TargetProcess()
+
+    monkeypatch.setattr(owned_process_bootstrap_module.subprocess, "Popen", _popen)
+    frame = owned_process_windows_module.encode_windows_bootstrap_payload(
+        ["tool.exe", "--pathspec-from-file=-"],
+        cwd=tmp_path,
+        env=None,
+        input_data=b"alpha.txt\0beta.txt\0",
+    )
+
+    exit_code = owned_process_windows_module.run_windows_owned_process_bootstrap(
+        io.BytesIO(frame)
+    )
+
+    assert exit_code == 19
+    assert observed["stdin"] == subprocess.PIPE
+    assert observed["input"] == b"alpha.txt\0beta.txt\0"
+
+
+@pytest.mark.parametrize("raw_input", [17, "%%%not-base64%%%"])
+def test_windows_bootstrap_rejects_invalid_input_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    raw_input: object,
+) -> None:
+    raw = json.dumps(
+        {
+            "argv": ["tool.exe"],
+            "cwd": str(tmp_path),
+            "env": None,
+            "input_data_b64": raw_input,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    frame = len(raw).to_bytes(4, "big") + raw
+    monkeypatch.setattr(
+        owned_process_bootstrap_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("invalid input must not launch target"),
+    )
+
+    assert (
+        owned_process_windows_module.run_windows_owned_process_bootstrap(
+            io.BytesIO(frame)
+        )
+        == 125
+    )
+
+
+def test_owned_process_input_rejects_invalid_type_and_oversized_envelope(
+    tmp_path: Path,
+) -> None:
+    service = OwnedProcessService(max_active=1, max_queued=0)
+
+    with pytest.raises(TypeError, match="bytes or None"):
+        service.spawn(  # type: ignore[arg-type]
+            [sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            input_data="not-bytes",
+        )
+    with pytest.raises(ValueError, match="payload exceeds"):
+        service.spawn(
+            [sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            input_data=b"x" * (1024 * 1024),
+        )
+
+    assert service.snapshot().active == 0
+
+
+def test_owned_process_input_roundtrip_drains_output_before_target_reads(
+    tmp_path: Path,
+) -> None:
+    input_data = b"alpha.txt\0beta.txt\0"
+    result = OwnedProcessService(max_active=1, max_queued=0).run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.buffer.write(b'x' * (256 * 1024)); "
+                "sys.stdout.buffer.flush(); "
+                "data = sys.stdin.buffer.read(); "
+                "sys.stderr.write(str(len(data)))"
+            ),
+        ],
+        cwd=tmp_path,
+        timeout_seconds=10,
+        input_data=input_data,
+    )
+
+    assert result.returncode == 0
+    assert result.output.stdout_bytes == 256 * 1024
+    assert result.stderr == str(len(input_data))
+    assert result.drain_incomplete is False
+
+
+def test_owned_process_cancellation_unblocks_unread_input(tmp_path: Path) -> None:
+    abort = threading.Event()
+    abort.set()
+    started_at = time.monotonic()
+
+    result = OwnedProcessService(max_active=1, max_queued=0).run(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        cwd=tmp_path,
+        timeout_seconds=10,
+        abort_event=abort,
+        input_data=b"x" * (512 * 1024),
+    )
+
+    assert result.aborted is True
+    assert time.monotonic() - started_at < 5
+    assert result.cleanup_verdict.output_readers_terminated is True
+
+
 def test_windows_bootstrap_preserves_cmd_command_string(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -530,7 +667,7 @@ def test_owned_process_drains_blocking_stdout_and_stderr_concurrently(
     assert service.snapshot().active == 0
 
 
-def test_posix_owned_process_stdin_is_closed_and_service_remains_usable(
+def test_posix_owned_process_stdin_is_closed_but_tree_cleanup_is_unproven(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -541,10 +678,14 @@ def test_posix_owned_process_stdin_is_closed_and_service_remains_usable(
         observed_stdin.append(kwargs.get("stdin"))
         return real_popen(argv, **kwargs)
 
+    def _killpg(_process_group_id: int, signal_number: int) -> None:
+        if signal_number == 0:
+            raise ProcessLookupError
+
     monkeypatch.setattr(
         owned_process_module,
         "os",
-        SimpleNamespace(name="posix"),
+        SimpleNamespace(name="posix", killpg=_killpg),
     )
     monkeypatch.setattr(owned_process_module.subprocess, "Popen", _popen)
     service = OwnedProcessService(max_active=1, max_queued=0)
@@ -558,18 +699,53 @@ def test_posix_owned_process_stdin_is_closed_and_service_remains_usable(
         cwd=tmp_path,
         timeout_seconds=5,
     )
-    followup_result = service.run(
-        [sys.executable, "-c", "print('ready')"],
-        cwd=tmp_path,
-        timeout_seconds=5,
-    )
-
     assert eof_result.returncode == 0
     assert eof_result.stdout.strip() == "0"
-    assert followup_result.returncode == 0
-    assert followup_result.stdout.strip() == "ready"
-    assert observed_stdin == [subprocess.DEVNULL, subprocess.DEVNULL]
-    assert service.snapshot().active == 0
+    assert eof_result.cleanup_verdict.cleanup == "uncertain"
+    assert eof_result.cleanup_verdict.process_tree_terminated is False
+    assert observed_stdin == [subprocess.DEVNULL]
+    assert service.snapshot().active == 1
+    with pytest.raises(OwnedProcessCapacityError):
+        service.run(
+            [sys.executable, "-c", "print('ready')"],
+            cwd=tmp_path,
+            timeout_seconds=5,
+        )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX descendant escape regression")
+def test_posix_detached_child_prevents_full_tree_cleanup_proof(tmp_path: Path) -> None:
+    pid_file = tmp_path / "detached-child.pid"
+    parent = tmp_path / "spawn-detached.py"
+    parent.write_text(
+        "import pathlib, subprocess, sys\n"
+        "child = subprocess.Popen(\n"
+        "    [sys.executable, '-c', 'import time; time.sleep(60)'],\n"
+        "    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+        "    stderr=subprocess.DEVNULL, start_new_session=True,\n"
+        ")\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='ascii')\n",
+        encoding="utf-8",
+    )
+    child_pid = 0
+    try:
+        result = OwnedProcessService(max_active=1, max_queued=0).run(
+            [sys.executable, str(parent), str(pid_file)],
+            cwd=tmp_path,
+            timeout_seconds=10,
+        )
+        child_pid = int(pid_file.read_text(encoding="ascii"))
+
+        assert child_pid > 0
+        os.kill(child_pid, 0)
+        assert result.cleanup_verdict.cleanup == "uncertain"
+        assert result.cleanup_verdict.process_tree_terminated is False
+    finally:
+        if child_pid > 0:
+            try:
+                os.kill(child_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
 
 def test_git_adapter_routes_through_owned_process_service(
@@ -598,7 +774,11 @@ def test_git_adapter_routes_through_owned_process_service(
     output = git_ops_module._run_git(["status"], cwd=tmp_path)  # noqa: SLF001
 
     assert output == "owned-output"
-    assert captured["argv"][:3] == ["git", "--no-pager", "--no-optional-locks"]
+    argv = captured["argv"]
+    assert argv[0] == "git"
+    # Repository-configured commands are neutralized with -c overrides before the verb.
+    assert argv[1] == "-c"
+    assert argv[-3:] == ["--no-pager", "--no-optional-locks", "status"]
     assert captured["cwd"] == tmp_path
     assert captured["timeout_seconds"] == git_ops_module.GIT_TIMEOUT_SECONDS
 

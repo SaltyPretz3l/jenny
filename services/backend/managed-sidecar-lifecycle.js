@@ -166,6 +166,15 @@ async function initializeManagedSidecar(
     }
     service._desktopPolicyProcess = initializingProcess;
   }
+  if (!signal?.aborted && service.sidecarManager.process === initializingProcess) {
+    const recovered = await service.sessionRuntime?.reconcileMutationPreparations?.();
+    if (recovered?.interrupted || recovered?.confirmed || recovered?.blocked) {
+      service._emitServiceLog('INFO', 'session_runtime.mutation_preparation_recovery', recovered);
+    }
+    void service.sessionRuntime?.recoverPausedCancellations?.().then(result => {
+      if (result.requested) service._emitServiceLog('INFO', 'session_runtime.paused_cancellation_recovery', result);
+    }).catch(() => service._emitServiceLog('ERROR', 'session_runtime.paused_cancellation_recovery_failed', {}));
+  }
   return applyResult ? applyManagedInitializePayload(service, payload) : payload;
 }
 
@@ -269,9 +278,6 @@ function applyManagedInitializePayload(service, payload = {}) {
     mcp_server_cooldowns: payload.mcp_server_cooldowns,
     schema_versions: payload.schema_versions,
   });
-  if (typeof service._normalizeManagedReasoningEfforts === 'function') {
-    service._normalizeManagedReasoningEfforts();
-  }
   return payload;
 }
 
@@ -315,6 +321,14 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
   absoluteTimeoutMs = null,
 } = {}) {
   if (!service.sidecarClient || !service.sidecarManager.process) {
+    return null;
+  }
+  if (String(reason).startsWith('workspace_root_') && service.activeStreams?.size > 0) {
+    service._emitServiceLog('INFO', 'sidecar.config_refresh_deferred', {
+      reason,
+      activeStreams: service.activeStreams.size,
+      scope: 'request_execution_context',
+    });
     return null;
   }
   service._emitServiceLog('INFO', 'sidecar.config_refresh_requested', { reason });

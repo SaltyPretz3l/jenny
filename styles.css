@@ -24,6 +24,8 @@
 @import url("./styles/sidebar.css");
 @import url("./styles/view-panel.css");
 @import url("./styles/chats-panel.css");
+@import url("./styles/attention-inbox.css");
+@import url("./styles/away-digest.css");
 @import url("./styles/chats-panel-selection.css");
 @import url("./styles/chats-panel-collapsed.css");
 @import url("./styles/toast.css");

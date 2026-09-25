@@ -1,4 +1,5 @@
 'use strict';
+const { projectDecisionPause } = require('../../backend/runtime-decision-control');
 
 const crypto = require('node:crypto');
 
@@ -171,6 +172,7 @@ module.exports = {
     let settleWaiter;
     const waiter = new Promise((resolve) => { settleWaiter = resolve; });
     let settled = false;
+    let detachDecision;
     const abortSignal = context.abortSignal;
     // This wait blocks the tool loop on a human answer, which the sidecar
     // credits against its own turn deadline (see
@@ -188,6 +190,7 @@ module.exports = {
     const finish = (payload = {}) => {
       if (settled) return;
       settled = true;
+      detachDecision?.();
       abortSignal?.removeEventListener?.('abort', handleAbort);
       service.pendingUserQuestions.delete(questionRef);
       resumeRpcTimeout?.();
@@ -202,6 +205,7 @@ module.exports = {
       callId,
       toolName: 'ask_user',
       questions,
+      requireExactRef: Boolean(context.runtimeDecisionControl && context.runtimeDecision),
       resolve: finish,
     });
     if (abortSignal?.aborted) {
@@ -210,11 +214,27 @@ module.exports = {
       abortSignal?.addEventListener?.('abort', handleAbort, { once: true });
     }
 
+    if (!settled && context.runtimeDecision) {
+      try {
+        const decision = context.runtimeDecision;
+        if (decision.kind !== 'user_questions' || decision.call_id !== callId
+          || decision.execution_started !== true || !context.runtimeDecisionControl) {
+          throw new Error('runtime_question_decision_invalid');
+        }
+        detachDecision = context.runtimeDecisionControl.offer(decision, pause => {
+          if (settled || abortSignal?.aborted
+            || service.pendingUserQuestions.get(questionRef)?.resolve !== finish) return false;
+          finish(pause);
+          return true;
+        });
+      } catch (_error) { finish({ failed: true }); }
+    }
     if (!settled) {
       try {
         service.emit('chat-stream', {
           type: 'user_questions_requested',
           streamId,
+          turnId: String(context.logicalTurnId || streamId).trim(),
           sessionId,
           model: service.currentModel,
           callId,
@@ -234,6 +254,7 @@ module.exports = {
     }
 
     const resolution = await waiter;
+    if (projectDecisionPause(resolution)) throw resolution;
     if (resolution.declined === true) {
       return {
         content: 'The user declined to answer.',

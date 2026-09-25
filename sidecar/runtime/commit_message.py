@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TypedDict
+from typing import Any, Callable, TypedDict
 
 from sidecar.ai.container import BrainContainer
+from sidecar.ai.engines.admitted import InferenceAdmissionError, InferenceAttemptContext
 from sidecar.ai.feature_flags import FEATURE_PROMPT_CACHE, is_feature_flag_enabled
 from sidecar.ai.routing.retry import (
     QUERY_SOURCE_BACKGROUND_CLASSIFIER,
@@ -138,17 +139,21 @@ def generate_commit_message(
     brain_container: BrainContainer,
     diff: str,
     logger: logging.Logger,
+    *,
+    request_id: str | None = None,
+    inference_admission: Callable[[InferenceAttemptContext], Any] | None = None,
 ) -> str:
     """Generate a single Conventional Commit message from the staged diff.
 
-    Returns the trimmed message string, or an empty string on any failure
-    (no diff, no brain stack, engine error). Never raises — all errors are
-    caught and logged.
+    Returns the trimmed message string, or an empty string on provider failure
+    (no diff, no brain stack, engine error). Typed application admission
+    failures propagate to the RPC boundary.
     """
     normalized_diff = str(diff or "").strip()
     if not normalized_diff:
         return ""
-    if brain_container.stack is None:
+    stack = brain_container.stack
+    if stack is None:
         log_event(
             logger,
             logging.WARNING,
@@ -160,13 +165,13 @@ def generate_commit_message(
 
     user_message = _build_user_message(normalized_diff)
     prompt_cache_enabled = is_feature_flag_enabled(
-        brain_container.stack.config.feature_flags or {},
+        stack.config.feature_flags or {},
         FEATURE_PROMPT_CACHE,
     )
 
     try:
         raw = execute_with_provider_retry(
-            operation=lambda context: brain_container.stack.engine.generate(
+            operation=lambda context: stack.engine.generate(
                 prompt=user_message,
                 max_tokens=context.max_tokens,
                 temperature=_TEMPERATURE,
@@ -183,11 +188,15 @@ def generate_commit_message(
             component="runtime.commit_message",
             event_prefix="runtime.commit_message.retry",
             request_source=QUERY_SOURCE_BACKGROUND_CLASSIFIER,
-            provider=brain_container.stack.config.engine_type,
-            model=brain_container.stack.config.model,
+            provider=stack.config.engine_type,
+            model=stack.config.model,
             initial_max_tokens=_MAX_TOKENS,
-            feature_flags=brain_container.stack.config.feature_flags,
+            feature_flags=stack.config.feature_flags,
+            request_id=request_id,
+            inference_admission=inference_admission,
         )
+    except InferenceAdmissionError:
+        raise
     except Exception:
         log_event(
             logger,

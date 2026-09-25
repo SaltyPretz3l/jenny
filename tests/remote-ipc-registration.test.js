@@ -30,7 +30,9 @@ function createIpcMain() {
   };
 }
 
-function createHarness({ secureStore = {}, lifecycle = {}, facadeOverrides = {} } = {}) {
+function createHarness({
+  secureStore = {}, lifecycle = {}, facadeOverrides = {}, powerMonitor = null,
+} = {}) {
   const ipcMain = createIpcMain();
   const calls = [];
   const bridgeEvents = [];
@@ -74,11 +76,13 @@ function createHarness({ secureStore = {}, lifecycle = {}, facadeOverrides = {} 
     shellConfigService: {},
     env: {},
     mainLifecycle: lifecycle,
+    powerMonitor,
     getMainWindow: () => null,
     sendBridgeEvent: (...args) => bridgeEvents.push(args),
     log: (...args) => logs.push(args),
     createWiring(deps) {
       wiringState.pluginSource = deps.pluginStateSource;
+      wiringState.powerMonitor = deps.powerMonitor;
       return { facade, dispose: async () => { wiringState.disposed += 1; } };
     },
   });
@@ -111,6 +115,14 @@ test('registers every invoke, routes exact payloads, and removes them on idempot
   assert.equal(fix.ipcMain.removed.length, 10);
   assert.equal(fix.wiringState.unsubscribed, 1);
   assert.equal(fix.wiringState.disposed, 1);
+});
+
+test('passes the injected power monitor to remote runtime wiring', async () => {
+  const powerMonitor = {};
+  const fix = createHarness({ powerMonitor });
+  assert.equal(fix.wiringState.pluginSource != null, true);
+  assert.equal(fix.wiringState.powerMonitor, powerMonitor);
+  await fix.registration.teardown();
 });
 
 test('rejects every malformed payload without calling the facade', async () => {

@@ -373,21 +373,21 @@
    */
   function getStatusLabel(status) {
     switch (status) {
-      case 'requested': return 'Requested';
+      case 'requested': return jt('chat.toolCall.requested', 'Requested');
       case 'awaiting_approval':
       case 'pending_approval': return jt('chat.toolCall.awaitingApproval', 'Awaiting approval');
-      case 'approved': return 'Approved';
-      case 'running': return 'Running';
-      case 'completed': return 'Success';
+      case 'approved': return jt('chat.toolCall.approved', 'Approved');
+      case 'running': return jt('chat.toolCall.running', 'Running');
+      case 'completed': return jt('chat.toolCall.success', 'Success');
       case 'errored':
-      case 'error': return 'Error';
-      case 'denied': return 'Denied';
-      case 'blocked': return 'Blocked';
+      case 'error': return jt('chat.toolCall.error', 'Error');
+      case 'denied': return jt('chat.toolCall.denied', 'Denied');
+      case 'blocked': return jt('chat.toolCall.blocked', 'Blocked');
       case 'timed_out': return jt('chat.toolCall.timedOut', 'Timed out');
-      case 'cancelled': return 'Cancelled';
+      case 'cancelled': return jt('chat.toolCall.cancelled', 'Cancelled');
       case 'abandoned': return jt('chat.toolCall.noResult', 'No result');
-      case 'interrupted': return 'Interrupted';
-      default: return status || 'Unknown';
+      case 'interrupted': return jt('chat.toolCall.interrupted', 'Interrupted');
+      default: return status || jt('chat.toolCall.unknown', 'Unknown');
     }
   }
 
@@ -433,6 +433,11 @@
     if (r.isError !== true) return '';
     if (classifyToolResultOutcome({ error_code: r.errorCode, is_error: true, status: r.status }) !== 'failure') {
       return '';
+    }
+    if (r.errorCode === 'CMP-TOOL-0047') {
+      return /^The PDF reading add-on is installed/u.test(String(r.outputText || '').trim())
+        ? jt('chat.toolCall.pdfAddonLoadFailed', 'PDF reading add-on could not be loaded')
+        : jt('chat.toolCall.pdfAddonMissing', 'PDF reading add-on not installed');
     }
     const firstOutputLine = String(r.outputText || '').split(/\r?\n/u)
       .map((line) => line.trim()).find(Boolean) || '';

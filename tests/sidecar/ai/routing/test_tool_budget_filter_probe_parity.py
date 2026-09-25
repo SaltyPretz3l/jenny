@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from sidecar.ai.config_models import ToolPolicySnapshot
 from sidecar.ai.context import token_budget as token_budget_module
 from sidecar.ai.context.compaction import CompactionResult
 from sidecar.ai.context.token_budget import (
@@ -30,6 +31,7 @@ from sidecar.ai.tools.assembly import AssembledToolContract, AssembledToolEntry
 from sidecar.ai.tools.catalog import CanonicalToolAvailability, CanonicalToolDescriptor
 from sidecar.ai.tools.tool_search import ToolResolutionContext
 from sidecar.runtime.chat_models import ChatRequestContext
+from sidecar.runtime.execution_context import ExecutionContext
 
 
 class _Config:
@@ -44,7 +46,9 @@ class _Config:
     context_length = 32_768
     max_tokens = 8_192
     token_budget_reserved_for_summary = None
-    token_budget_tool_overhead = None
+    # Pinned to the flat reserve these probes were calibrated against; the
+    # measured per-request reserve is covered in test_token_budget_tool_reserve.py.
+    token_budget_tool_overhead = 500
     token_budget_warning_ratio = None
     token_budget_auto_compact_ratio = None
     token_budget_auto_compact_ratio_by_model = None
@@ -570,3 +574,51 @@ def test_compaction_terminal_is_preserved_at_physical_limit() -> None:
 
     assert result.terminal_decision is not None
     assert result.terminal_decision.terminal_error_code == "CMP-CTX-0002"
+
+
+def _execution_context(root_path: str | None):
+    return ExecutionContext(
+        schema_version=1, authority_revision="revision", project_id="project_probe",
+        root_path=root_path, root_id="root" if root_path else None,
+        root_revision=1 if root_path else 0, device_id=None, inode=None,
+        tool_policy_snapshot=ToolPolicySnapshot(), knowledge_roots=(),
+    )
+
+
+class _RecordingContextBuilder(_ContextBuilder):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def build_system_prompt(self, prompt: str, **kwargs: Any) -> str:
+        self.calls.append(dict(kwargs))
+        return prompt
+
+
+@pytest.mark.parametrize("root_path", [None, "C:/bound/project"])
+def test_prompt_for_statuses_forwards_request_authority_root(root_path: str | None) -> None:
+    """An unbound request (root None) must reach the builder as ``None``, not be omitted."""
+    kernel = _FilterKernel()
+    builder = _RecordingContextBuilder()
+    kernel._context_builder = builder
+    context = _filter_input(kernel)
+    context = replace(
+        context,
+        request_context=replace(
+            context.request_context, execution_context=_execution_context(root_path)
+        ),
+    )
+
+    tool_budget_filter_module.build_system_prompt_for_statuses(context, ())
+
+    assert builder.calls and "request_workspace_root" in builder.calls[-1]
+    assert builder.calls[-1]["request_workspace_root"] == root_path
+
+
+def test_prompt_for_statuses_without_execution_context_keeps_builder_root() -> None:
+    kernel = _FilterKernel()
+    builder = _RecordingContextBuilder()
+    kernel._context_builder = builder
+
+    tool_budget_filter_module.build_system_prompt_for_statuses(_filter_input(kernel), ())
+
+    assert builder.calls and "request_workspace_root" not in builder.calls[-1]

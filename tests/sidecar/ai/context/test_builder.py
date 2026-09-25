@@ -9,6 +9,8 @@ import pytest
 from sidecar.ai.context.builder import (
     ContextBuilder,
     LearnedLesson,
+    REASONING_STATUS_MAX_WORDS,
+    REASONING_STATUS_MIN_WORDS,
     RecalledMemory,
     RuntimeToolStatus,
 )
@@ -799,6 +801,54 @@ def test_context_builder_places_reasoning_status_block_between_skills_and_lesson
     assert "\u27e8STATUS: 3-5 word summary\u27e9" in prompt
 
 
+def test_context_builder_reasoning_status_v2_unifies_word_bounds(tmp_path) -> None:
+    from sidecar.runtime.reasoning_status import (
+        REASONING_STATUS_MAX_WORDS as EXTRACTOR_MAX_WORDS,
+        REASONING_STATUS_MIN_WORDS as EXTRACTOR_MIN_WORDS,
+    )
+
+    prompt = ContextBuilder(tmp_path).build_system_prompt(
+        "Base system prompt.",
+        include_reasoning_status_markers=True,
+        reasoning_status_v2=True,
+    )
+
+    assert REASONING_STATUS_MIN_WORDS == EXTRACTOR_MIN_WORDS == 2
+    assert REASONING_STATUS_MAX_WORDS == EXTRACTOR_MAX_WORDS == 6
+    assert "\u27e8STATUS: 2-6 word summary\u27e9" in prompt
+    assert "start each genuinely new logical phase" in prompt
+    assert "between 2 and 6 words" in prompt
+    assert "3-5 word summary" not in prompt
+
+
+def test_context_builder_reasoning_status_v2_flag_off_preserves_legacy_block(tmp_path) -> None:
+    prompt = ContextBuilder(tmp_path).build_system_prompt(
+        "Base system prompt.",
+        include_reasoning_status_markers=True,
+        reasoning_status_v2=False,
+    )
+
+    expected = (
+        "## Reasoning Status Markers\n"
+        "When using your internal thinking/reasoning process, signal each new logical "
+        "phase with a status marker on its own line:\n\n"
+        "\u27e8STATUS: 3-5 word summary\u27e9\n\n"
+        "IMPORTANT: These markers belong ONLY in your internal thinking output. "
+        "Never include \u27e8STATUS:\u27e9 markers in your visible response to the user.\n\n"
+        "Examples (for your thinking blocks only):\n\n"
+        "\u27e8STATUS: Analyzing user constraints\u27e9\n"
+        "\u27e8STATUS: Comparing implementation options\u27e9\n"
+        "\u27e8STATUS: Drafting final response\u27e9\n\n"
+        "Constraints:\n"
+        "- Use exactly the characters \u27e8 (U+27E8) and \u27e9 (U+27E9) as delimiters\n"
+        "- Keep the summary between 2 and 6 words with no terminal punctuation\n"
+        "- One marker per logical phase - do not over-annotate\n"
+        "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
+        "- If unsure whether to add a marker, omit it\n\n"
+    )
+    assert str(prompt).removeprefix("Base system prompt.\n\n") == expected
+
+
 def test_context_builder_guides_source_requests_to_filesystem_tools(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
@@ -832,7 +882,8 @@ def test_context_builder_guides_source_requests_to_filesystem_tools(tmp_path) ->
     )
 
     assert "## Workspace Source Access" in prompt
-    assert "configured workspace is the Jenny source repository" in prompt
+    assert "The workspace bound to this request is the `workspace` folder." in prompt
+    assert "Jenny source repository" not in prompt
     assert "`read_file`, `grep_search`, `glob_files`, and `list_dir`" in prompt
     assert "`jenny_status` is only for runtime capability diagnostics" in prompt
     assert "do not claim you lack access to source files" in prompt

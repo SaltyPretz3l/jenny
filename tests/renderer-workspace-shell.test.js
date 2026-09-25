@@ -87,7 +87,7 @@ test('workspace rail stays visible while split artifact review is open in chat',
   const doc = window.document;
   const rail = doc.getElementById('workspaceRailShell');
   const workspace = doc.getElementById('workspace');
-  const sidebar = doc.querySelector('.sidebar');
+  const sidebar = doc.getElementById('viewPanel');
   const sidebarResizer = doc.getElementById('sidebarResizer');
   const splitToggle = doc.getElementById('artifactSplitViewToggle');
 

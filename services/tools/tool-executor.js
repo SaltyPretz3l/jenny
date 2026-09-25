@@ -11,20 +11,11 @@ const {
 } = require('./tool-policy-evaluator');
 const { NEVER_PERSIST_ALWAYS_ALLOW } = require('./tool-permission-store');
 const { TOOL_ERROR_CODES } = require('../backend/error-codes');
+const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
+const { executeResolvedTool } = require('./tool-execution-dispatch');
+const { PLAN_DECISIONS } = require('./builtin/exit-plan-mode-tool');
 
 const APPROVAL_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
-const CMP_ERROR_CODE_PATTERN = /^CMP-[A-Z-]+-\d{4}$/;
-
-function normalizeToolErrorCode(error, fallback = TOOL_ERROR_CODES.EXECUTION_FAILED) {
-  const candidate = String(
-    error?.errorCode
-    || error?.error_code
-    || error?.code
-    || ''
-  ).trim();
-  return CMP_ERROR_CODE_PATTERN.test(candidate) ? candidate : fallback;
-}
-
 class ToolExecutor {
   constructor({
     registry,
@@ -75,6 +66,7 @@ class ToolExecutor {
   }
 
   async execute(call, context) {
+    context = this._bindExecutionContext(context);
     const { callId, toolName, input } = call;
     const preflight = this._preflightTool(call, context, { preApproved: false });
     if (!preflight.tool) {
@@ -112,7 +104,9 @@ class ToolExecutor {
       approvalState = 'auto';
     } else {
       this._logger('INFO', 'tool.approval_requested', { callId, toolName, streamId: context.streamId });
-      const approvalResolution = await this._waitForApproval(callId, toolName, context.streamId, input);
+      const approvalResolution = await this._waitForApproval(
+        callId, toolName, context.streamId, input, context
+      );
       if (approvalResolution && typeof approvalResolution === 'object') {
         approvalState = String(approvalResolution.state || 'approved');
         resolvedContext = {
@@ -122,6 +116,16 @@ class ToolExecutor {
         };
       } else {
         approvalState = approvalResolution;
+      }
+    }
+
+    if (Object.hasOwn(resolvedContext, 'executionAuthority')) {
+      try {
+        const trustedExecution = getTrustedExecutionBinding(resolvedContext.executionAuthority);
+        if (!trustedExecution) throw new Error('Execution authority is unavailable.');
+        trustedExecution.assertCurrent();
+      } catch (_error) {
+        approvalState = 'cancelled';
       }
     }
 
@@ -182,6 +186,7 @@ class ToolExecutor {
   }
 
   async executePreApproved(call, context) {
+    context = this._bindExecutionContext(context);
     const { callId, toolName } = call;
     const preflight = this._preflightTool(call, context, { preApproved: true });
     if (!preflight.tool) {
@@ -232,9 +237,30 @@ class ToolExecutor {
     if (!pending) {
       return false;
     }
+    try {
+      pending.trustedExecution?.assertCurrent();
+    } catch (_error) {
+      clearTimeout(pending.timer);
+      this._removePending(callId, pending.streamId);
+      pending.resolve('cancelled');
+      return false;
+    }
 
     clearTimeout(pending.timer);
     this._removePending(callId, pending.streamId);
+
+    const requestedDecision = String(options.decision || 'approved').trim();
+    if (!PLAN_DECISIONS.includes(requestedDecision)) {
+      // Fail closed: an unrecognized decision denies instead of executing.
+      this._logger('WARN', 'tool.unknown_decision_denied', {
+        callId,
+        toolName: pending.toolName,
+        decision: requestedDecision.slice(0, 40),
+      });
+      pending.resolve('denied');
+      return true;
+    }
+    const decision = requestedDecision;
 
     this._logger('INFO', 'tool.approved', {
       callId,
@@ -242,10 +268,6 @@ class ToolExecutor {
       alwaysAllow: !!options.alwaysAllow,
     });
 
-    const requestedDecision = String(options.decision || 'approved').trim();
-    const decision = ['approved', 'approved_auto', 'rejected'].includes(requestedDecision)
-      ? requestedDecision
-      : 'approved';
     pending.resolve({
       state: 'approved',
       decision,
@@ -254,8 +276,13 @@ class ToolExecutor {
 
     if (options.alwaysAllow && !NEVER_PERSIST_ALWAYS_ALLOW.has(pending.toolName)) {
       try {
+        pending.trustedExecution?.assertCurrent();
         const store = this._permissionStore;
-        (store.grantAlwaysAllow || ((name) => store.setPolicy(name, 'auto'))).call(store, pending.toolName, pending.toolInput);
+        (store.grantAlwaysAllow || ((name, _input, authority) => (
+          store.setPolicy(name, 'auto', authority)
+        ))).call(
+          store, pending.toolName, pending.toolInput, pending.trustedExecution?.authority
+        );
       } catch (error) {
         this._logger('WARN', 'tool.always_allow_persist_failed', {
           callId,
@@ -306,6 +333,7 @@ class ToolExecutor {
   }
 
   getToolPolicy(toolName, input = {}, context = {}) {
+    context = this._bindExecutionContext(context);
     const tool = this.registry.getTool(toolName);
     if (tool) {
       return this._evaluateToolPolicy(tool, input, context).decision;
@@ -331,6 +359,12 @@ class ToolExecutor {
       streamId: context.streamId,
       ...(preApproved ? { preApproved: true } : {}),
     });
+
+    if (context.authorityInvalid === true) {
+      return this._errorResult(callId, toolName,
+        `Tool "${toolName}" is disabled: execution authority is invalid.`, startTime,
+        { errorCode: TOOL_ERROR_CODES.DISABLED });
+    }
 
     const tool = this.registry.getTool(toolName);
     if (!tool) {
@@ -384,14 +418,22 @@ class ToolExecutor {
     return { startTime, tool };
   }
 
-  _waitForApproval(callId, toolName, streamId, toolInput) {
+  _waitForApproval(callId, toolName, streamId, toolInput, context = {}) {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this._removePending(callId, streamId);
         resolve('expired');
       }, this._approvalExpiryMs);
 
-      this._pendingApprovals.set(callId, { callId, toolName, streamId, toolInput, resolve, timer });
+      this._pendingApprovals.set(callId, {
+        callId,
+        toolName,
+        streamId,
+        toolInput,
+        resolve,
+        timer,
+        trustedExecution: getTrustedExecutionBinding(context.executionAuthority),
+      });
 
       if (!this._streamApprovals.has(streamId)) {
         this._streamApprovals.set(streamId, new Set());
@@ -411,88 +453,13 @@ class ToolExecutor {
     }
   }
 
-  async _executeResolvedTool(call, context, {
-    approvalState,
-    policyDecision = null,
-    startTime,
-    tool,
-  }) {
-    const { callId, toolName, input } = call;
-
-    this._logger('DEBUG', 'tool.execution_started', { callId, toolName });
-
-    const executionContext = {
-      ...context,
-      callId,
-      pathPolicy: this._pathPolicy,
-      artifactService: this._artifactService,
-      worktreeService: this._worktreeService,
-      automationService: this._automationService,
-      workspacePresentationService: this._workspacePresentationService,
-      browserSessionService: this._browserSessionService,
-      workspaceTestRunnerService: this._workspaceTestRunnerService,
-      homeAssistantService: this._homeAssistantService(),
-      configService: this._configService,
-      refreshManagedConfig: this._refreshManagedConfig,
-      logger: this._logger,
-    };
-
-    try {
-      const result = await tool.execute(input, executionContext);
-      const durationMs = Date.now() - startTime;
-      const isError = result.isError || false;
-      const errorCode = isError ? normalizeToolErrorCode(result) : '';
-      this._logger('DEBUG', 'tool.execution_completed', {
-        callId,
-        toolName,
-        durationMs,
-        isError,
-        errorCode,
-      });
-      return {
-        callId,
-        toolName,
-        content: result.content,
-        summary: result.summary || tool.summarize(input),
-        isError,
-        approvalState,
-        durationMs,
-        metadata: this._mergePolicyDecisionMetadata(result.metadata, policyDecision),
-        ...(toolName === 'preview_test' && tool.category === 'builtin' && input?.screenshot === true && !isError
-          ? { previewImage: result.previewImage } : {}),
-        errorCode,
-      };
-    } catch (error) {
-      const durationMs = Date.now() - startTime;
-      const errorCode = normalizeToolErrorCode(error);
-      const errorMessage = String(error && error.message || error || 'Unknown error');
-
-      this._logger('ERROR', 'tool.execution_failed', {
-        callId,
-        toolName,
-        durationMs,
-        error: errorMessage,
-        errorCode,
-      });
-
-      return {
-        callId,
-        toolName,
-        content: `Error executing "${toolName}": ${errorMessage}`,
-        summary: `${toolName} failed`,
-        isError: true,
-        approvalState,
-        durationMs,
-        metadata: this._mergePolicyDecisionMetadata({}, policyDecision),
-        errorCode,
-      };
-    }
+  _executeResolvedTool(call, context, options) {
+    return executeResolvedTool(this, call, context, options);
   }
-
   _evaluateToolPolicy(tool, input, context = {}) {
     const descriptor = this._toolPolicyDescriptor(tool);
     const mode = this._policyMode(context);
-    const snapshot = this._policySnapshot(tool.name);
+    const snapshot = this._policySnapshot(tool.name, context);
     const args = input && typeof input === 'object' ? input : {};
     const decision = evaluatePolicy({ descriptor, args, mode, snapshot: snapshot ?? {} });
     // Unreadable permission store (snapshot === null): never auto-run on built-in defaults alone.
@@ -525,10 +492,13 @@ class ToolExecutor {
     ).trim();
   }
 
-  _policySnapshot(toolName) {
+  _policySnapshot(toolName, context = {}) {
     try {
       if (this._permissionStore && typeof this._permissionStore.getSnapshot === 'function') {
-        return this._permissionStore.getSnapshot();
+        const trustedExecution = getTrustedExecutionBinding(context.executionAuthority);
+        return trustedExecution
+          ? this._permissionStore.getSnapshot(trustedExecution.authority)
+          : this._permissionStore.getSnapshot();
       }
       if (this._permissionStore && typeof this._permissionStore.getAllPolicies === 'function') {
         return this._permissionStore.getAllPolicies();
@@ -557,6 +527,18 @@ class ToolExecutor {
       });
     }
     return 'ask';
+  }
+
+  _bindExecutionContext(context) {
+    const source = context && typeof context === 'object' && !Array.isArray(context) ? context : {};
+    if (!Object.hasOwn(source, 'executionAuthority')) return source;
+    const trustedExecution = getTrustedExecutionBinding(source.executionAuthority);
+    if (!trustedExecution) return { ...source, workingDirectory: '', authorityInvalid: true };
+    return {
+      ...source,
+      workingDirectory: trustedExecution.authority.root_path || '',
+      projectAuthority: trustedExecution.authority,
+    };
   }
 
   _policyDecisionMetadata(policyDecision) {

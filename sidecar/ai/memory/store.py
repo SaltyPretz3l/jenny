@@ -19,6 +19,7 @@ from sidecar.ai.error_codes import (
     CMP_MEMORY_ROW_QUARANTINED,
 )
 from sidecar.ai.memory.contracts import (
+    GENERAL_PROJECT_ID,
     MAX_QUARANTINE_PAYLOAD_CHARS,
     MAX_QUARANTINE_ROWS,
 )
@@ -40,6 +41,7 @@ from sidecar.ai.memory.store_shared import (
     MEMORY_RETENTION_MAX_DB_BYTES,
     MEMORY_RETENTION_MAX_ROWS_PER_TABLE,
     _locked,
+    _project_scope,
     _transaction,
 )
 from sidecar.ai.memory.store_shared import (
@@ -438,16 +440,31 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
             logger.warning("%s memory_reclamation_failed", CMP_MEMORY_FAILED)
 
     @_locked
-    def status_snapshot(self) -> dict[str, object]:
+    def status_snapshot(
+        self,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
+    ) -> dict[str, object]:
+        scope = _project_scope(project_id)
         counts = {}
+        # Management lists every project, so its totals must span every
+        # project too; recall and capture keep the per-project scope.
         for table, key in (
             ("memories", "approved"),
             ("pending_memory_candidates", "pending"),
             ("memory_suppressions", "suppressions"),
-            ("memory_quarantine", "quarantined"),
         ):
-            row = self._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            row = self._connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+                if all_projects
+                else f"SELECT COUNT(*) FROM {table} WHERE project_id = ?",
+                () if all_projects else (scope,),
+            ).fetchone()
             counts[key] = int(row[0] if row else 0)
+        quarantine_row = self._connection.execute(
+            "SELECT COUNT(*) FROM memory_quarantine"
+        ).fetchone()
         physical_bytes = self._database_physical_bytes()
         return {
             "available": True,
@@ -455,6 +472,12 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
             "recall_index": "fts5" if self._recall_index_available else "bounded_scan",
             "recall_partial": bool(self._last_recall_partial),
             "counts": counts,
+            "counts_scope": "all" if all_projects else "project",
+            "project_id": scope,
+            "operational_counts": {
+                "scope": "profile",
+                "quarantined": int(quarantine_row[0] if quarantine_row else 0),
+            },
             "storage": {
                 "physical_bytes": physical_bytes,
                 "capacity_bytes": MEMORY_RETENTION_MAX_DB_BYTES,
@@ -465,6 +488,7 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
                 ),
             },
             "maintenance": {
+                "scope": "profile",
                 "pending_mutations": self._successful_mutations,
                 "seconds_since_last_run": round(
                     max(time.monotonic() - self._last_maintenance_monotonic, 0.0),
@@ -474,12 +498,18 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
         }
 
     @_locked
-    def is_memory_suppressed(self, content_fingerprint: str) -> bool:
+    def is_memory_suppressed(
+        self,
+        content_fingerprint: str,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+    ) -> bool:
+        scope = _project_scope(project_id)
         row = self._connection.execute(
             """
             SELECT 1 FROM memory_suppressions
-            WHERE content_fingerprint = ? LIMIT 1
+            WHERE project_id = ? AND content_fingerprint = ? LIMIT 1
             """,
-            (str(content_fingerprint or "").strip().lower(),),
+            (scope, str(content_fingerprint or "").strip().lower()),
         ).fetchone()
         return bool(row)

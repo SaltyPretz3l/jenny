@@ -63,3 +63,22 @@ test('refresh queued behind promotion maps stale valid IDs and retains newer nav
   await Promise.all([promotion, navigation, refresh]);
   assert.deepEqual(c.getState(), { activeSessionId: 'A', openSessionIds: ['A', 'C'] });
 });
+
+test('promoting a session no tab holds publishes nothing, so the renderer keeps its current session', async () => {
+  // First send in a new chat: the optimistic shell never became a tab, so its
+  // rekey must not republish the workspace's stale active id (it flipped
+  // state.currentSessionId to '' mid-handoff and a render in that window
+  // painted an empty chat with no Stop button).
+  const published = [];
+  let writes = 0;
+  const c = createWorkspaceStateController({
+    jennyShell: { workspace: { getState: async () => ({}), updateState: async (next) => { writes += 1; return next; } } },
+    onStateChanged: (snapshot) => published.push(snapshot),
+  });
+  assert.deepEqual(await c.rekeySession('session_local_1', 'session-real'), { activeSessionId: '', openSessionIds: [] });
+  await c.openSession('A');
+  const before = { published: published.length, writes };
+  assert.deepEqual(await c.rekeySession('session_local_2', 'session-real-2'), { activeSessionId: 'A', openSessionIds: ['A'] });
+  assert.deepEqual({ published: published.length, writes }, before);
+  assert.deepEqual(published, [{ activeSessionId: 'A', openSessionIds: ['A'] }]);
+});

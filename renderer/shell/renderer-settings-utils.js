@@ -41,6 +41,7 @@
     buildUiLanguageFieldMarkup = function fallbackBuildUiLanguageFieldMarkup() { return ''; },
     buildSafetyModeFieldMarkup = function fallbackBuildSafetyModeFieldMarkup() { return ''; },
     buildUnattendedGuardFieldMarkup = function fallbackBuildUnattendedGuardFieldMarkup() { return ''; },
+    buildAutoApproveStreakCapFieldMarkup = function fallbackBuildAutoApproveStreakCapFieldMarkup() { return ''; },
     buildDefaultRunModeFieldMarkup = function fallbackBuildDefaultRunModeFieldMarkup() { return ''; },
     buildContextToggleListsMarkup = function fallbackBuildContextToggleListsMarkup() { return { sources: '', runtime: '' }; },
     buildSettingsToggleListMarkup = function fallbackBuildSettingsToggleListMarkup() { return ''; },
@@ -81,7 +82,7 @@
       composerSettingsPopover, composerSettingsButton, composerChatZoomSelect, composerChatZoomStatus,
       composerCommandPopover, composerCommandPopoverList, composerTerminalShortcut,
       settingsModelCard,
-      modelBadge, modelStatus, appearanceBadge, appearanceStatus, appearanceResetButton,
+      modelBadge, modelStatus, modelStartupLoadList, appearanceBadge, appearanceStatus, appearanceResetButton,
       modelCatalogEmpty,
       accountBadge, accountSummary, localProfileSettingsMount, backendSummary,
       setupSettingsSummary, setupSettingsActions, setupProgressContainer,
@@ -90,7 +91,7 @@
       contextBadge, contextStatus, contextHistoryScopeSelect,
       contextSourcesList, contextRuntimeList, contextCompactionTuning,
       toolsConfigFieldList, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
-      toolsWorkspaceChooseButton, toolsSummary,
+      toolsWorkspaceProject, toolsWorkspaceChooseButton, toolsSummary,
       editorBadge, editorStatus, editorSettingsFieldList,
       homeBadge, homeStatus, homeSettingsFieldList,
       chatInput, composerModelSelectEl,
@@ -236,11 +237,19 @@
         syncSettingsControlTowerIndicators(controlTowerModel, { documentRef: settingsControlTowerHost.ownerDocument });
       }
 
+      // "Use default" (value '') runs on this model; the effort control reads it
+      // from here to offer that model's efforts. Stamped before the rebuild so
+      // the rebuild's mutation-driven reconcile sees the current pair.
+      composerModelSelect.dataset.backendModel = String(activeModel || '').trim();
+      composerModelSelect.dataset.backendEngineType = String(
+        state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || ''
+      ).trim().toLowerCase();
       composerModelSelect.innerHTML = buildModelOptionMarkup(models, runtimePreferences.preferredModel, {
         compact: true,
       });
       composerModelSelect.value = runtimePreferences.preferredModel;
       composerMeasure.syncComposerModelSelectWidth?.();
+      composerEffortSelect.dataset.requestedEffort = String(runtimePreferences.reasoningEffort || '');
       composerEffortSelect.value = runtimePreferences.reasoningEffort;
       if (appearanceThemeBundleSelect) {
         appearanceThemeBundleSelect.innerHTML = buildSelectOptionMarkup(
@@ -396,6 +405,17 @@
         contextHistoryScopeSelect.disabled =
           !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity);
       }
+      if (modelStartupLoadList) {
+        modelStartupLoadList.innerHTML = buildSettingsToggleListMarkup({
+          toggleSwitch: typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null,
+          escapeHtml,
+          fields: [{
+            id: 'modelStartupLoadToggle',
+            checked: state.localEngines?.startupModelLoad !== false,
+            disabled: !state.auth.authenticated,
+          }],
+        });
+      }
       if (contextSourcesList || contextRuntimeList) {
         const toggleSwitchRenderer =
           typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
@@ -437,6 +457,9 @@
         }) + buildUnattendedGuardFieldMarkup({
           value: state.unattendedGuardMinutes,
           numberInput: typeof globalThis !== 'undefined' ? globalThis.inventory?.numberInput : null,
+        }) + buildAutoApproveStreakCapFieldMarkup({
+          value: state.autoApproveStreakCap,
+          numberInput: typeof globalThis !== 'undefined' ? globalThis.inventory?.numberInput : null,
         }) + buildToolConfigFieldListMarkup({
           fields: toolConfigFields, tools: featureTools, availability: toolAvailability,
           escapeHtml, toggleSwitch: toolsToggleSwitchRenderer,
@@ -458,6 +481,7 @@
       if (toolsWorkspaceChooseButton) {
         toolsWorkspaceChooseButton.textContent = jt('settings.tools.openWorkspace', 'Open Workspace');
       }
+      settingsCoreRenderers?.paintToolsWorkspaceProject?.(toolsWorkspaceProject, workspaceRootState.path, workspaceRootStatus.state);
       if (toolsSummary) {
         const optionalCapabilityStates = [
           ...toolConfigFields.map((field) => ({
@@ -514,6 +538,8 @@
         settingsCoreRenderers?.renderApprovalRules?.({
           container: toolsApprovalRulesList,
           api: (typeof window !== 'undefined' && window.jennyShell?.tools) || null,
+          projectsApi: (typeof window !== 'undefined' && window.jennyShell?.projects) || null,
+          permissionReviewApi: (typeof window !== 'undefined' && window.jennyShell?.permissionReview) || null,
           escapeHtml,
         });
       }

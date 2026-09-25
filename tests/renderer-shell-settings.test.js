@@ -699,6 +699,62 @@ test('Models Settings removes duplicate session controls while Composer remains 
   assert.ok(doc.querySelector('#composerModelPopover .composer-model-carriers[hidden] #composerModelSelect'));
 });
 
+test('Models Settings updates the startup model loading toggle', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const updates = [];
+  shell.engines = {
+    async updateSettings(patch) {
+      updates.push(patch);
+      return { localEngines: { startupModelLoad: patch.startupModelLoad }, preferredEngineType: '' };
+    },
+  };
+
+  const list = window.document.getElementById('modelStartupLoadList');
+  const toggle = list.querySelector('[data-inv-toggle="modelStartupLoadToggle"]');
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute('aria-checked'), 'true');
+
+  toggle.dispatchEvent(new window.CustomEvent('inv-toggle-change', {
+    bubbles: true,
+    detail: { id: 'modelStartupLoadToggle', checked: false },
+  }));
+  await waitForUi(window, 40);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(updates)), [{ startupModelLoad: false }]);
+  assert.equal(
+    list.querySelector('[data-inv-toggle="modelStartupLoadToggle"]').getAttribute('aria-checked'),
+    'false'
+  );
+});
+
+test('Models Settings unchecks startup model loading when engine settings disable it', async (t) => {
+  const app = await loadRendererTestApp(t);
+  const { window, shell } = app;
+  shell.engines = {
+    async getSettings() {
+      return { localEngines: { startupModelLoad: false }, preferredEngineType: '' };
+    },
+  };
+  await app.reloadRendererApp();
+  await waitForUi(window, 40);
+
+  const toggle = window.document.querySelector(
+    '#modelStartupLoadList [data-inv-toggle="modelStartupLoadToggle"]'
+  );
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute('aria-checked'), 'false');
+});
+
+test('Models Settings checks startup model loading when engine settings omit the key', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  const toggle = window.document.querySelector(
+    '#modelStartupLoadList [data-inv-toggle="modelStartupLoadToggle"]'
+  );
+
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute('aria-checked'), 'true');
+});
+
 test('legacy face flag does not inject face DOM into the standard shell', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     shell: {

@@ -227,6 +227,14 @@ function createShellStubServices(context) {
         return { status: 'deleted', artifact_id: artifactId };
       },
     },
+    ...(options.projects ? { projects: {
+      async list() { return options.projects.list({ state }); },
+      async adoptWorkspace(payload) {
+        return typeof options.projects.adoptWorkspace === 'function'
+          ? options.projects.adoptWorkspace(payload, { state })
+          : { ok: false, error: { reason: 'workspace_project_unavailable' } };
+      },
+    } } : {}),
     memory: {
       contextFiles: createMemoryNotesStub(options.memory, state),
       async status() { return typeof options.memory?.status === 'function' ? options.memory.status({ state }) : { available: true, schema_version: 7, recall_index: 'fts5', counts: { approved: 0, pending: 0, quarantined: 0 }, storage: { state: 'ready', physical_bytes: 0, capacity_bytes: 50 * 1024 * 1024 }, repair_required: false, degraded_reasons: [] }; },
@@ -254,9 +262,9 @@ function createShellStubServices(context) {
         }
         return { candidates: [] };
       },
-      async update(memoryId, patch) {
+      async update(memoryId, patch, projectId) {
         if (typeof options.memory?.update === 'function') {
-          return options.memory.update(memoryId, patch, { state });
+          return options.memory.update(memoryId, patch, projectId, { state });
         }
         return {
           updated: true,
@@ -266,9 +274,9 @@ function createShellStubServices(context) {
           },
         };
       },
-      async delete(memoryId) {
+      async delete(memoryId, projectId) {
         if (typeof options.memory?.delete === 'function') {
-          return options.memory.delete(memoryId, { state });
+          return options.memory.delete(memoryId, projectId, { state });
         }
         return { deleted: true, memory_id: memoryId };
       },
@@ -278,11 +286,13 @@ function createShellStubServices(context) {
         }
         return { deleted: Boolean(sessionId && contentFingerprint) };
       },
-      async dismiss(fingerprint) {
+      async dismiss(sessionIdOrFingerprint, fingerprint) {
         if (typeof options.memory?.dismiss === 'function') {
-          return options.memory.dismiss(fingerprint, { state });
+          return fingerprint === undefined
+            ? options.memory.dismiss(sessionIdOrFingerprint, { state })
+            : options.memory.dismiss(sessionIdOrFingerprint, fingerprint, { state });
         }
-        return { dismissed: Boolean(fingerprint) };
+        return { dismissed: Boolean(fingerprint ?? sessionIdOrFingerprint) };
       },
     },
     harness: {

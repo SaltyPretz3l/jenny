@@ -60,3 +60,29 @@ test('late events cannot resurrect or replace a different admitted stream', () =
   assert.equal(streamEventDto({ type: 'started', sessionId: 'x'.repeat(129), streamId: 's' }), null);
   events.dispose();
 });
+
+
+test('admission DTO validates logical identity and keeps arbitrary metadata private', () => {
+  const runtimeAdmission = { work_id: 'work_1', turn_id: 'turn_1', session_id: 'session_1', stream_id: 'stream_1',
+    user_message_id: 'user_1', idempotency_key: 'receipt_1', authority: 'secret' };
+  const event = { type: 'started', sessionId: 'session_1', streamId: 'stream_1', turnId: 'turn_1', runtimeAdmission };
+  const dto = streamEventDto(event);
+  assert.equal(dto.turn_id, 'turn_1'); assert.equal(dto.runtime_admission.work_id, 'work_1');
+  assert.equal(JSON.stringify(dto).includes('secret'), false);
+  assert.equal(streamEventDto({ ...event, turnId: 'foreign' }), null);
+  assert.equal(streamEventDto({ ...event, runtimeAdmission: { ...runtimeAdmission, session_id: 'foreign' } }), null);
+});
+
+test('evicting a live aggregate does not discard subsequent events or retain terminal identities', () => {
+  const backend = new EventEmitter(); const events = new BackendEvents({ backend, bootEpoch: 'boot' });
+  for (let i = 0; i < 12; i++) backend.emit('chat-stream', { type: 'started', sessionId: `s_${i}`, streamId: `t_${i}` });
+  assert.equal(events.live.size, 8); assert.equal(events.snapshot('s_0'), null);
+  const cursor = events.cursor;
+  backend.emit('chat-stream', { type: 'delta', sessionId: 's_0', streamId: 't_0', content: 'still published' });
+  assert.equal(events.cursor, cursor + 1);
+  for (let i = 0; i < 12; i++) backend.emit('chat-stream', { type: 'complete', sessionId: `s_${i}`, streamId: `t_${i}` });
+  assert.equal(events.active.size, 0); assert.equal(events.live.size, 0);
+  const settled = events.cursor;
+  backend.emit('chat-stream', { type: 'delta', sessionId: 's_0', streamId: 't_0', content: 'late' });
+  assert.equal(events.cursor, settled); events.dispose();
+});

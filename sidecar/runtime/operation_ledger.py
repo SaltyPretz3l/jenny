@@ -410,6 +410,12 @@ class OperationLedger:
                         "timed out waiting for operation ledger lock"
                     ) from None
                 time.sleep(_LOCK_POLL_SECONDS)
+            except PermissionError:
+                # Windows refuses to create a file another process is still
+                # deleting: the previous holder is releasing the lock.
+                if os.name != "nt" or time.monotonic() >= deadline:
+                    raise
+                time.sleep(_LOCK_POLL_SECONDS)
         try:
             written = os.write(lock_fd, lock_token.encode("ascii"))
             if written != len(lock_token):

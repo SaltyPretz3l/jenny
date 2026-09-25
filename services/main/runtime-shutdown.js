@@ -87,6 +87,17 @@ function createRuntimeShutdownController({
     log,
     lifecycle: llamaServerLifecycleImpl,
     resolveLaunchAccelerationImpl,
+    // Managed-engine liveness heartbeat for the sidecar's stream-inactivity
+    // watchdog: llama-server streams no chat chunks while the model composes a
+    // buffered tool call, but keeps printing decode telemetry (mirrors the
+    // Ollama manager's sink in services/main/backend-service-wiring.js).
+    onEngineActivity: () => {
+      try {
+        getBackendService()?.sidecarClient?.notifyEngineActivity?.();
+      } catch (_error) {
+        /* best-effort */
+      }
+    },
     // Every launch mints a new api key; a sidecar already talking to the
     // openai-compatible engine must receive it or every request 401s.
     onStateChange: (status) => {
@@ -106,6 +117,34 @@ function createRuntimeShutdownController({
   let emergencyRuntimeShutdownTriggered = false;
   let workspaceDisposalStarted = false;
   let workspaceDisposalConfirmed = false;
+
+  function beginSessionRuntimeShutdown(reason, observeResult = false) {
+    const runtime = getBackendService()?.sessionRuntime;
+    if (typeof runtime?.beginShutdown !== 'function') return false;
+    try {
+      const request = runtime.beginShutdown({ reason, timeoutMs: 1500 });
+      Promise.resolve(request?.completion).then((result) => {
+        if (observeResult && result?.ok !== true) {
+          log('WARN', 'session_runtime.shutdown_unconfirmed', {
+            reason: String(result?.reason || 'runtime_shutdown_unconfirmed').slice(0, 240),
+            timedOut: result?.timedOut === true,
+          });
+        }
+      }).catch((error) => {
+        log('WARN', 'session_runtime.shutdown_unconfirmed', {
+          reason: String(error?.message || error).slice(0, 240),
+          timedOut: false,
+        });
+      });
+      return request?.requested === true;
+    } catch (error) {
+      log('WARN', 'session_runtime.shutdown_unconfirmed', {
+        reason: String(error?.message || error).slice(0, 240),
+        timedOut: false,
+      });
+      return true;
+    }
+  }
 
   function getLlamaServerManager() {
     return managedLlamaServer;
@@ -261,6 +300,7 @@ function createRuntimeShutdownController({
 
   async function stopRuntimeBeforeQuit({ signal } = {}) {
     if (signal?.aborted) return;
+    beginSessionRuntimeShutdown('app_shutdown');
     const shutdownStartedAt = Date.now();
     await runShutdownStage('setup_operations', () => drainSetupChildren(), signal);
     if (signal?.aborted) return;
@@ -353,6 +393,7 @@ function createRuntimeShutdownController({
     let llamaExitConfirmed;
     let ollamaExitConfirmed = false;
     let ollamaSweepSkipped = '';
+    const runtimeShutdownRequested = beginSessionRuntimeShutdown('emergency_shutdown', true);
     try {
       // Drain debounced session-store writes FIRST: every step below only
       // kills processes, and an emergency exit (SIGINT, second-instance kill)
@@ -408,9 +449,20 @@ function createRuntimeShutdownController({
     } catch (_error) {
       // best effort only
     }
+    // The awaited quit path has already requested the runtime shutdown, so
+    // "requested" is always true here; judge the runtime by its settled state.
+    let runtimeCleanupConfirmed = !runtimeShutdownRequested;
+    try {
+      const runtime = getBackendService()?.sessionRuntime;
+      if (typeof runtime?.isCleanupConfirmed === 'function') {
+        runtimeCleanupConfirmed = runtime.isCleanupConfirmed() === true;
+      }
+    } catch (_error) {
+      runtimeCleanupConfirmed = false;
+    }
     const emergencyConfirmed = sidecarExitConfirmed && llamaExitConfirmed && ollamaExitConfirmed
       && setupSignals.failed !== true && setupSignals.signalled === 0
-      && workspaceSignals.confirmed === true;
+      && workspaceSignals.confirmed === true && runtimeCleanupConfirmed;
     log(emergencyConfirmed ? 'INFO' : 'WARN', 'runtime.shutdown_stage', {
       stage: 'emergency_fallback',
       status: emergencyConfirmed ? 'ok' : 'unconfirmed',
@@ -420,6 +472,8 @@ function createRuntimeShutdownController({
       confirmed: emergencyConfirmed,
       setupSignals: setupSignals.signalled,
       workspaceSignals: workspaceSignals.signalled,
+      runtimeShutdownRequested,
+      runtimeCleanupConfirmed,
       ...(ollamaSweepSkipped ? { ollamaSweepSkipped } : {}),
     });
   }

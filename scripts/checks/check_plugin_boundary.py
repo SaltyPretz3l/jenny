@@ -265,7 +265,10 @@ const output = {};
 for (const filename of paths) {
   output[filename] = inspect(fs.readFileSync(filename, 'utf8'));
 }
-process.stdout.write(JSON.stringify(output));
+// Preserve BigInt precision and type without treating it as a numeric budget.
+process.stdout.write(JSON.stringify(output, (_key, value) => (
+  typeof value === 'bigint' ? { $bigint: value.toString() } : value
+)));
 """
 
 

@@ -42,6 +42,14 @@ const STREAM_ENVELOPE_SEQUENCE_REGRESSION_EVENT = 'chat.stream_envelope_sequence
 // One merged event per frame preserves renderer semantics without main-process
 // stalls while the sidecar continues streaming.
 const DELTA_COALESCE_WINDOW_MS = 50;
+// A fast model fills a 50 ms window with 4-5 tokens, which paints as visible
+// word-group jumps. Once a window holds two deltas of one stream it flushes as
+// soon as one frame has passed since it opened. A stream at <=40 tok/s (the
+// ratchet fixture in tests/streaming-ipc-bytes.load) sends exactly what it sent
+// before. A faster stream trades per-event overhead for smoothness: every event
+// still carries at least two of its deltas, at no more than one per frame.
+const DELTA_EARLY_FLUSH_DELTAS = 2;
+const DELTA_MIN_FLUSH_INTERVAL_MS = 16;
 
 function createChatStreamBridge({
   sendBridgeEvent = () => {},
@@ -83,6 +91,9 @@ function createChatStreamBridge({
     },
   });
   let flushTimerHandle = null;
+  let coalesceWindowStartedAtMs = 0;
+  let flushDueAtMs = 0;
+  const deltasInWindowByStream = new Map(); // streamId -> deltas since the window opened
   // Until the first successful terminal ack proves envelope consumption,
   // legacy events flow alongside envelopes; the renderer subscribes to one.
   // A receipt timeout reopens legacy delivery so reloads/regressions degrade
@@ -139,7 +150,9 @@ function createChatStreamBridge({
   }
 
   function clearCoalesceTimerIfIdle() {
-    if (!hasPendingCoalescedWork() && flushTimerHandle) {
+    if (hasPendingCoalescedWork()) return;
+    deltasInWindowByStream.clear();
+    if (flushTimerHandle) {
       clearCoalesceTimer(flushTimerHandle);
       flushTimerHandle = null;
     }
@@ -170,6 +183,7 @@ function createChatStreamBridge({
 
   function flushAllPendingCoalesced() {
     flushTimerHandle = null;
+    deltasInWindowByStream.clear();
     if (!hasPendingCoalescedWork()) {
       return;
     }
@@ -179,6 +193,7 @@ function createChatStreamBridge({
 
   function flushPendingDeltaForStream(streamId) {
     if (!streamId) return '';
+    deltasInWindowByStream.delete(streamId);
     const entry = pendingDeltaByStream.get(streamId);
     if (!entry) return '';
     pendingDeltaByStream.delete(streamId);
@@ -195,6 +210,7 @@ function createChatStreamBridge({
     if (!normalized) {
       return '';
     }
+    deltasInWindowByStream.delete(normalized);
     let firstError = '';
     for (const [key, entry] of [...pendingEnvelopeDeltaByKey.entries()]) {
       if (entry.streamId !== normalized) {
@@ -222,7 +238,28 @@ function createChatStreamBridge({
 
   function scheduleDeltaFlush() {
     if (flushTimerHandle) return;
+    coalesceWindowStartedAtMs = now();
+    flushDueAtMs = coalesceWindowStartedAtMs + DELTA_COALESCE_WINDOW_MS;
     flushTimerHandle = setCoalesceTimer(flushAllPendingCoalesced, DELTA_COALESCE_WINDOW_MS);
+  }
+
+  // Called once per incoming delta event, after it was queued.
+  function pullDeltaFlushForward(streamId) {
+    if (!flushTimerHandle || !streamId) return;
+    const deltasInWindow = (deltasInWindowByStream.get(streamId) || 0) + 1;
+    deltasInWindowByStream.set(streamId, deltasInWindow);
+    if (deltasInWindow < DELTA_EARLY_FLUSH_DELTAS) return;
+    const dueAtMs = coalesceWindowStartedAtMs + DELTA_MIN_FLUSH_INTERVAL_MS;
+    if (dueAtMs >= flushDueAtMs) return;
+    const nowMs = now();
+    clearCoalesceTimer(flushTimerHandle);
+    flushTimerHandle = null;
+    if (nowMs >= dueAtMs) {
+      flushAllPendingCoalesced();
+      return;
+    }
+    flushDueAtMs = dueAtMs;
+    flushTimerHandle = setCoalesceTimer(flushAllPendingCoalesced, dueAtMs - nowMs);
   }
 
   function queueDeltaForCoalesce(payload, streamId) {
@@ -243,7 +280,14 @@ function createChatStreamBridge({
       return sendEnvelope(envelope, null);
     }
     const key = buildEnvelopeDeltaKey(envelope);
-    const existing = pendingEnvelopeDeltaByKey.get(key);
+    let existing = pendingEnvelopeDeltaByKey.get(key);
+    let flushError = '';
+    if (existing && envelope.sequence !== (existing.envelope.sequenceEnd ?? existing.envelope.sequence) + 1) {
+      // Another channel/phase owns the intervening sequence. Merging would
+      // discard that sequence range and force the receiver into recovery.
+      flushError = flushPendingEnvelopeDeltasForStream(streamId);
+      existing = null;
+    }
     const mergedEnvelope = existing
       ? mergeStreamEnvelopeDeltas(existing.envelope, envelope)
       : envelope;
@@ -252,7 +296,7 @@ function createChatStreamBridge({
       envelope: mergedEnvelope,
     });
     scheduleDeltaFlush();
-    return '';
+    return flushError;
   }
 
   function getEnvelopeState(streamId) {
@@ -353,6 +397,9 @@ function createChatStreamBridge({
       phase: null,
       payload: {
         type: 'started',
+        ...(payload.runtimeAdmission ? { runtimeAdmission: Object.fromEntries(
+          ['work_id', 'turn_id', 'session_id', 'stream_id', 'user_message_id', 'idempotency_key']
+            .map(key => [key, normalizeToken(payload.runtimeAdmission[key])])) } : {}),
       },
       emittedAtMs: normalizeNumber(payload.emittedAtMs || payload.emitted_at_ms) ?? timestampMs,
       // bridgedAtMs is stamped once at dispatch in sendEnvelope.
@@ -693,6 +740,9 @@ function createChatStreamBridge({
     } else if (type !== 'delta' && streamId) {
       pendingDeltaByStream.delete(streamId);
       clearCoalesceTimerIfIdle();
+    }
+    if (type === 'delta') {
+      pullDeltaFlushForward(streamId);
     }
     if (legacyForwardError) {
       recordRendererForwardFailure(stats, legacyForwardError);

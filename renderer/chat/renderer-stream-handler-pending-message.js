@@ -142,6 +142,7 @@
       }
       const pendingId = state.pendingStreams.get(payload.streamId);
       const sessionMessages = getSessionMessages(payload.sessionId);
+      const logicalTurnId = normalizeId(payload?.turnId) || normalizeId(payload?.turn_id);
       const segState = streamSegmentState.get(payload.streamId);
       const segIndex = segState ? segState.segmentIndex : 0;
       const messageId = typeof buildAssistantShellMessageId === 'function'
@@ -153,6 +154,11 @@
         && segState.authoritativeAssistantSegmentIndex === segIndex;
       const existingIndex = findPendingStreamEntryIndex(sessionMessages, pendingId, messageId, payload.streamId, requireCanonicalId);
       if (existingIndex !== -1) {
+        if (logicalTurnId && normalizeId(sessionMessages[existingIndex]?.turn_id) !== logicalTurnId) {
+          const stampedMessages = sessionMessages.slice();
+          stampedMessages[existingIndex] = { ...stampedMessages[existingIndex], turn_id: logicalTurnId };
+          setSessionMessages(payload.sessionId, stampedMessages, `session_${payload.sessionId}`);
+        }
         state.pendingStreams.set(payload.streamId, sessionMessages[existingIndex].id);
         return existingIndex;
       }
@@ -163,6 +169,7 @@
         id: messageId,
         status: payload.type === 'error' ? messageStatus.ERROR : messageStatus.STREAMING,
         streamId: payload.streamId,
+        ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
         finalizedAt: payload.type === 'error' ? new Date().toISOString() : null,
         reasoning: { source: 'none', entries: [] },
         reasoning_phases: getReasoningPhasesForStream(payload.streamId),

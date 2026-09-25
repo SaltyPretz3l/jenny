@@ -53,7 +53,14 @@ test('terminal and legacy plans render as collapsed inert receipts', () => {
   assert.equal(approved.includes('data-plan-title'), false);
   assert.equal(approved.includes('data-plan-step-controls'), false);
   assert.equal(approved.includes('data-plan-add-step'), false);
-  assert.match(approved, /edited &middot; approved/);
+  assert.match(approved, /edited &middot; Approved/);
+  assert.equal(approved.includes('data-plan-build-accepted'), false);
+  const accepted = documentUi.fullDocumentMarkup({
+    plan_id: 'plan_a', title: 'Held', steps: ['A'], state: 'accepted',
+  });
+  assert.match(accepted, /^<details[^>]*data-plan-state="accepted"/);
+  assert.match(accepted, /Accepted · not built/);
+  assert.match(accepted, /data-plan-build-accepted data-plan-id="plan_a"/);
 });
 
 test('transition normalization is bounded and stable', () => {
@@ -110,7 +117,12 @@ test('plan document controller mounts decisions, focuses Build it, and submits b
     textField,
   });
   const host = dom.window.document.querySelector('[data-plan-document]');
-  assert.equal(host.querySelectorAll('[data-plan-decision]').length, 3);
+  assert.equal(host.querySelectorAll('[data-plan-decision]').length, 4);
+  // Review actions left, build actions right, with the primary Build it last.
+  const groups = [...host.querySelectorAll('.plan-document__actions-group')]
+    .map((group) => [...group.querySelectorAll('[data-plan-decision]')].map((node) => node.dataset.planDecision));
+  assert.deepEqual(groups, [['feedback', 'accepted'], ['approved_auto', 'approved']]);
+  assert.equal(host.querySelector('[data-plan-decision="accepted"]').textContent.trim(), 'Looks good, not yet');
   assert.equal(host.querySelector('[data-plan-decision="approved"]').textContent.trim(), 'Build it');
   assert.equal(host.querySelector('[data-plan-decision="approved_auto"]').textContent.trim(), 'Build it, auto mode');
   assert.equal(require('../locales/en.json')['chat.planDocument.buildWithoutAsking'], 'Build it, auto mode');
@@ -213,7 +225,7 @@ test('edited title is included in approval while an unedited plan omits the plan
   host.querySelector('[data-plan-decision="approved"]').click();
   await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   assert.deepEqual(decisions[0], ['call-edit', {
-    decision: 'approved', feedback: '<no feedback given>',
+    decision: 'approved', feedback: '',
     plan: { title: '<Edited title>', steps: ['Inspect'] },
   }]);
 
@@ -233,7 +245,7 @@ test('edited title is included in approval while an unedited plan omits the plan
   cleanDom.window.document.querySelector('[data-plan-decision="approved"]').click();
   await new Promise((resolve) => cleanDom.window.setTimeout(resolve, 0));
   assert.deepEqual(cleanDecisions[0], ['call-clean', {
-    decision: 'approved', feedback: '<no feedback given>',
+    decision: 'approved', feedback: '',
   }]);
   cleanController.dispose();
   cleanDom.window.close();
@@ -260,4 +272,52 @@ test('step editing refuses last-step removal and add-step appends an editable ro
 
   controller.dispose();
   dom.window.close();
+});
+
+test('Looks good, not yet settles as accepted with no placeholder feedback', async () => {
+  const dom = new JSDOM(`<!doctype html><body><main id="chatTimeline">${documentUi.fullDocumentMarkup({
+    tool_call_id: 'call-hold', title: 'Hold', steps: ['Inspect'], state: 'pending',
+  })}</main></body>`, { pretendToBeVisual: true });
+  const decisions = [];
+  dom.window.jennyShell = { tools: { approve: async (...args) => { decisions.push(args); return true; } } };
+  const controller = createPlanDocumentController({ windowRef: dom.window, actionButton, textField });
+  dom.window.document.querySelector('[data-plan-decision="accepted"]').click();
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(decisions, [['call-hold', { decision: 'accepted', feedback: '' }]]);
+  controller.dispose();
+  dom.window.close();
+});
+
+test('only the latest accepted receipt offers Build it', async () => {
+  const receipt = (planId, state) => documentUi.fullDocumentMarkup({
+    plan_id: planId, title: planId, steps: ['A'], state,
+  });
+  const dom = new JSDOM(`<!doctype html><body><main id="chatTimeline">${receipt('plan_old', 'accepted')}`
+    + `${receipt('plan_new', 'accepted')}</main></body>`, { pretendToBeVisual: true });
+  const controller = createPlanDocumentController({ windowRef: dom.window, actionButton, textField });
+  const buttons = () => [...dom.window.document.querySelectorAll('[data-action="plan-build-accepted"]')]
+    .map((node) => node.dataset.planId);
+  assert.deepEqual(buttons(), ['plan_new']);
+
+  const newer = dom.window.document.createElement('div');
+  newer.innerHTML = receipt('plan_newest', 'approved');
+  dom.window.document.getElementById('chatTimeline').append(newer.firstElementChild);
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(buttons(), [], 'a newer plan retires the older receipt action');
+  controller.dispose();
+  dom.window.close();
+});
+
+test('an accepted transition coalesces and replays as a collapsed accepted receipt', () => {
+  const events = ['pending', 'accepted'].map((transition, index) => ({
+    event_id: `t:plan:${index}`, turn_id: 't', kind: 'plan_document',
+    primary_message_id: 'plan_document_p', source_message_ids: ['plan_document_p'],
+    sort_key: [index, 0, 29], status: transition,
+    payload: { plan_id: 'p', title: 'Plan', steps: ['A'], transition },
+  }));
+  const rows = projectTurnRows(events);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].payload.transition, 'accepted');
+  assert.equal(documentUi.normalizePlanDocument(rows[0].payload).state, 'accepted');
+  assert.match(documentUi.fullDocumentMarkup(rows[0].payload), /^<details[^>]*data-plan-state="accepted"/);
 });

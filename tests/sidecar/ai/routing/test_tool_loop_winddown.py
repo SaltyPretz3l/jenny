@@ -241,3 +241,47 @@ def test_max_iteration_wind_down_resets_stale_text_before_fallback() -> None:
     # route every ordinary budget stop takes, and it is the only one driven by a
     # real wound-down loop rather than a stubbed result.
     assert decision.resumable_stop == "max_iterations"
+
+
+def test_thinking_budget_checkpoint_after_tool_work_continues_instead_of_winding_down() -> None:
+    """Owner gate 2026-09-20: a post-tool think cut at its first checkpoint.
+
+    The empty-final wind-down ran before the checkpoint ladder saw the result,
+    so the model was told to stop reasoning and summarize at the first budget
+    checkpoint after a tool call. A checkpoint-shaped completion is not empty.
+    """
+    engine, decision = _run(
+        [
+            _tool_plan(),
+            _ToolPlan(
+                result=GenerationResult(
+                    content="",
+                    finish_reason="thinking_budget",
+                    thinking_text="halfway through comparing the two figures",
+                )
+            ),
+            _ToolPlan(result=GenerationResult(content="Decisive answer.", finish_reason="stop")),
+        ]
+    )
+
+    assert decision.response_text == "Decisive answer."
+    assert decision.completion_source == "model"
+    continuation_messages = [
+        str(message.get("content", "")) for message in engine.requests[-1]["messages"]
+    ]
+    assert any("thinking-budget checkpoint" in text for text in continuation_messages)
+    assert not any("tool phase of this turn is over" in text for text in continuation_messages)
+    assert engine.requests[-1]["tools"], "the continuation keeps its tools"
+
+
+def test_wind_down_notes_never_speak_for_the_user() -> None:
+    from sidecar.ai.routing import thinking_checkpoint, tool_loop_recovery
+
+    for note in (
+        tool_loop_recovery._EMPTY_FINAL_WIND_DOWN,
+        tool_loop_recovery._BUDGET_EXHAUSTED_WIND_DOWN,
+        tool_loop_recovery._MAX_ITERATIONS_WIND_DOWN,
+        thinking_checkpoint._THINKING_BUDGET_WIND_DOWN,
+    ):
+        assert "user wants" not in note.lower()
+        assert "not a message from the user" in note or "Summarize for the user" in note

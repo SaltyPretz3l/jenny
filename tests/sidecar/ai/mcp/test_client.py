@@ -10,7 +10,7 @@ import pytest
 from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.mcp import client_support
 from sidecar.ai.mcp.client import MCP_FAILURE_HISTORY_LIMIT, MCPClient, _extract_tool_output
-from sidecar.ai.mcp.exceptions import CMP_MCP_SERVER_FAILED, MCPError
+from sidecar.ai.mcp.exceptions import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FAILED, MCPError
 from sidecar.ai.mcp.transport_base import MCPTransport
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.cooldowns import CooldownRegistry
@@ -461,6 +461,42 @@ def test_client_reconnects_and_retries_retryable_read_only_tool_failure(
     assert result.metadata["mcp_current_generation_id"] == "gen_new"
 
 
+def test_client_keeps_transport_timeout_evidence_when_the_budget_is_spent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A transport response timeout always spends the whole call budget. The
+    # replay path used to raise a fresh generic "MCP tool call timed out"
+    # (completion unknown), so dispatch never learned the server was
+    # terminated and quarantined the resource (2026-09-22 paused-turn deadlock).
+    tools = [{"name": "lookup", "input_schema": {"type": "object"}, "side_effecting": False}]
+    clock = [100.0]
+    monkeypatch.setattr(client_support.time, "monotonic", lambda: clock[0])
+    timed_out = MCPError(
+        code=CMP_MCP_SERVER_FAILED,
+        message="mcp server 'docs' response timed out",
+        retryable=True,
+        completion_status="started_response_lost",
+        transport_terminated=True,
+    )
+
+    class _BudgetSpendingTransport(_FakeTransport):
+        def call_tool(self, tool_name: str, arguments: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            clock[0] += 10.0
+            return super().call_tool(tool_name, arguments, **kwargs)
+
+    first = _BudgetSpendingTransport("docs", tools, failures=[timed_out])
+    second = _FakeTransport("docs", tools)
+    client = _configured_client(monkeypatch, [first, second])
+
+    with pytest.raises(MCPError) as excinfo:
+        client.execute_tool("mcp__docs__lookup", {"query": "release"}, timeout_seconds=5.0)
+
+    assert excinfo.value is timed_out
+    assert excinfo.value.completion_status == "started_response_lost"
+    assert excinfo.value.transport_terminated is True
+    assert second.calls == []
+
+
 def test_client_reconnects_but_does_not_retry_side_effecting_tool_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -486,6 +522,44 @@ def test_client_reconnects_but_does_not_retry_side_effecting_tool_failure(
     assert first.calls == [("write", {"path": "notes.md"})]
     assert second.calls == []
     assert client.tool_descriptor("mcp__docs__write") is not None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "side_effecting", "replayed"),
+    [("lookup", False, True), ("write", True, False)],
+)
+def test_client_reconnects_after_terminated_protocol_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    side_effecting: bool,
+    replayed: bool,
+) -> None:
+    tools = [{"name": tool_name, "input_schema": {"type": "object"},
+              "side_effecting": side_effecting}]
+    failure = MCPError(
+        code=CMP_MCP_PROTOCOL_FAILED,
+        message="mcp server 'docs' returned invalid json",
+        retryable=True,
+        completion_status="started_response_lost",
+        transport_terminated=True,
+    )
+    first = _FakeTransport("docs", tools, failures=[failure])
+    second = _FakeTransport("docs", tools)
+    client = _configured_client(monkeypatch, [first, second])
+    arguments = {"value": "example"}
+
+    if replayed:
+        result = client.execute_tool(f"mcp__docs__{tool_name}", arguments)
+        assert result.output == f"{tool_name} ok"
+    else:
+        with pytest.raises(MCPError) as raised:
+            client.execute_tool(f"mcp__docs__{tool_name}", arguments)
+        assert raised.value is failure
+
+    assert first.closed is True
+    assert first.calls == [(tool_name, arguments)]
+    assert second.calls == ([(tool_name, arguments)] if replayed else [])
+    assert client.tool_descriptor(f"mcp__docs__{tool_name}") is not None
 
 
 def test_client_does_not_retry_when_side_effecting_is_omitted(

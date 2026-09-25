@@ -1,4 +1,5 @@
 'use strict';
+const { waitForManagedInitialization } = require('./managed-sidecar-chat-reconnect');
 
 const {
   CLOUD_ERROR_CODES,
@@ -188,8 +189,13 @@ async function sendManagedChatWithAuthRetry({
   probe = null,
   log = null,
   ids = null,
+  assertBeforeSend = null,
 } = {}) {
-  const send = () => service.sidecarClient.chatSend(params, options);
+  const send = async () => {
+    await waitForManagedInitialization(service, controller?.signal);
+    assertBeforeSend?.();
+    return service.sidecarClient.chatSend(params, options);
+  };
   const emit = (level, event, details) => emitRetryLog(log, ids, level, event, details);
   if (service?.featureFlags?.chatgpt_auth_turn_retry === false) {
     return send();

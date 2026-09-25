@@ -3,6 +3,9 @@ const fs = require('fs');
 const {
   MAX_IMAGE_SIZE_BYTES,
 } = require('../attachment-service');
+const {
+  ensureSessionAttachmentAuthority,
+} = require('../projects/session-attachment-authority');
 
 function resolveManagedImageAssetPath(service, assetPath) {
   const store = service.attachmentAssetStore;
@@ -22,7 +25,12 @@ function resolveManagedImageAssetPath(service, assetPath) {
   return managedAssetPath;
 }
 
-function validateImageAttachmentsForManagedSend(service, attachments) {
+function validateImageAttachmentsForManagedSend(service, attachments, sessionContext = {}) {
+  const useDesktopAuthority = service?.hostMode !== 'server' && Boolean(service?.projectAuthority);
+  const authority = useDesktopAuthority ? ensureSessionAttachmentAuthority(service) : null;
+  if (useDesktopAuthority && !authority) {
+    throw new Error('Image attachment authority is unavailable.');
+  }
   for (const entry of attachments) {
     const assetPath = String(entry?.assetPath || '').trim();
     if (!assetPath) {
@@ -47,8 +55,24 @@ function validateImageAttachmentsForManagedSend(service, attachments) {
       entry.assetPath = managedAssetPath;
     }
   }
+  return authority?.authorizeManagedSend(attachments, sessionContext) || null;
+}
+
+function createSessionWithImageAdmission(admission, createSession, rollbackCreatedSession) {
+  let createdSession;
+  try {
+    createdSession = createSession();
+    if (createdSession) admission?.finalizeCreatedSession(createdSession);
+    else admission?.release();
+    return createdSession;
+  } catch (error) {
+    admission?.release();
+    if (createdSession && rollbackCreatedSession) rollbackCreatedSession(createdSession);
+    throw error;
+  }
 }
 
 module.exports = {
+  createSessionWithImageAdmission,
   validateImageAttachmentsForManagedSend,
 };

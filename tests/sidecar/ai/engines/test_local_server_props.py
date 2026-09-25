@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import Mock
 
 import pytest
 
+from sidecar.ai.engines import local_server_props
 from sidecar.ai.engines.local_server_props import (
     context_length_from_props,
     probe_server_modalities,
@@ -122,3 +124,64 @@ def test_probe_returns_none_for_non_object_json_and_closes(
 
     assert probe_server_modalities(base_url="http://127.0.0.1:8033/v1") is None
     close.assert_called_once_with()
+
+
+def _unauthorized() -> ProviderHttpError:
+    return ProviderHttpError(
+        provider="openai-compatible",
+        status_code=401,
+        code="CMP-CLOUD-1001",
+        message="unauthorized",
+        retryable=False,
+    )
+
+
+def test_unauthorized_probe_warns_once_per_server_and_names_the_cause(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Owner session 2026-09-19: a managed llama-server logged "unauthorized:
+    # Invalid API Key" on every catalog refresh while the served window and
+    # vision verdict silently degraded -- the probe only logged at DEBUG.
+    monkeypatch.setattr(local_server_props, "_auth_failures_logged", set())
+    monkeypatch.setattr(ProviderHttpService, "get_json", Mock(side_effect=_unauthorized()))
+    monkeypatch.setattr(ProviderHttpService, "close", Mock())
+
+    with caplog.at_level(logging.DEBUG):
+        assert probe_server_modalities(base_url="http://127.0.0.1:8033/v1") is None
+        assert probe_server_modalities(base_url="http://127.0.0.1:8033/v1") is None
+        assert probe_server_modalities(
+            base_url="http://127.0.0.1:9099/v1",
+            headers={"Authorization": "Bearer stale"},
+        ) is None
+
+    warnings = [
+        record for record in caplog.records
+        if getattr(record, "event", "") == "ai.engines.local_server_props.probe_unauthorized"
+    ]
+    assert [record.levelno for record in warnings] == [logging.WARNING, logging.WARNING]
+    assert [record.data["base_url"] for record in warnings] == [
+        "http://127.0.0.1:8033",
+        "http://127.0.0.1:9099",
+    ]
+    assert [record.data["authenticated"] for record in warnings] == [False, True]
+    assert [record.data["status_code"] for record in warnings] == [401, 401]
+    assert "no API key for this server" in warnings[0].getMessage()
+    assert "bearer token that the server rejected" in warnings[1].getMessage()
+
+
+def test_non_auth_failures_stay_at_debug(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(local_server_props, "_auth_failures_logged", set())
+    monkeypatch.setattr(ProviderHttpService, "get_json", Mock(side_effect=TimeoutError("slow")))
+    monkeypatch.setattr(ProviderHttpService, "close", Mock())
+
+    with caplog.at_level(logging.DEBUG):
+        assert probe_server_modalities(base_url="http://127.0.0.1:8033/v1") is None
+
+    events = [getattr(record, "event", "") for record in caplog.records]
+    assert "ai.engines.local_server_props.probe_failed" in events
+    assert "ai.engines.local_server_props.probe_unauthorized" not in events
+

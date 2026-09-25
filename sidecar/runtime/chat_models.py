@@ -7,9 +7,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.runtime.continuation_context import (
+    ContinuationContext,
+    continuation_context_from_params,
+)
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.vision_input import VisionImage
+    from sidecar.runtime.chat_continuation_resume import HydratedBeforeToolDispatchResume
+    from sidecar.runtime.execution_context import ExecutionContext
 
 DISABLED_MEMORY_POLICY = MemoryPolicy(enabled=False, include_response_style=False)
 
@@ -31,6 +37,12 @@ class ChatRequestContext:
     session_id: str | None
     mode: str
     approvals_pre_granted: bool
+    logical_turn_id: str | None = None
+    continuation_context: ContinuationContext | None = None
+    runtime_continuation_resume: HydratedBeforeToolDispatchResume | None = None
+    execution_context: ExecutionContext | None = None
+    inference_budget_required: bool = False
+    runtime_children_enabled: bool = False
     memory_policy: MemoryPolicy | None = None
     reasoning_effort: str | None = None
     session_start_date: str | None = None
@@ -43,6 +55,9 @@ class ChatRequestContext:
     plan_feedback: str = ""
     edited_plan: dict[str, Any] | None = None
     approved_plan: dict[str, Any] | None = None
+    # Set when the user accepted a plan without building it: the tool loop
+    # allows exactly one toolless reply, then ends the turn.
+    final_toolless_reply: bool = False
     tool_preferences: dict[str, tuple[str, ...]] | None = None
     approval_mode: str = "prompt"
     session_offline_lockdown: bool = False
@@ -76,6 +91,36 @@ class ChatRequestContext:
     # Internal child completion contract. Legacy hidden executors retain the
     # four-field JSON report; the public delegate facade requests plain text.
     sub_agent_report_mode: str = "structured"
+
+
+_LOGICAL_TURN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
+
+def logical_turn_id_from_params(params: dict[str, Any], request_id: str) -> str:
+    """Return the app-owned logical turn identity, preserving legacy streams."""
+
+    if "logical_turn_id" not in params:
+        return request_id
+    value = params.get("logical_turn_id")
+    if not isinstance(value, str) or _LOGICAL_TURN_ID_RE.fullmatch(value) is None:
+        raise ValueError("logical_turn_id is not a canonical runtime identifier")
+    return value
+
+
+def continuation_identity_from_params(
+    params: dict[str, Any], *, request_id: str, session_id: str | None,
+    execution_context: ExecutionContext | None,
+) -> tuple[str, ContinuationContext | None]:
+    """Bind optional continuation identity to the enclosing chat request."""
+
+    logical_turn_id = logical_turn_id_from_params(params, request_id)
+    continuation_context = continuation_context_from_params(
+        params, request_id=request_id, session_id=session_id,
+        execution_context=execution_context,
+    )
+    if continuation_context is not None and continuation_context.turn_id != logical_turn_id:
+        raise ValueError("continuation logical_turn_id mismatch")
+    return logical_turn_id, continuation_context
 
 
 class ChatRequestError(Exception):

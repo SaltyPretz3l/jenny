@@ -22,6 +22,30 @@ This repository vendors the following third-party code:
   v3.46.0 Search icon and modified only to embed its attribution and license
   notice.
 
+## Sidecar media site (`vendor/sidecar-media-site`, packaged as `resources/sidecar-media-site`)
+
+- Pillow — MIT-CMU; numpy — BSD-3-Clause.
+- rapidocr 3.9.2 — Apache-2.0. The PP-OCRv6 ONNX models are derived from
+  PaddleOCR (Apache-2.0) and redistributed by RapidAI:
+  https://github.com/RapidAI/RapidOCR
+- onnxruntime — MIT; opencv-python-headless — Apache-2.0 (OpenCV).
+- shapely — BSD-3-Clause; pyclipper — MIT.
+- omegaconf and antlr4-python3-runtime — BSD-3-Clause.
+- tqdm — MPL-2.0 and MIT.
+- requests — Apache-2.0; urllib3 — MIT; certifi — MPL-2.0;
+  charset-normalizer — MIT; idna — BSD-3-Clause.
+- colorlog — MIT; colorama — BSD-3-Clause; six — MIT; PyYAML — MIT.
+- protobuf — BSD-3-Clause; flatbuffers — Apache-2.0; packaging — Apache-2.0
+  or BSD-2-Clause.
+
+The site is built from the hash lock and verified before packaging.
+
+## Optional PDF reading add-on (not bundled)
+
+PyMuPDF 1.27.2.2 (AGPL-3.0, or Artifex commercial licence) is not distributed
+with Jenny. The user may choose to download it from PyPI from Settings > Tools:
+https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright
+
 ## Local-only reference checkouts (not distributed)
 
 Directories under `vendor/` that are listed in `.gitignore`

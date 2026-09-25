@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from sidecar.ai.routing.tool_execution_snapshots import (
     freeze_effective_execution_inputs,
+    normalize_snapshot_lookup_path,
     update_read_snapshot_cache,
 )
 from sidecar.ai.tools.models import ToolCallRequest
@@ -86,3 +88,49 @@ def test_move_file_receives_session_scope_for_builtin_snapshot_invalidation() ->
     )
 
     assert frozen.effective_tool_arguments["_jenny_session_id"] == "session-1"
+
+
+def test_model_reserved_execution_scope_keys_are_removed_before_freeze() -> None:
+    frozen = freeze_effective_execution_inputs(
+        _kernel(),
+        ToolCallRequest(
+            tool_id="read_file",
+            arguments={
+                "path": "note.txt",
+                "_jenny_execution_context": {"root_path": "forged"},
+                "_jenny_operation_id": "forged",
+            },
+            call_id="call-2",
+        ),
+        session_id="session-1",
+        read_snapshot_cache={},
+    )
+
+    assert frozen.visible_tool_arguments == {"path": "note.txt"}
+    assert "_jenny_execution_context" not in frozen.effective_tool_arguments
+    assert "_jenny_operation_id" not in frozen.effective_tool_arguments
+
+
+def test_snapshot_paths_use_captured_root_instead_of_mutable_kernel_root(
+    tmp_path: Path,
+) -> None:
+    root_a = (tmp_path / "a").resolve()
+    root_b = (tmp_path / "b").resolve()
+    kernel = SimpleNamespace(
+        _config=SimpleNamespace(tools_workspace_root=str(root_a)),
+        _mcp_client=None,
+    )
+
+    scoped = normalize_snapshot_lookup_path(
+        kernel,
+        str(root_b / "note.txt"),
+        execution_context=SimpleNamespace(root_path=str(root_b)),
+    )
+    conversation_only = normalize_snapshot_lookup_path(
+        kernel,
+        str(root_b / "note.txt"),
+        execution_context=SimpleNamespace(root_path=None),
+    )
+
+    assert scoped == "note.txt"
+    assert conversation_only == (root_b / "note.txt").as_posix()

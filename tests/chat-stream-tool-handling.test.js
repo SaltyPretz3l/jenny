@@ -600,6 +600,7 @@ test('handleToolNotification redacts sensitive-looking input values before persi
     model: 'mock-model',
     resolvedSessionId: 'session-redact-input',
     streamId: 'stream-redact-input',
+    workspaceRoot: 'C:\\Users\\demo\\private',
     eventBase: { sessionId: 'session-redact-input', streamId: 'stream-redact-input', model: 'mock-model' },
   };
 
@@ -624,6 +625,14 @@ test('handleToolNotification redacts sensitive-looking input values before persi
   assert.equal(serialized.includes('super-secret-token'), false);
   assert.equal(messages[0].tool_call.input.token, '[redacted]');
   assert.match(messages[0].tool_call.input.note, /\[redacted\]/);
+  assert.equal(
+    messages[0].tool_call.input_json,
+    '{"path":"[redacted:path]/notes.txt","note":"temporary value [redacted] should not persist","token":"[redacted]"}'
+  );
+  assert.equal(
+    messages[0].tool_call.model_input_json,
+    '{"path":"./notes.txt","note":"temporary value [redacted] should not persist","token":"[redacted]"}'
+  );
 });
 
 test('handleToolNotification restores trusted local artifact paths with session scope only from bridge state', () => {

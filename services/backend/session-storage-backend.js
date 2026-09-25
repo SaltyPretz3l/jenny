@@ -32,6 +32,29 @@ const {
   recordAcceptedSessionMutation,
   restoreCachedSessionSnapshot, evictLoadedSession,
 } = require('./session-storage-durability');
+const {
+  TranscriptCacheAccounting,
+} = require('./session-transcript-cache');
+
+let mutationAfterDisposeWarningEmitted = false;
+
+function dropMutationAfterDispose(backend, method) {
+  if (!backend._disposed) return false;
+  if (!mutationAfterDisposeWarningEmitted && backend._logger) {
+    mutationAfterDisposeWarningEmitted = true;
+    safeEmitLog(backend._logger, 'WARN', 'session_store.mutation_after_dispose', { method });
+  }
+  return true;
+}
+
+function countPendingSessions(backend) {
+  const sessionIds = new Set([...backend._dirtySessionIds, ...backend._sessionStores.keys()]);
+  let pending = 0;
+  for (const sessionId of sessionIds) {
+    if (backend.hasPendingWriteForSession(sessionId)) pending += 1;
+  }
+  return pending;
+}
 
 // Per-session directory backend used by ElectronSessionStore and
 // SessionShadowStore. Replaces the single-file monolithic layout that froze
@@ -58,7 +81,8 @@ const {
 //     underlying file removal genuinely failed — the session is RETAINED so
 //     the still-on-disk data isn't orphaned (see session-storage-deletion.js)
 //   - flush()                       -> boolean (true if any disk write happened)
-//   - dispose()                     -> flush + drop file handles
+//   - dispose(), disposeAsync()     -> { disposed: true, pending: <dirty sessions> }
+//                                      after flush; reject later mutations
 //   - hasNewerSchema()
 //   - hasPendingWriteForSession(id), hasPendingWrites()
 //
@@ -75,6 +99,7 @@ class SessionStorageBackend {
     migratePayload,
     normalizeSession,
     summarizeSession,
+    migrateSummary = summary => summary,
     writeDebounceMs = 0,
     logger = null,
     storeName = 'session_store',
@@ -99,6 +124,7 @@ class SessionStorageBackend {
     this._migratePayload = migratePayload;
     this._normalizeSession = normalizeSession;
     this._summarizeSession = summarizeSession;
+    this._migrateSummary = migrateSummary;
     this._writeDebounceMs = Math.max(0, Number(writeDebounceMs) || 0);
     this._logger = typeof logger === 'function' ? logger : null;
     this._storeName = String(storeName || 'session_store');
@@ -114,6 +140,10 @@ class SessionStorageBackend {
     this._durability = new SessionStorageDurability();
     this._dirtyFlushFailureCounts = new Map();
     this._sessionLru = new Set();
+    this._transcriptCache = new TranscriptCacheAccounting();
+    this._cacheAvailabilityListeners = new Set();
+    this._cacheNotificationQueued = false;
+    this._disposed = false;
     // Scan registry: sessionId -> active_turn (or null) for every session the
     // backend has authoritative in-memory knowledge of. Lets bulk callers
     // (listSessionRecords) answer active_turn without loading message bodies.
@@ -149,6 +179,7 @@ class SessionStorageBackend {
     fs.mkdirSync(this._rootDir, { recursive: true });
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });
     this._cachedIndex = { schema_version: this._schemaVersion, sessions: {} };
@@ -157,6 +188,7 @@ class SessionStorageBackend {
   _loadFromSplitLayout() {
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });
     const raw = this._indexStore.read(null);
@@ -217,6 +249,8 @@ class SessionStorageBackend {
     return this._newerSchemaVersion > 0;
   }
 
+  isDisposed() { return this._disposed; }
+
   getIndexSnapshot() {
     return {
       schema_version: this._cachedIndex.schema_version,
@@ -240,7 +274,7 @@ class SessionStorageBackend {
       return null;
     }
     const session = this._loadSession(sessionId);
-    if (session) this._durability.markLoaded(sessionId);
+    if (session && this._loadedSessions.has(sessionId)) this._durability.markLoaded(sessionId);
     return session;
   }
 
@@ -282,15 +316,41 @@ class SessionStorageBackend {
     return snapshots;
   }
 
+  getCachePressure() {
+    this._syncTranscriptCache();
+    return this._transcriptCache.snapshot((sessionId) => (
+      this.hasPendingWriteForSession(sessionId) || Boolean(this._loadedSessions.get(sessionId)?.active_turn)
+    ));
+  }
+
+  onCacheAvailable(listener) {
+    if (typeof listener !== 'function') throw new TypeError('cache_listener_invalid');
+    this._cacheAvailabilityListeners.add(listener);
+    return () => this._cacheAvailabilityListeners.delete(listener);
+  }
+
+  _notifyCacheAvailability() {
+    if (this._cacheNotificationQueued || !this._cacheAvailabilityListeners.size) return;
+    this._cacheNotificationQueued = true;
+    queueMicrotask(() => {
+      this._cacheNotificationQueued = false;
+      if (!this._cacheAvailabilityListeners.size) return;
+      try {
+        this._pruneCache();
+        if (this.getCachePressure().backpressured) return;
+        for (const listener of this._cacheAvailabilityListeners) {
+          try { listener(); } catch (_error) { /* Admission observers own their errors. */ }
+        }
+      } catch (_error) { /* Unknown pressure remains closed at admission. */ }
+    });
+  }
+
   upsertSession(sessionId, sessionRecord, { persist = true, alreadyNormalized = false } = {}) {
+    if (dropMutationAfterDispose(this, 'upsertSession')) return false;
     if (this._newerSchemaVersion > 0) {
       this._logNewerSchemaWriteBlocked();
       return false;
     }
-    // The store layer hands us records that are already normalizeSession()
-    // output; re-normalizing them here was a redundant full message-array walk
-    // on every mutation (findings #3, #4). Callers that pass raw/summary records
-    // (mirror _write, index inserts) leave alreadyNormalized=false.
     if (this.hasSession(sessionId)) this._durability.markLoaded(sessionId);
     const normalized = alreadyNormalized ? sessionRecord : this._normalizeSession(sessionId, sessionRecord);
 
@@ -307,6 +367,7 @@ class SessionStorageBackend {
       }
       recordAcceptedSessionMutation(this, sessionId, { indexChanged });
       this._loadedSessions.set(sessionId, normalized);
+      this._transcriptCache.invalidate(sessionId, normalized);
       this._trackActiveTurn(sessionId, normalized);
       this._touchSession(sessionId);
       return true;
@@ -339,11 +400,6 @@ class SessionStorageBackend {
         error
       );
     }
-    // Skip the index write when the summary fields are unchanged, e.g.
-    // setActiveTurn / clearActiveTurn / appendTurnEvents mutate per-session
-    // state but never touch any summary field, so rewriting the index would
-    // be a no-op disk hit. Index writes still happen for title/preview/
-    // preference changes where the summary genuinely shifts.
     let deferredIndexWrite = false;
     let indexWrite = null;
     if (!writeError && this._indexStore && summaryChanged) {
@@ -371,6 +427,7 @@ class SessionStorageBackend {
       this._cachedIndex = nextIndex;
     }
     this._loadedSessions.set(sessionId, normalized);
+    this._transcriptCache.invalidate(sessionId, normalized);
     recordAcceptedSessionMutation(this, sessionId, {
       sessionWrite,
       indexWrite,
@@ -382,6 +439,7 @@ class SessionStorageBackend {
   }
 
   deleteSession(sessionId) {
+    if (dropMutationAfterDispose(this, 'deleteSession')) return false;
     if (this._newerSchemaVersion > 0) {
       this._logNewerSchemaWriteBlocked();
       return false;
@@ -389,34 +447,51 @@ class SessionStorageBackend {
     if (!this.hasSession(sessionId)) {
       return false;
     }
-    return deleteSessionFromBackend(this, sessionId);
+    const result = deleteSessionFromBackend(this, sessionId);
+    if (result === true) {
+      this._transcriptCache.remove(sessionId);
+      this._notifyCacheAvailability();
+    }
+    return result;
   }
 
   flush() {
-    return flushBackend(this);
+    if (this._disposed && !this.hasPendingWrites()) return false;
+    const result = flushBackend(this);
+    this._pruneCache();
+    return result;
   }
 
   async flushAsync() {
-    return flushBackendAsync(this);
+    if (this._disposed && !this.hasPendingWrites()) return false;
+    const result = await flushBackendAsync(this);
+    this._pruneCache();
+    return result;
   }
 
   dispose() {
-    this.flush();
+    if (this._disposed && !this.hasPendingWrites()) return { disposed: true, pending: 0 };
+    this._disposed = true;
+    this._cacheAvailabilityListeners.clear();
+    flushBackend(this);
+    this._pruneCache();
+    return { disposed: true, pending: countPendingSessions(this) };
   }
 
   async disposeAsync() {
-    await this.flushAsync();
+    if (this._disposed && !this.hasPendingWrites()) return { disposed: true, pending: 0 };
+    this._disposed = true;
+    this._cacheAvailabilityListeners.clear();
+    await flushBackendAsync(this);
+    this._pruneCache();
+    return { disposed: true, pending: countPendingSessions(this) };
   }
 
-  // Force a single session's cached record to disk immediately, bypassing the
-  // debounce window, and report whether the bytes actually landed. Callers that
-  // must confirm durability before discarding a crash-recovery source (e.g. the
-  // turn-event journal) use this: with writeDebounceMs > 0 an upsert only
-  // SCHEDULES a best-effort async write, so "accepted into cache" is not "safe
-  // on disk". Refuses when the store is frozen (monolithic_readonly or a newer
-  // on-disk schema) so a current-schema payload never overwrites future bytes.
   flushSession(sessionId) {
-    return flushSessionDurably(this, sessionId);
+    if (this._disposed && !this.hasPendingWriteForSession(sessionId)) return false;
+    const result = flushSessionDurably(this, sessionId);
+    this._pruneCache();
+    return result;
   }
 
   getSessionDurability(sessionId) {
@@ -424,7 +499,15 @@ class SessionStorageBackend {
   }
 
   restoreSessionSnapshot(sessionId, snapshot, indexSnapshot) {
-    return restoreCachedSessionSnapshot(this, sessionId, snapshot, indexSnapshot);
+    if (dropMutationAfterDispose(this, 'restoreSessionSnapshot')) return false;
+    const previous = this._loadedSessions.get(sessionId);
+    const result = restoreCachedSessionSnapshot(this, sessionId, snapshot, indexSnapshot);
+    const restored = this._loadedSessions.get(sessionId);
+    if (restored && (result === true || restored !== previous)) {
+      this._transcriptCache.invalidate(sessionId, restored);
+    }
+    this._pruneCache();
+    return result;
   }
   hasPendingWriteForSession(sessionId) {
     const durability = reconcileSessionDurability(this, sessionId);
@@ -450,6 +533,9 @@ class SessionStorageBackend {
   }
 
   async runPendingMigrations({ batchSize = SPLIT_MIGRATION_BATCH_SIZE } = {}) {
+    if (dropMutationAfterDispose(this, 'runPendingMigrations')) {
+      return { ran: false, success: true, storeName: this._storeName, reason: 'none' };
+    }
     if (!this._pendingSplitMigration) {
       return {
         ran: false,
@@ -477,23 +563,31 @@ class SessionStorageBackend {
 
   _pruneCache() {
     const maxCached = 30;
-    if (this._loadedSessions.size <= maxCached && this._sessionStores.size <= maxCached) {
+    const loadedPruningAllowed = this._mode !== 'monolithic_readonly';
+    this._syncTranscriptCache();
+    if ((!loadedPruningAllowed || this._loadedSessions.size <= maxCached)
+      && this._sessionStores.size <= maxCached
+      && (!loadedPruningAllowed
+        || this._transcriptCache.accountedBytes <= this._transcriptCache.limitBytes)) {
       return;
     }
     for (const sessionId of this._sessionLru) {
-      if (this._loadedSessions.size > maxCached) {
+      if (loadedPruningAllowed && (this._loadedSessions.size > maxCached
+        || this._transcriptCache.accountedBytes > this._transcriptCache.limitBytes)) {
         // A session whose disk write is still debounced/in-flight must keep
         // its cache entry: evicting it would make the next getSession()
         // re-read STALE disk bytes and silently revert the pending mutation
         // (2026-07-02 lifecycle-triage F4 — a mass session load mid-window
         // dropped a freshly persisted user message this way).
-        if (!this.hasPendingWriteForSession(sessionId)) {
+        if (!this.hasPendingWriteForSession(sessionId)
+          && !this._loadedSessions.get(sessionId)?.active_turn) {
           evictLoadedSession(this, sessionId);
+          this._transcriptCache.remove(sessionId);
         }
       }
       if (this._sessionStores.size > maxCached) {
         const store = this._sessionStores.get(sessionId);
-        if (store && !store.hasPendingWrite()) {
+        if (store && !this.hasPendingWriteForSession(sessionId) && !store.hasPendingWrite()) {
           try {
             store.dispose();
           } catch (_e) {
@@ -502,16 +596,25 @@ class SessionStorageBackend {
           this._sessionStores.delete(sessionId);
         }
       }
-      if (this._loadedSessions.size <= maxCached && this._sessionStores.size <= maxCached) {
-        break;
+      if ((!loadedPruningAllowed || this._loadedSessions.size <= maxCached)
+        && this._sessionStores.size <= maxCached) {
+        if (!loadedPruningAllowed
+          || this._transcriptCache.accountedBytes <= this._transcriptCache.limitBytes) break;
       }
     }
   }
 
+  _syncTranscriptCache() {
+    this._transcriptCache.synchronize(this._loadedSessions, (sessionId) => (
+      this.hasPendingWriteForSession(sessionId)
+    ));
+  }
+
   _loadSession(sessionId) {
     if (this._loadedSessions.has(sessionId)) {
+      const cached = this._loadedSessions.get(sessionId);
       this._touchSession(sessionId);
-      return this._loadedSessions.get(sessionId);
+      return cached;
     }
     if (this._mode === 'monolithic_readonly') {
       // monolithic_readonly pre-populates every session into the loaded cache
@@ -528,16 +631,12 @@ class SessionStorageBackend {
     return normalized;
   }
 
-  // Shared parse+normalize for _loadSession (caching) and peekSession
-  // (cache-neutral). A missing file is a missing session; an EXISTING file
-  // that cannot be read is quarantined and the session re-seeded, so
-  // corruption no longer masquerades as absence (which silently dropped every
-  // later mutation). The recovery stub is cached by its own upsert.
   _readSessionFromDisk(sessionId) {
     const store = this._sessionStores.get(sessionId) || new FileJsonStore(
       this._sessionFilePath(sessionId),
       {
         writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       }
     );
@@ -581,8 +680,6 @@ class SessionStorageBackend {
     this._activeTurnScanSeeded = true;
     for (const sessionId of this.getSessionIds()) {
       if (this._scanActiveTurns.has(sessionId)) {
-        // Already tracked from an in-process write/load, which is at least as
-        // fresh as disk (pending-write sessions never leave the cache).
         continue;
       }
       this._trackActiveTurn(sessionId, this.peekSession(sessionId));
@@ -590,6 +687,7 @@ class SessionStorageBackend {
   }
 
   _quarantineAndRecoverCorruptSession(sessionId, readStatus) {
+    if (this._disposed) return null;
     const filePath = this._sessionFilePath(sessionId);
     const quarantineDir = path.join(this._rootDir, 'corrupt');
     const quarantinePath = path.join(
@@ -600,9 +698,6 @@ class SessionStorageBackend {
       fs.mkdirSync(quarantineDir, { recursive: true });
       fs.renameSync(filePath, quarantinePath);
     } catch (error) {
-      // The unreadable bytes could not be moved aside; leave the file where
-      // it is (it may be hand-recoverable) and keep the missing-session
-      // behavior for this read rather than risk overwriting evidence.
       logWriteFailed(
         this._logger,
         `${this._storeName}.session_file_quarantine_failed`,
@@ -643,6 +738,7 @@ class SessionStorageBackend {
     if (!store) {
       store = new FileJsonStore(this._sessionFilePath(sessionId), {
         writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       });
       this._sessionStores.set(sessionId, store);
@@ -679,6 +775,7 @@ class SessionStorageBackend {
       const filePath = path.join(this._rootDir, entry.name);
       const store = new FileJsonStore(filePath, {
         writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       });
       const raw = store.read(null);
@@ -702,6 +799,7 @@ class SessionStorageBackend {
       }
       const normalized = this._normalizeSession(sessionId, sessionRecord);
       this._loadedSessions.set(sessionId, normalized);
+      this._sessionLru.add(sessionId);
       this._trackActiveTurn(sessionId, normalized);
       indexSessions[sessionId] = this._summarizeSession(normalized);
       recoveredCount += 1;
@@ -717,12 +815,14 @@ class SessionStorageBackend {
     }
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });
     this._cachedIndex = {
       schema_version: this._schemaVersion,
       sessions: indexSessions,
     };
+    this._pruneCache();
     try {
       this._indexStore.writeImmediate(this._cachedIndex);
       this._indexDirty = false;

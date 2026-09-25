@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { SIDECAR_ERROR_CODES } = require('../services/backend/error-codes');
+const { SIDECAR_ERROR_CODES, RUNTIME_ERROR_CODES } = require('../services/backend/error-codes');
 const { getOllamaModelBlob } = require('../services/backend/backend-ollama-blob');
 
 test('getOllamaModelBlob returns null before the sidecar is ready', async () => {
@@ -85,4 +85,16 @@ test('getOllamaModelBlob logs DEBUG on timeout', async () => {
   assert.equal(result, null);
   assert.equal(logs[0].level, 'DEBUG');
   assert.equal(logs[0].event, 'backend.models_ollama_blob_failed');
+});
+
+test('getOllamaModelBlob rethrows a worker-cap refusal at DEBUG so callers do not cache it', async () => {
+  const logs = [];
+  const refusal = new Error('too many active models.ollama_blob requests');
+  refusal.error_code = RUNTIME_ERROR_CODES.RESOURCE_EXCEEDED;
+  await assert.rejects(getOllamaModelBlob({
+    sidecarManager: { getStatus: () => ({ phase: 'ready' }) },
+    sidecarClient: { async modelsOllamaBlob() { throw refusal; } },
+    _emitServiceLog(level, event) { logs.push({ level, event }); },
+  }, 'gemma4:12b'), refusal);
+  assert.deepEqual(logs, [{ level: 'DEBUG', event: 'backend.models_ollama_blob_failed' }]);
 });

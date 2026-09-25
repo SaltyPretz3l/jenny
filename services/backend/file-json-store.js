@@ -16,7 +16,7 @@ function buildTempPath(filePath) {
 // delayed. Callers should drain pending async writes via `flushAsync()` /
 // `disposeAsync()` before process exit or before reading the file from a
 // different instance. `flush()` / `dispose()` remain synchronous crash-safety
-// drains for pending timer values. `writeImmediate(value)` bypasses debouncing
+// drains for pending or in-flight values. `writeImmediate(value)` bypasses debouncing
 // for crash-safety-critical writes; it cancels any pending debounced write so
 // the immediate value wins.
 class FileJsonStore {
@@ -24,6 +24,7 @@ class FileJsonStore {
     this.filePath = filePath;
     const logger = options && typeof options.logger === 'function' ? options.logger : null;
     this._logger = logger;
+    this._onWriteSettled = typeof options?.onWriteSettled === 'function' ? options.onWriteSettled : null;
     const rawDebounce = options && options.writeDebounceMs;
     this._writeDebounceMs = Number.isFinite(Number(rawDebounce))
       ? Math.max(0, Math.trunc(Number(rawDebounce)))
@@ -39,6 +40,7 @@ class FileJsonStore {
     this._lastImmediateGeneration = 0;
     this._lastImmediateValue = undefined;
     this._deleteGeneration = 0;
+    this._disposed = false;
     // Read-your-writes buffer: the newest value handed to write() that has not
     // yet completed its disk write. While any write is pending or in flight,
     // readWithStatus() serves this instead of the (stale) disk bytes — a read
@@ -114,6 +116,7 @@ class FileJsonStore {
   }
 
   write(value) {
+    this._assertWritable();
     this._writeGeneration += 1;
     const generation = this._writeGeneration;
     this._deleteGeneration = 0;
@@ -127,6 +130,7 @@ class FileJsonStore {
         this._failedGeneration = generation;
         throw error;
       }
+      this._notifyWriteSettled();
       return { generation, durable: true };
     }
     this._pendingWriteValue = value;
@@ -142,6 +146,7 @@ class FileJsonStore {
   }
 
   writeImmediate(value) {
+    this._assertWritable();
     this._cancelDebounce();
     this._writeGeneration += 1;
     this._deleteGeneration = 0;
@@ -168,10 +173,12 @@ class FileJsonStore {
       this._failedGeneration = this._writeGeneration;
       throw error;
     }
+    this._notifyWriteSettled();
     return { generation: this._writeGeneration, durable: true };
   }
 
   flush() {
+    if (this._disposed) return false;
     if (this._debounceTimer != null) {
       clearTimeout(this._debounceTimer);
       this._debounceTimer = null;
@@ -198,10 +205,12 @@ class FileJsonStore {
     if (this._asyncWriteCount === 0) {
       this._lastUnflushedValue = undefined;
     }
+    this._notifyWriteSettled();
     return true;
   }
 
   async flushAsync() {
+    if (this._disposed) return false;
     let wroteAny = false;
     if (this._debounceTimer != null) {
       clearTimeout(this._debounceTimer);
@@ -243,11 +252,43 @@ class FileJsonStore {
   }
 
   dispose() {
-    this.flush();
+    if (this._disposed) return;
+    if (this._debounceTimer != null) {
+      clearTimeout(this._debounceTimer);
+      this._debounceTimer = null;
+    }
+    if (this._hasPendingWrite || this._asyncWriteCount > 0) {
+      const value = this._lastUnflushedValue !== undefined
+        ? this._lastUnflushedValue
+        : this._pendingWriteValue;
+      if (value === undefined) { this._disposed = true; return; }
+      this._pendingWriteValue = undefined;
+      this._hasPendingWrite = false;
+      try {
+        this._writeNow(value);
+        this._durableGeneration = this._writeGeneration;
+        this._failedGeneration = 0;
+      } catch (error) {
+        this._pendingWriteValue = value;
+        this._lastUnflushedValue = value;
+        this._hasPendingWrite = true;
+        throw error;
+      }
+      if (this._asyncWriteCount > 0) {
+        this._lastImmediateGeneration = this._writeGeneration;
+        this._lastImmediateValue = value;
+      } else {
+        this._lastUnflushedValue = undefined;
+      }
+      this._notifyWriteSettled();
+    }
+    this._disposed = true;
   }
 
   async disposeAsync() {
+    if (this._disposed) return;
     await this.flushAsync();
+    this._disposed = true;
   }
 
   delete() {
@@ -311,9 +352,21 @@ class FileJsonStore {
             this._lastUnflushedValue = undefined;
           }
         }
+        this._notifyWriteSettled();
       });
     this._asyncWriteChain = operation.catch(() => {});
     return operation;
+  }
+
+  _notifyWriteSettled() {
+    try { this._onWriteSettled?.(); } catch (_error) { /* Observers cannot change durability. */ }
+  }
+
+  _assertWritable() {
+    if (!this._disposed) return;
+    const error = new Error('store_disposed');
+    error.code = 'store_disposed';
+    throw error;
   }
 
   _logDebouncedWriteFailure(error) {

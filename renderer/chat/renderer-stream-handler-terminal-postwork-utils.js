@@ -149,9 +149,12 @@
           return true;
         },
       });
+      // noteStep records a stage's own sub-steps (e.g. one IPC call) as
+      // "<stage>.<step>" so a slow stage names its slow call.
+      const noteStep = (step, durationMs) => noteStageDuration(streamId, `${stageName}.${step}`, durationMs);
       let task;
       try {
-        task = Promise.resolve(taskFactory({ signal: abortController.signal, guard }));
+        task = Promise.resolve(taskFactory({ signal: abortController.signal, guard, noteStep }));
       } catch (syncError) {
         task = Promise.reject(syncError);
       }

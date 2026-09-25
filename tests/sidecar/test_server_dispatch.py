@@ -78,11 +78,15 @@ def test_prune_finished_chat_workers_removes_cancel_handle() -> None:
     assert list(active_cancel_handles) == [live]
 
 
-def test_make_chat_send_worker_sends_control_error_when_worker_raises() -> None:
-    sent: list[dict[str, object]] = []
+def test_make_chat_send_worker_sends_terminal_error_when_worker_raises() -> None:
+    # A10: the fatal response trails the data frames the turn already queued
+    # (terminal lane); the control lane would overtake them.
+    control: list[dict[str, object]] = []
+    terminal: list[tuple[list[object], dict[str, object]]] = []
     transport = SimpleNamespace(
         approval_reader_factory=lambda *_args, **_kwargs: None,
-        send_control=sent.append,
+        send_control=control.append,
+        send_terminal_result=lambda notifications, response: terminal.append((list(notifications), response)),
         unregister_turn=lambda _request_id, expected_handle=None: None,
     )
 
@@ -100,9 +104,14 @@ def test_make_chat_send_worker_sends_control_error_when_worker_raises() -> None:
 
     worker()
 
-    assert sent[0]["id"] == 102
-    assert sent[0]["error"]["code"] == -32603
-    assert sent[0]["error"]["message"] == "internal error: RuntimeError"
+    assert control == []
+    assert len(terminal) == 1
+    notifications, response = terminal[0]
+    assert notifications == []
+    assert response["id"] == 102
+    assert response["error"]["code"] == -32603
+    assert response["error"]["message"] == "internal error: RuntimeError"
+    assert response["error"]["data"]["retryable"] is False
 
 
 def test_chat_send_adapter_forwards_prepared_plugin_runtime_admission(monkeypatch) -> None:

@@ -8,7 +8,7 @@
 .user-questions-question,
 .user-questions-actions,
 .user-questions-receipt {
-  max-width: min(100%, 640px);
+  max-width: min(100%, var(--chat-card-max-width));
 }
 
 .user-questions-header {

@@ -224,6 +224,13 @@
           ];
           continue;
         }
+        if (row && row.kind === 'approval_gap' && row.payload) {
+          const status = normalizeToolStatus(row.payload.state);
+          if (status === 'awaiting_approval' || status === 'pending_approval') {
+            row.payload.state = 'interrupted';
+          }
+          continue;
+        }
         if (!row || row.kind !== 'tool_call' || !row.payload) {
           continue;
         }

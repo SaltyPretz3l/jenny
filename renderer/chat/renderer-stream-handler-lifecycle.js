@@ -16,6 +16,16 @@
     return null;
   }
 
+  function resolveTurnTreeProjectorModule() {
+    if (typeof globalThis !== 'undefined' && globalThis.rendererTurnTreeProjector) {
+      return globalThis.rendererTurnTreeProjector;
+    }
+    if (typeof require === 'function') {
+      try { return require('./renderer-turn-tree-projector'); } catch (_error) { /* browser script mode */ }
+    }
+    return null;
+  }
+
   function createStreamHandlerLifecycle(options = {}) {
     const {
       state,
@@ -274,6 +284,7 @@
         return (payload) => streamMailbox.enqueue(payload, async ({ guard, signal, rendererEpoch }) => {
           try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
           try {
+            if (state.runtimeSendController?.acceptAdmission?.(payload) === false) return { buffered: false, terminal: false };
             const continuation = { continuationGuard: guard, signal, rendererEpoch };
             if (useEnvelopeHandler) {
               return await handleStreamEnvelope(payload, continuation);
@@ -377,7 +388,50 @@
       }
     }
 
-    function rehydrateSessionFromPersistedTurnEvents(sessionId) {
+    // pendingPayloads are live events the backend still waits on for an
+    // in-flight turn (an ask_user question after a renderer reload). They
+    // re-enter through normal dispatch once the persisted log is seeded.
+    function rehydrateSessionFromPersistedTurnEvents(sessionId, { pendingPayloads = [] } = {}) {
+      const payloads = Array.isArray(pendingPayloads) ? pendingPayloads : [];
+      const seeded = seedSessionFromPersistedTurnEvents(sessionId, normalizeId(payloads[0]?.turnId));
+      for (const payload of payloads) {
+        Promise.resolve(handleStreamPayload(payload)).catch((error) => {
+          appendClientLog('WARN', 'stream.rehydrate_pending_payload_failed', {
+            type: String(payload?.type || '').slice(0, 60),
+            streamId: String(payload?.streamId || '').slice(0, 30),
+            message: String(error?.message || error).slice(0, 200),
+          });
+        });
+      }
+      return seeded;
+    }
+
+    // F25 (gate A7): main persists an in-flight turn's events only when it
+    // settles, so a reload mid-turn finds that turn's messages on disk but no
+    // events for it. Seed it from the events its persisted messages project;
+    // otherwise the live turn built from the replayed payloads alone replaces
+    // those rows (Thought, tool) until the terminal.
+    function withInFlightTurnMessageEvents(sessionId, persistedEvents, turnId) {
+      if (!turnId || persistedEvents.some((event) => normalizeId(event?.turn_id || event?.turnId) === turnId)) {
+        return persistedEvents;
+      }
+      const projector = resolveTurnTreeProjectorModule();
+      const messages = state.messagesBySession instanceof Map ? state.messagesBySession.get(sessionId) : null;
+      if (typeof projector?.projectTurnTree !== 'function' || !Array.isArray(messages) || !messages.length) {
+        return persistedEvents;
+      }
+      let turn;
+      try {
+        const turns = projector.projectTurnTree({ messages })?.turns;
+        turn = (Array.isArray(turns) ? turns : []).find((entry) => normalizeId(entry?.turn_id) === turnId) || null;
+      } catch (_error) {
+        turn = null;
+      }
+      const turnEvents = Array.isArray(turn?.events) ? turn.events : [];
+      return turnEvents.length ? [...persistedEvents, ...turnEvents] : persistedEvents;
+    }
+
+    function seedSessionFromPersistedTurnEvents(sessionId, inFlightTurnId = '') {
       if (!streamRehydrateUtils || typeof streamRehydrateUtils.rehydrateSessionLiveState !== 'function') {
         return null;
       }
@@ -390,9 +444,11 @@
         return null;
       }
       const persistedPayload = turnEventsStore.get(normalizedSessionId);
-      const persistedEvents = persistedPayload && Array.isArray(persistedPayload.turnEvents)
-        ? persistedPayload.turnEvents
-        : [];
+      const persistedEvents = withInFlightTurnMessageEvents(
+        normalizedSessionId,
+        persistedPayload && Array.isArray(persistedPayload.turnEvents) ? persistedPayload.turnEvents : [],
+        inFlightTurnId
+      );
       if (!persistedEvents.length) {
         return null;
       }

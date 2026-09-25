@@ -31,7 +31,7 @@ function createManagedService(userDataPath, options = {}) {
     repoRoot: process.cwd(),
     pythonExecutable: process.execPath,
     launchCommand: process.execPath,
-    launchArgs: [path.join(__dirname, '..', 'fixtures', 'fake-sidecar.js')],
+    launchArgs: [path.join(__dirname, '..', 'fixtures', 'fake-sidecar.js'), ...(options.sidecarArgs || [])],
     safeStorage: createFakeSafeStorage(),
     isSafeStorageReady: () => true,
     defaultModel: String(options.defaultModel || 'mock-v1'),

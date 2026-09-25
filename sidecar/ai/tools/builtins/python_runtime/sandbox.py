@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sidecar.ai.config import read_environment_value
+from sidecar.ai.tools.builtins.python_runtime import bootstrap_subprocess
 from sidecar.ai.tools.builtins.python_runtime.job_object import JobObject
 
 PYTHON_RESULT_SCHEMA_VERSION = 1
@@ -379,7 +380,7 @@ def execute_sandboxed(
         with JobObject(memory_limit_mb=memory_limit_mb, max_processes=5) as job:
             proc = subprocess.Popen(
                 [
-                    str(venv_python),
+                    *bootstrap_subprocess.managed_python_argv(venv_python),
                     str(wrapper_path),
                     str(script_path),
                     str(result_path),

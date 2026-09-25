@@ -72,10 +72,12 @@ test('streaming Mermaid and math decorators use patched root with timeline fallb
   timeline.innerHTML = '<article class="chat-entry" data-message-id="active"><div class="target"></div></article>';
   const mermaidRoots = [];
   const mathRoots = [];
+  const codeRoots = [];
   const previousWindow = global.window;
   global.window = dom.window;
   dom.window.markdownUtils = { renderInlineMermaidBlocks: (root) => mermaidRoots.push(root) };
   dom.window.markdownMathUtils = { renderMathInto: (root) => mathRoots.push(root) };
+  dom.window.rendererCodeHighlight = { decorateCodeBlocks: (root) => codeRoots.push(root) };
   try {
     const pipeline = createRenderEffectsPipeline({ dom: { chatTimeline: timeline } });
     pipeline.runPostTimelineRenderEffects([], {
@@ -92,6 +94,9 @@ test('streaming Mermaid and math decorators use patched root with timeline fallb
     assert.equal(mathRoots[0], mermaidRoots[0]);
     assert.equal(mermaidRoots[1], timeline);
     assert.equal(mathRoots[1], timeline);
+    // Tool-detail sections and diff hunks are colored at the same post-insert
+    // seam as Mermaid and math, so eagerly expanded rows are covered too.
+    assert.deepEqual(codeRoots, mermaidRoots);
   } finally {
     global.window = previousWindow;
   }

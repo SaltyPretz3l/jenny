@@ -27,7 +27,7 @@ test('chat session rows do not restore per-row bottom dividers', () => {
   assert.doesNotMatch(ruleBody('.session-row'), /border-bottom\s*:/);
 });
 
-test('selection glyph is visible for every runtime state while menus and inactive toolbar stay hidden', t => {
+test('reserved dot is visible for every runtime state but yields to bulk selection', t => {
   const dom = new JSDOM('<!doctype html><head></head><body><div class="sidebar-bulk-actions" hidden></div></body>');
   t.after(() => dom.window.close());
   const style = dom.window.document.createElement('style');
@@ -35,12 +35,17 @@ test('selection glyph is visible for every runtime state while menus and inactiv
   style.textContent = panelCss.slice(0, panelCss.indexOf('@container')) + selectionCss;
   dom.window.document.head.append(style);
   for (const state of ['idle', 'streaming', 'approval']) {
-    dom.window.document.body.insertAdjacentHTML('beforeend', `<li class="session-row active sidebar-bulk-selecting sidebar-bulk-selected" data-session-dominant-state="${state}"><button class="session-row__open" role="checkbox" aria-checked="true"><span class="session-row__selection"></span><span class="session-row__dot"></span></button><button class="session-row__menu" hidden></button></li>`);
+    dom.window.document.body.insertAdjacentHTML('beforeend', `<li class="session-row active sidebar-bulk-selected" data-session-dominant-state="${state}"><button class="session-row__open" role="checkbox" aria-checked="true"><span class="session-row__selection"></span><span class="session-row__dot"></span></button><button class="session-row__menu" hidden></button></li>`);
     const row = dom.window.document.body.lastElementChild;
     const computed = node => dom.window.getComputedStyle(node);
+    assert.match(computed(row.querySelector('.session-row__dot')).display, /^(?:block|inline-block)$/, state);
+    if (state === 'idle') {
+      assert.equal(computed(row.querySelector('.session-row__dot')).backgroundColor, 'rgba(0, 0, 0, 0)');
+    }
+    row.classList.add('sidebar-bulk-selecting');
     assert.equal(computed(row.querySelector('.session-row__selection')).display, 'block', state);
     assert.equal(computed(row.querySelector('.session-row__menu')).display, 'none', state);
-    assert.equal(computed(row.querySelector('.session-row__dot')).display, state === 'idle' ? 'none' : 'block');
+    assert.equal(computed(row.querySelector('.session-row__dot')).display, 'none', state);
     assert.equal(computed(row.querySelector('.session-row__selection')).animationName, 'none');
   }
   assert.equal(dom.window.getComputedStyle(dom.window.document.querySelector('.sidebar-bulk-actions')).display, 'none');

@@ -32,6 +32,7 @@ function buildSessions(count, extra = {}) {
 function createControllerHarness({ sessions = buildSessions(2), nowStep = 0, provideEscapeHtml = true } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="scope"></div><input id="search"><div id="count"></div><div id="groups"></div><div id="status"></div></body></html>');
   const frames = [];
+  const cancelled = [];
   let frameId = 0;
   let nowValue = 0;
   const logs = [];
@@ -45,7 +46,7 @@ function createControllerHarness({ sessions = buildSessions(2), nowStep = 0, pro
       frameId += 1;
       return frameId;
     },
-    cancelAnimationFrame() {},
+    cancelAnimationFrame(id) { cancelled.push(id); },
   };
   const state = {
       sessions,
@@ -59,21 +60,22 @@ function createControllerHarness({ sessions = buildSessions(2), nowStep = 0, pro
     newChat: () => newChatCalls.push(true),
   };
   if (provideEscapeHtml) callbacks.escapeHtml = actionButton.escapeHtml;
+  const domRefs = {
+    scopeSlot: dom.window.document.getElementById('scope'),
+    searchInput: dom.window.document.getElementById('search'),
+    conversationCount: dom.window.document.getElementById('count'),
+    conversationGroups: dom.window.document.getElementById('groups'),
+    status: dom.window.document.getElementById('status'),
+  };
   const controller = createChatsPanelController({
     state,
     documentRef: dom.window.document,
     windowRef,
-    dom: {
-      scopeSlot: dom.window.document.getElementById('scope'),
-      searchInput: dom.window.document.getElementById('search'),
-      conversationCount: dom.window.document.getElementById('count'),
-      conversationGroups: dom.window.document.getElementById('groups'),
-      status: dom.window.document.getElementById('status'),
-    },
+    dom: domRefs,
     inventory: { actionButton, segmentedControl },
     callbacks,
   });
-  return { dom, controller, frames, logs, afterRenderCalls, state, newChatCalls };
+  return { dom, controller, frames, cancelled, domRefs, logs, afterRenderCalls, state, newChatCalls };
 }
 
 function localDayIso(now, dayOffset, hour = 8) {
@@ -439,7 +441,7 @@ test('search and scope changes reset the history viewport to the top', () => {
 });
 
 test('runtime badge patches do not structurally rebuild and slow warnings are bounded and content-free', () => {
-  const harness = createControllerHarness({ nowStep: 40 });
+  const harness = createControllerHarness({ nowStep: 120 });
   harness.controller.renderNow();
   const firstRow = harness.dom.window.document.querySelector('[data-session-id="session-0"]');
   harness.controller.patchRuntimeState();
@@ -448,6 +450,7 @@ test('runtime badge patches do not structurally rebuild and slow warnings are bo
 
   const slowWarnings = harness.logs.filter((entry) => entry.eventName === 'sidebar.render_slow');
   assert.equal(slowWarnings.length, 1, 'warnings are limited to one per 30-second window');
+  assert.equal(slowWarnings[0].level, 'WARN', 'a render past 100 ms is a stall');
   assert.deepEqual(Object.keys(slowWarnings[0].details).sort(), ['durationMs', 'sessionCount', 'visibleCount']);
   assert.doesNotMatch(JSON.stringify(slowWarnings), /Chat 0|Preview 0|session-0/);
   harness.controller.dispose();
@@ -535,4 +538,45 @@ test('bulk mode survives real panel rerenders and roving focus without replacing
   assert.equal(replacement.hasAttribute('aria-checked'), false);
   assert.equal(row.querySelector('[data-session-action="menu"]').hidden, false);
   assert.equal(row.querySelector('[data-session-action="menu"]').tabIndex, replacement.tabIndex);
+});
+
+test('renderNow clears the frame latch before an early return and cancels a pending frame', () => {
+  const { controller, frames, cancelled, domRefs } = createControllerHarness();
+  controller.renderNow();
+  const start = frames.length;
+  controller.renderSessions();
+  assert.equal(frames.length, start + 1, 'precondition: a frame is pending');
+
+  // The frame fires while the groups node is gone (chrome torn down without
+  // dispose): the latch must clear, or every later scheduleRender is wedged.
+  const groups = domRefs.conversationGroups;
+  domRefs.conversationGroups = null;
+  assert.equal(frames[frames.length - 1](), null);
+  domRefs.conversationGroups = groups;
+  controller.renderSessions();
+  assert.equal(frames.length, start + 2, 'the next render schedules a frame instead of wedging on the fired id');
+
+  // A direct render cancels the pending frame instead of painting twice.
+  const pendingId = frames.length;
+  const before = cancelled.length;
+  assert.ok(controller.renderNow());
+  assert.deepEqual(cancelled.slice(before), [pendingId]);
+  controller.renderSessions();
+  assert.equal(frames.length, start + 3);
+});
+
+test('sidebar renders under the long-task line stay silent and moderate ones log INFO', () => {
+  const fast = createControllerHarness({ nowStep: 45 });
+  fast.controller.renderNow();
+  assert.equal(fast.logs.filter((entry) => entry.eventName === 'sidebar.render_slow').length, 0);
+  fast.controller.dispose();
+  fast.dom.window.close();
+
+  const moderate = createControllerHarness({ nowStep: 70 });
+  moderate.controller.renderNow();
+  const slow = moderate.logs.filter((entry) => entry.eventName === 'sidebar.render_slow');
+  assert.equal(slow.length, 1);
+  assert.equal(slow[0].level, 'INFO');
+  moderate.controller.dispose();
+  moderate.dom.window.close();
 });

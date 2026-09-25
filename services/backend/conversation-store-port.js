@@ -4,6 +4,9 @@ const {
   normalizeTurnEvent,
 } = require('./message-normalization');
 const { normalizeId } = require('../shared/normalize');
+const {
+  createRuntimeContinuationPort,
+} = require('./runtime-continuation-store');
 
 const TERMINAL_TOOL_STATUSES = new Set([
   'complete',
@@ -480,6 +483,7 @@ function createConversationStorePort(store, { kind = 'unknown' } = {}) {
         ? result
         : buildCommitResult({ reason: 'invalid_commit_result' });
     },
+    ...createRuntimeContinuationPort(store, { finalizeCommit, normalizeId }),
     truncateAfterMessage(sessionId, messageId, options = {}, { durable = false } = {}) {
       const id = normalizeId(sessionId);
       const raw = store.truncateAfterMessage?.(id, messageId, options);

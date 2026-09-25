@@ -355,7 +355,15 @@ function prepareResumedHistory(service, resumePayload) {
     ? service.options.historyAttachmentHydrator(messages) : messages;
 }
 
+function captureManagedExecutionAuthority(service, sessionId, options) {
+  if (!service.sessionExecutionAuthority?.captureSession) {
+    throw new Error('Session execution authority is unavailable.');
+  }
+  return service.sessionExecutionAuthority.captureSession(sessionId, options);
+}
+
 module.exports = {
+  captureManagedExecutionAuthority,
   prepareResumedHistory,
   CLOUD_ENGINE_TYPES,
   buildAutomaticCompactionSendContext,

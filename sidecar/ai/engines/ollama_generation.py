@@ -8,7 +8,9 @@ import urllib.request
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
-from sidecar.ai.engines.base import EngineMessage
+from sidecar.ai.engines import admitted as _admitted
+from sidecar.ai.engines import vision_input as _vision_input
+from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
 from sidecar.ai.engines.ollama_metadata import (
     build_tools_payload_cached as _build_tools_payload_cached_helper,
 )
@@ -35,12 +37,6 @@ from sidecar.ai.engines.ollama_shared import (
     _HTTP_STATUS_RE,
     logger,
     supports_ollama_reasoning_levels,
-)
-from sidecar.ai.engines.vision_input import (
-    VisionImage,
-    VisionInput,
-    VisionInputError,
-    normalize_vision_inputs,
 )
 from sidecar.ai.tools.inband_parser import extract_inband_tool_calls_detailed
 from sidecar.runtime.local_engine.messages import (
@@ -93,6 +89,21 @@ from sidecar.runtime.ollama_support import (
     StreamChunk,
     UnsupportedModalityError,
 )
+
+
+def _outbound_content(raw: Any, *, has_tool_calls: bool) -> str:
+    """Assistant/user text for the wire, minus the empty-content backfill.
+
+    ``ensure_non_empty_assistant_content`` stamps a placeholder on assistant
+    tool-call rows for providers that reject empty content. Sent as content it
+    becomes a few-shot pattern the model imitates as its own visible reply (the
+    ChatGPT serializer drops it for the same reason), and Ollama accepts a
+    tool-call row with empty content, so it never goes on the wire here.
+    """
+    content = str(raw or "").strip()
+    if has_tool_calls and content == EMPTY_ASSISTANT_CONTENT_PLACEHOLDER:
+        return ""
+    return content
 
 
 class _OllamaGenerationMixin:
@@ -185,7 +196,7 @@ class _OllamaGenerationMixin:
             return ""
         return str(response.get("response", "") or "")
 
-    def generate(
+    def generate(  # noqa: PLR0917 - preserves the positional engine API.
         self,
         prompt: str,
         max_tokens: int = 16384,
@@ -208,7 +219,7 @@ class _OllamaGenerationMixin:
             response_format=response_format,
         )
 
-    def stream(
+    def stream(  # noqa: PLR0917 - preserves the positional engine API.
         self,
         prompt: str,
         max_tokens: int = 16384,
@@ -233,7 +244,7 @@ class _OllamaGenerationMixin:
             cancel_handle=cancel_handle,
         )
 
-    def generate_with_tools(
+    def generate_with_tools(  # noqa: PLR0917 - preserves the positional engine API.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -273,6 +284,7 @@ class _OllamaGenerationMixin:
         except EngineConnectionError as error:
             if self._extract_http_status(error) != _BAD_REQUEST_STATUS:
                 raise
+            _admitted.refuse_unadmitted_provider_retry()
             self._note_tool_call_http_400(streaming=False)
             return self._fallback_plain_generate_result(
                 prompt=prompt,
@@ -315,7 +327,7 @@ class _OllamaGenerationMixin:
             response_format=response_format,
         )
 
-    def stream_with_tools(
+    def stream_with_tools(  # noqa: PLR0917 - preserves the positional engine API.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -364,6 +376,7 @@ class _OllamaGenerationMixin:
         except EngineConnectionError as error:
             if self._extract_http_status(error) != _BAD_REQUEST_STATUS:
                 raise
+            _admitted.refuse_unadmitted_provider_retry()
             self._note_tool_call_http_400(streaming=True)
             return (
                 yield from self._fallback_plain_stream_result(
@@ -393,7 +406,7 @@ class _OllamaGenerationMixin:
     def generate_with_vision(
         self,
         prompt: str,
-        images: list[VisionInput],
+        images: list[_vision_input.VisionInput],
         max_tokens: int = 256,
         temperature: float = 0.7,
     ) -> GenerationResult:
@@ -402,8 +415,8 @@ class _OllamaGenerationMixin:
         self._assert_ready()
 
         try:
-            encoded = [image.as_base64() for image in normalize_vision_inputs(images)]
-        except VisionInputError as error:
+            encoded = [image.as_base64() for image in _vision_input.normalize_vision_inputs(images)]
+        except _vision_input.VisionInputError as error:
             raise GenerationError(str(error)) from error
 
         data: dict[str, Any] = {
@@ -522,9 +535,9 @@ class _OllamaGenerationMixin:
                 role = str(item.get("role", "") or "").strip().lower()
                 if not role:
                     continue
-                content = str(item.get("content", "") or "").strip()
                 raw_tool_calls = item.get("tool_calls") if role == "assistant" else None
                 has_tool_calls = isinstance(raw_tool_calls, list) and bool(raw_tool_calls)
+                content = _outbound_content(item.get("content"), has_tool_calls=has_tool_calls)
                 if not content and not has_tool_calls:
                     continue
                 if role == "tool":
@@ -545,7 +558,7 @@ class _OllamaGenerationMixin:
                     images := [
                         image.as_base64()
                         for image in raw_images
-                        if isinstance(image, VisionImage)
+                        if isinstance(image, _vision_input.VisionImage)
                     ]
                 ):
                     entry["images"] = images

@@ -21,6 +21,7 @@ from sidecar.ai.error_codes import (
     CMP_LOOP_ENGINE_STALLED,
     CMP_LOOP_TOOL_INPUT_VALIDATION,
     CMP_MODE_TOOL_BLOCKED,
+    CMP_STREAM_INCOMPLETE,
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_COMMAND_BLOCKED,
     CMP_TOOL_DISABLED,
@@ -35,9 +36,11 @@ from sidecar.ai.feature_flags import (
     FEATURE_TOOL_SEARCH,
 )
 from sidecar.ai.mcp.models import MCPToolDescriptor, MCPToolResult
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID
 from sidecar.ai.memory.store import ApprovedMemory
 from sidecar.ai.routing import generation_runtime
 from sidecar.ai.routing.loop_events import (
+    ContextCompactionStartedEvent,
     ContextCompactedEvent,
     FallbackTriggeredEvent,
     StopEvent,
@@ -56,6 +59,7 @@ from sidecar.ai.tools.models import (
 )
 from sidecar.ai.tools.tool_search import TOOL_SEARCH_RESULT_KIND, compute_deferral_set
 from sidecar.protocol import CHAT_THINKING_KIND_STATUS
+from sidecar.runtime.chat_models import ChatRequestContext
 
 
 @dataclass(frozen=True)
@@ -181,10 +185,15 @@ class _StubMCPClient:
 class _PromptMemoryStore:
     def __init__(self) -> None:
         self.recall_queries: list[str] = []
+        self.recall_projects: list[str] = []
 
-    def recall_memories(self, query: str, *, limit: int) -> list[ApprovedMemory]:
+    def recall_memories(
+        self, query: str, *, limit: int, project_id: str, include_general: bool = False
+    ) -> list[ApprovedMemory]:
         _ = limit
+        assert include_general is True, "prompt recall layers the General project"
         self.recall_queries.append(query)
+        self.recall_projects.append(project_id)
         if not str(query or "").strip():
             return []
         return [
@@ -205,9 +214,10 @@ class _PromptMemoryStore:
         ]
 
     def get_recent_memories_by_kind(
-        self, lesson_kind: str, limit: int
+        self, lesson_kind: str, limit: int, *, project_id: str, include_general: bool = False
     ) -> list[ApprovedMemory]:
-        _ = (lesson_kind, limit)
+        _ = (lesson_kind, limit, include_general)
+        self.recall_projects.append(project_id)
         return []
 
 
@@ -358,9 +368,14 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
         ]
     )
     captured: dict[str, list[dict[str, Any]]] = {}
+    events: list[object] = []
 
     def fake_compact_context(messages, *_args, **_kwargs):  # noqa: ANN001
         captured["messages"] = [dict(message) for message in messages]
+        started = events[-1]
+        assert isinstance(started, ContextCompactionStartedEvent)
+        assert started.phase == "preflight"
+        assert started.message_count == len(messages)
         return CompactionResult(
             messages=[
                 {"role": "system", "content": "Compacted system prompt."},
@@ -402,6 +417,10 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
         latest_user_content=long_user_content,
         mode="chat",
         approvals_pre_granted=True,
+        runtime=LoopRuntime(
+            emit=events.append,
+            request_id="req_compact_runtime_overlays",
+        ),
     )
 
     compaction_text = "\n".join(
@@ -418,6 +437,14 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
     assert "## Recalled Memories" in system_headings
     assert "## Context Pressure Advisory" in system_headings
     assert memory_store.recall_queries == [long_user_content.strip()]
+    assert memory_store.recall_projects == [GENERAL_PROJECT_ID, GENERAL_PROJECT_ID]
+    started_event = next(
+        event for event in events if isinstance(event, ContextCompactionStartedEvent)
+    )
+    compacted_event = next(
+        event for event in events if isinstance(event, ContextCompactedEvent)
+    )
+    assert events.index(started_event) < events.index(compacted_event)
 
 
 def test_router_returns_terminal_when_runtime_overlays_exceed_post_compaction_budget(
@@ -474,6 +501,7 @@ def test_router_returns_terminal_when_runtime_overlays_exceed_post_compaction_bu
     assert decision.terminal_error_retryable is False
     assert engine.last_kwargs == {}
     assert memory_store.recall_queries == ["hello"]
+    assert memory_store.recall_projects == [GENERAL_PROJECT_ID, GENERAL_PROJECT_ID]
 
 
 def test_router_streaming_runtime_uses_stream_with_tools() -> None:
@@ -3005,7 +3033,9 @@ def test_router_budget_filter_caps_oversized_request_allowlist() -> None:
     assert {f"mcp__budget__tool_{index:02d}" for index in range(11, 15)}.isdisjoint(
         full_schema_names
     )
-    assert decision.compact_threshold_tokens == 47_700
+    # Whole-prompt meter units: the 47,700 trigger plus 12 schemas x 500 reserve.
+    assert decision.compact_threshold_tokens == 47_700 + 12 * 500
+    assert decision.context_tool_overhead_tokens == 12 * 500
 
 
 @pytest.mark.parametrize(
@@ -3147,7 +3177,9 @@ def test_router_tool_search_expands_budget_filtered_tool_schema() -> None:
         outcome for outcome in decision.tool_results if outcome.tool_name == "tool_search"
     )
     assert tool_search_outcome.metadata["discovered_tools"] == ["mcp__budget__tool_14"]
-    assert decision.compact_threshold_tokens == 47_250
+    # Whole-prompt meter units: the 47,250 trigger plus 13 schemas x 500 reserve.
+    assert decision.compact_threshold_tokens == 47_250 + 13 * 500
+    assert decision.context_tool_overhead_tokens == 13 * 500
 
 
 def test_router_unavailable_tool_search_reports_plain_unavailable_result() -> None:
@@ -6433,3 +6465,124 @@ def test_context_tokens_estimate_uses_the_config_aware_backend(
 
     router._context_tokens_estimate([{"role": "user", "content": "abcdefgh"}])
     assert len(created) == 1, "the backend must be memoized, not rebuilt per turn"
+
+
+def _run_accepted_plan_router(second_result: GenerationResult) -> tuple[Any, Any, Any]:
+    """Drive an ``accepted`` exit_plan_mode outcome, then ``second_result``."""
+    engine = _StubEngine(
+        plans=[
+            _ToolPlan(
+                result=GenerationResult(
+                    content="Here is the plan.",
+                    tool_calls=(
+                        ToolCallRequest(
+                            tool_id="exit_plan_mode",
+                            arguments={"title": "Hold", "steps": ["Inspect"]},
+                            call_id="call-exit",
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ),
+            _ToolPlan(result=second_result),
+            _ToolPlan(result=GenerationResult(content="must not run", finish_reason="stop")),
+        ]
+    )
+    descriptors = {
+        "exit_plan_mode": MCPToolDescriptor(
+            name="exit_plan_mode",
+            description="Submit the plan",
+            input_schema={"type": "object"},
+            side_effecting=False,
+            server_name="tools",
+        ),
+        "read_file": MCPToolDescriptor(
+            name="read_file",
+            description="Read a file",
+            input_schema={"type": "object"},
+            side_effecting=False,
+            server_name="tools",
+        ),
+    }
+    client = _StubMCPClient(
+        descriptors,
+        results={
+            "exit_plan_mode": MCPToolResult(
+                tool_name="exit_plan_mode",
+                output="Plan accepted. The user does not want it built yet.",
+                success=True,
+                metadata={
+                    "result_kind": "plan_mode_transition",
+                    "plan_decision": "accepted",
+                    "plan_mode_cleared": False,
+                    "turn_disposition": "final_reply",
+                },
+            ),
+        },
+    )
+    router = _build_router(
+        config=RuntimeConfig(engine_type="mock", model="mock-v1"),
+        engine=engine,
+        mcp_client=client,
+    )
+
+    decision = router.build_chat_decision(
+        request_id="req_accepted_plan",
+        messages=[{"role": "user", "content": "Plan it and show me"}],
+        latest_user_content="Plan it and show me",
+        mode="assist",
+        approvals_pre_granted=True,
+        request_context=ChatRequestContext(
+            request_id="req_accepted_plan",
+            trace_id=None,
+            session_id=None,
+            mode="assist",
+            approvals_pre_granted=True,
+            plan_mode=True,
+            read_only=True,
+            plan_decision="accepted",
+        ),
+    )
+
+    return engine, client, decision
+
+
+def test_router_accepted_plan_gets_one_toolless_reply_then_ends() -> None:
+    """Accepted, not built: after exit_plan_mode returns ``accepted`` the loop
+    runs exactly one more generation, with no tools offered, and ends the turn
+    even when that generation tries to call a tool."""
+    engine, client, decision = _run_accepted_plan_router(
+        GenerationResult(
+            content="Got it, I'll hold here.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_id="read_file",
+                    arguments={"path": "a.txt"},
+                    call_id="call-sneaky",
+                ),
+            ),
+            finish_reason="tool_calls",
+        )
+    )
+
+    assert len(engine.calls) == 2
+    assert not engine.calls[1].get("tools")
+    assert decision.response_text == "Got it, I'll hold here."
+    assert [name for name, _ in client.executed_calls] == ["exit_plan_mode"]
+
+
+@pytest.mark.parametrize("finish_reason", ["incomplete", "error", "thinking_budget"])
+def test_router_accepted_plan_reply_cut_off_fails_like_a_normal_reply(
+    finish_reason: str,
+) -> None:
+    """A cut-off acknowledgment is reported as a retryable incomplete stream,
+    exactly as the normal final-response path reports it, not as success."""
+    engine, client, decision = _run_accepted_plan_router(
+        GenerationResult(content="Got it, I'll h", finish_reason=finish_reason)
+    )
+
+    assert len(engine.calls) == 2
+    assert decision.terminal_error_code == CMP_STREAM_INCOMPLETE
+    assert decision.terminal_error_retryable is True
+    assert decision.response_text != "Got it, I'll h"
+    assert [name for name, _ in client.executed_calls] == ["exit_plan_mode"]

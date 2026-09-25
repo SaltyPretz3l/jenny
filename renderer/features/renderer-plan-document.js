@@ -8,7 +8,19 @@
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  const TERMINAL_STATES = new Set(['approved', 'approved_auto', 'rejected', 'abandoned', 'superseded']);
+  const TERMINAL_STATES = new Set(['approved', 'approved_auto', 'accepted', 'rejected', 'abandoned', 'superseded']);
+
+  function stateLabel(state) {
+    switch (state) {
+      case 'approved': return jt('artifacts.plan.state.approved', 'Approved');
+      case 'approved_auto': return jt('artifacts.plan.state.approvedAuto', 'Approved, auto mode');
+      case 'accepted': return jt('artifacts.plan.state.accepted', 'Accepted · not built');
+      case 'rejected': return jt('artifacts.plan.state.rejected', 'Rejected');
+      case 'abandoned': return jt('artifacts.plan.state.abandoned', 'Abandoned');
+      case 'superseded': return jt('artifacts.plan.state.superseded', 'Superseded');
+      default: return state.replace(/_/g, ' ');
+    }
+  }
 
   function escapeFallback(value) {
     return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -59,7 +71,9 @@
     const plan = normalizePlanDocument(value);
     const escapeHtml = options?.escapeHtml || escapeFallback;
     return `<details class="plan-document-receipt" data-plan-document="true" data-plan-state="${escapeHtml(plan.state)}">`
-      + `<summary><span>${escapeHtml(plan.title)}</span><span class="plan-document-receipt__state">${plan.plan_edited ? 'edited &middot; ' : ''}${escapeHtml(plan.state.replace('_', ' '))}</span></summary>`
+      + `<summary><span>${escapeHtml(plan.title)}</span><span class="plan-document-receipt__meta"><span class="plan-document-receipt__state">${plan.plan_edited ? `${escapeHtml(jt('artifacts.plan.editedPrefix', 'edited'))} &middot; ` : ''}${escapeHtml(stateLabel(plan.state))}</span>`
+      + (plan.state === 'accepted' && plan.plan_id ? `<span data-plan-build-accepted data-plan-id="${escapeHtml(plan.plan_id)}"></span>` : '')
+      + '</span></summary>'
       + `<div class="plan-document-receipt__body"><ol>${plan.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>`
       + (plan.feedback ? `<p><strong>${escapeHtml(jt('artifacts.plan.feedbackLabel', 'Feedback:'))}</strong> ${escapeHtml(plan.feedback)}</p>` : '')
       + '</div></details>';

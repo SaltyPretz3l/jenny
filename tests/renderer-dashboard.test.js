@@ -5,6 +5,9 @@ const { JSDOM } = require('jsdom');
 const { createDashboardRegistry } = require('../renderer/features/renderer-dashboard-registry.js');
 const { createDashboardManager } = require('../renderer/features/renderer-dashboard-manager.js');
 const dashboardRegistryModule = require('../renderer/features/renderer-dashboard-registry.js');
+const dashboardCalendarModule = require('../renderer/features/renderer-dashboard-calendar.js');
+const dashboardLoopsModule = require('../renderer/features/renderer-dashboard-loops.js');
+const dashboardAwayDigestModule = require('../renderer/features/renderer-dashboard-widget-away-digest.js');
 const inventoryActionButton = require('../renderer/inventory/action-button.js');
 
 function createDom() {
@@ -350,4 +353,37 @@ test('dashboard manager disposal fences the initial refresh and rejects later re
   assert.deepEqual(state.scheduler.upcoming, []);
   assert.equal(manager.render(), null);
   assert.equal(probeRenders, 1);
+});
+
+test('dashboard manager registers and owns the away digest Home widget', async () => {
+  const { documentRef, grid, infoStrip } = createDom();
+  const state = { ui: { activeView: 'home' } };
+  const manager = createDashboardManager({
+    state,
+    documentRef,
+    shell: null,
+    dom: { homeInfoStrip: infoStrip, homeDashboardGrid: grid },
+    modules: {
+      dashboardRegistry: dashboardRegistryModule,
+      dashboardCalendar: dashboardCalendarModule,
+      dashboardAwayDigest: dashboardAwayDigestModule,
+      dashboardLoops: dashboardLoopsModule,
+    },
+    actionButton: inventoryActionButton,
+    callbacks: { appendClientLog: () => {} },
+  });
+
+  assert.deepEqual(manager.registry.list().map(({ id, slot }) => ({ id, slot })), [
+    { id: 'calendar', slot: 'main' },
+    { id: 'away-digest', slot: 'main' },
+    { id: 'open-loops', slot: 'main' },
+  ]);
+  assert.equal(typeof state.awayDigestReader?.refresh, 'function');
+  assert.equal(typeof state.awayDigestReader?.onChromePass, 'function');
+
+  manager.render();
+  assert.ok(grid.querySelector('[data-widget-id="away-digest"] .dashboard-empty-note'));
+
+  await manager.dispose();
+  assert.equal(state.awayDigestReader, null);
 });

@@ -2,6 +2,9 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+const { ResourceBroker } = require('../services/session-runtime/resource-broker');
+const { ToolResourceOperations } = require('../services/session-runtime/resource-operations');
 
 const {
   ELECTRON_BRIDGE_TOOL_NAMES,
@@ -14,6 +17,50 @@ function makeThrowingToolExecutor() {
     async executePreApproved() {
       throw new Error('toolExecutor.executePreApproved must not be called for __jenny_git_checkpoint');
     },
+  };
+}
+
+function dynamicResourceHarness(toolName, runtimeService) {
+  const pluginAuthority = Object.freeze({ mode: 'plugin', registry_revision: 1,
+    dependency_graph_hash: 'a'.repeat(64), commit_epoch: 1,
+    active_generation_id: 'generation-1' });
+  const capture = Object.freeze({ authority: pluginAuthority,
+    descriptor_digest: 'b'.repeat(64), descriptors: Object.freeze([Object.freeze({
+      name: toolName, side_effecting: true, read_only: false,
+      tool_family: 'other', source_kind: 'mcp', server_name: 'electron_tool_bridge',
+      plan_mode_only: false, workspace_required: false,
+      capability_identity: Object.freeze({ binding_digest: 'c'.repeat(64) }),
+    })]) });
+  let currentCapture = capture;
+  const root = Object.freeze({ project_id: 'project-alpha', root_path: null,
+    root_id: null, root_revision: 1, device_id: null, inode: null });
+  const authority = new SessionExecutionAuthority({
+    projectAuthority: { captureSession: () => root, requireCurrent: () => root },
+    permissionStore: { getSnapshot: () => ({ version: 3,
+      legacy_policies: { [toolName]: 'auto' }, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+    resolvePluginToolAuthority: () => currentCapture,
+    randomUUID: () => 'dynamic-authority',
+  });
+  const binding = authority.captureSession('session-dynamic', { requestId: 'request-dynamic' });
+  authority.bindPluginTools(binding, pluginAuthority);
+  const broker = new ResourceBroker({ limits: { tool_operations: 1 },
+    createId: () => 'dynamic-resource' });
+  const gateway = new ToolResourceOperations({ broker, pathResolver: { resolve: () => {
+    throw new Error('dynamic tools do not resolve filesystem resources');
+  } }, executionAuthority: authority, binding });
+  return {
+    broker,
+    gateway,
+    capture,
+    setCapture(value) { currentCapture = value; },
+    options: {
+      executionAuthority: binding,
+      pluginRuntimeAuthority: pluginAuthority,
+      params: { tool_name: toolName, tool_call_id: 'dynamic-call', arguments: {} },
+    },
+    service: { sessionRuntime: {}, sessionExecutionAuthority: authority, ...runtimeService },
   };
 }
 
@@ -347,5 +394,115 @@ describe('Electron tool bridge: Stage 6 restricted plugin tools', () => {
     });
     assert.equal(rejected.success, false);
     assert.match(rejected.output, /commit_epoch_stale/);
+  });
+});
+
+describe('Electron tool bridge: dynamic plugin resource ownership', () => {
+  test('remote, restricted, and native receipts settle one per-call tool claim', async () => {
+    const cases = [
+      ['plugin:remote:server:tool:search:abc', {
+        _pluginStage5ControlPlane: { executeRemoteTool: async () => ({ ok: true,
+          result: { source: 'remote' }, provenance: {},
+          execution_settlement: { cleanup: 'confirmed', producer_started: true } }) },
+      }],
+      ['plugin:acme-labs:widgets:compute', {
+        _pluginStage6ControlPlane: { executeRestrictedTool: async () => ({ ok: true,
+          value: { source: 'restricted' }, invocation_id: 'invocation-1' }) },
+      }],
+      ['plugin_native_read', {
+        _pluginStage8ControlPlane: { invokeNativeTool: async () => ({ ok: true,
+          result: { source: 'native' }, binding_digest: 'd'.repeat(64),
+          proof: { launch_receipt_id: 'launch-1', session_epoch: 1 } }) },
+      }],
+    ];
+    for (const [toolName, runtimeService] of cases) {
+      const harness = dynamicResourceHarness(toolName, runtimeService);
+      const result = await executeElectronToolRequest(harness.service, harness.options);
+      assert.equal(result.success, true, toolName);
+      assert.equal(harness.broker.snapshot().lease_count, 0, toolName);
+      assert.equal(harness.gateway.snapshot().settled, 1, toolName);
+    }
+  });
+
+  test('a thrown restricted invocation quarantines its external-owned claim', async () => {
+    const toolName = 'plugin:acme-labs:widgets:compute';
+    const harness = dynamicResourceHarness(toolName, {
+      _pluginStage6ControlPlane: { executeRestrictedTool: async () => {
+        throw new Error('channel lost');
+      } },
+    });
+    const result = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(result.success, false);
+    assert.equal(harness.broker.snapshot().lease_count, 1);
+    assert.equal(harness.gateway.snapshot().quarantined, 1);
+  });
+
+  test('a native method return without an invocation receipt cannot prove cleanup', async () => {
+    const toolName = 'plugin_native_read';
+    const harness = dynamicResourceHarness(toolName, {
+      _pluginStage8ControlPlane: { invokeNativeTool: async () => ({ ok: true,
+        result: { source: 'native' }, binding_digest: 'd'.repeat(64) }) },
+    });
+    const result = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(result.success, true);
+    assert.equal(harness.broker.snapshot().lease_count, 1);
+    assert.equal(harness.gateway.snapshot().quarantined, 1);
+  });
+
+  test('a lost remote response quarantines the external-owned claim', async () => {
+    const toolName = 'plugin:remote:server:tool:search:abc';
+    const harness = dynamicResourceHarness(toolName, {
+      _pluginStage5ControlPlane: { executeRemoteTool: async () => ({
+        ok: false, reason: 'response_stream_failed',
+        execution_settlement: { cleanup: 'uncertain' },
+      }) },
+    });
+    const result = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(result.success, false);
+    assert.equal(harness.broker.snapshot().lease_count, 1);
+    assert.equal(harness.gateway.snapshot().quarantined, 1);
+  });
+
+  test('restricted no-start evidence releases capacity for the next valid call', async () => {
+    const toolName = 'plugin:acme-labs:widgets:compute';
+    let calls = 0;
+    let observedAuthority;
+    const harness = dynamicResourceHarness(toolName, {
+      _pluginStage6ControlPlane: { executeRestrictedTool: async (_name, _args, context) => {
+        calls += 1;
+        observedAuthority = context.executionAuthority;
+        return calls === 1
+          ? { ok: false, reason: 'restricted_arguments_schema_invalid',
+            execution_settlement: { cleanup: 'confirmed', producer_started: false } }
+          : { ok: true, value: { accepted: true }, invocation_id: 'invocation-2' };
+      } },
+    });
+    const malformed = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(malformed.success, false);
+    assert.equal(harness.broker.snapshot().lease_count, 0);
+    harness.options.params.tool_call_id = 'dynamic-call-2';
+    const valid = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(valid.success, true);
+    assert.equal(harness.broker.snapshot().lease_count, 0);
+    assert.equal(observedAuthority.descriptor.name, toolName);
+    assert.equal(observedAuthority.authority.active_generation_id, 'generation-1');
+  });
+
+  test('native not-found cannot fall through after the captured generation changes', async () => {
+    const toolName = 'plugin:acme-labs:widgets:compute';
+    let restrictedCalls = 0;
+    const harness = dynamicResourceHarness(toolName, {});
+    harness.service._pluginStage8ControlPlane = { invokeNativeTool: async () => {
+      harness.setCapture(Object.freeze({ ...harness.capture, descriptor_digest: 'f'.repeat(64) }));
+      return { ok: false, reason: 'native_mcp_tool_not_found' };
+    } };
+    harness.service._pluginStage6ControlPlane = { executeRestrictedTool: async () => {
+      restrictedCalls += 1;
+      return { ok: true, value: {}, invocation_id: 'unexpected' };
+    } };
+    const result = await executeElectronToolRequest(harness.service, harness.options);
+    assert.equal(result.success, false);
+    assert.equal(restrictedCalls, 0);
+    assert.equal(harness.broker.snapshot().lease_count, 0);
   });
 });

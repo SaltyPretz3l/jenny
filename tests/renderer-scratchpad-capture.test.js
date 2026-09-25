@@ -142,3 +142,28 @@ test('open() after dispose is a no-op', () => {
   assert.equal(controller.open(), false);
   assert.equal(documentRef.querySelector('.scratchpad-capture'), null);
 });
+
+test('a second chord while the popover is open keeps the typed text', () => {
+  const { documentRef, controller } = setup(() => Promise.resolve({ ok: true }));
+  controller.open();
+  documentRef.querySelector('#scratchpadCaptureInput').value = 'half-typed';
+  assert.equal(controller.open(), true);
+  assert.equal(controller.isOpen(), true);
+  assert.equal(documentRef.querySelector('#scratchpadCaptureInput').value, 'half-typed');
+  assert.equal(documentRef.activeElement, documentRef.querySelector('#scratchpadCaptureInput'), 'the chord refocuses the field');
+});
+
+test('a second chord during an in-flight submit keeps that submit current', async () => {
+  let resolveCapture;
+  const { controller, toasts, documentRef } = setup(() => new Promise((res) => { resolveCapture = res; }));
+  controller.open();
+  documentRef.querySelector('#scratchpadCaptureInput').value = 'first';
+  controller.submit();              // in-flight
+  assert.equal(controller.open(), true);
+
+  resolveCapture({ ok: true, noteTitle: 'Note 1' });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(toasts.length, 1, 'the in-flight capture still reports');
+  assert.equal(controller.isOpen(), false, 'and closes the popover as usual');
+});

@@ -50,6 +50,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     path.join(rootDir, 'styles', 'chat-timeline-orientation-v2.css'),
     'utf8'
   );
+  const taskRailCss = fs.readFileSync(path.join(rootDir, 'styles', 'task-rail.css'), 'utf8');
   const chatToolsCss = fs.readFileSync(
     path.join(rootDir, 'styles', 'chat-tools.css'),
     'utf8'
@@ -314,6 +315,28 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /\.chat-timeline-utility-cluster\s*\{[\s\S]*?grid-row:\s*1;[\s\S]*?align-self:\s*start;[\s\S]*?justify-self:\s*end;/,
     'timeline utilities should overlay the upper-right content gutter without creating a row'
   );
+  assert.match(
+    timelineOrientationCss,
+    /#chatThreadStage\s*\{[\s\S]*?container-type:\s*inline-size;[\s\S]*?container-name:\s*chatstage;/,
+    'the thread stage should expose its actual inline width to utility-cluster layout rules'
+  );
+  assert.match(
+    timelineOrientationCss,
+    /\.chat-timeline-utility-cluster\s*\{[^}]*flex-direction:\s*column;/,
+    'the utility cluster is always a column (it is the stage\'s sibling, so no container rule can reach it)'
+  );
+  assert.match(
+    timelineOrientationCss,
+    /@container chatstage \(max-width:\s*880px\)\s*\{[\s\S]*?\.chat-thread-column\s*\{[\s\S]*?padding-inline-end:\s*44px;/,
+    'narrow thread stages reserve the transcript gutter for the button column'
+  );
+  assert.match(
+    taskRailCss,
+    /\.artifact-review-panel\[data-artifact-review-mode="tasks"\]\s*\{[\s\S]*?background:\s*var\(--bg-base\);[\s\S]*?border-inline-start:\s*1px solid var\(--line\);/,
+    'tasks mode should use the flat chat-page surface grammar'
+  );
+  assert.match(taskRailCss, /\.task-rail-check\s*\{[\s\S]*?border-bottom:\s*1px solid color-mix/);
+  assert.doesNotMatch(taskRailCss, /\.task-rail-row-actions\b/);
   const timelineUtilityButtonRule = readCssRuleBlock(
     timelineOrientationCss,
     '.chat-timeline-utility-button'

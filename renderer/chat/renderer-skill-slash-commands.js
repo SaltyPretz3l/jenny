@@ -249,7 +249,11 @@
     }
 
     function clearAccepted(result, invocation, settings) {
-      if (!result?.streamId || settings?.editedMessageId || !invocation?.id) return false;
+      // A durable submission carries the skill in its captured payload, so its
+      // accepted receipt (work_id, snake_case) consumes the chip too, admitted or not.
+      const accepted = Boolean(result?.streamId)
+        || (result?.durable === true && result?.ok === true && Boolean(result?.work_id));
+      if (!accepted || settings?.editedMessageId || !invocation?.id) return false;
       const pending = getPending();
       if (!pending || pending.id !== invocation.id) return false;
       const cleared = stateUtilsRef()?.clearPendingSkillInvocation?.(state) === true;

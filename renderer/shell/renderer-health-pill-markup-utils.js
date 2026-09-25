@@ -140,8 +140,12 @@
     let detail = state;
     let valueClass = 'muted';
     if (state === 'ready') {
+      // A custom build names itself ('build 10683', 1-9 digits, no leading zero);
+      // bundled, env, custom and unknown add nothing.
+      const build = /^build ([1-9]\d{0,8})$/.exec(typeof facet.runtime_label === 'string' ? facet.runtime_label : '');
       detail = 'serving' + (alias ? ' ' + alias : '') + (port > 0 ? ' on :' + port : '')
-        + (mode && mode !== 'off' && mode !== 'unknown' ? ' · ' + mode : '');
+        + (mode && mode !== 'off' && mode !== 'unknown' ? ' · ' + mode : '')
+        + (build ? jt('models.library.buildSuffix', ' · build {build}', { build: build[1] }) : '');
       valueClass = 'success';
     } else if (state === 'crashed') {
       detail = jt('healthPill.serverStoppedUnexpectedly', 'stopped unexpectedly{alias}', { alias: alias ? ' (' + alias + ')' : '' });

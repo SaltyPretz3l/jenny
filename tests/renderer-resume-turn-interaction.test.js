@@ -360,3 +360,107 @@ test('Enter with a queued attachment and empty text does not activate Resume', (
   assert.equal(event.defaultPrevented, false);
   assert.equal(harness.bubbleKeydownCount, 1);
 });
+
+function withPlanReceipt(harness, planId = 'plan_new') {
+  harness.scopeRoot.insertAdjacentHTML('beforeend',
+    `<details data-plan-document="true" data-plan-state="accepted"><summary><span>Plan</span>`
+    + `<span class="plan-document-receipt__state">Accepted · not built</span>`
+    + `<button type="button" data-action="plan-build-accepted" data-plan-id="${planId}">Build it</button>`
+    + '</summary></details>');
+  return harness.scopeRoot.querySelector('[data-action="plan-build-accepted"]');
+}
+
+function withPlanGlobals({ runMode = 'plan', built = { ok: true } } = {}) {
+  const calls = [];
+  let mode = runMode;
+  const previous = { runMode: globalThis.rendererRunModeControl, shell: globalThis.jennyShell };
+  globalThis.rendererRunModeControl = {
+    currentRunMode: () => mode,
+    togglePlanMode: async () => { calls.push('toggle'); mode = 'ask'; },
+  };
+  globalThis.jennyShell = {
+    tools: { buildAcceptedPlan: async (...args) => { calls.push(['build', ...args]); return built; } },
+  };
+  return {
+    calls,
+    restore() {
+      globalThis.rendererRunModeControl = previous.runMode;
+      globalThis.jennyShell = previous.shell;
+    },
+  };
+}
+
+test('accepted receipt Build it leaves Plan mode, flips the plan, then sends once', async (t) => {
+  const harness = buildHarness();
+  const globals = withPlanGlobals();
+  t.after(() => { globals.restore(); harness.controller.dispose(); harness.dom.window.close(); });
+  const button = withPlanReceipt(harness);
+  const click = new harness.dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  button.dispatchEvent(click);
+  button.dispatchEvent(new harness.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(click.defaultPrevented, true, 'the summary click does not toggle the receipt');
+  assert.deepEqual(globals.calls, [['build', 'session-1', 'plan_new'], 'toggle'],
+    'the backend flip is confirmed before Plan mode is left');
+  assert.deepEqual(harness.sendCalls, ['Build the accepted plan.']);
+  assert.equal(harness.sendOptions[0].sessionIdOverride, 'session-1');
+  const host = harness.scopeRoot.querySelector('[data-plan-document]');
+  assert.equal(host.dataset.planState, 'approved');
+  assert.equal(host.querySelector('[data-action="plan-build-accepted"]'), null);
+});
+
+test('accepted receipt Build it does nothing while the session is busy', async (t) => {
+  const harness = buildHarness();
+  const globals = withPlanGlobals();
+  t.after(() => { globals.restore(); harness.controller.dispose(); harness.dom.window.close(); });
+  harness.setSendBusy(true);
+  withPlanReceipt(harness).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(globals.calls, []);
+  assert.deepEqual(harness.sendCalls, []);
+});
+
+test('a refused build surfaces an error, keeps Plan mode, and never sends', async (t) => {
+  const harness = buildHarness();
+  const globals = withPlanGlobals({ runMode: 'plan', built: { ok: false, reason: 'not_latest' } });
+  t.after(() => { globals.restore(); harness.controller.dispose(); harness.dom.window.close(); });
+  const button = withPlanReceipt(harness);
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(globals.calls, [['build', 'session-1', 'plan_new']], 'a refusal never leaves Plan mode');
+  assert.deepEqual(harness.sendCalls, []);
+  assert.equal(harness.errorCalls.length, 1);
+  assert.equal(button.disabled, false, 'the claim is released for a retry');
+});
+
+test('a successful build mirrors the approved state into the renderer transcript', async (t) => {
+  const { JSDOM: Dom } = require('jsdom');
+  const dom = new Dom('<!DOCTYPE html><body><div id="chatTimeline"></div><textarea id="chatInput"></textarea></body>');
+  const scopeRoot = dom.window.document.getElementById('chatTimeline');
+  let messages = [
+    { id: 'plan_document_plan_new', kind: 'plan_document', plan_document: { plan_id: 'plan_new', state: 'accepted' } },
+    { id: 'other', role: 'user', content: 'hi' },
+  ];
+  const writes = [];
+  const controller = createResumeTurnInteraction({
+    scopeRoot,
+    chatInput: dom.window.document.getElementById('chatInput'),
+    startPromptSend: async () => ({}),
+    getCurrentSessionId: () => 'session-1',
+    isSessionSendBusy: () => false,
+    sessionCallbacks: {
+      getSessionMessages: () => messages,
+      setSessionMessages: (sessionId, next, key) => { writes.push([sessionId, key]); messages = next; },
+    },
+  });
+  const globals = withPlanGlobals({ runMode: 'ask' });
+  t.after(() => { globals.restore(); controller.dispose(); dom.window.close(); });
+  withPlanReceipt({ scopeRoot }).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(messages[0].plan_document.state, 'approved');
+  assert.equal(messages[1].content, 'hi');
+  assert.deepEqual(writes, [['session-1', 'session_session-1']]);
+});

@@ -13,12 +13,14 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   if (!formatUtils || typeof formatUtils.canonicalOllamaTag !== 'function'
-    || typeof formatUtils.boundedErrorMessage !== 'function') {
+    || typeof formatUtils.boundedErrorMessage !== 'function'
+    || typeof formatUtils.llamaServerFailureText !== 'function') {
     throw new Error('model-library-runtime-actions: missing required dependency');
   }
 
   var canonicalOllamaTag = formatUtils.canonicalOllamaTag;
   var boundedErrorMessage = formatUtils.boundedErrorMessage;
+  var llamaServerFailureText = formatUtils.llamaServerFailureText;
   var MODEL_LOAD_TIMEOUT_MS = 120000;
   // Must stay ABOVE sidecar-request-timeouts.js 'models.unload' (35s), which is
   // itself above the sidecar's own 30s eviction timeout. Rejecting first would
@@ -75,7 +77,9 @@
 
     function failRuntimeAction(operationId, key, modelId, error, eventName, fallback) {
       if (disposed || operationId !== runtimeOperationId) return;
-      var message = boundedErrorMessage(error, fallback);
+      // A managed llama-server launch code names its own fix (read raw, before bounding).
+      var message = llamaServerFailureText(error && error.message ? error.message : error, modelId)
+        || boundedErrorMessage(error, fallback);
       activation = { status: 'idle', key: key, message: message };
       setStatusMessage(message);
       appendClientLog('WARN', eventName, { model: modelId, message: message });

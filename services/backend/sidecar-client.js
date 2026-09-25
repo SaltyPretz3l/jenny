@@ -1,7 +1,6 @@
+const { projectDecisionPause } = require('./runtime-decision-control');
+const { boundedEditedPlan } = require('./plan-document-events');
 const { EventEmitter } = require('events');
-
-const { version: DEFAULT_CLIENT_VERSION } = require('../../package.json');
-
 const { SIDECAR_ERROR_CODES } = require('./error-codes');
 const {
   CANCEL_REASON_TIMEOUT,
@@ -16,7 +15,8 @@ const {
   parseContentLength,
 } = require('./sidecar-client-transport-codec');
 const { resolveRequestTimeoutMs } = require('./sidecar-request-timeouts');
-const { initializePluginRuntime } = require('./sidecar-client-plugin-runtime');
+const { initializeSidecarClient } = require('./sidecar-client-initialize');
+const { invalidateRuntimeInferenceProtocol } = require('../session-runtime/inference-protocol');
 const {
   endSidecarInput,
   requestSidecarShutdown,
@@ -24,10 +24,10 @@ const {
 const {
   emitSidecarErrorSafely,
 } = require('./sidecar-client-reverse-rpc');
-const { handleElectronToolRequest, handlePluginHostRequest } = require('./sidecar-client-request-rpc');
-const { notifyEngineActivity, notifySessionRunModeUpdated } = require('./sidecar-client-notifications');
+const { handleElectronToolRequest, handlePluginHostRequest,
+  handleRuntimeOperationRequest } = require('./sidecar-client-request-rpc');
+const { notificationRequestId, notifyEngineActivity, notifySessionRunModeUpdated } = require('./sidecar-client-notifications');
 const { armPendingTimeout, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
-
 const API_VERSION = '2026-08-17';
 const JSONRPC_VERSION = '2.0';
 const CHAT_CANCEL_METHOD = 'chat.cancel';
@@ -48,7 +48,6 @@ const DEFAULT_SIDECAR_FEATURE_FLAGS = Object.freeze({
   multiplexer: true,
   chat_cancel: true,
 });
-
 class SidecarClient extends EventEmitter {
   constructor({ logger } = {}) {
     super({ captureRejections: true });
@@ -61,6 +60,7 @@ class SidecarClient extends EventEmitter {
     this.approvalHandlers = new Map();
     this.electronToolHandlers = new Map();
     this.pluginHostHandlers = new Map();
+    this.runtimeOperationHandlers = new Map();
     this.cancelledRequestKeys = new Map();
     // Counts unmatched notifications by request_id so each request warns once.
     this.unmatchedNotificationCounts = new Map();
@@ -70,12 +70,10 @@ class SidecarClient extends EventEmitter {
     this._handleProcessExit = this._handleProcessExit.bind(this);
     this._handleStdinError = this._handleStdinError.bind(this);
   }
-
   _resetStdoutBuffer() {
     this.buffer = Buffer.alloc(0);
     this.bufferOffset = 0;
   }
-
   attachProcess(childProcess) {
     if (!childProcess || typeof childProcess !== 'object') {
       throw new Error('A child process is required to attach the sidecar client.');
@@ -85,39 +83,17 @@ class SidecarClient extends EventEmitter {
     this._resetStdoutBuffer();
     this.sidecarFeatureFlags = { ...DEFAULT_SIDECAR_FEATURE_FLAGS };
     this.connected = true;
-
     if (this.process.stdout) {
       this.process.stdout.on('data', this._handleStdoutData);
     }
     if (this.process.stdin) {
       this.process.stdin.on('error', this._handleStdinError);
     }
-
     this.process.once('exit', this._handleProcessExit);
   }
   async initialize(payload = {}, { timeoutMs, signal, onProgress } = {}) {
-    if (payload?.mode === 'plugin_runtime') return initializePluginRuntime(this, payload, { timeoutMs, signal });
-    const { config = {}, secrets = {}, clientVersion = DEFAULT_CLIENT_VERSION } = payload || {};
-    const requestId = `initialize-${this.nextId}`;
-    this.notificationHandlers.set(requestId, typeof onProgress === 'function' ? onProgress : null);
-    try {
-      return await this.request('initialize', {
-        accept_version: API_VERSION,
-        client_version: clientVersion,
-        request_id: requestId,
-        config,
-        secrets,
-      }, {
-        timeoutMs,
-        signal,
-        requestKey: requestId,
-        initializeMode: 'full_runtime',
-      });
-    } finally {
-      this.notificationHandlers.delete(requestId);
-    }
+    return initializeSidecarClient(this, payload, { timeoutMs, signal, onProgress }, API_VERSION);
   }
-
   async modelsList(engineType, options = {}) {
     const normalizedInspectModelId = String(options?.inspectModelId || '').trim();
     return this.request('models.list', {
@@ -131,7 +107,6 @@ class SidecarClient extends EventEmitter {
       accept_version: API_VERSION,
     });
   }
-
   async backgroundRun(task, params = {}) {
     const normalizedTask = String(task || '').trim().toLowerCase();
     if (!normalizedTask) {
@@ -143,18 +118,15 @@ class SidecarClient extends EventEmitter {
       ...params,
     });
   }
-
   async hardwareProfile(params = {}) {
     return this.request('hardware.profile', {
       accept_version: API_VERSION,
       ...params,
     });
   }
-
   async hardwareVramUsage() {
     return this.request('hardware.vram_usage', { accept_version: API_VERSION });
   }
-
   async modelsResident() {
     return this.request('models.resident', { accept_version: API_VERSION });
   }
@@ -182,6 +154,7 @@ class SidecarClient extends EventEmitter {
     onApprovalRequest,
     onElectronToolRequest,
     onPluginHostRequest,
+    onRuntimeOperation,
     timeoutMs,
     signal,
   } = {}) {
@@ -193,6 +166,7 @@ class SidecarClient extends EventEmitter {
     this.approvalHandlers.set(requestId, onApprovalRequest || null);
     this.electronToolHandlers.set(requestId, onElectronToolRequest || null);
     this.pluginHostHandlers.set(requestId, onPluginHostRequest || null);
+    this.runtimeOperationHandlers.set(requestId, onRuntimeOperation || null);
     return this.request('chat.send', {
       accept_version: API_VERSION,
       ...params,
@@ -205,6 +179,7 @@ class SidecarClient extends EventEmitter {
         this.approvalHandlers.delete(requestId);
         this.electronToolHandlers.delete(requestId);
         this.pluginHostHandlers.delete(requestId);
+        this.runtimeOperationHandlers.delete(requestId);
       },
     });
   }
@@ -475,6 +450,7 @@ class SidecarClient extends EventEmitter {
       this.approvalHandlers.delete(pending.requestKey);
       this.electronToolHandlers.delete(pending.requestKey);
       this.pluginHostHandlers.delete(pending.requestKey);
+      this.runtimeOperationHandlers.delete(pending.requestKey);
       if (outcome && outcome.type === 'resolve') {
         this.cancelledRequestKeys.delete(pending.requestKey);
       }
@@ -495,6 +471,7 @@ class SidecarClient extends EventEmitter {
   }
 
   detachProcess() {
+    invalidateRuntimeInferenceProtocol(this);
     if (!this.process) {
       this.connected = false;
       this._resetStdoutBuffer();
@@ -531,6 +508,7 @@ class SidecarClient extends EventEmitter {
     this.approvalHandlers.clear();
     this.electronToolHandlers.clear();
     this.pluginHostHandlers.clear();
+    this.runtimeOperationHandlers.clear();
     this.cancelledRequestKeys.clear();
     this.unmatchedNotificationCounts.clear();
     this.sidecarFeatureFlags = { ...DEFAULT_SIDECAR_FEATURE_FLAGS };
@@ -673,6 +651,7 @@ class SidecarClient extends EventEmitter {
     this.approvalHandlers.clear();
     this.electronToolHandlers.clear();
     this.pluginHostHandlers.clear();
+    this.runtimeOperationHandlers.clear();
     this.unmatchedNotificationCounts.clear();
     throw error;
   }
@@ -764,8 +743,14 @@ class SidecarClient extends EventEmitter {
       return;
     }
 
+    if (message.method === 'runtime.operation') {
+      void handleRuntimeOperationRequest(this, message);
+      return;
+    }
+
     const params = message.params && typeof message.params === 'object' ? message.params : {};
-    const requestId = String(params.request_id || '').trim();
+    const requestId = notificationRequestId(message);
+    if (requestId === null) return;
     const handler = requestId ? this.notificationHandlers.get(requestId) : null;
     if (typeof handler === 'function') {
       try {
@@ -813,7 +798,7 @@ class SidecarClient extends EventEmitter {
       return;
     }
     const params = message?.params && typeof message.params === 'object' ? message.params : {};
-    const requestId = String(params.request_id || '').trim();
+    const requestId = notificationRequestId(message) || '';
     this.logger('WARN', 'sidecar.notification_listener_failed', {
       request_id: requestId,
       trace_id: String(params.trace_id || requestId).trim() || requestId,
@@ -876,7 +861,9 @@ class SidecarClient extends EventEmitter {
       this._writeFrame({
         jsonrpc: JSONRPC_VERSION,
         id: message.id,
-        result: approvalResult && typeof approvalResult === 'object'
+        result: projectDecisionPause(approvalResult)
+          ? { runtime_decision_pause: projectDecisionPause(approvalResult) }
+          : approvalResult && typeof approvalResult === 'object'
           ? {
             approved: approvalResult.approved === true,
             ...(typeof approvalResult.decision === 'string'
@@ -884,6 +871,9 @@ class SidecarClient extends EventEmitter {
               : {}),
             ...(typeof approvalResult.feedback === 'string'
               ? { feedback: approvalResult.feedback.slice(0, 800) }
+              : {}),
+            ...(boundedEditedPlan(approvalResult.edited_plan)
+              ? { edited_plan: approvalResult.edited_plan }
               : {}),
           }
           : { approved: approvalResult === true },

@@ -22,6 +22,28 @@ if TYPE_CHECKING:
     from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
 
 _WINDOWS_REPARSE_POINT_ATTRIBUTE = 0x400
+_PATH_REDACTION_PLACEHOLDERS = ("[redacted:path]", "[redacted]", "<path>")
+
+
+def _describe_redaction_placeholder(path_argument: str) -> str | None:
+    for placeholder in _PATH_REDACTION_PLACEHOLDERS:
+        if placeholder in path_argument:
+            return f'"{placeholder}" is a log redaction placeholder, not a real path'
+    return None
+
+
+def _describe_invalid_path_argument(path_argument: str) -> str | None:
+    """Say why a path argument is invalid; no platform branch, so it is testable anywhere."""
+    placeholder_reason = _describe_redaction_placeholder(path_argument)
+    if placeholder_reason:
+        return placeholder_reason
+    for index, character in enumerate(path_argument):
+        drive = path_argument[0]
+        if character == ":" and index == 1 and drive.isascii() and drive.isalpha():
+            continue
+        if character in ':<>"|?*' or "\x00" < character < " ":
+            return f"{character!r} at index {index} is not allowed in a Windows path"
+    return None
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -100,9 +122,17 @@ class WorkspaceGuard:
         try:
             candidate = resolved_path.resolve(strict=False)
         except OSError as error:
+            unresolved = Path(resolved_path)
+            try:
+                display_path = str(unresolved.relative_to(root)) or "."
+            except ValueError:
+                display_path = "an absolute path outside the workspace"
             raise ToolExecutionFailure(
                 code=CMP_TOOL_INVALID_PATH,
-                message=f"failed to resolve path: {error}",
+                message=(
+                    f'failed to resolve path "{display_path}": '
+                    f'{error.strerror or "unresolvable path"}'
+                ),
                 retryable=False,
             ) from error
 
@@ -226,7 +256,24 @@ class WorkspaceGuard:
                 retryable=False,
             )
 
-        requested = Path(candidate)
+        expanded_candidate = candidate
+        if candidate == "~" or candidate.startswith(("~/", "~" + os.sep)):
+            # The prompt shows a root under home as "~". A literal "~"
+            # directory remains reachable with ./~/...
+            try:
+                home = str(Path.home())
+            except RuntimeError as error:
+                raise ToolExecutionFailure(
+                    code=CMP_TOOL_INVALID_PATH,
+                    message=(
+                        "path starts with ~ but the home directory is unavailable: "
+                        f'{candidate}. Use "." or a workspace-relative path.'
+                    ),
+                    retryable=False,
+                ) from error
+            expanded_candidate = home + candidate[1:]
+
+        requested = Path(expanded_candidate)
         target = requested if requested.is_absolute() else root / requested
 
         try:
@@ -235,18 +282,35 @@ class WorkspaceGuard:
             # Name the path and a recovery route: models that get the bare
             # "path does not exist" treat it as a capability failure instead
             # of correcting the path.
+            placeholder_reason = _describe_redaction_placeholder(candidate)
+            reason_suffix = f" {placeholder_reason}." if placeholder_reason else ""
             raise ToolExecutionFailure(
                 code=CMP_TOOL_INVALID_PATH,
                 message=(
                     f"path does not exist: {candidate}. "
-                    "Check the exact path with list_dir or glob_files."
+                    f"Check the exact path with list_dir or glob_files.{reason_suffix}"
                 ),
                 retryable=False,
             ) from error
         except OSError as error:
+            if requested.is_absolute():
+                try:
+                    display_path = str(requested.relative_to(root)) or "."
+                except ValueError:
+                    display_path = "an absolute path outside the workspace"
+            else:
+                display_path = candidate
+            reason = (
+                _describe_invalid_path_argument(candidate)
+                or error.strerror
+                or "unresolvable path"
+            )
             raise ToolExecutionFailure(
                 code=CMP_TOOL_INVALID_PATH,
-                message=f"failed to resolve path: {error}",
+                message=(
+                    f'invalid path "{display_path}": {reason}. '
+                    'Use "." for the workspace root or a workspace-relative path.'
+                ),
                 retryable=False,
             ) from error
 

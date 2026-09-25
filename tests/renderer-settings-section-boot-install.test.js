@@ -38,6 +38,16 @@ function bootOptions() {
     // undefined until this payload hydrates partway through boot -- preserving
     // the race the bug depends on.
     shell: {
+      sessions: [{ id: 'session_boot', project_id: 'project_boot', title: 'Boot project' }],
+      workspaceState: { activeSessionId: 'session_boot', openSessionIds: ['session_boot'] },
+      knowledge: {
+        async getState(payload) {
+          assert.equal(payload.session_id, 'session_boot');
+          assert.equal(payload.project_id, 'project_boot');
+          return { projectId: 'project_boot', revision: 1, roots: [] };
+        },
+        onChanged() { return () => {}; },
+      },
       features: {
         state: {
           featureFlags: {

@@ -69,6 +69,7 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'tool.executing',
   'tool.output_chunk',
   'tool.result',
+  'context.compaction_started',
   'context.compacted',
   'context.usage',
   'chat.plan_usage',
@@ -101,7 +102,7 @@ function canonicalToolNotification(ctx, event) {
   };
   if (eventType === 'tool_call_requested' || eventType === 'tool_execution_started') {
     return {
-      method: 'tool.executing',
+      method: eventType === 'tool_call_requested' ? 'tool.requested' : 'tool.executing',
       params: common,
     };
   }
@@ -183,6 +184,42 @@ function applyVisibleTextDelta(ctx, tokenDelta, params = {}, options = {}) {
   return true;
 }
 
+// The renderer's activity row only needs the call's cumulative size plus the
+// first few KB (to spot a path), so provider-rate fragments are folded into at
+// most one control event per TOOL_INPUT_FORWARD_INTERVAL_MS. Envelope kind
+// 'progress' passes 1:1, which is exactly why this must not forward per chunk
+// (a 32 KiB write would otherwise be thousands of IPC sends). Nothing trails:
+// the row is replaced by the tool_use event that follows the last fragment.
+const TOOL_INPUT_PREVIEW_CHARS = 4096;
+const TOOL_INPUT_FORWARD_INTERVAL_MS = 100;
+
+function forwardToolInputDelta(ctx, event, payload) {
+  const toolCallId = String(event.tool_call_id || '');
+  const delta = String(payload.arguments_delta || '');
+  let forward = ctx.toolInputForward;
+  if (!forward || forward.toolCallId !== toolCallId) {
+    forward = { toolCallId, bytes: 0, shippedChars: 0, pending: '', lastEmitAt: 0 };
+    ctx.toolInputForward = forward;
+  }
+  forward.bytes += Buffer.byteLength(delta, 'utf8');
+  const previewRoom = TOOL_INPUT_PREVIEW_CHARS - forward.shippedChars - forward.pending.length;
+  if (previewRoom > 0) forward.pending += delta.slice(0, previewRoom);
+  const nowMs = typeof ctx.now === 'function' ? Number(ctx.now()) : Date.now();
+  if (forward.lastEmitAt && nowMs - forward.lastEmitAt < TOOL_INPUT_FORWARD_INTERVAL_MS) return;
+  forward.lastEmitAt = nowMs;
+  ctx.emitChatStream({
+    type: 'tool_input_delta',
+    toolCallId,
+    toolName: String(payload.tool_name || ''),
+    argumentsDelta: forward.pending,
+    argumentsBytes: forward.bytes,
+    sequence: Number.isFinite(Number(payload.sequence)) ? Number(payload.sequence) : 0,
+    ...ctx.eventBase,
+  }, { channel: 'control' });
+  forward.shippedChars += forward.pending.length;
+  forward.pending = '';
+}
+
 function applyCanonicalBridgeEvent(ctx, event, {
   toolContext,
   handleToolNotification,
@@ -241,13 +278,18 @@ function applyCanonicalBridgeEvent(ctx, event, {
     }
     return true;
   }
+  if (eventType === 'tool_input_delta') {
+    if (typeof touchProgress === 'function') touchProgress();
+    forwardToolInputDelta(ctx, event, payload);
+    return true;
+  }
   const toolNotification = canonicalToolNotification(ctx, event);
   if (!toolNotification) {
     return false;
   }
   if (typeof touchProgress === 'function') touchProgress();
   const callId = normalizeRuntimeToken(toolNotification.params?.tool_call_id);
-  if (toolNotification.method === 'tool.executing') {
+  if (toolNotification.method === 'tool.executing' || toolNotification.method === 'tool.requested') {
     const toolCallAlreadyProjected = toolContext?.seenToolCalls instanceof Set
       && toolContext.seenToolCalls.has(callId);
     if (
@@ -256,18 +298,20 @@ function applyCanonicalBridgeEvent(ctx, event, {
     ) {
       return true;
     }
-    ctx.canonicalToolStartedCallIds.add(callId);
-    ctx.unfinishedToolsSettled = false;
+    if (toolNotification.method === 'tool.executing') {
+      ctx.canonicalToolStartedCallIds.add(callId);
+      ctx.unfinishedToolsSettled = false;
+    }
     persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true });
     noteDiagnosticToolEvent({
       callId,
       toolName: String(toolNotification.params.tool_name || ''),
-      phase: 'executing',
+      phase: toolNotification.method === 'tool.requested' ? 'requested' : 'executing',
     });
     transcriptCollector.noteToolStep({
       callId,
       toolName: String(toolNotification.params.tool_name || ''),
-      status: 'running',
+      status: toolNotification.method === 'tool.requested' ? 'pending' : 'running',
       toolUseMessageId: buildStreamToolUseMessageId(streamId, callId),
     });
   } else if (toolNotification.method === 'tool.result') {
@@ -290,6 +334,7 @@ function applyCanonicalBridgeEvent(ctx, event, {
   }
   return typeof handleToolNotification === 'function'
     ? handleToolNotification(service, toolContext, toolNotification, {
+      canonicalEvent: true,
       ...(toolNotification.method === 'tool.executing'
         ? { nextAssistantMessageId: `assistant_${ctx.streamId}_seg${ctx.textSegmentIndex}` }
         : {}),
@@ -353,13 +398,18 @@ function handleNotification(ctx, notification, {
   }
   const touchProgress = () => {
     touchActiveTurnProgress(adapter, {
-      requestId: streamId,
+      requestId: ctx.turnId || streamId,
       streamId,
     });
   };
   if (notification.method === 'turn.event') {
+    if (!canonicalBridgeEnabled && service.featureFlags?.canonical_turn_events !== true) return;
+    if (ctx.turnLease && params.turn_id !== streamId && params.turn_id !== ctx.turnId) {
+      turnMetrics?.recordDroppedCanonicalEvent?.();
+      return;
+    }
     const identityStampedParams = attachWorkspaceIdentityToCanonicalEvent(
-      params,
+      ctx.turnId && params.turn_id === streamId ? { ...params, turn_id: ctx.turnId } : params,
       service,
       toolContext?.workspaceRoot
     );
@@ -424,7 +474,7 @@ function handleNotification(ctx, notification, {
     if (!agentStatus || !isAgentStatusSurfaceEnabled(service, agentStatus)) {
       return;
     }
-    coordinateWorkLifecycle(service, adapter, agentStatus);
+    coordinateWorkLifecycle(service, adapter, { ...agentStatus, requestId: ctx.turnId || streamId });
     emitChatStream({
       ...ctx.eventBase,
       ...agentStatus,
@@ -498,6 +548,9 @@ function handleNotification(ctx, notification, {
     if (service?.featureFlags?.aggregate_checkpoints === true) {
       ctx.aggregateCheckpointPending = true;
     }
+    // Reasoning after a closed reasoning phase (the sidecar ends it at the
+    // first tool-call output) can reuse its thinking id; it is a new entry.
+    if (String(params.phase_kind || '') === 'reasoning') ctx.reasoningTailBreakPending = true;
     const summary = normalizePhaseSummary(params.summary);
     const tokenRate = normalizeTokenRate(params.tokens_per_second);
     transcriptCollector.notePhaseCompleted({
@@ -744,11 +797,22 @@ function handleNotification(ctx, notification, {
     }
     return;
   }
+  if (notification.method === 'context.compaction_started') {
+    // `compactionPhase`, not `phase`: emitChatStream owns `phase` (it is the
+    // transport phase snapshot) and would overwrite a sidecar string there.
+    emitChatStream({
+      type: 'context_compacting',
+      compactionPhase: String(params.phase || 'preflight'),
+      tokensBefore: Math.max(0, Number(params.tokens_before || 0) || 0),
+      messageCount: Math.max(0, Number(params.message_count || 0) || 0),
+      ...ctx.eventBase,
+    }, { channel: 'control' });
+    return;
+  }
   if (notification.method === 'context.compacted') {
     const summaryPersisted = persistAutomaticCompactionSnapshot(ctx, params);
     stageMidTurnCompactionCandidate(ctx, params);
-    emitChatStream({
-      type: 'context_compacted',
+    const contextCompaction = {
       strategy: String(params.strategy || 'micro'),
       tokensBefore: Number(params.tokens_before || 0) || 0,
       tokensAfter: Number(params.tokens_after || 0) || 0,
@@ -759,8 +823,20 @@ function handleNotification(ctx, notification, {
       droppedMessages: Math.max(0, Number(params.dropped_messages || 0) || 0),
       droppedBytes: Math.max(0, Number(params.dropped_bytes || 0) || 0),
       summaryPersisted,
+      summaryExcerpt: String(params.summary_message?.content || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 1200),
+    };
+    const { phase: compactionPhase, ...wireFields } = contextCompaction;
+    emitChatStream({
+      type: 'context_compacted',
+      ...wireFields,
+      compactionPhase,
       ...ctx.eventBase,
     }, { channel: 'control' });
+    ctx.transcriptCollector?.noteContextCompaction?.({
+      ...contextCompaction,
+      occurredAt: new Date().toISOString(),
+    });
     return;
   }
   if (notification.method === 'chat.plan_usage') {

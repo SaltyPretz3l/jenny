@@ -153,6 +153,10 @@ class ReplayEngine(BaseEngine):
         # with "Conversation too long to continue".
         return 32_768
 
+    def get_inference_budget_context_length(self) -> int:
+        # This controlled engine owns its fixed window; no catalog fallback.
+        return self.get_model_context_length()
+
     def get_model_max_output_tokens(self) -> int:
         return 4_096
 

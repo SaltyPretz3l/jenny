@@ -64,9 +64,20 @@ def write_bytes_atomic_if_matches(
     )
 
 
-def write_hosted_bytes_after_read(path: Path, content: bytes, *, expected: bytes | None) -> None:
-    """Bind a hosted mutation to the bytes validated before checkpoint work."""
-    if not write_bytes_atomic_if_matches(path, content, expected_current_bytes=expected):
+def write_hosted_bytes_after_read(
+    path: Path,
+    content: bytes,
+    *,
+    expected: bytes | None,
+    workspace: WorkspaceGuard | None = None,
+) -> None:
+    """Bind a mutation to the bytes validated before checkpoint work."""
+    if not write_bytes_atomic_if_matches(
+        path,
+        content,
+        expected_current_bytes=expected,
+        workspace=workspace,
+    ):
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
             message=("File changed after validation; no replacement was applied. "
@@ -79,10 +90,12 @@ def write_edit_bytes_after_read(
     path: Path, content: bytes, *, expected: bytes, workspace: WorkspaceGuard,
 ) -> None:
     """Apply an edit through the host-specific mutation contract."""
-    if hosted_file_io_enabled():
-        write_hosted_bytes_after_read(path, content, expected=expected)
-    else:
-        write_bytes_atomic(path, content, workspace=workspace)
+    write_hosted_bytes_after_read(
+        path,
+        content,
+        expected=expected,
+        workspace=workspace,
+    )
 
 
 def _write_bytes_atomic(
@@ -224,10 +237,11 @@ def _matches_expected_current(
     except OSError:
         return False
     try:
-        opened = NodeIdentity.from_stat(os.fstat(fd))
+        opened_stat = os.fstat(fd)
+        opened = NodeIdentity.from_stat(opened_stat)
         data = os.read(fd, len(expected) + 1)
         return (
-            opened == current
+            current.matches_open_stat(opened_stat)
             and data == expected
             and NodeIdentity.from_stat(os.fstat(fd)) == opened
         )

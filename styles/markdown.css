@@ -183,6 +183,7 @@
 }
 
 /* Custom styles for actions inside markdown codeblock headers */
+:is(.chat-bubble-markdown, .tool-result-body) .inv-table-copy,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-copy,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-wrap-toggle {
   display: inline-flex;
@@ -207,11 +208,13 @@
   user-select: none;
 }
 
+:is(.chat-bubble-markdown, .tool-result-body) .markdown-table-wrapper:hover .inv-table-copy,
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-block:hover .inv-codeblock-copy,
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-block:hover .inv-codeblock-wrap-toggle {
   opacity: 1;
 }
 
+:is(.chat-bubble-markdown, .tool-result-body) .inv-table-copy:hover,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-copy:hover,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-wrap-toggle:hover {
   background: var(--widget-action-hover-bg, rgba(255, 255, 255, 0.08));
@@ -219,17 +222,20 @@
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border-strong, var(--line)));
 }
 
+:is(.chat-bubble-markdown, .tool-result-body) .inv-table-copy:active,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-copy:active,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-wrap-toggle:active {
   color: var(--text-secondary);
 }
 
+:is(.chat-bubble-markdown, .tool-result-body) .inv-table-copy:focus-visible,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-copy:focus-visible,
 :is(.chat-bubble-markdown, .tool-result-body) .inv-codeblock-wrap-toggle:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 1px;
 }
 
+:is(.chat-bubble-markdown, .tool-result-body) .markdown-table-header .inv-table-copy[data-copy-status="copied"],
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-header .inv-codeblock-copy[data-copy-status="copied"],
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-code-header .inv-codeblock-wrap-toggle[aria-pressed="true"] {
   color: var(--accent-cyan);
@@ -439,6 +445,18 @@
   margin: var(--markdown-block-gap) 0;
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+.chat-bubble-markdown .markdown-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75em;
+  min-height: 32px;
+  padding: 0.45em 0.95em;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .chat-bubble-markdown .markdown-table-wrapper::-webkit-scrollbar {

@@ -592,7 +592,7 @@ test('minimal tool row reveal animates max-height when a transition duration is 
   assert.equal(body.style.maxHeight, '', 'collapsed body clears the inline max-height');
 });
 
-// A2 â€” Approval Allow/Deny: busy state, visible error, focus restoration.
+// A2 — Approval Allow/Deny: busy state, visible error, focus restoration.
 // See renderer/chat/renderer-approval-block.js for the real markup shape
 // (approval-gap-row > tool-approval-block > .tool-approve-btn/.tool-deny-btn).
 function buildApprovalRowHtml(callId, { approvalId } = {}) {
@@ -611,7 +611,7 @@ function buildApprovalRowHtml(callId, { approvalId } = {}) {
 }
 
 // Real resolveToolCallId implementation (mirrors the one in
-// renderer-chat-event-utils.js) â€” the buildNoopBindingDeps default
+// renderer-chat-event-utils.js) — the buildNoopBindingDeps default
 // (`() => ''`) can't be reused here because the busy/focus behavior depends
 // on actually resolving the call id from the clicked button's ancestry.
 function realResolveToolCallId(target) {
@@ -625,7 +625,7 @@ function realResolveToolCallId(target) {
 // The click handler references the bare (browser-)global `window.jennyShell`,
 // mirroring how it runs in the real renderer. Under plain node:test there is
 // no ambient `window`, so tests that exercise the approve/deny IPC calls must
-// install `dom.window` as `global.window` (and clean it up via t.after) â€”
+// install `dom.window` as `global.window` (and clean it up via t.after) —
 // the same pattern used throughout tests/renderer-*.test.js.
 function installApprovalWindowGlobals(t, window, { approve, deny, getActiveTurnState } = {}) {
   window.jennyShell = {
@@ -887,7 +887,7 @@ test('A2: a resolved approval whose row is removed moves focus to the next pendi
   const firstApproveBtn = firstRow.querySelector('.tool-approve-btn');
 
   // Focus must be inside the row at click time so the handler's heldFocus
-  // snapshot is true â€” this is what makes the fallback-focus restore below
+  // snapshot is true — this is what makes the fallback-focus restore below
   // eligible to fire once the row is removed.
   firstApproveBtn.focus();
   firstApproveBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -896,7 +896,7 @@ test('A2: a resolved approval whose row is removed moves focus to the next pendi
   await Promise.resolve();
 
   // Simulate the reducer/render pipeline resolving the approval and splicing
-  // the row out of the DOM â€” this happens later, driven by a stream event,
+  // the row out of the DOM — this happens later, driven by a stream event,
   // not synchronously inside the click handler (see
   // renderer-turn-reducer-approval-gap.js::removeApprovalGapRow).
   firstRow.remove();

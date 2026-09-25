@@ -3,12 +3,13 @@
     module.exports = factory(
       root,
       require('../inventory/number-input'),
-      require('./renderer-model-tuning-engine-utils')
+      require('./renderer-model-tuning-engine-utils'),
+      require('./renderer-model-library-format-utils')
     );
     return;
   }
-  root.rendererModelTuningDrawer = factory(root, root.inventoryNumberInput, root.rendererModelTuningEngineUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, bundledNumberInput, engineUtils) {
+  root.rendererModelTuningDrawer = factory(root, root.inventoryNumberInput, root.rendererModelTuningEngineUtils, root.rendererModelLibraryFormatUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, bundledNumberInput, engineUtils, formatUtils) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
@@ -54,12 +55,20 @@
     return definitions;
   }, []);
   var SUPPORTED_ENGINES = new Set(['ollama', 'vllm', 'openai-compatible']);
+  // Engine restarts owed by model key ({runtimeChanged, launch}): a reflected
+  // engine write on the served model whose restart could not run (a chat was
+  // streaming, or its tuning follow-up failed). Per window, so they survive the
+  // drawer's close and reopen; each runs on its model's next Apply, and only on
+  // the llama-server launch it was owed on.
+  var owedRestartsByWindow = new WeakMap();
 
   function createModelTuningDrawerController(deps) {
     var d = deps || {};
     var shellState = d.state || {};
     var windowRef = d.windowRef || root;
     var documentRef = d.documentRef || windowRef.document;
+    var owedRestarts = owedRestartsByWindow.get(windowRef) || new Map();
+    owedRestartsByWindow.set(windowRef, owedRestarts);
     var inventory = d.inventory || windowRef.inventory || {};
     var drawerFactory = d.drawerFactory || windowRef.inventoryDrawer;
     var disposed = false;
@@ -79,6 +88,10 @@
     var engineView = null;
     var engineDraft = null;
     var engineHints = null;
+    var engineTypeHint = '';
+    var pickFailure = ''; // the status copy a failed pick put up
+    var pickingGguf = null; // the drawer generation whose pick (dialog, then probe) is in flight
+    var pickingRuntime = null;
     var getStreamingSessionIds = typeof d.getStreamingSessionIds === 'function'
       ? d.getStreamingSessionIds
       : function () { return []; };
@@ -126,11 +139,12 @@
         : '';
       if (entryEngine) return entryEngine;
       var activeModel = String(shellState?.status?.model || shellState?.modelList?.active_model || '').trim();
-      if (activeModel === activeModelId) {
-        return String(shellState?.status?.engine || shellState?.status?.engine_type
-          || shellState?.modelList?.engine_type || '').trim().toLowerCase();
-      }
-      return '';
+      var servedEngine = activeModel === activeModelId
+        ? String(shellState?.status?.engine || shellState?.status?.engine_type
+          || shellState?.modelList?.engine_type || '').trim().toLowerCase()
+        : '';
+      // Last: the opener's hint (a Local GGUF card that is neither listed nor served).
+      return servedEngine || engineTypeHint;
     }
 
     function supportsTuning() {
@@ -250,6 +264,7 @@
         toggleSwitch: typeof toggleModule === 'function' ? toggleModule : toggleModule?.toggleSwitch,
         actionButton: inventory.actionButton || windowRef.inventoryActionButton,
         escapeHtml: escapeHtml,
+        runtimeRowAvailable: typeof windowRef?.jennyShell?.llamaServer?.chooseRuntime === 'function',
       });
     }
 
@@ -368,6 +383,8 @@
       engineDraft.engine = event.detail.value;
       var mtpRow = boundActionsHost?.querySelector?.('[data-model-tuning-row="mtp"]');
       if (mtpRow) mtpRow.hidden = engineDraft.engine !== 'llama-server';
+      var runtimeRow = boundActionsHost?.querySelector?.('[data-model-tuning-row="runtimePath"]');
+      if (runtimeRow) runtimeRow.hidden = engineDraft.engine !== 'llama-server';
       var status = boundActionsHost?.querySelector?.('[data-model-tuning-row="engine"] .model-tuning-row-range');
       if (status) status.textContent = engineUtils.engineStatusText(engineView, engineDraft, serverStatus);
       updateDirtyState(boundActionsHost);
@@ -379,16 +396,36 @@
       updateDirtyState(boundActionsHost);
     }
 
+    // Picker failures patch the status line in place: render() rebuilds the
+    // inputs and would drop unapplied edits. The next successful pick (or Use
+    // bundled) clears that copy, never a line a pending Apply or restart took.
+    function showStatusInPlace(message) {
+      statusMessage = message;
+      pickFailure = message;
+      var status = boundActionsHost?.querySelector?.('.model-tuning-drawer-status');
+      if (status) status.textContent = message;
+      else render();
+    }
+
+    function clearPickFailure() {
+      if (pickFailure && !pending && statusMessage === pickFailure) showStatusInPlace('');
+      pickFailure = '';
+    }
+
+    // One pick at a time per picker and drawer session: the dialog is modal, but
+    // its probe can take seconds. A reopened drawer picks afresh (the old result is stale).
     async function chooseGguf() {
-      var operationGeneration = generation, operationModelId = activeModelId;
+      if (pickingGguf === generation) return;
+      var operationGeneration = pickingGguf = generation, operationModelId = activeModelId;
       try {
         var result = await windowRef.jennyShell.llamaServer.chooseGguf({
           defaultPath: engineUtils.pickerDefaultDir(engineView, engineDraft),
         });
         if (disposed || generation !== operationGeneration || activeModelId !== operationModelId) return;
-        if (result && result.ok === false) { statusMessage = engineUtils.pickerFailureText(result); return render(); }
+        if (result && result.ok === false) return showStatusInPlace(engineUtils.pickerFailureText(result));
         if (!result?.path) return;
         engineUtils.applyPickedGguf(engineView, engineDraft, result);
+        clearPickFailure();
         var code = boundActionsHost?.querySelector?.('[data-model-tuning-gguf]');
         if (code) { code.textContent = engineUtils.modelPathName(result.path); code.title = result.path; }
         var note = boundActionsHost?.querySelector?.('[data-model-tuning-row="mtp"] .model-tuning-row-range');
@@ -400,10 +437,54 @@
         (inventory.segmentedControl || windowRef.inventorySegmentedControl)?.select?.(group, 'llama-server');
       } catch (_error) {
         if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-          statusMessage = jt('models.tuning.filePickerFailed', 'Could not open the file picker.');
-          render();
+          showStatusInPlace(jt('models.tuning.filePickerFailed', 'Could not open the file picker.'));
         }
+      } finally {
+        if (pickingGguf === operationGeneration) pickingGguf = null;
       }
+    }
+
+    // The build row, patched in place from the draft (no re-render: unapplied
+    // inputs survive). Hiding a focused "Use bundled" hands focus to Choose….
+    function syncRuntimeRow() {
+      clearPickFailure();
+      var code = boundActionsHost?.querySelector?.('[data-model-tuning-runtime]');
+      if (code) { code.textContent = engineUtils.runtimeValueText(engineDraft); code.title = engineDraft.runtimePath; }
+      var useBundled = boundActionsHost?.querySelector?.('[data-action="use-bundled-llama-server"]');
+      if (useBundled) {
+        if (!engineDraft.runtimePath && documentRef?.activeElement === useBundled) {
+          boundActionsHost.querySelector('[data-action="choose-llama-server-runtime"]')?.focus?.();
+        }
+        useBundled.hidden = !engineDraft.runtimePath;
+      }
+      updateDirtyState(boundActionsHost);
+    }
+
+    // Mirrors chooseGguf: the pick only edits the draft; Apply is the commit.
+    async function chooseRuntime() {
+      if (pickingRuntime === generation) return;
+      var operationGeneration = pickingRuntime = generation, operationModelId = activeModelId;
+      try {
+        var result = await windowRef.jennyShell.llamaServer.chooseRuntime({
+          defaultPath: engineUtils.runtimePickerDefaultDir(engineDraft),
+        });
+        if (disposed || generation !== operationGeneration || activeModelId !== operationModelId) return;
+        if (result && result.ok === false) return showStatusInPlace(engineUtils.runtimePickerFailureText(result));
+        if (engineUtils.applyPickedRuntime(engineView, engineDraft, result)) syncRuntimeRow();
+      } catch (_error) {
+        if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
+          showStatusInPlace(jt('models.tuning.filePickerFailed', 'Could not open the file picker.'));
+        }
+      } finally {
+        if (pickingRuntime === operationGeneration) pickingRuntime = null;
+      }
+    }
+
+    function useBundledRuntime() {
+      if (!engineDraft) return;
+      engineDraft.runtimePath = '';
+      engineDraft.runtimeBuild = 0;
+      syncRuntimeRow();
     }
 
     function bindDrawerActions() {
@@ -429,6 +510,8 @@
       host?.querySelector?.('[data-action="reset-model-tuning"]')?.addEventListener('click', reset);
       host?.querySelector?.('[data-action="recheck-model-tuning-engine"]')?.addEventListener('click', recheckEngine);
       host?.querySelector?.('[data-action="choose-model-gguf"]')?.addEventListener('click', chooseGguf);
+      host?.querySelector?.('[data-action="choose-llama-server-runtime"]')?.addEventListener('click', chooseRuntime);
+      host?.querySelector?.('[data-action="use-bundled-llama-server"]')?.addEventListener('click', useBundledRuntime);
       updateDirtyState(host);
     }
 
@@ -491,21 +574,140 @@
       }
     }
 
-    async function restartManagedServerForContext() {
+    // Nothing new is live yet: the restart was declined, reused a server, or its
+    // model is no longer served.
+    function savedNextRestartText(reason) {
+      return reason === 'engine'
+        ? jt('models.tuning.engineSavedNextRestart', 'Setting saved. The new engine settings will take effect on the next llama-server restart.')
+        : jt('models.tuning.contextSavedNextRestart', 'Setting saved. The new context window will take effect on the next llama-server restart.');
+    }
+
+    function appliedPressUseText() {
+      return jt('models.tuning.appliedPressUse', 'Applied. Press Use on this model to run it with these settings.');
+    }
+
+    // Not served now, so nothing restarts. Where the drawer showed the model
+    // serving, the setting waits for a restart. Otherwise an engine write waits
+    // for the model's next Use, and a context window is live at once on Ollama
+    // but read by llama-server only as -c at launch: say when it takes effect.
+    function notServedText(reason) {
+      if (engineView?.serving) return savedNextRestartText(reason);
+      if (reason === 'engine') return appliedPressUseText();
+      return resolveEngineType() === 'openai-compatible'
+        ? jt('models.tuning.contextSavedNextStart', 'Saved. The new context window applies the next time llama-server starts.')
+        : statusMessage;
+    }
+
+    // Success copy: 'context' keeps its own; 'engine' names the build it now runs
+    // when the build changed (runtimeLabel is main's bounded token, never shown raw).
+    function restartSucceededText(reason, opts) {
+      var label = String(serverStatus?.runtimeLabel || '');
+      // A reused server Jenny did not launch ('unknown') was not relaunched: it
+      // never took the new -c or engine settings.
+      if (label === 'unknown') return savedNextRestartText(reason);
+      if (reason !== 'engine') return jt('models.tuning.restartSucceeded', 'Restarted llama-server. The new context window is live.');
+      var build = /^build ([1-9]\d{0,8})$/.exec(label);
+      if (opts?.runtimeChanged && build) return jt('models.tuning.restartSucceededBuild', 'Restarted llama-server. It now runs build {build}.', { build: build[1] });
+      if (opts?.runtimeChanged && label === 'bundled') return jt('models.tuning.restartSucceededBundled', 'Restarted llama-server. It now runs the bundled build.');
+      return jt('models.tuning.restartSucceededEngine', 'Restarted llama-server. The new engine settings are live.');
+    }
+
+    function streamingCount() {
+      var ids = getStreamingSessionIds();
+      return Array.isArray(ids) ? ids.filter(Boolean).length : 0;
+    }
+
+    // The llama-server launch serving this model now, from a fresh status: its
+    // pid (0 for a reused server) and the time it became ready, which any
+    // relaunch changes. '' when the model is not served, null when the status
+    // could not be read.
+    async function servedLaunch(modelId) {
+      try {
+        var status = await windowRef.jennyShell.llamaServer.getStatus();
+        return engineUtils.servesModel(status, modelId) ? (Number(status.pid) || 0) + '@' + (Number(status.changedAt) || 0) : '';
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    function dropOwedRestart(key) {
+      var owed = owedRestarts.get(key) || null;
+      owedRestarts.delete(key);
+      return owed;
+    }
+
+    // Owed to the launch serving the model now; nothing when it is not served
+    // (its next launch reads the saved entry).
+    async function oweRestart(modelId, key, opts, launch) {
+      launch = launch || await servedLaunch(modelId);
+      if (!launch || disposed) return;
+      var prior = owedRestarts.get(key);
+      owedRestarts.set(key, {
+        launch: launch,
+        runtimeChanged: opts?.runtimeChanged === true || (prior?.launch === launch && prior.runtimeChanged === true),
+      });
+    }
+
+    // An owed restart runs only while the launch it was owed on still serves its
+    // model, checked on a fresh status (never open()'s): a relaunch already read
+    // the saved entry, and restart() without a spec relaunches main's last spec,
+    // which may be another model. Dropped otherwise; kept if the drawer went
+    // stale or the status could not be read.
+    async function takeOwedRestart(key, modelId, stale) {
+      var owed = owedRestarts.get(key);
+      if (!owed) return null;
+      var launch = await servedLaunch(modelId);
+      if (stale() || owedRestarts.get(key) !== owed || launch === null) return null;
+      owedRestarts.delete(key);
+      return launch && launch === owed.launch ? owed : null;
+    }
+
+    // A reflected engine write whose drawer closed or moved on still goes live,
+    // with no drawer UI: restart now, or, while a chat streams, owe it. Only
+    // while llama-server still serves that very model.
+    async function settleDetachedRestart(modelId, key, opts) {
+      var launch = await servedLaunch(modelId);
+      if (!launch || disposed) return;
+      if (streamingCount()) return oweRestart(modelId, key, opts, launch);
+      try {
+        await windowRef.jennyShell.llamaServer.restart();
+      } catch (_error) { /* fail-soft: the saved entry applies at the next launch */ }
+    }
+
+    // Makes a saved setting live on the served model. reason 'context' (context
+    // window) or 'engine' (engine, MTP, GGUF file, build) picks the copy; the
+    // flow is shared: a fresh status, confirm only while a chat streams, then restart().
+    async function restartManagedServer(reason, opts) {
       if (pending || disposed) return false;
+      var engineChange = reason === 'engine';
       var operationGeneration = generation;
       var operationModelId = activeModelId;
+      var stale = function () {
+        return disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId;
+      };
       pending = true;
       try {
-        var streamingSessionIds = getStreamingSessionIds();
-        var streamingCount = Array.isArray(streamingSessionIds) ? streamingSessionIds.filter(Boolean).length : 0;
-        if (streamingCount) {
+        // Only while a fresh status shows this model served (an owed restart
+        // brings the launch it checked), never open()'s: restart() relaunches
+        // main's last spec, which may be another model by now, and a model
+        // served since open() needs the restart too. A failed fetch is not
+        // served; the drawer closed meanwhile: nothing. No Engine section: no restart.
+        var served = engineView && (opts?.launch || await servedLaunch(operationModelId));
+        if (stale()) return false;
+        if (!served) {
+          statusMessage = notServedText(reason);
+          return false;
+        }
+        var streaming = streamingCount();
+        if (streaming) {
           var confirmed = false;
           if (typeof confirmDialog?.confirm === 'function') {
             try {
               confirmed = await confirmDialog.confirm({
                 title: jt('models.tuning.restartConfirmTitle', 'Restart llama-server?'),
-                message: jtn('models.tuning.restartStreamingWarning', streamingCount, { count: streamingCount }, 'A chat is still streaming. Restarting llama-server will end that response. The new context window only takes effect after a restart.', '{count} chats are still streaming. Restarting llama-server will end those responses. The new context window only takes effect after a restart.'),
+                message: engineChange
+                  ? jtn('models.tuning.restartStreamingWarningEngine', streaming, { count: streaming }, 'A chat is still streaming. Restarting llama-server will end that response. The new engine settings only take effect after a restart.', '{count} chats are still streaming. Restarting llama-server will end those responses. The new engine settings only take effect after a restart.')
+                  : jtn('models.tuning.restartStreamingWarning', streaming, { count: streaming }, 'A chat is still streaming. Restarting llama-server will end that response. The new context window only takes effect after a restart.', '{count} chats are still streaming. Restarting llama-server will end those responses. The new context window only takes effect after a restart.'),
                 confirmLabel: jt('models.tuning.restartAnyway', 'Restart anyway'),
                 cancelLabel: jt('models.tuning.notNow', 'Not now'),
                 variant: 'danger',
@@ -513,9 +715,15 @@
             } catch (_error) { /* unavailable confirmations cancel safely */ }
           }
           if (!confirmed) {
-            if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-              statusMessage = jt('models.tuning.contextSavedNextRestart', 'Setting saved. The new context window will take effect on the next llama-server restart.');
-            }
+            if (!stale()) statusMessage = savedNextRestartText(reason);
+            return false;
+          }
+          // The dialog can stay open while llama-server moves on: check again. An
+          // owed restart still needs its own launch, and drops silently otherwise.
+          served = await servedLaunch(operationModelId);
+          if (stale()) return false;
+          if (!served || (opts?.launch && served !== opts.launch)) {
+            if (!opts?.launch) statusMessage = notServedText(reason);
             return false;
           }
         }
@@ -538,12 +746,14 @@
             restartFailed = true;
           }
         }
-        if (disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId) return false;
+        if (stale()) return false;
         deriveEngineState();
         var restarted = !restartFailed && serverStatus?.ok !== false && engineView?.serving;
+        // A launch code (missing build, unreadable file) names its fix instead.
         statusMessage = restarted
-          ? jt('models.tuning.restartSucceeded', 'Restarted llama-server. The new context window is live.')
-          : jt('models.tuning.restartFailedSettingSaved', 'llama-server restart failed. The setting was saved and is not live yet.');
+          ? restartSucceededText(reason, opts)
+          : formatUtils?.llamaServerFailureText?.(serverStatus?.lastError, activeModelId)
+            || jt('models.tuning.restartFailedSettingSaved', 'llama-server restart failed. The setting was saved and is not live yet.');
         return restarted;
       } finally {
         pending = false;
@@ -551,25 +761,15 @@
       }
     }
 
-    // A saved context window is live immediately on Ollama, but llama-server only
-    // reads it as -c at launch: restart when this model is the one being served,
-    // and otherwise say when the number will take effect rather than nothing.
-    async function settleContextChange(applied, contextChanged) {
-      if (!applied || !contextChanged) return;
-      if (engineView?.serving) {
-        await restartManagedServerForContext();
-        return;
-      }
-      if (resolveEngineType() !== 'openai-compatible' || disposed || !visible) return;
-      statusMessage = jt('models.tuning.contextSavedNextStart', 'Saved. The new context window applies the next time llama-server starts.');
-      render();
-    }
-
     async function save() {
       if (pending || disposed) return;
+      var operationGeneration = generation, operationModelId = activeModelId;
+      var stale = function () {
+        return disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId;
+      };
       var host = documentRef?.getElementById?.('modelTuningDrawer');
       var dirty = dirtyFields(host);
-      var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath'].includes(field); });
+      var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath', 'runtimePath'].includes(field); });
       var ratioRaw = String(host?.querySelector?.('#modelTuningRatio')?.value || '').trim();
       var ratio = ratioRaw ? Number(ratioRaw) : null;
       var hydratedRatio = activeState?.ratioByModel?.[activeModelId];
@@ -587,33 +787,59 @@
       var contextChanged = Object.hasOwn(patch, 'contextLength');
       if (tuningDirty.length === dirty.length) {
         var applied = await applyPatch(patch);
-        await settleContextChange(applied, contextChanged);
+        // An engine restart this model still owes runs once now (it covers the context too).
+        // Pending while it is checked: a second Apply would cancel the restart below.
+        var owedRestart = null;
+        if (applied && engineView && !pending) {
+          pending = true;
+          try { owedRestart = await takeOwedRestart(engineView.key, operationModelId, stale); } finally { pending = false; }
+        }
+        if (owedRestart) await restartManagedServer('engine', owedRestart);
+        else if (applied && contextChanged && !stale()) await restartManagedServer('context');
         return applied;
       }
-      var operationGeneration = generation, operationModelId = activeModelId;
       var request = engineUtils.buildManagedPatch(activeModelId, engineView, engineDraft);
+      var requestKey = engineView.key;
       // Engine write first; the tuning patch follows ONLY when the runtime reflected
       // the entry. `finally` clears pending even for a stale (closed/re-targeted) result.
+      // A reflected write on llama-server restarts its model once, after the
+      // follow-up, while it is served: engine, MTP, GGUF-file and build changes go
+      // live right away.
+      var toLlamaServer = request.entry.engine === 'llama-server';
+      var buildSent = Object.hasOwn(request.entry, 'runtimePath');
+      var restartOptions = null;
       var followUp = null;
       pending = true; statusMessage = jt('models.tuning.applyingCheckingRuntime', 'Applying and checking the runtime…'); render();
       try {
         var result = await windowRef.jennyShell.engines.updateSettings(request.payload);
         // The write landed: the library (app-wide state) hears it even if this drawer went stale.
         if (result?.localEngines) d.onEngineSettingsChanged?.(result.localEngines);
-        if (disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId) return;
-        var reflected = engineUtils.returnedEntryMatches(result?.localEngines, engineView.key, request.entry);
+        var reflected = engineUtils.returnedEntryMatches(result?.localEngines, requestKey, request.entry, request.runtimeBuild);
+        if (stale()) {
+          // Closed or moved on: the write still settles what its model owed, and a
+          // served model still gets its restart (no drawer UI).
+          if (reflected && !disposed) {
+            var owedBefore = dropOwedRestart(requestKey);
+            if (toLlamaServer) {
+              void settleDetachedRestart(operationModelId, requestKey, { runtimeChanged: buildSent || owedBefore?.runtimeChanged === true });
+            }
+          }
+          return;
+        }
         if (!reflected) {
           statusMessage = jt('models.tuning.engineSettingsUpdateFailed', 'Could not update the engine settings.'); // draft kept: Apply stays live for a retry
         } else {
           engineSettings = Object.assign({}, engineSettings || {}, { localEngines: result.localEngines });
           deriveEngineState();
+          // This write's own restart (if any) supersedes an owed one and keeps its build
+          // copy; a write off llama-server drops it.
+          var owed = dropOwedRestart(requestKey);
+          restartOptions = toLlamaServer ? { runtimeChanged: buildSent || owed?.runtimeChanged === true } : null;
           if (tuningDirty.length) followUp = patch;
-          else statusMessage = jt('models.tuning.appliedPressUse', 'Applied. Press Use on this model to run it with these settings.');
+          else if (!toLlamaServer) statusMessage = appliedPressUseText();
         }
       } catch (_error) {
-        if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
-          statusMessage = jt('models.tuning.engineSettingsApplyFailed', 'The engine settings could not be applied.');
-        }
+        if (!stale()) statusMessage = jt('models.tuning.engineSettingsApplyFailed', 'The engine settings could not be applied.');
       } finally {
         if (!disposed) {
           pending = false;
@@ -622,9 +848,24 @@
       }
       if (followUp) {
         var followUpApplied = await applyPatch(followUp);
-        await settleContextChange(followUpApplied, contextChanged);
+        if (restartOptions) {
+          if (stale()) {
+            if (!disposed) await settleDetachedRestart(operationModelId, requestKey, restartOptions); // closed mid follow-up
+          } else if (followUpApplied) {
+            await restartManagedServer('engine', restartOptions); // exactly one restart, context included
+          } else {
+            // The follow-up's message stays; the model's next successful Apply restarts, after a reopen too.
+            await oweRestart(operationModelId, requestKey, restartOptions);
+          }
+        } else if (followUpApplied && contextChanged && !stale()) {
+          // Off llama-server nothing restarts: the context goes live with the next
+          // Use, on the new engine (said as for any context window when it was not served).
+          statusMessage = engineView?.serving ? appliedPressUseText() : notServedText('context');
+          render();
+        }
         return followUpApplied;
       }
+      if (restartOptions) await restartManagedServer('engine', restartOptions);
     }
 
     function reset() {
@@ -649,6 +890,7 @@
       activeDisplayName = String(options?.displayName || normalizedModelId).trim() || normalizedModelId;
       engineSettings = null; localGgufs = null; serverStatus = null; engineView = null; engineDraft = null;
       engineHints = options?.engines || null; // the library card's merged engine facts, when opened from a card
+      engineTypeHint = String(options?.engineTypeHint || '').trim().toLowerCase(); // per open(): resolveEngineType's last resort
       statusMessage = jt('models.tuning.loadingProfile', 'Loading model profile…');
       render();
       var requests = [Promise.resolve().then(function () { return api()?.getState?.(); })];

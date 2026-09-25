@@ -209,7 +209,7 @@ test('ArtifactWorkspaceService redacts paths from renderer-facing mutation resul
     openPathImpl: async (targetPath) => { filesystemPaths.push(targetPath); return ''; },
     showItemInFolderImpl: (targetPath) => { filesystemPaths.push(targetPath); },
   });
-  service.resolveArtifact = async () => ({
+  service._resolveArtifact = async () => ({
     artifact_id: 'artifact_safe_note',
     absolute_path: artifactPath,
     file_name: 'note.md',

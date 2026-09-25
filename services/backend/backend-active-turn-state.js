@@ -43,6 +43,25 @@ function findPendingApproval(service, sessionId, streamId) {
   return null;
 }
 
+// A renderer reload loses the live user_questions_requested event, so the
+// snapshot carries the waiting ask_user questions for the renderer to re-show.
+function findPendingUserQuestions(service, sessionId, streamId) {
+  if (!(service?.pendingUserQuestions instanceof Map)) {
+    return [];
+  }
+  return [...service.pendingUserQuestions.values()]
+    .filter((pending) => normalizeToken(pending?.sessionId) === sessionId
+      && normalizeToken(pending?.streamId) === streamId
+      && normalizeToken(pending?.questionRef) && normalizeToken(pending?.callId))
+    .map((pending) => ({
+      question_id: normalizeToken(pending.questionId),
+      question_ref: normalizeToken(pending.questionRef),
+      call_id: normalizeToken(pending.callId),
+      tool_name: normalizeToken(pending.toolName) || 'ask_user',
+      questions: Array.isArray(pending.questions) ? pending.questions : [],
+    }));
+}
+
 function readPendingApprovalSummary(service, sessionId, callId) {
   if (typeof service?.sessionStore?.getSessionMessages !== 'function') {
     return '';
@@ -104,6 +123,7 @@ function getManagedActiveTurnState(service, sessionId) {
         tool_name: pending.toolName,
         ...(pending.policyScope ? { policy_scope: pending.policyScope } : {}),
         ...(pending.policyConsequence ? { policy_consequence: pending.policyConsequence } : {}),
+        ...(pending.oneOffOnly === true ? { one_off_only: true } : {}),
         ...(pending.reason ? { reason: pending.reason } : {}),
         summary: (pending.summary || readPendingApprovalSummary(
           service,
@@ -112,6 +132,7 @@ function getManagedActiveTurnState(service, sessionId) {
         )).slice(0, MAX_PENDING_APPROVAL_SUMMARY_CHARS),
       }
     : null;
+  const pendingUserQuestions = findPendingUserQuestions(service, normalizedSessionId, streamId);
   const status = normalizeToken(activeTurn.status);
   return {
     ...activeTurn,
@@ -125,6 +146,7 @@ function getManagedActiveTurnState(service, sessionId) {
     terminal_reason: null,
     terminal_subcode: null,
     ...(pendingApproval ? { pending_approval: pendingApproval } : {}),
+    ...(pendingUserQuestions.length ? { pending_user_questions: pendingUserQuestions } : {}),
   };
 }
 

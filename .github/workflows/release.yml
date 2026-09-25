@@ -141,8 +141,8 @@ jobs:
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
 
-      - name: Build installer without publishing
-        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish never
+      - name: Export configured signing secrets
+        shell: bash
         env:
           # --- Windows Authenticode (optional; unsigned build when unset) ---
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
@@ -153,6 +153,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in WIN_CSC_LINK WIN_CSC_KEY_PASSWORD CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              { echo "${name}<<__JENNY_EOF__"; echo "$value"; echo "__JENNY_EOF__"; } >> "$GITHUB_ENV"
+              echo "exported ${name}"
+            else
+              echo "skipped ${name} (not configured)"
+            fi
+          done
+
+      - name: Build installer without publishing
+        run: npm exec -- electron-builder ${{ matrix.eb_flag }} --config electron-builder.yml --publish never
 
       - name: Verify Apple Silicon release artifacts
         if: runner.os == 'macOS'

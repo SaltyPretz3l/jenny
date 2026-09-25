@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createMemoryFsFacade } = require('../../../services/plugins/store/fs-facade');
-const { FullHostCleanupReceiptStore } = require(
+const { FILE_NAME, MAX_RECEIPTS, FullHostCleanupReceiptStore } = require(
   '../../../services/plugins/full-host/cleanup-receipt-store'
 );
 const { FullHostCrashQuarantineStore } = require(
@@ -29,6 +29,39 @@ test('unproven cleanup survives restart until a proven settlement', async () => 
   assert.equal((await restarted.list()).receipts.length, 1);
   assert.equal((await restarted.settle(recorded.receipt)).ok, true);
   assert.deepEqual((await restarted.list()).receipts, []);
+});
+
+test('cleanup receipt capacity preserves unresolved and future records', async () => {
+  const facade = createMemoryFsFacade();
+  const receipts = [null, {
+    session_id: 'existing', session_epoch: 4, future_schema: 2, future_detail: { keep: true },
+  }];
+  while (receipts.length < MAX_RECEIPTS) {
+    receipts.push({ session_id: `pending-${receipts.length}`, session_epoch: 1 });
+  }
+  await facade.mkdir('plugins/runtime');
+  await facade.writeFile(`plugins/runtime/${FILE_NAME}`, JSON.stringify({
+    schema_version: 1, receipts,
+  }));
+  const store = new FullHostCleanupReceiptStore({ facade, baseDir: 'plugins', now: () => 0 });
+
+  const rejected = await store.record({ session: { session_id: 'new', session_epoch: 1 } });
+  assert.deepEqual(rejected, { ok: false, reason: 'cleanup_receipt_store_capacity' });
+  assert.deepEqual((await store.list()).receipts, receipts);
+
+  const updated = await store.record({ session: { session_id: 'existing', session_epoch: 4 },
+    reason: 'retry_unproven' });
+  assert.equal(updated.ok, true);
+  const after = (await store.list()).receipts;
+  assert.equal(after.length, MAX_RECEIPTS);
+  assert.equal(after[0], null);
+  assert.equal(after[1].future_schema, 2);
+  assert.deepEqual(after[1].future_detail, { keep: true });
+  assert.equal(after[1].reason, 'retry_unproven');
+  assert.equal((await store.settle(updated.receipt)).ok, true);
+  const settled = (await store.list()).receipts;
+  assert.equal(settled.length, MAX_RECEIPTS - 1);
+  assert.equal(settled[0], null, 'malformed evidence is preserved for future recovery');
 });
 
 test('crash quarantine state hydrates after restart and remains identity-bound', async () => {

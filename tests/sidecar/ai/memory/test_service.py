@@ -31,14 +31,36 @@ def _memory(memory_id: int, *, kind: str = "preference", body: str = "Tea") -> A
 class _Store:
     def __init__(self) -> None:
         self.calls = 0
+        self.projects: list[str] = []
+        self.include_general: list[bool] = []
         self.recalled = [_memory(1), _memory(2)]
         self.style = replace(self.recalled[0], lesson_kind="response_style")
 
-    def recall_memories(self, _query: str, *, limit: int) -> list[ApprovedMemory]:
+    def recall_memories(
+        self,
+        _query: str,
+        *,
+        limit: int,
+        project_id: str,
+        include_general: bool = False,
+    ) -> list[ApprovedMemory]:
+        assert project_id.startswith("project_")
+        self.projects.append(project_id)
+        self.include_general.append(include_general)
         self.calls += 1
         return self.recalled[:limit]
 
-    def get_recent_memories_by_kind(self, _kind: str, _limit: int) -> list[ApprovedMemory]:
+    def get_recent_memories_by_kind(
+        self,
+        _kind: str,
+        _limit: int,
+        *,
+        project_id: str,
+        include_general: bool = False,
+    ) -> list[ApprovedMemory]:
+        assert project_id.startswith("project_")
+        self.projects.append(project_id)
+        self.include_general.append(include_general)
         return [self.style]
 
     def status_snapshot(self) -> dict[str, object]:
@@ -84,6 +106,19 @@ def test_recall_can_exclude_response_style_without_disabling_other_memory() -> N
 
     assert [memory.id for memory in recalled] == [1, 2]
     assert recalled[0].lesson_kind == "preference"
+
+
+def test_recall_threads_immutable_policy_project_scope() -> None:
+    store = _Store()
+    service = MemoryService(store)  # type: ignore[arg-type]
+
+    service.recall_for_prompt(
+        "tea",
+        policy=MemoryPolicy(project_id="project_beta"),
+    )
+
+    assert store.projects == ["project_beta", "project_beta"]
+    assert store.include_general == [True, True]
 
 
 def test_unavailable_status_is_content_free() -> None:

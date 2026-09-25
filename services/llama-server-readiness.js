@@ -8,6 +8,7 @@
 const http = require('http');
 
 const { isPortOpen, wait } = require('./backend/process-utils');
+const { requestWithTimeout } = require('./http-fetch-util');
 
 const DEFAULT_READINESS_TIMEOUT_MS = 90_000;
 const DEFAULT_READINESS_POLL_INTERVAL_MS = 300;
@@ -150,6 +151,25 @@ async function waitForReadiness({
   return false;
 }
 
+async function probeVisionSupport(baseUrl, {
+  timeoutMs = 2_000,
+  apiKey = '',
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  try {
+    const response = await requestWithTimeout(new URL('/props', baseUrl).toString(), {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      timeoutMs,
+      fetchImpl,
+    });
+    if (!response || response.ok !== true) return false;
+    const payload = await response.json();
+    return payload?.modalities?.vision === true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 module.exports = {
   DEFAULT_EXISTING_PROBE_TIMEOUT_MS,
   DEFAULT_READINESS_POLL_INTERVAL_MS,
@@ -157,6 +177,7 @@ module.exports = {
   normalizeLogger,
   probeExistingServer,
   probeHealth,
+  probeVisionSupport,
   stripLatestTag,
   waitForReadiness,
 };

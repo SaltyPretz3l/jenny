@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import threading
 import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sidecar.ai.tools.builtins import web_http
 from sidecar.ai.tools.builtins.web import (
     _CachedFetchEntry,
     _ddg_http_request,
@@ -33,7 +35,7 @@ from tests._concurrency import join_all_or_fail
 
 
 @pytest.fixture(autouse=True)
-def _reset_web_tools() -> Iterator[None]:
+def _reset_web_tools(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Reset module-level state around each test (setup AND teardown).
 
     Yielding so the reset also runs on teardown means a test that fails after
@@ -53,6 +55,16 @@ def _reset_web_tools() -> Iterator[None]:
         _fetch_cache._entries.clear()  # noqa: SLF001
         _fetch_cache._size_bytes = 0  # noqa: SLF001
 
+    class _UrlopenProxy:
+        def open(self, request: object, timeout: float | None = None) -> object:
+            return urllib.request.urlopen(request, timeout=timeout)
+
+    monkeypatch.setattr(web_http, "_build_opener", lambda _pinned_ip: _UrlopenProxy())
+    monkeypatch.setattr(
+        "sidecar.ai.tools.builtins.web_ddg.validate_public_url",
+        lambda raw_url, **_kwargs: ValidatedUrl(url=raw_url, pinned_ip="93.184.216.34"),
+    )
+
     _reset()
     yield
     _reset()
@@ -61,7 +73,7 @@ def _reset_web_tools() -> Iterator[None]:
 def _mock_response(body: bytes, status: int = 200) -> MagicMock:
     resp = MagicMock()
     resp.status = status
-    resp.read.return_value = body
+    resp.read.side_effect = [body, b""]
     resp.headers = {}
     resp.__enter__ = MagicMock(return_value=resp)
     resp.__exit__ = MagicMock(return_value=False)
@@ -191,7 +203,7 @@ class TestWebSearchTool:
         ).encode()
         mock_resp = MagicMock()
         mock_resp.status = 200
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.headers = {}
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
@@ -214,7 +226,7 @@ class TestWebSearchTool:
         ).encode()
 
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -247,7 +259,7 @@ class TestWebSearchTool:
             }
         ).encode()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -281,7 +293,7 @@ class TestWebSearchTool:
             }
         ).encode()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -324,7 +336,7 @@ class TestWebSearchTool:
             }
         ).encode()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -359,7 +371,7 @@ class TestWebSearchTool:
             }
         ).encode()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -395,7 +407,7 @@ class TestWebSearchTool:
         ).encode()
 
         mock_resp = MagicMock()
-        mock_resp.read.return_value = ddg_response
+        mock_resp.read.side_effect = [ddg_response, b""]
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -428,12 +440,12 @@ class TestWebSearchTool:
             b"</div>"
         )
         mock_resp_instant = MagicMock()
-        mock_resp_instant.read.return_value = ddg_instant_response
+        mock_resp_instant.read.side_effect = [ddg_instant_response, b""]
         mock_resp_instant.__enter__ = MagicMock(return_value=mock_resp_instant)
         mock_resp_instant.__exit__ = MagicMock(return_value=False)
 
         mock_resp_html = MagicMock()
-        mock_resp_html.read.return_value = ddg_html_response
+        mock_resp_html.read.side_effect = [ddg_html_response, b""]
         mock_resp_html.__enter__ = MagicMock(return_value=mock_resp_html)
         mock_resp_html.__exit__ = MagicMock(return_value=False)
 
@@ -460,7 +472,7 @@ class TestWebSearchTool:
             }
         ).encode()
         mock_resp_instant = MagicMock()
-        mock_resp_instant.read.return_value = ddg_instant_response
+        mock_resp_instant.read.side_effect = [ddg_instant_response, b""]
         mock_resp_instant.__enter__ = MagicMock(return_value=mock_resp_instant)
         mock_resp_instant.__exit__ = MagicMock(return_value=False)
 

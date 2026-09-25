@@ -25,6 +25,11 @@ from sidecar.runtime.multiplexer import (
 _APPROVAL_REQUEST_IDS = itertools.count(1_000_000)
 _APPROVAL_CORRELATION_MAX_CHARS = 160
 _EDITED_PLAN_MAX_BYTES = 16 * 1024
+# Mirrors PLAN_DECISIONS in services/tools/builtin/exit-plan-mode-tool.js.
+PLAN_DECISIONS = frozenset({"approved", "approved_auto", "accepted", "rejected"})
+# Pre-plan-document decision spellings still accepted from older frames.
+_LEGACY_DENY_DECISIONS = frozenset({"deny", "denied"})
+_LEGACY_DECISIONS = frozenset({"approve", "allow", "allowed"}) | _LEGACY_DENY_DECISIONS
 _ResponseReader = Callable[[float], dict[str, Any]]
 
 
@@ -44,6 +49,7 @@ class ApprovalResolution:
     decision: str = ""
     feedback: str = ""
     edited_plan: dict[str, Any] | None = None
+    runtime_decision_pause: dict[str, Any] | None = None
 
     def __bool__(self) -> bool:
         return self.approved
@@ -86,17 +92,35 @@ def approval_request_message(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _runtime_pause_resolution(result: dict[str, Any]) -> ApprovalResolution:
+    pause = result["runtime_decision_pause"]
+    if (set(result) != {"runtime_decision_pause"} or not isinstance(pause, dict)
+            or set(pause) != {"schema_version", "request_id", "decision"}
+            or type(pause["schema_version"]) is not int or pause["schema_version"] != 1
+            or not isinstance(pause["request_id"], str)
+            or not isinstance(pause["decision"], dict)):
+        resolution = ApprovalResolution(approved=False, status="runtime_pause_invalid")
+    else:
+        resolution = ApprovalResolution(approved=False, status="runtime_pause",
+                              runtime_decision_pause=json.loads(json.dumps(pause)))
+    return resolution
+
+
 def approval_resolution_from_response(
     response: dict[str, Any], expected_id: int
 ) -> ApprovalResolution:
-    if response.get("id") != expected_id:
-        return ApprovalResolution(approved=False, status="mismatch")
-
     result = response.get("result")
+    resolution = None
+    if response.get("id") != expected_id:
+        resolution = ApprovalResolution(approved=False, status="mismatch")
+    elif isinstance(result, dict) and "runtime_decision_pause" in result:
+        resolution = _runtime_pause_resolution(result)
+    if resolution is not None:
+        return resolution
     if isinstance(result, dict):
         raw_decision = result.get("decision")
         decision = raw_decision.strip().lower() if isinstance(raw_decision, str) else ""
-        if decision in {"approved", "approved_auto", "rejected"}:
+        if decision in PLAN_DECISIONS:
             raw_feedback = result.get("feedback")
             if raw_feedback is not None and not isinstance(raw_feedback, str):
                 return ApprovalResolution(approved=False, status="malformed")
@@ -109,15 +133,16 @@ def approval_resolution_from_response(
                 feedback=feedback,
                 edited_plan=edited_plan,
             )
+        if decision in _LEGACY_DENY_DECISIONS or (
+            decision and decision not in _LEGACY_DECISIONS
+        ):
+            # Fail closed: an explicit deny spelling or a present-but-unknown
+            # decision never approves, even when the frame carries approved=True.
+            return ApprovalResolution(approved=False, status="denied")
         approved = result.get("approved")
-        if isinstance(approved, bool):
-            return ApprovalResolution(
-                approved=approved,
-                status="approved" if approved else "denied",
-                decision="approved" if approved else "",
-            )
-        if isinstance(raw_decision, str):
-            approved = decision in {"approve", "allow", "allowed"}
+        if isinstance(approved, bool) or isinstance(raw_decision, str):
+            if not isinstance(approved, bool):
+                approved = decision in {"approve", "allow", "allowed"}
             return ApprovalResolution(
                 approved=approved,
                 status="approved" if approved else "denied",
@@ -152,6 +177,7 @@ def request_tool_approval(
     response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None = None,
     timeout_seconds: float,
     logger: Any,
+    extra_wait_seconds: Callable[[], float] | None = None,
     cancel_handle: TurnCancellationHandle | None = None,
 ) -> ApprovalResolution:
     request_message = approval_request_message(approval_request)
@@ -177,10 +203,23 @@ def request_tool_approval(
                 read_timeout_seconds=normalized_timeout,
                 cancel_handle=cancel_handle,
             )
-        return _wait_for_approval_resolution(
+        resolution = _wait_for_approval_resolution(
             context,
             response_reader,
             timeout_seconds=normalized_timeout,
+            cancel_handle=cancel_handle,
+            log_timeout=extra_wait_seconds is None,
+        )
+        if resolution.status != "timeout" or extra_wait_seconds is None:
+            return resolution
+        extended_timeout = max(0.0, float(extra_wait_seconds()))
+        if extended_timeout <= 0:
+            return _approval_timed_out(context, normalized_timeout)
+        _log_approval_extended(context, approval_request, extended_timeout)
+        return _wait_for_approval_resolution(
+            context,
+            response_reader,
+            timeout_seconds=extended_timeout,
             cancel_handle=cancel_handle,
         )
     finally:
@@ -221,6 +260,24 @@ def _log_approval_requested(
         20,
         event="sidecar.runtime.approval.requested",
         message="Waiting for tool approval response",
+        status="awaiting_approval",
+        data={
+            "tool_name": approval_request.get("tool_name"),
+            "timeout_seconds": timeout_seconds,
+        },
+    )
+
+
+def _log_approval_extended(
+    context: _ApprovalLogContext,
+    approval_request: dict[str, Any],
+    timeout_seconds: float,
+) -> None:
+    _log_approval_event(
+        context,
+        20,
+        event="sidecar.runtime.approval.extended",
+        message="Extending wait for tool approval response",
         status="awaiting_approval",
         data={
             "tool_name": approval_request.get("tool_name"),
@@ -282,22 +339,19 @@ def _fallback_response_reader(
     def _fallback_reader(timeout: float) -> dict[str, Any]:
         step = 0.05
         elapsed = 0.0
-        try:
-            while elapsed < timeout:
-                _raise_if_approval_cancelled(cancel_handle)
-                try:
-                    response, error = q.get(timeout=min(step, timeout - elapsed))
-                except queue.Empty:
-                    elapsed += step
-                    continue
-                if error is not None:
-                    raise error
-                if response is None:
-                    raise RuntimeError("approval response reader returned no response")
-                return response
-            raise TimeoutError("timed out waiting for response")
-        finally:
-            stop_event.set()
+        while elapsed < timeout:
+            _raise_if_approval_cancelled(cancel_handle)
+            try:
+                response, error = q.get(timeout=min(step, timeout - elapsed))
+            except queue.Empty:
+                elapsed += step
+                continue
+            if error is not None:
+                raise error
+            if response is None:
+                raise RuntimeError("approval response reader returned no response")
+            return response
+        raise TimeoutError("timed out waiting for response")
 
     _fallback_reader.close = stop_event.set  # type: ignore[attr-defined]
     return _fallback_reader
@@ -314,6 +368,7 @@ def _wait_for_approval_resolution(
     *,
     timeout_seconds: float,
     cancel_handle: TurnCancellationHandle | None,
+    log_timeout: bool = True,
 ) -> ApprovalResolution:
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
@@ -321,11 +376,19 @@ def _wait_for_approval_resolution(
             return _approval_cancelled(context, "tool approval request cancelled")
         remaining_seconds = deadline - time.monotonic()
         if remaining_seconds <= 0:
-            return _approval_timed_out(context, timeout_seconds)
+            return (
+                _approval_timed_out(context, timeout_seconds)
+                if log_timeout
+                else ApprovalResolution(approved=False, status="timeout")
+            )
         try:
             approval_response = response_reader(remaining_seconds)
         except TimeoutError:
-            return _approval_timed_out(context, timeout_seconds)
+            return (
+                _approval_timed_out(context, timeout_seconds)
+                if log_timeout
+                else ApprovalResolution(approved=False, status="timeout")
+            )
         except ApprovalResponseCancelledError:
             return _approval_cancelled(context, "tool approval request cancelled")
         except Exception:  # noqa: BLE001

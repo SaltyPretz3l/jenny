@@ -365,3 +365,32 @@ test('unknown context windows fail honest instead of guessing from model names',
     model: 'gemma3-or-any-future-model',
   }), null);
 });
+
+test('a streaming turn counts its reasoning and the memo follows the growing tail', () => {
+  // Owner gate 2026-09-20: the composer meter sat still through a 200 s think.
+  const store = model.createContextUsageStore();
+  const source = messages();
+  const options = { contextLimit: 100000, historyScope: 'session', model: 'm', autoCompactEnabled: true };
+  const settled = store.buildCachedEstimate('s1', source, options);
+
+  const live = {
+    id: 'a3',
+    role: 'assistant',
+    status: 'streaming',
+    content: '',
+    reasoning: { source: 'provider', entries: [{ id: 'r1', text: 'x'.repeat(400) }] },
+  };
+  source.push(live);
+  const thinking = store.buildCachedEstimate('s1', source, options);
+  assert.equal(thinking.usedTokens, settled.usedTokens + 100, 'live reasoning is in the window now');
+
+  live.reasoning.entries[0].text = 'x'.repeat(800);
+  const grown = store.buildCachedEstimate('s1', source, options);
+  assert.notEqual(grown, thinking, 'an in-place reasoning growth invalidates the memo');
+  assert.equal(grown.usedTokens, settled.usedTokens + 200);
+  assert.equal(store.buildCachedEstimate('s1', source, options), grown, 'unchanged tail reuses the memo');
+
+  live.status = 'complete';
+  const done = store.buildCachedEstimate('s1', source, options);
+  assert.equal(done.usedTokens, settled.usedTokens, 'a settled turn no longer counts its reasoning');
+});

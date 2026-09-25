@@ -495,6 +495,61 @@
       timer.textContent = '';
     }
 
+    /* Stable identity: the queue strip short-circuits an unchanged render by
+     * comparing its handlers, so a fresh literal per frame would rebuild it. */
+    let runtimeQueueActions = null;
+    function getRuntimeQueueActions() {
+      runtimeQueueActions = runtimeQueueActions || {
+        withdraw: (row) => state.runtimeSendController?.withdraw?.(row.key),
+        resume: (row) => state.runtimeSendController?.resume?.(row.key),
+      };
+      return runtimeQueueActions;
+    }
+
+    /* Rows for paused work come from a session-scoped snapshot the poller only
+     * reads while something is pending. A conversation whose reply is already
+     * paused has nothing pending, so the chrome asks once when the conversation
+     * is activated -- never on a keystroke's render, never as a standing poll;
+     * the controller's own reads keep the rows fresh while work is in flight. */
+    let rowsReadFor = '';
+    /* Pause is built beside Stop at boot by renderer-turn-pause-interaction.js
+     * through the inventory primitive, after this pipeline exists, so it is
+     * resolved on demand and re-resolved if it ever leaves the document. */
+    let pauseTurnButton = null;
+    function resolvePauseTurnButton() {
+      if (pauseTurnButton?.isConnected) return pauseTurnButton;
+      pauseTurnButton = stopStreamButton?.parentElement?.querySelector?.('.composer-pause-button') || null;
+      return pauseTurnButton;
+    }
+    function syncPauseTurnButton(currentSessionId, showStop, pauseState) {
+      const controller = state.runtimeSendController;
+      const runtimeOwnsSends = state.features?.featureFlags?.session_runtime === true
+        && typeof controller?.pauseSession === 'function';
+      if (runtimeOwnsSends && currentSessionId && currentSessionId !== rowsReadFor
+        && typeof controller.refreshSessionRows === 'function') {
+        rowsReadFor = currentSessionId;
+        Promise.resolve(controller.refreshSessionRows(currentSessionId)).catch(() => {});
+      }
+      const button = resolvePauseTurnButton();
+      if (!button) return;
+      // Only a reply the runtime admitted can be paused: an edit, a retry or a
+      // legacy stream has no running work behind it, so Pause stays hidden.
+      const show = showStop && runtimeOwnsSends && typeof controller.ownsStream === 'function'
+        && controller.ownsStream(state.activeStreamId) === true;
+      button.classList.toggle('hidden', !show);
+      if (!show) return;
+      // A requested pause is not a pause: the control says only that it was asked for.
+      const requested = pauseState?.status === 'requested';
+      const label = requested
+        ? jt('composer.pauseRequested', 'Pause requested…')
+        : jt('composer.pauseReply', 'Pause this reply');
+      button.disabled = requested;
+      button.title = requested ? label : jt('composer.pauseReplyTitle', 'Pause at the next approval');
+      button.setAttribute('aria-label', label);
+      if (requested) button.dataset.pauseState = 'requested';
+      else delete button.dataset.pauseState;
+    }
+
     function renderComposerState() {
       const currentSessionId = String(state.currentSessionId || '').trim();
       const activeSession = (Array.isArray(state.sessions) ? state.sessions : [])
@@ -518,6 +573,10 @@
         && state.ui.activeView === 'ide'
         && (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state) === true;
       const currentQueuedSend = state.queuedSendBySession?.get(currentSessionId) || null;
+      // Durable Send owns its own pending list; the composer must read as
+      // "queued" from either model, never only the legacy one-deep queue.
+      const durablePending = state.runtimeSendController?.listPending?.(currentSessionId) || [];
+      const runtimeSessionState = state.runtimeSendController?.getSessionRuntimeState?.(currentSessionId) || null;
       const queueEligible =
         ownsActiveStream
         && (!activeApprovalPending || dockApprovalSteer)
@@ -560,7 +619,7 @@
         syncDisabledReason, setComposerStatusNotice, clearComposerStatusNotice,
       }) || null;
       if (queueEligible) {
-        const queued = !hasComposerDraft && currentQueuedSend;
+        const queued = !hasComposerDraft && (currentQueuedSend || durablePending.length > 0);
         sendButton.textContent = queued ? jt('chat.pipelineChrome.queuedRunsIn', 'Queued — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueRunsIn', 'Queue — runs in {runMode}', { runMode: runModeLabel });
         sendButton.setAttribute(
           'aria-label',
@@ -574,13 +633,16 @@
       sendButton.classList.toggle('composer-stop', false);
       chatInput.classList.toggle('hidden', interactiveBatchActive);
       sendButton.classList.toggle('hidden', interactiveBatchActive && !sendBusy);
+      const currentSendLifecycle = resolveChatSendLifecycle(currentSessionId);
+      const showStopButton = ownsActiveStream || isSendLifecycleInflight(currentSendLifecycle);
       if (stopStreamButton) {
-        const currentSendLifecycle = resolveChatSendLifecycle(currentSessionId);
-        const showStopButton = ownsActiveStream || isSendLifecycleInflight(currentSendLifecycle);
         stopStreamButton.classList.toggle('hidden', !showStopButton);
         stopStreamButton.disabled = !ownsActiveStream || isSendPreflightPending();
         setDatasetIfChanged(stopStreamButton, 'sendLifecycle', currentSendLifecycle);
       }
+      // Pause lives beside Stop and shares its visibility: there is nothing to
+      // pause when no reply of this conversation's is in flight.
+      syncPauseTurnButton(currentSessionId, showStopButton && !pluginSessionReadOnly, runtimeSessionState?.pause);
       if (composerWrap) composerWrap.classList.toggle('composer-plugin-read-only', pluginSessionReadOnly);
       if (pluginSessionReadOnly) {
         sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.pluginSendingUnavailable', 'Chat sending is unavailable in a plugin transcript'));
@@ -646,7 +708,18 @@
       );
       composerModelSelect.value = runtimePreferences.preferredModel;
       syncComposerModelSelectWidth();
+      composerEffortSelect.dataset.requestedEffort = String(runtimePreferences.reasoningEffort || '');
       composerEffortSelect.value = runtimePreferences.reasoningEffort;
+      // No matching option (a conversation switch onto a model without that
+      // effort): let the effort control normalize and save it now, not at the
+      // next popover open, so a stale effort never rides a send. Once per
+      // effort/model pair: a failed save rolls back and re-renders, and must not
+      // retry on every render.
+      const effortReconcileKey = `${composerEffortSelect.dataset.requestedEffort}\u0000${composerModelSelect.value}`;
+      if (composerEffortSelect.value === '' && composerEffortSelect.dataset.reconciledFor !== effortReconcileKey) {
+        composerEffortSelect.dataset.reconciledFor = effortReconcileKey;
+        globalRef.reasoningEffortControls?.reconcile?.();
+      }
       globalRef.rendererComposerModelPicker?.instance?.renderIfOpen?.();
       composerV2Render.syncRunModeChip(runModeProjection.runMode, documentRef);
       syncComposerTurnTimer();
@@ -667,6 +740,14 @@
         host: documentRef?.getElementById('sendOutbox'),
         actions: controllers.getSendOutboxActions?.(),
       });
+      globalRef.rendererRuntimeQueueView?.renderRuntimeQueue?.({
+        state,
+        host: documentRef?.getElementById('runtimeQueue'),
+        // Idle direct Sends retain pending ownership without entering the queue strip.
+        rows: durablePending.filter(row => row.queued !== false),
+        actions: getRuntimeQueueActions(),
+        closing: runtimeSessionState?.closing === true,
+      });
       syncComposerAccessoryVisibility();
       renderComposerEnhancements?.();
       if ((pluginSessionReadOnly || !state.auth.authenticated) && state.ui.composerPopoverOpen) {
@@ -679,6 +760,13 @@
       const shouldRenderVisionNotice = Boolean(visionGate?.notice || visionNoticeShown);
       visionNoticeShown = Boolean(visionGate?.notice);
       if (shouldRenderVisionNotice) renderComposerStatusNotice();
+      // Sibling composer surfaces (the workspace-root nudge) follow the chat
+      // switch and busy/idle transitions off this one bubbling event instead
+      // of each polling state on its own cadence.
+      const CustomEventCtor = chatInput?.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+      if (typeof CustomEventCtor === 'function' && typeof chatInput?.dispatchEvent === 'function') {
+        chatInput.dispatchEvent(new CustomEventCtor('composer-state-rendered', { bubbles: true }));
+      }
     }
 
 

@@ -58,7 +58,7 @@ test('the off-group surface matches the reviewed snapshot', () => {
     'delegate', 'exit_plan_mode', 'git_diff', 'git_log',
     'git_show', 'git_status', 'home', 'jenny_status',
     'knowledge_exec', 'knowledge_search', 'knowledge_view', 'load_skill',
-    'lsp', 'monitor', 'operation_status', 'preview_test', 'task_board', 'todo_read', 'todo_write',
+    'lsp', 'monitor', 'operation_status', 'preview_test', 'session_result', 'session_spawn', 'session_wait', 'task_board', 'todo_read', 'todo_write',
     'tool_search', 'verify', 'workspace_change_baseline', 'workspace_change_delta',
     'workspace_manifest_read', 'workspace_present', 'worktree_create',
     'worktree_delete', 'worktree_list', 'worktree_select',

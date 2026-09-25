@@ -1,4 +1,8 @@
-"""Qwen3.8 27B request profile for supported local engines."""
+"""Qwen3.8 27B request profile for supported local engines.
+
+The two sampler presets are public because Bonsai 2 (PrismML's ternary
+Qwen3.8-27B, ``app_profiles/bonsai2.py``) publishes the identical recipe.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,9 @@ from sidecar.ai.app_profiles import (
     VariantSpec,
 )
 
-_THINKING_SAMPLER = SamplerPreset(
+# Annotated like QWEN38_PROFILE: bonsai2.py imports these across the package's
+# import cycle, where mypy cannot infer an unannotated constant's type.
+QWEN38_THINKING_SAMPLER: SamplerPreset = SamplerPreset(
     temperature=1.0,
     top_p=0.95,
     top_k=20,
@@ -18,7 +24,7 @@ _THINKING_SAMPLER = SamplerPreset(
     presence_penalty=0.0,
     repeat_penalty=1.0,
 )
-_INSTRUCT_SAMPLER = SamplerPreset(
+QWEN38_INSTRUCT_SAMPLER: SamplerPreset = SamplerPreset(
     temperature=0.7,
     top_p=0.80,
     top_k=20,
@@ -45,8 +51,8 @@ QWEN38_PROFILE: AppProfile = AppProfile(
             overrides=ConfigOverrides(context_length=131_072),
             behavior=RequestBehavior(
                 engine_types=("ollama", "openai-compatible"),
-                thinking_sampler=_THINKING_SAMPLER,
-                instruct_sampler=_INSTRUCT_SAMPLER,
+                thinking_sampler=QWEN38_THINKING_SAMPLER,
+                instruct_sampler=QWEN38_INSTRUCT_SAMPLER,
                 max_output_tokens=32_768,
                 thinking_token_headroom=32_768,
             ),

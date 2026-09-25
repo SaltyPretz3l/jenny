@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from sidecar.ai.error_codes import CMP_MEMORY_FAILED
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, require_project_id
+from sidecar.exceptions import MemoryStoreError
 
 MAX_RECALL_LIMIT = 5
 PROMPT_RECALL_TOKEN_BUDGET = 256
@@ -42,7 +44,8 @@ SELECT
     family_key,
     provenance,
     created_at,
-    updated_at
+    updated_at,
+    project_id
 FROM memories
 """
 _PENDING_MEMORY_SELECT = """
@@ -59,7 +62,8 @@ SELECT
     family_key,
     category,
     created_at,
-    updated_at
+    updated_at,
+    project_id
 FROM pending_memory_candidates
 """
 
@@ -78,6 +82,7 @@ class ApprovedMemory:
     provenance: str
     created_at: str
     updated_at: str
+    project_id: str = GENERAL_PROJECT_ID
 
 
 @dataclass(frozen=True)
@@ -95,6 +100,21 @@ class PendingMemoryCandidate:
     category: str
     created_at: str
     updated_at: str
+    project_id: str = GENERAL_PROJECT_ID
+
+
+def _project_scope(project_id: object) -> str:
+    try:
+        return require_project_id(project_id)
+    except ValueError as error:
+        raise MemoryStoreError(CMP_MEMORY_FAILED, str(error)) from error
+
+
+def recall_scopes(project_id: str) -> tuple[str, ...]:
+    scope = require_project_id(project_id)
+    if scope == GENERAL_PROJECT_ID:
+        return (scope,)
+    return (scope, GENERAL_PROJECT_ID)
 
 
 def _locked(method):

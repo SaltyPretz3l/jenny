@@ -1,16 +1,12 @@
 'use strict';
-
 /* Shared jsdom harness for Workspace IDE renderer tests (rail, search panel,
  * watcher reconciliation). Mirrors the fake-bridge pattern proven in
  * tests/renderer-ide-tree.test.js: a virtual workspace where directories
  * derive from file-key prefixes so file operations show up in later listings,
  * plus W4 surfaces - searchInFiles scans the virtual files, watchStart/Stop
  * record calls, and emitChange() drives the workspaceFs.onChange path. */
-
 const { JSDOM } = require('jsdom');
-
 const { createIdeController } = require('../../renderer/features/renderer-ide-controller');
-
 function buildIdeDom() {
   const dom = new JSDOM(`
     <div id="ideView">
@@ -86,7 +82,6 @@ function buildIdeDom() {
     }),
   };
 }
-
 function createBridgeStub({
   files = {},
   dirs = [],
@@ -103,38 +98,13 @@ function createBridgeStub({
   git = null,
 } = {}) {
   const calls = {
-    listDirectory: [],
-    listAllFiles: [],
-    readImage: [],
-    readFileBase64: [],
-    createFile: [],
-    createDirectory: [],
-    rename: [],
-    delete: [],
-    readFile: [],
-    readText: [],
-    writeFile: [],
-    writeText: [],
-    updateSettings: [],
-    updateState: [],
-    searchInFiles: [],
-    watchStart: [],
-    watchStop: [],
-    readPreChange: [],
-    revealInFolder: [],
-    openInDefaultApp: [],
-    clipboardWriteText: [],
-    chooseRoot: [],
-    terminalStart: [],
-    terminalWrite: [],
-    terminalSignal: [],
-    terminalKill: [],
-    gitGetStatus: [],
-    gitStage: [],
-    gitUnstage: [],
-    gitCommit: [],
-    gitDiscard: [],
-    gitFileAtHead: [],
+    listDirectory: [], listAllFiles: [], readDocument: [], readImage: [], readFileBase64: [],
+    createFile: [], createDirectory: [], rename: [], delete: [], readFile: [], readText: [],
+    writeDocument: [], writeFile: [], writeText: [], updateSettings: [], updateState: [],
+    searchInFiles: [], watchStart: [], watchStop: [], readPreChange: [], revealInFolder: [],
+    openInDefaultApp: [], clipboardWriteText: [], chooseRoot: [], terminalStart: [],
+    terminalWrite: [], terminalSignal: [], terminalKill: [], gitGetStatus: [], gitStage: [],
+    gitUnstage: [], gitCommit: [], gitDiscard: [], gitFileAtHead: [],
   };
   // snapshots: beforeHash -> pre-change content (the W5 snapshot store fake).
   const state = {
@@ -145,7 +115,6 @@ function createBridgeStub({
     rootGeneration: 1,
   };
   let pendingRootTransition = null;
-
   // In-memory git model. `git` (null when the feature is off) carries
   // { branch, files:[], head:{path:content}, isRepo, unborn, available }.
   function normalizeGitFile(entry) {
@@ -200,19 +169,16 @@ function createBridgeStub({
   const filePathKey = (filePath) => (process.platform === 'win32'
     ? String(filePath).toLowerCase()
     : String(filePath));
-
   function noRootError() {
     const error = new Error('Choose a workspace root first.');
     error.code = 'CMP-WORKSPACEFS-0001';
     return error;
   }
-
   function conflictError() {
     const error = new Error('A file or folder with that name already exists.');
     error.code = 'CMP-WORKSPACEFS-0030';
     return error;
   }
-
   function isDir(relPath) {
     if (state.dirs.has(relPath)) {
       return true;
@@ -220,7 +186,6 @@ function createBridgeStub({
     const prefix = `${relPath}/`;
     return Object.keys(state.files).some((key) => key.startsWith(prefix));
   }
-
   function listChildren(dirPath) {
     const prefix = dirPath ? `${dirPath}/` : '';
     const dirNames = new Set();
@@ -254,7 +219,6 @@ function createBridgeStub({
       })),
     ];
   }
-
   // Literal case-insensitive scan over the virtual files, one result per
   // matching line - the same shape services/workspace-ide-search.js returns.
   // An optional `scope` (Find-in-Folder) narrows the scan to a root-relative
@@ -289,11 +253,9 @@ function createBridgeStub({
     }
     return { query, results, fileCount: matchedFiles.size, filesScanned: 0, limitHit: false };
   }
-
   function rootContext(rootPath = state.rootPath, phase = 'ready', generation = state.rootGeneration) {
     return { rootPath, rootId: rootPath ? 'root_fake' : null, generation, phase };
   }
-
   function prepareRootTransition(rootPath) {
     if (rootPath === null) return { prepared: false, changed: false, canceled: true };
     if (rootPath === state.rootPath) return { prepared: false, changed: false, canceled: false };
@@ -303,9 +265,9 @@ function createBridgeStub({
       candidate: rootContext(rootPath, 'preparing', state.rootGeneration + 1),
     };
   }
-
   return {
     calls,
+    fileVersions,
     state,
     gitState,
     emitChange(payload) {
@@ -471,6 +433,28 @@ function createBridgeStub({
             truncated: false,
           };
         },
+        async readDocument(payload) {
+          calls.readDocument.push(payload);
+          if (!(payload.path in state.files)) {
+            return { ok: false, code: 'CMP-WORKSPACEFS-0004', message: 'File not found in the workspace.', details: {} };
+          }
+          const content = String(state.files[payload.path]);
+          const format = (payload.path.split('/').pop() || '').split('.').pop().toLowerCase();
+          const mime = { docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pdf: 'application/pdf' }[format];
+          if (!mime) {
+            return { ok: false, code: 'CMP-WORKSPACEFS-0015', message: 'Only supported workspace documents can be opened.', details: {} };
+          }
+          const fileVersion = `vf2_${++fileVersionCounter}`;
+          fileVersions.set(payload.path, fileVersion);
+          return {
+            ok: true, path: payload.path, pathKey: filePathKey(payload.path),
+            requestedPath: payload.path, requestedPathKey: filePathKey(payload.path),
+            size: Buffer.byteLength(content), mtimeMs: (mtimeCounter += 10), rootId: 'root-test',
+            generation: state.rootGeneration, fileVersion, kind: 'document', format,
+            representation: 'base64', mime, base64: Buffer.from(content, 'utf8').toString('base64'),
+            editable: true, truncated: false,
+          };
+        },
         async writeFile(payload) {
           calls.writeFile.push(payload);
           state.files[payload.path] = payload.content;
@@ -498,6 +482,24 @@ function createBridgeStub({
             editable: true,
             truncated: false,
             eol: 'lf',
+          };
+        },
+        async writeDocument(payload) {
+          calls.writeDocument.push(payload);
+          if (fileVersions.get(payload.path) !== payload.expectedFileVersion) {
+            return { ok: false, code: 'CMP-WORKSPACEFS-0020', message: 'File changed on disk since it was loaded.', details: {} };
+          }
+          const content = Buffer.from(payload.base64, 'base64').toString('utf8');
+          state.files[payload.path] = content;
+          const nextVersion = `vf2_${++fileVersionCounter}`;
+          fileVersions.set(payload.path, nextVersion);
+          const mime = { docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pdf: 'application/pdf' }[payload.format];
+          return {
+            ok: true, path: payload.path, pathKey: filePathKey(payload.path),
+            requestedPath: payload.path, requestedPathKey: filePathKey(payload.path),
+            size: Buffer.byteLength(content), mtimeMs: (mtimeCounter += 10), rootId: 'root-test',
+            generation: state.rootGeneration, fileVersion: nextVersion, kind: 'document',
+            format: payload.format, representation: 'base64', mime, editable: true, truncated: false,
           };
         },
         async listDirectory(payload) {
@@ -837,7 +839,6 @@ function createBridgeStub({
     },
   };
 }
-
 async function settle(ms = 10) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }

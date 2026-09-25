@@ -261,6 +261,7 @@ test('seam: handleContextCompacted retains the latest event and caps ordered his
     streamId: 'stream-1',
     tokensBefore: 5000 - index,
     tokensAfter: 4000 - index,
+    summaryExcerpt: `${index}: ${'x'.repeat(1300)}`,
   });
 
   await handlers.handleContextCompacted(event(1));
@@ -269,6 +270,9 @@ test('seam: handleContextCompacted retains the latest event and caps ordered his
   assert.equal(messages[0].context_compactions.length, 2);
   assert.deepEqual(messages[0].context_compacted, messages[0].context_compactions[1]);
   assert.match(messages[0].context_compacted.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(messages[0].context_compacted.summaryExcerpt.length, 1200);
+  assert.equal(messages[0].context_compacted.summaryExcerpt, event(2).summaryExcerpt.slice(0, 1200));
+  assert.equal(messages[0].context_compactions[0].summaryExcerpt, event(1).summaryExcerpt.slice(0, 1200));
 
   for (let index = 3; index <= 21; index += 1) {
     await handlers.handleContextCompacted(event(index));
@@ -302,7 +306,7 @@ test('seam: handleContextCompacted after a tool boundary starts a fresh per-segm
   });
 
   await handlers.handleContextCompacted({
-    type: 'context_compacted', sessionId: 'session-1', streamId: 'stream-1', tokensBefore: 5000, tokensAfter: 4000, phase: 'tool_loop',
+    type: 'context_compacted', sessionId: 'session-1', streamId: 'stream-1', tokensBefore: 5000, tokensAfter: 4000, compactionPhase: 'tool_loop',
   });
 
   assert.equal(patches.length, 1);

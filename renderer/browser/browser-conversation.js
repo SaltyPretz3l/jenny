@@ -347,8 +347,9 @@
     async send() {
       const capture = this._capture();
       const state = this.getState();
-      const prompt = text(state.draft).trim();
-      if (!prompt || !state.control.owned || !state.selectedSessionId || state.activeStreamId
+      const capturedDraft = text(state.draft);
+      const prompt = capturedDraft.trim();
+      if (!prompt || !state.control.owned || !state.selectedSessionId || state.mutationPending
         || state.snapshotPending || state.snapshotUnavailable) return;
       const queued = Array.isArray(state.attachments) ? state.attachments : [];
       if (queued.some((item) => item.status === 'uploading')) {
@@ -367,11 +368,15 @@
         params: { prompt, ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) },
       });
       if (!this._current(capture)) return;
-      if (result?.ok && result.accepted === true && text(result.stream_id)) {
-        state.activeStreamId = result.stream_id;
-        state.draft = '';
-        state.attachments = [];
-        state.statusMessage = jt("app.jennyIsWorking", "Jenny is working…");
+      const durable = result?.durable === true && text(result.work_id) && text(result.turn_id)
+        && result.session_id === capture.sessionId;
+      if (result?.ok && result.accepted === true && (text(result.stream_id) || durable)) {
+        if (text(result.stream_id)) state.activeStreamId = result.stream_id;
+        const currentIds = (state.attachments || []).map(item => text(item?.attachment?.id));
+        if (state.draft === capturedDraft && JSON.stringify(currentIds) === JSON.stringify(attachmentIds)) {
+          state.draft = ''; state.attachments = [];
+        }
+        state.statusMessage = durable ? jt('titlebar.runtimeHealth.pending', 'Pending') : jt("app.jennyIsWorking", "Jenny is working…");
         void this.loadSnapshot(state.selectedSessionId);
         this.render();
       }
@@ -533,6 +538,8 @@
       const streamId = text(event.stream_id);
       if (!streamId) return;
       const state = this.getState();
+      const activeId = state.activeStreamId || state.liveProjection?.stream_id;
+      if (event.type !== 'started' && activeId && activeId !== streamId) return;
       const terminal = ['complete', 'error', 'cancelled', 'canceled', 'failed'].includes(text(event.type));
       if (terminal) {
         state.liveProjection = null;
@@ -549,6 +556,8 @@
             : [],
         }
         : { stream_id: streamId, session_id: state.selectedSessionId, assistant_text: '', reasoning: [] };
+      if (text(event.turn_id)) current.turn_id = event.turn_id;
+      if (event.runtime_admission) current.runtime_admission = { ...event.runtime_admission };
       if (event.type === 'stream_reset') {
         current.assistant_text = '';
         current.reasoning = [];

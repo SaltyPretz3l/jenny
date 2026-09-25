@@ -28,6 +28,7 @@ from sidecar.ai.tools.builtins.filesystem import (
     read_file_tool,
 )
 from sidecar.ai.tools.builtins.rich_files import notebook as notebook_module
+from sidecar.ai.tools.builtins.rich_files import pdf as pdf_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.registry import build_default_registry
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -173,8 +174,6 @@ def test_read_file_rich_delegation_forwards_only_whitelisted_arguments(
 def test_read_file_forwards_pages_to_pdf_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sidecar.ai.tools.builtins.rich_files import pdf as pdf_module
-
     _configure(rich=True, image=False)
     target = tmp_path / "report.pdf"
     target.write_bytes(b"%PDF-1.4 truncated garbage")
@@ -249,3 +248,31 @@ def test_knowledge_tools_keep_injected_rich_adapters() -> None:
         }
     )
     assert "knowledge_view" in registry
+
+
+def test_read_file_forwards_cursor_to_pdf_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure(rich=True, image=False)
+    target = tmp_path / "report.pdf"
+    target.write_bytes(b"%PDF-1.4 truncated garbage")
+    seen: list[dict[str, object]] = []
+
+    def _recorder(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:
+        seen.append(dict(arguments))
+        return ToolHandlerResult(output="{}", success=True, metadata={})
+
+    monkeypatch.setattr(pdf_module, "pdf_inspect_tool", _recorder)
+
+    read_file_tool(
+        {
+            "path": "report.pdf",
+            "cursor": "pdf:0123456789abcdef:2:17",
+            "create_preview": True,
+        },
+        _guard(tmp_path),
+    )
+
+    assert len(seen) == 1
+    assert seen[0].get("cursor") == "pdf:0123456789abcdef:2:17"
+    assert "create_preview" not in seen[0]

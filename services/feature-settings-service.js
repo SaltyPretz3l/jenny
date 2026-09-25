@@ -280,6 +280,7 @@ function registerFeatureIpcHandlers({
   updateSettings,
   getWebSearchSecretStatus = null,
   setWebSearchSecret = null,
+  authorization = {},
 } = {}) {
   const handlers = {
     'features.getState': () => getState(),
@@ -291,7 +292,7 @@ function registerFeatureIpcHandlers({
   if (typeof setWebSearchSecret === 'function') {
     handlers['features.setWebSearchSecret'] = (_, payload) => setWebSearchSecret(payload);
   }
-  registerIpcInvokeHandlers(ipcMainLike, handlers);
+  registerIpcInvokeHandlers(ipcMainLike, handlers, authorization);
 }
 
 module.exports = {

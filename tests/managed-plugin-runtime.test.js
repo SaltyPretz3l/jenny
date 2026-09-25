@@ -2,9 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const {
   attachManagedPluginRuntime,
+  bindPluginExecutionAuthority,
   getManagedPluginRuntime,
   sendWithPluginRuntimeReconciliation,
 } = require('../services/backend/managed-plugin-runtime');
@@ -26,6 +28,45 @@ function activeEnvelope(revision = 1) {
       declarative_content: [],
     },
   };
+}
+
+const digest = (value) => String(value).repeat(64);
+const schemaDigest = (schema) => createHash('sha256').update(schema).digest('hex');
+
+function dynamicEnvelope() {
+  const envelope = activeEnvelope(7);
+  const snapshot = envelope.plugin_runtime.snapshot;
+  snapshot.remote_mcp_bindings = [{
+    binding_digest: digest('1'), descriptor_digest: digest('2'), artifact_digest: digest('3'),
+    endpoint_origin_digest: digest('4'), contributions: [{ kind: 'tool',
+      namespaced_name: 'plugin:remote:server:tool:search:abc', schema_digest: digest('5') }],
+  }];
+  snapshot.restricted_contributions = [{
+    namespaced_name: 'plugin:acme-labs:widgets:compute', capabilities: ['network.request'],
+    network_origins: ['https://example.test'], artifact_digest: digest('6'),
+    component_digest: digest('7'), content_digest: digest('8'), generation_id: 'gen-7',
+    commit_epoch: 7, lifecycle_epoch: 2, policy_revision: 3,
+    workspace_incarnation_id: 'workspace-1', abi_digest: digest('9'),
+    protocol_digest: digest('a'),
+  }];
+  const schema = '{}';
+  snapshot.native_mcp_bindings = [
+    {
+      publisher_id: 'third-party', plugin_id: 'native', contribution_id: 'server',
+      binding_digest: digest('b'), artifact_digest: digest('c'), executable_digest: digest('d'),
+      containment_profile_digest: digest('e'), active_generation_id: 'gen-7', commit_epoch: 7,
+      tools: [{ namespaced_name: 'plugin_third_party_native_read',
+        schema_digest: schemaDigest(schema), side_effecting: false }],
+    },
+    {
+      publisher_id: 'jenny-official', plugin_id: 'native', contribution_id: 'official',
+      binding_digest: digest('f'), artifact_digest: digest('0'), executable_digest: digest('1'),
+      containment_profile_digest: digest('2'), active_generation_id: 'gen-7', commit_epoch: 7,
+      tools: [{ namespaced_name: 'plugin_jenny_native_read',
+        schema_digest: schemaDigest(schema), side_effecting: false }],
+    },
+  ];
+  return envelope;
 }
 
 test('adapter is weak-owner scoped, tracks stable/fenced state, and detaches cleanly', async () => {
@@ -63,6 +104,43 @@ test('V6 privileged-only snapshots keep exact chat authority active', async () =
     commit_epoch: 6, active_generation_id: 'gen-6',
   });
   adapter.detach();
+});
+
+test('captures bounded policy descriptors only from the committed dynamic runtime snapshot', () => {
+  const adapter = attachManagedPluginRuntime({}, {
+    requestApply: async () => ({ ok: true, attestation: {} }),
+  });
+  const envelope = dynamicEnvelope();
+  assert.equal(adapter.commit({ envelope }).ok, true);
+  const capture = adapter.captureExecutionToolAuthority(adapter.getChatAuthority());
+
+  assert.deepEqual(capture.descriptors.map((item) => [
+    item.name, item.source_kind, item.side_effecting, item.read_only,
+  ]), [
+    ['plugin_jenny_native_read', 'plugin_native_mcp', false, true],
+    ['plugin_third_party_native_read', 'plugin_native_mcp', true, false],
+    ['plugin:acme-labs:widgets:compute', 'restricted', true, false],
+    ['plugin:remote:server:tool:search:abc', 'mcp', true, false],
+  ]);
+  assert.equal(capture.descriptors.find((item) => item.source_kind === 'restricted')
+    .capability_identity.capabilities[0], 'network.request');
+  assert.match(capture.descriptor_digest, /^[0-9a-f]{64}$/);
+  assert.equal(Object.isFrozen(capture.descriptors), true);
+  assert.throws(() => adapter.captureExecutionToolAuthority({
+    ...adapter.getChatAuthority(), commit_epoch: 8,
+  }), /does not match/);
+});
+
+test('dynamic tool capture rejects cross-runtime name collisions', () => {
+  const adapter = attachManagedPluginRuntime({}, {
+    requestApply: async () => ({ ok: true, attestation: {} }),
+  });
+  const envelope = dynamicEnvelope();
+  envelope.plugin_runtime.snapshot.native_mcp_bindings[0].tools[0].namespaced_name =
+    'plugin:acme-labs:widgets:compute';
+  assert.equal(adapter.commit({ envelope }).ok, true);
+  assert.throws(() => adapter.captureExecutionToolAuthority(adapter.getChatAuthority()),
+    /duplicate name/);
 });
 
 test('overlapping fence owners cannot reopen admission until every owner releases', () => {
@@ -188,6 +266,7 @@ test('authority conflict reconciles once and retries with refreshed plugin autho
   });
   adapter.commit({ envelope: activeEnvelope(2) });
   const seen = [];
+  const bound = [];
   const result = await sendWithPluginRuntimeReconciliation(owner, async (authority) => {
     seen.push(authority);
     if (seen.length === 1) {
@@ -196,11 +275,12 @@ test('authority conflict reconciles once and retries with refreshed plugin autho
       throw error;
     }
     return { ok: true };
-  });
+  }, { bindAuthority: (authority) => bound.push(authority) });
   assert.deepEqual(result, { ok: true });
   assert.equal(applies, 1);
   assert.deepEqual(seen.map((authority) => authority.mode), ['plugin', 'plugin']);
   assert.equal(seen[1].registry_revision, 2);
+  assert.deepEqual(bound, seen);
 });
 
 test('failed authority reconciliation retries the same effect-free request once as core-only', async () => {
@@ -221,4 +301,11 @@ test('failed authority reconciliation retries the same effect-free request once 
   });
   assert.deepEqual(result, { ok: true, mode: 'core_only' });
   assert.deepEqual(seen.map((authority) => authority.mode), ['plugin', 'core_only']);
+});
+
+test('missing session bind support is compatible only with core-only authority', () => {
+  assert.equal(bindPluginExecutionAuthority({}, {}, { mode: 'core_only' }), true);
+  assert.throws(() => bindPluginExecutionAuthority({}, {}, {
+    mode: 'plugin', registry_revision: 1,
+  }), /binder is unavailable/);
 });

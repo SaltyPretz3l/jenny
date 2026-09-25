@@ -93,7 +93,26 @@ def test_manifest_capability_is_owned_only_by_first_party_artifact_tools() -> No
         if entry.get("availability", {}).get("plan_mode_artifact_write") is True
     }
 
-    assert flagged == {"create_artifact", "mermaid_generate"}
+    assert flagged == {"create_artifact", "mermaid_generate", "todo_write"}
+
+
+def test_plan_mode_keeps_the_todo_list_writable() -> None:
+    descriptor = CanonicalToolDescriptor(
+        name="todo_write",
+        description="todo list",
+        input_schema={"type": "object", "properties": {}},
+        side_effecting=True,
+        read_only=False,
+        availability=CanonicalToolAvailability(plan_mode_artifact_write=True),
+    )
+    todos = {"todos": [{"content": "Outline", "status": "pending"}]}
+
+    assert is_plan_artifact_write_eligible(
+        descriptor, "todo_write", todos, plan_mode=True, read_only=True
+    )
+    assert not is_plan_artifact_write_eligible(
+        descriptor, "todo_write", todos, plan_mode=False, read_only=True
+    )
 
 
 def test_plan_mode_exposes_only_the_narrowed_create_artifact_schema() -> None:

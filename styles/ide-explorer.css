@@ -34,6 +34,51 @@
   gap: 2px;
 }
 
+/* Projects v2: the title is the current project and opens the project menu.
+ * Same type as the static label; the chevron is the only added mark. */
+.ide-tree-header-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  margin-inline-start: -6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+
+.ide-tree-header-project:hover,
+.ide-tree-header-project[aria-expanded="true"] {
+  background: var(--bg-surface-2);
+}
+
+.ide-tree-header-project:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-tree-header-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.ide-tree-header-project svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
 .ide-tree-header-button {
   display: inline-flex;
   align-items: center;

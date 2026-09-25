@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidecar.ai.tools.builtins import shell as shell_module
+from sidecar.ai.tools.builtins.owned_process import OwnedProcessCleanupVerdict
 from sidecar.ai.tools.builtins.shell import (
     _parse_command,
     _shell_argv,
@@ -124,6 +125,36 @@ def test_full_pipeline_safe_read_command(
     assert body["ok"] is True
     assert result.metadata["classification"]["verdict"] == "allowed"
     assert "git_operations" not in body
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_foreground_command_propagates_exact_resource_cleanup_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    timed_out: bool,
+) -> None:
+    verdict = OwnedProcessCleanupVerdict(
+        cleanup="confirmed",
+        process_tree_terminated=True,
+        output_readers_terminated=True,
+    )
+    monkeypatch.setattr(
+        shell_module,
+        "_run_owned_process",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="ok\n",
+            stderr="",
+            timed_out=timed_out,
+            aborted=False,
+            drain_incomplete=False,
+            cleanup_verdict=verdict,
+        ),
+    )
+
+    result = run_command_tool({"command": "echo ok"}, _guard(tmp_path))
+
+    assert result.metadata["resource_cleanup"] == verdict.metadata()
 
 
 # ── Semantic exit codes with classification ───────────────────────────

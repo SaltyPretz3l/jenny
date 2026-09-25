@@ -1,7 +1,7 @@
 /* renderer/shell/renderer-overlay-manager.js
  *
  * The shared stack arbitrates Escape and focus trapping for managed overlays.
- * The command palette remains outside it.
+ * The command palette registers with it too (UIUX-019); global shortcuts stand down while it is non-empty.
  *
  * Contract
  * --------
@@ -44,6 +44,11 @@
  *   - isOpen(id?): with an id, whether that entry is on the stack; with no
  *     id, whether the stack is non-empty.
  *   - getDepth(): current stack size.
+ *     isOpen/getDepth first drop any entry whose root left the DOM without a
+ *     close() (chrome re-rendered under it), releasing its inert targets.
+ *   - requestClose(id, reason?): runs that entry's onRequestClose -- the same
+ *     path Escape takes -- so a caller can dismiss a launcher-style overlay
+ *     (the command palette) before acting. Returns true/false.
  *   - dispose(): removes the document listener, releases all inert targets,
  *     and permanently closes the manager without restoring focus.
  *
@@ -303,13 +308,36 @@
       return true;
     }
 
+    // Re-render resilience: chrome that rebuilds while an overlay is up can
+    // drop the overlay root without its owner ever calling close(). Left on
+    // the stack, that entry pins its inert targets and stands every global
+    // chord down for the rest of the session, so a detached root reads as
+    // closed. Every call site attaches the root before open().
+    function pruneDetached() {
+      for (const entry of [...stack]) {
+        if (entry.root && entry.root.isConnected === false) close(entry.id);
+      }
+    }
+
     function isOpen(id) {
+      pruneDetached();
       if (id === undefined) return stack.length > 0;
       return findIndexById(id) !== -1;
     }
 
     function getDepth() {
+      pruneDetached();
       return stack.length;
+    }
+
+    // The owner's own close path (what Escape runs), for a caller that must
+    // dismiss a launcher-style overlay before acting, e.g. the capture chord.
+    function requestClose(id, reason) {
+      const index = findIndexById(id);
+      if (index === -1) return false;
+      try { stack[index].onRequestClose(reason || 'request'); }
+      catch (_e) { /* swallow: owner's problem to surface */ }
+      return true;
     }
 
     function dispose() {
@@ -328,6 +356,7 @@
     return {
       open,
       close,
+      requestClose,
       isOpen,
       getDepth,
       dispose,

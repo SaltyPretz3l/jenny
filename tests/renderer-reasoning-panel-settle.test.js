@@ -444,3 +444,124 @@ test('collapsing one reasoning phase hides only that panel when another phase st
     harness.restore();
   }
 });
+
+// --- Owner gate 2026-09-20: an earlier expanded thought must not flicker -----
+//
+// With an earlier phase re-opened by the user while a later phase streams, the
+// height sync used a first-match lookup: every reveal patch re-pinned the
+// earlier (settled) panel and never released the live tail. Each panel is now
+// judged by its own block.
+
+function twoPhaseStack(firstStatus, secondStatus) {
+  return `
+    <div class="reasoning-row-stack" data-reasoning-row-version="2">
+      <div class="reasoning-row-block expanded" data-thinking-id="think_1" data-phase-key="think_1" data-reasoning-status="${firstStatus}">
+        <button class="reasoning-row-header" type="button" data-reasoning-toggle="true" data-message-id="assistant_stream" data-thinking-id="think_1" data-phase-key="think_1">
+          <span class="reasoning-row-main">earlier thought</span>
+        </button>
+        <div class="reasoning-row-panel expanded" data-thinking-id="think_1" data-phase-key="think_1">
+          <div class="reasoning-row-panel-body chat-bubble-markdown"><p>earlier thought</p></div>
+        </div>
+      </div>
+      <div class="reasoning-row-block expanded" data-thinking-id="think_2" data-phase-key="think_2" data-reasoning-status="${secondStatus}">
+        <button class="reasoning-row-header" type="button" data-reasoning-toggle="true" data-message-id="assistant_stream" data-thinking-id="think_2" data-phase-key="think_2">
+          <span class="reasoning-row-main">live thought</span>
+        </button>
+        <div class="reasoning-row-panel expanded" data-thinking-id="think_2" data-phase-key="think_2">
+          <div class="reasoning-row-panel-body chat-bubble-markdown"><p>live thought</p></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function patchTwoPhaseStack(controller, firstStatus, secondStatus) {
+  controller.queuePatch({
+    currentSessionId: 'session-1',
+    structureSignature: 10,
+    latestAssistantMessageId: 'assistant_stream',
+    streamingMessage: { id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' },
+    messages: [{ id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' }],
+    buildMessageNodeState: () => ({
+      bubbleInnerHtml: null,
+      thinkingMarkup: twoPhaseStack(firstStatus, secondStatus),
+      innerHtml: '',
+      pending: true,
+      entryReveal: false,
+      status: 'streaming',
+      finalizedAt: '',
+    }),
+  });
+}
+
+test('a settled expanded thought keeps its resting height while a later phase streams', () => {
+  const { timeline, controller } = createImmediateRevealController(`
+    <div id="timeline">
+      <article class="chat-entry assistant pending" data-message-id="assistant_stream" data-streaming-message-id="assistant_stream">
+        <div class="chat-message-content">${twoPhaseStack('complete', 'streaming')}</div>
+      </article>
+    </div>
+  `);
+  controller.commitFullRender({
+    currentSessionId: 'session-1',
+    structureSignature: 10,
+    streamingMessage: { id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' },
+    streamingArticleMessageId: 'assistant_stream',
+  });
+  const panels = timeline.querySelectorAll('.reasoning-row-panel');
+  const earlier = panels[0];
+  const live = panels[1];
+  // The earlier thought is at rest: settled by its own expand, inline height cleared.
+  earlier.classList.add(SETTLED_CLASS);
+  earlier.style.maxHeight = '';
+
+  patchTwoPhaseStack(controller, 'complete', 'streaming');
+
+  assert.equal(earlier.style.maxHeight, '', 'the settled earlier panel is not re-pinned by a later phase\'s patch');
+  assert.ok(earlier.classList.contains(SETTLED_CLASS), 'the settled class survives the patch');
+  assert.equal(live.style.maxHeight, 'none', 'the live tail is released to grow, not the first expanded panel in the DOM');
+});
+
+test('an earlier thought mid-expand keeps its pinned px while a later phase streams', () => {
+  const { timeline, controller } = createImmediateRevealController(`
+    <div id="timeline">
+      <article class="chat-entry assistant pending" data-message-id="assistant_stream" data-streaming-message-id="assistant_stream">
+        <div class="chat-message-content">${twoPhaseStack('complete', 'streaming')}</div>
+      </article>
+    </div>
+  `);
+  controller.commitFullRender({
+    currentSessionId: 'session-1',
+    structureSignature: 10,
+    streamingMessage: { id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' },
+    streamingArticleMessageId: 'assistant_stream',
+  });
+  const earlier = timeline.querySelectorAll('.reasoning-row-panel')[0];
+  earlier.style.maxHeight = '120px';
+
+  patchTwoPhaseStack(controller, 'complete', 'streaming');
+
+  assert.equal(earlier.style.maxHeight, '120px', 'a px pin from the panel\'s own expand transition is left alone');
+});
+
+test('a thought that just flipped from streaming to complete is still pinned once', () => {
+  const { timeline, controller } = createImmediateRevealController(`
+    <div id="timeline">
+      <article class="chat-entry assistant pending" data-message-id="assistant_stream" data-streaming-message-id="assistant_stream">
+        <div class="chat-message-content">${twoPhaseStack('streaming', 'streaming')}</div>
+      </article>
+    </div>
+  `);
+  controller.commitFullRender({
+    currentSessionId: 'session-1',
+    structureSignature: 10,
+    streamingMessage: { id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' },
+    streamingArticleMessageId: 'assistant_stream',
+  });
+  const earlier = timeline.querySelectorAll('.reasoning-row-panel')[0];
+  earlier.style.maxHeight = 'none';
+
+  patchTwoPhaseStack(controller, 'complete', 'streaming');
+
+  assert.match(earlier.style.maxHeight, /px$/, 'the flip-to-complete pin still writes a measured height');
+});

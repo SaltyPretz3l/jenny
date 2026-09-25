@@ -7,6 +7,10 @@ const {
   ensureArray,
   isPlainObject,
 } = require('../value-utils');
+const {
+  GENERAL_PROJECT_ID,
+  normalizeProjectId,
+} = require('../projects/project-schema');
 
 const MAX_MEMORY_CANDIDATE_LENGTH = 50_000;
 const MAX_MEMORY_SUGGESTION_USER_MESSAGES = 3;
@@ -18,6 +22,32 @@ async function requestMemoryRpc(service, method, params = {}) {
     accept_version: API_VERSION,
     ...params,
   });
+}
+
+function captureMemoryAuthority(service, sessionId = null) {
+  return sessionId === null
+    ? service.projectAuthority.captureProject(GENERAL_PROJECT_ID)
+    : service.projectAuthority.captureSession(sessionId);
+}
+
+function dismissedFingerprintKey(projectId, fingerprint) {
+  const normalized = String(fingerprint || '').trim().toLowerCase();
+  return normalized ? `${projectId}\0${normalized}` : '';
+}
+
+function resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint) {
+  const usesSessionScope = fingerprint !== undefined;
+  const authority = captureMemoryAuthority(
+    service,
+    usesSessionScope ? String(sessionIdOrFingerprint || '').trim() : null
+  );
+  return {
+    authority,
+    key: dismissedFingerprintKey(
+      authority.project_id,
+      usesSessionScope ? fingerprint : sessionIdOrFingerprint
+    ),
+  };
 }
 
 function unavailableMemoryStatus(reason) {
@@ -45,9 +75,11 @@ async function getMemoryStatus(service) {
     return unavailableMemoryStatus(reason);
   }
   try {
-    return await requestMemoryRpc(service, 'memory.status');
-  } catch (_error) {
-    const reason = 'sidecar_request_failed';
+    const authority = captureMemoryAuthority(service);
+    // The management page lists every project, so its counts span every project too.
+    return await requestMemoryRpc(service, 'memory.status', { project_id: authority.project_id, scope: 'all' });
+  } catch (error) {
+    const reason = String(error?.reason || 'sidecar_request_failed');
     service._emitServiceLog('WARN', 'memory.status_unavailable', {
       reason,
       method: 'memory.status',
@@ -56,27 +88,25 @@ async function getMemoryStatus(service) {
   }
 }
 
-function dismissMemorySuggestion(service, fingerprint) {
-  const normalized = String(fingerprint || '').trim().toLowerCase();
-  if (normalized) {
-    service._dismissedMemoryFingerprints.delete(normalized);
-    service._dismissedMemoryFingerprints.add(normalized);
+function dismissMemorySuggestion(service, sessionIdOrFingerprint, fingerprint) {
+  const { key } = resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint);
+  if (key) {
+    service._dismissedMemoryFingerprints.delete(key);
+    service._dismissedMemoryFingerprints.add(key);
     if (typeof service.trimDismissedMemoryFingerprints === 'function') {
       service.trimDismissedMemoryFingerprints();
     }
   }
 }
 
-function isMemorySuggestionDismissed(service, fingerprint) {
-  const normalized = String(fingerprint || '').trim().toLowerCase();
-  return normalized ? service._dismissedMemoryFingerprints.has(normalized) : false;
+function isMemorySuggestionDismissed(service, sessionIdOrFingerprint, fingerprint) {
+  const { key } = resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint);
+  return key ? service._dismissedMemoryFingerprints.has(key) : false;
 }
 
 async function suggestMemoriesForSession(service, sessionId) {
   const resolvedSessionId = String(sessionId || '').trim();
-  if (!resolvedSessionId) {
-    return { suggestions: [] };
-  }
+  const authority = captureMemoryAuthority(service, resolvedSessionId);
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.suggest_skipped', {
       sessionId: resolvedSessionId,
@@ -90,13 +120,16 @@ async function suggestMemoriesForSession(service, sessionId) {
     { maxUserMessages: MAX_MEMORY_SUGGESTION_USER_MESSAGES }
   );
   const payload = await requestMemoryRpc(service, 'memory.suggest', {
+    project_id: authority.project_id,
     session_id: resolvedSessionId,
     messages,
   });
   const suggestions = ensureArray(payload?.suggestions)
     .filter((s) => {
       const fp = String(s?.content_fingerprint || '').trim().toLowerCase();
-      return !fp || !service._dismissedMemoryFingerprints.has(fp);
+      return !fp || !service._dismissedMemoryFingerprints.has(
+        dismissedFingerprintKey(authority.project_id, fp)
+      );
     });
   return { suggestions };
 }
@@ -109,6 +142,7 @@ async function saveMemoryForSession(service, sessionId, candidate) {
   if (!isPlainObject(candidate)) {
     throw new Error('candidate is required');
   }
+  const authority = captureMemoryAuthority(service, resolvedSessionId);
   const normalizedCandidate = {
     title: String(candidate.title || ''),
     lesson_text: String(candidate.lesson_text || ''),
@@ -137,6 +171,7 @@ async function saveMemoryForSession(service, sessionId, candidate) {
   }
 
   const payload = await requestMemoryRpc(service, 'memory.save', {
+    project_id: authority.project_id,
     session_id: resolvedSessionId,
     candidate: normalizedCandidate,
   });
@@ -161,6 +196,7 @@ async function listApprovedMemories(service) {
   const seenCursors = new Set();
   do {
     const payload = await requestMemoryRpc(service, 'memory.list', {
+      scope: 'all',
       cursor,
       limit: MEMORY_LIST_PAGE_SIZE,
     });
@@ -188,6 +224,7 @@ async function listPendingMemories(service) {
   const seenCursors = new Set();
   do {
     const payload = await requestMemoryRpc(service, 'memory.pending.list', {
+      scope: 'all',
       cursor,
       limit: MEMORY_LIST_PAGE_SIZE,
     });
@@ -203,13 +240,22 @@ async function listPendingMemories(service) {
   return { candidates: candidates.slice(0, MEMORY_LIST_MAX_ITEMS) };
 }
 
-async function updateApprovedMemory(service, memoryId, patch) {
+async function updateApprovedMemory(
+  service,
+  memoryId,
+  patch,
+  projectId = GENERAL_PROJECT_ID
+) {
   const resolvedMemoryId = Number(memoryId);
   if (!Number.isInteger(resolvedMemoryId) || resolvedMemoryId <= 0) {
     throw new Error('memoryId is required');
   }
   if (!isPlainObject(patch)) {
     throw new Error('patch is required');
+  }
+  const resolvedProjectId = normalizeProjectId(projectId);
+  if (!resolvedProjectId) {
+    throw new Error('projectId is invalid');
   }
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.update_skipped', {
@@ -222,6 +268,7 @@ async function updateApprovedMemory(service, memoryId, patch) {
     };
   }
   const payload = await requestMemoryRpc(service, 'memory.update', {
+    project_id: resolvedProjectId,
     memory_id: resolvedMemoryId,
     patch,
   });
@@ -234,10 +281,14 @@ async function updateApprovedMemory(service, memoryId, patch) {
   };
 }
 
-async function deleteApprovedMemory(service, memoryId) {
+async function deleteApprovedMemory(service, memoryId, projectId = GENERAL_PROJECT_ID) {
   const resolvedMemoryId = Number(memoryId);
   if (!Number.isInteger(resolvedMemoryId) || resolvedMemoryId <= 0) {
     throw new Error('memoryId is required');
+  }
+  const resolvedProjectId = normalizeProjectId(projectId);
+  if (!resolvedProjectId) {
+    throw new Error('projectId is invalid');
   }
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.delete_skipped', {
@@ -247,6 +298,7 @@ async function deleteApprovedMemory(service, memoryId) {
     return { deleted: false };
   }
   const payload = await requestMemoryRpc(service, 'memory.delete', {
+    project_id: resolvedProjectId,
     memory_id: resolvedMemoryId,
   });
   return {
@@ -264,6 +316,7 @@ async function deletePendingMemory(service, sessionId, contentFingerprint) {
   if (!resolvedFingerprint) {
     throw new Error('contentFingerprint is required');
   }
+  const authority = captureMemoryAuthority(service, resolvedSessionId);
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.pending_delete_skipped', {
       sessionId: resolvedSessionId,
@@ -272,6 +325,7 @@ async function deletePendingMemory(service, sessionId, contentFingerprint) {
     return { deleted: false };
   }
   const payload = await requestMemoryRpc(service, 'memory.pending.delete', {
+    project_id: authority.project_id,
     session_id: resolvedSessionId,
     content_fingerprint: resolvedFingerprint,
   });
@@ -280,9 +334,10 @@ async function deletePendingMemory(service, sessionId, contentFingerprint) {
   };
 }
 
-async function recallApprovedMemories(service, query, limit = 3) {
+async function recallApprovedMemories(service, query, limit = 3, { sessionId = null } = {}) {
   const normalizedQuery = String(query || '').trim();
   const normalizedLimit = Number.isInteger(limit) ? limit : 3;
+  const authority = captureMemoryAuthority(service, sessionId);
   if (!normalizedQuery) {
     service._emitServiceLog('INFO', 'memory.recall_skipped', {
       reason: 'blank_query',
@@ -296,6 +351,8 @@ async function recallApprovedMemories(service, query, limit = 3) {
     return { memories: [] };
   }
   const payload = await requestMemoryRpc(service, 'memory.recall', {
+    project_id: authority.project_id,
+    ...(sessionId === null ? {} : { include_general: true }),
     query: normalizedQuery,
     limit: normalizedLimit,
   });
@@ -304,9 +361,15 @@ async function recallApprovedMemories(service, query, limit = 3) {
   };
 }
 
-async function recallRecentApprovedMemories(service, lessonKind, limit = 2) {
+async function recallRecentApprovedMemories(
+  service,
+  lessonKind,
+  limit = 2,
+  { sessionId = null } = {}
+) {
   const normalizedLessonKind = String(lessonKind || '').trim().toLowerCase();
   const normalizedLimit = Number.isInteger(limit) ? limit : RESPONSE_STYLE_RECALL_LIMIT;
+  const authority = captureMemoryAuthority(service, sessionId);
   if (!normalizedLessonKind) {
     service._emitServiceLog('INFO', 'memory.recall_recent_skipped', {
       reason: 'blank_lesson_kind',
@@ -321,6 +384,8 @@ async function recallRecentApprovedMemories(service, lessonKind, limit = 2) {
     return { memories: [] };
   }
   const payload = await requestMemoryRpc(service, 'memory.recall_recent', {
+    project_id: authority.project_id,
+    ...(sessionId === null ? {} : { include_general: true }),
     lesson_kind: normalizedLessonKind,
     limit: normalizedLimit,
   });

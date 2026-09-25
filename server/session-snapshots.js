@@ -93,6 +93,7 @@ function projectLiveProjection(value) {
       result[key] = text(value[key], MAX_LIVE_PROJECTION_TEXT);
     }
   }
+  if (typeof value.turn_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.turn_id)) result.turn_id = value.turn_id;
   // BackendEvents owns the live projection shape: content is the bounded
   // aggregate and reasoning is a bounded list of entries. Preserve both at
   // their source limits instead of silently reducing reconnect state to 16k.

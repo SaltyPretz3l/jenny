@@ -104,6 +104,7 @@ test('queueSplitLayoutMigration sets _cachedIndex and _pendingSplitMigration and
     _schemaVersion: 14,
     _storeName: 'store',
     _rootDir: '/r',
+    _migrateSummary: (summary, version) => { assert.equal(version, 9); return summary; },
     _logger: (lvl, ev, data) => logs.push([lvl, ev, data]),
   };
 
@@ -137,6 +138,7 @@ test('queueSplitLayoutMigration: non-object sessions field produces empty sessio
     _schemaVersion: 14,
     _storeName: 'store',
     _rootDir: '/r',
+    _migrateSummary: (summary, version) => { assert.equal(version, 9); return summary; },
     _logger: (lvl, ev, data) => logs.push([lvl, ev, data]),
   };
 
@@ -159,6 +161,7 @@ test('queueSplitLayoutMigration: null indexRaw produces empty sessions', () => {
     _schemaVersion: 14,
     _storeName: 'store',
     _rootDir: '/r',
+    _migrateSummary: (summary, version) => { assert.equal(version, 9); return summary; },
     _logger: (lvl, ev, data) => logs.push([lvl, ev, data]),
   };
   queueSplitLayoutMigration(self, null, 3);

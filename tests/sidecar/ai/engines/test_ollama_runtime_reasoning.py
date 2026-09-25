@@ -84,6 +84,7 @@ class FakeEngine:
         self.provider_requests: list[dict[str, Any]] = []
         self.usages: list[dict[str, Any]] = []
         self.completed = 0
+        self.outcomes: list[str] = []
         self.first_chunks = 0
         self.reasoning_fallback_calls: list[dict[str, Any]] = []
 
@@ -126,8 +127,9 @@ class FakeEngine:
     def _record_provider_request(self, **kw: Any) -> None:
         self.provider_requests.append(kw)
 
-    def _complete_provider_request(self) -> None:
+    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
         self.completed += 1
+        self.outcomes.append(outcome)
 
     def _record_first_chunk(self) -> None:
         self.first_chunks += 1
@@ -419,6 +421,12 @@ def test_stream_suppresses_repeated_thinking_after_guard_trips(monkeypatch, capl
         )
     lines.append(json.dumps({"message": {"content": "answer"}, "done": True}).encode() + b"\n")
     _patch_urlopen(monkeypatch, lines)
+    # The cumulative snapshots feed ~194k reasoning chars. Since 2026-09-20 the
+    # guard keeps counting after its repetition trip, so with the default-on
+    # budget abort this stream would legitimately end as ``thinking_budget``
+    # before the answer chunk (pinned in test_thinking_budget_abort). This test
+    # is about suppression + the single log line, so hold the abort off.
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
     engine = FakeEngine(think_value=True)
     with caplog.at_level("INFO", logger="sidecar.ai.engines.ollama_runtime"):
         events = list(stream(engine, prompt="hi"))

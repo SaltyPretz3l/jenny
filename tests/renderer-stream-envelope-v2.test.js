@@ -60,6 +60,26 @@ test('W2-1: tool_output_chunk envelopes classify as tool/progress and round-trip
   assert.equal(legacy.partial, 'progress 42%');
 });
 
+test('tool_approval_withdrawn envelopes classify as tool/completed and round-trip with their approval id', () => {
+  // A runtime pause's withdrawal must reach the renderer 1:1 on the tool
+  // channel (never a coalescing delta), and keep the exact approval id.
+  const params = {
+    type: 'tool_approval_withdrawn', streamId: 'stream-paused', sessionId: 'session-1',
+    callId: 'call-1', approvalId: 'approval-1', toolName: 'todo_write', reason: 'runtime_pause',
+  };
+  const sources = buildEnvelopeSources(params, 'tool_approval_withdrawn');
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].channel, 'tool');
+  assert.equal(sources[0].eventKind, 'completed');
+  const legacy = streamEnvelopeToLegacyPayload({
+    schemaVersion: 2, streamId: 'stream-paused', sessionId: 'session-1',
+    channel: 'tool', eventKind: 'completed', payload: sources[0].payload,
+  });
+  assert.equal(legacy?.type, 'tool_approval_withdrawn');
+  assert.equal(legacy.approvalId, 'approval-1');
+  assert.equal(legacy.callId, 'call-1');
+});
+
 test('context_usage envelopes classify as control/progress and round-trip without coalescing', () => {
   // Same class as tool_output_chunk: a rapid stream of ephemeral readings on
   // one channel must NOT classify as "delta", or successive snapshots merge

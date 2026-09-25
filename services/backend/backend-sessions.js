@@ -1,3 +1,5 @@
+const { createSessionId } = require('./electron-session-store');
+const { validateImageAttachmentsForManagedSend, createSessionWithImageAdmission } = require('./managed-sidecar-attachments');
 const {
   collectAssetPaths,
 } = require('../attachment-service');
@@ -9,9 +11,11 @@ const {
   readStoreMessages,
 } = require('./backend-session-reference-scan');
 const { hydrateMessagesWithTerminalRepairs } = require('./terminal-repair-service');
+const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-ownership');
 const { editUserMessageAndTruncate } = require('./backend-session-truncate');
 const { normalizeLinkedTaskId } = require('./session-store-migrations');
 const { normalizeRunMode } = require('./session-preferences-patch');
+const { resolveDefaultSessionProjectId } = require('../projects/workspace-project-provisioner');
 const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
@@ -34,7 +38,6 @@ function normalizeLockdownPreferencePatch(preferences) {
 }
 
 async function listSessions(service) {
-    service._normalizeManagedReasoningEfforts();
     const data = service.sessionStore.listSessions();
     return {
       object: 'list',
@@ -44,14 +47,17 @@ async function listSessions(service) {
 }
 
 async function createSession(service, {
-  title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId,
+  title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
 } = {}) {
+    // No explicit project: the configured Workspace folder's project (provisioned
+    // on demand), General only when no folder is configured.
+    const authority = service.projectAuthority.captureProject(
+      projectId === undefined ? resolveDefaultSessionProjectId(service) : projectId
+    );
     const composerDraft = normalizeInitialPrompt(initialPrompt);
     const normalizedLinkedTaskId = normalizeLinkedTaskId(linkedTaskId);
-    let normalizedPreferences = normalizeLockdownPreferencePatch(
-      service._normalizeManagedSessionPreferencePatch(preferences)
-    );
-    // The normalizer passes a falsy `preferences` through as-is (null included).
+    let normalizedPreferences = normalizeLockdownPreferencePatch(preferences);
+    // Keep null and other non-object callers from bypassing default seeding.
     if (!normalizedPreferences || typeof normalizedPreferences !== 'object') {
       normalizedPreferences = {};
     }
@@ -78,14 +84,35 @@ async function createSession(service, {
       }
       pluginSession = resolved.pluginSession;
     }
-    const session = service.sessionStore.createSession({
+    if (draftImageAttachments !== undefined && (!Array.isArray(draftImageAttachments)
+      || draftImageAttachments.length > 8 || pluginSession
+      || draftImageAttachments.some(image => image?.kind !== 'image'))) throw new TypeError('session_draft_images_invalid');
+    const createOptions = {
       title,
       preferences: normalizedPreferences,
       sessionType: pluginSession ? 'plugin' : 'chat',
       pluginSession,
       ...(composerDraft ? { composerDraft } : {}),
       ...(normalizedLinkedTaskId ? { linkedTaskId: normalizedLinkedTaskId } : {}),
-    });
+      projectId: authority.project_id,
+    };
+    let session;
+    if (draftImageAttachments?.length) {
+      const sessionId = createSessionId();
+      const admission = validateImageAttachmentsForManagedSend(service, draftImageAttachments,
+        { requestedSessionId: '', resolvedSessionId: sessionId });
+      session = createSessionWithImageAdmission(admission,
+        () => service.sessionStore.createSessionWithId(sessionId, createOptions), created => {
+          const current = service.sessionStore.getSession(sessionId);
+          if (current?.created_at !== created.created_at || current.messages.length
+            || service.sessionStore.deleteSession(sessionId, { scrubLinks: false }) !== true) {
+            const error = new Error('session_draft_images_cleanup_failed');
+            error.code = 'session_draft_images_cleanup_failed';
+            error.sessionId = sessionId;
+            throw error;
+          }
+        });
+    } else session = service.sessionStore.createSession(createOptions);
     if (!session) {
       throw new Error(
         'Session could not be created: session storage rejected the write '
@@ -218,7 +245,7 @@ async function cleanupDeletedSession(
   attachmentPreparationError,
   deletedPayloadPaths,
   payloadPreparationError,
-  { deleteShadow = false } = {}
+  { deleteShadow = false, artifactDeletion = null, artifactPreparationError = null } = {}
 ) {
   const cleanupErrors = [];
 
@@ -340,7 +367,9 @@ async function cleanupDeletedSession(
 
   if (service.artifactService) {
     await runDeleteCleanupStep(service, sessionId, cleanupErrors, 'artifacts', async () => {
-      await service.artifactService.deleteSessionArtifacts(sessionId);
+      if (artifactPreparationError) throw artifactPreparationError;
+      if (artifactDeletion) await artifactDeletion.deleteSessionArtifacts();
+      else await service.artifactService.deleteSessionArtifacts(sessionId);
       if (typeof service.artifactService.pruneOrphanedArtifacts === 'function') {
         // Provider form: re-resolved before each deletion so a fork that
         // persists a branch mid-prune is not swept on a stale snapshot.
@@ -382,6 +411,19 @@ async function cleanupDeletedSession(
 }
 
 async function deleteSession(service, sessionId) {
+  let artifactDeletion = null;
+  let artifactPreparationError = null;
+  if (service.artifactService?.forSessionAuthority) {
+    try {
+      const authority = service.projectAuthority.captureSession(sessionId);
+      artifactDeletion = service.artifactService.forSessionAuthority(authority, sessionId)
+        .prepareSessionDeletion(sessionId);
+    } catch (error) {
+      // History deletion is still permitted; failed capture must never fall
+      // back to a UI root or remove another session's scratch files.
+      artifactPreparationError = error;
+    }
+  }
   let deletedAssetPaths = [];
   let attachmentPreparationError = null;
   if (service.attachmentAssetStore) {
@@ -416,7 +458,8 @@ async function deleteSession(service, sessionId) {
       attachmentPreparationError,
       deletedPayloadPaths,
       payloadPreparationError,
-      { deleteShadow: Boolean(service.shadowStore?.getSession?.(sessionId)) }
+      { deleteShadow: Boolean(service.shadowStore?.getSession?.(sessionId)),
+        artifactDeletion, artifactPreparationError }
     );
     return {
       object: 'session',
@@ -430,15 +473,39 @@ async function getSessionMessages(service, sessionId) {
     const session = service.sessionStore.getSession(sessionId);
     const messages = Array.isArray(session?.messages) ? [...session.messages] : [];
     const turnEvents = Array.isArray(session?.turn_events) ? [...session.turn_events] : [];
+    // Runtime state is a read-time view, never a rewrite of transcript history.
+    // Page the scoped index so old paused turns receive the same authority.
+    const runtimeStatuses = new Map();
+    const runtimeStore = service.sessionRuntime?.store;
+    if (session && typeof runtimeStore?.listSummaries === 'function') {
+      let cursor = null;
+      const activeTurnId = typeof session.active_turn?.turn_id === 'string'
+        ? session.active_turn.turn_id.trim() : '';
+      do {
+        const page = runtimeStore.listSummaries({ sessionId, cursor, limit: 100 });
+        for (const work of page.items) {
+          // A terminal response clears active_turn before the scheduler settles its work.
+          // Drop that gap's stale running label instead of persisting it in the UI.
+          if (
+            work.status === 'running'
+            && (!session.active_turn || (activeTurnId && activeTurnId !== work.turn_id))
+          ) continue;
+          if (work.session_id === sessionId) runtimeStatuses.set(work.turn_id, work.status);
+        }
+        cursor = page.next_cursor;
+      } while (cursor);
+    }
     return {
       object: 'list',
       data: hydrateMessagesWithTerminalRepairs(
         service,
         sessionId,
         messages
-      ),
+      ).map(message => runtimeStatuses.has(message.turn_id)
+        ? { ...message, runtime_status: runtimeStatuses.get(message.turn_id) }
+        : message),
       turn_event_log_version: Number(session?.turn_event_log_version || 0),
-      turn_events: turnEvents,
+      turn_events: resolveCanonicalTextMessageOwners(turnEvents, messages),
       // Authoritative in-flight signal for the renderer's rehydrate gate: a
       // settled turn has active_turn === null (clearActiveTurn always persists),
       // so reopening it does not resurrect a phantom Active Turn deck
@@ -455,9 +522,7 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
   const previous = service.sessionStore.getSession?.(sessionId) || null;
   const updated = service.sessionStore.setSessionPreferences(
     sessionId,
-    normalizeLockdownPreferencePatch(
-      service._normalizeManagedSessionPreferencePatch(preferences, sessionId)
-    )
+    normalizeLockdownPreferencePatch(preferences)
   );
   const stored = service.sessionStore.getSession?.(sessionId) || updated;
   const changedKeys = stored
@@ -474,10 +539,17 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     const runMode = String(stored.run_mode || '').trim().toLowerCase();
     const controller = service.activeStreams.get(streamId);
     if (controller) delete controller.unattendedPauseRequested;
-    service.sidecarClient.notifySessionRunModeUpdated({
+    const approvalMode = runMode === 'auto' ? 'auto_run' : 'prompt';
+    const readOnly = runMode === 'plan' || stored.plan_mode === true;
+    service.sidecarClient.notifySessionRunModeUpdated({ sessionId, approvalMode, readOnly });
+    // The execution authority fails the in-flight request on its next
+    // revalidation (run_mode_changed); this line is the log's only cause.
+    service._emitServiceLog?.('INFO', 'session.run_mode_pushed', {
       sessionId,
-      approvalMode: runMode === 'auto' ? 'auto_run' : 'prompt',
-      readOnly: runMode === 'plan' || stored.plan_mode === true,
+      streamId,
+      changedKeys,
+      approvalMode,
+      readOnly,
     });
   } else if (modeChanged && !hasActiveStream) {
     service._emitServiceLog?.('INFO', 'session.run_mode_push_skipped', {
@@ -520,6 +592,7 @@ function pauseSessionAutoRun(service, sessionId, {
     sessionId,
     approvalMode: 'prompt',
     readOnly,
+    reason,
   });
   const controller = service.activeStreams.get(activeStreamId);
   if (controller && reason === 'unattended_idle') controller.unattendedPauseRequested = true;

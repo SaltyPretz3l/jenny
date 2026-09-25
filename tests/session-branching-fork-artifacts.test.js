@@ -137,6 +137,22 @@ function createArtifactSourceSessions() {
 }
 
 describe('forkSessionWithArtifacts', () => {
+  it('uses the clone-bound cleanup when persistence fails', async () => {
+    const store = createMockSessionStore(createArtifactSourceSessions());
+    const calls = [];
+    const artifactService = createFakeArtifactService({
+      cloneImpl(sourceId, targetId) {
+        return { cloned: true, rewriteEntry: createBranchRewriter(sourceId, targetId),
+          cleanupArtifacts: async () => { calls.push(targetId); } };
+      },
+    });
+    store._write = () => { throw new Error('persistence unavailable'); };
+    assert.equal(await forkSessionWithArtifacts(store, 'sess_1', 'msg_3', { artifactService }), null);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], artifactService.calls.clone[0].targetSessionId);
+    assert.deepEqual(artifactService.calls.deleted, []);
+  });
+
   it('copies artifacts and rewrites carried references onto the branch', async () => {
     const store = createMockSessionStore(createArtifactSourceSessions());
     const artifactService = createFakeArtifactService();

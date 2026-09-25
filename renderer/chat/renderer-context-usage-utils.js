@@ -187,6 +187,9 @@
       sourceLabel: sourceLabel(String(data.usageSource || '')),
       targetType: target.type,
       targetExact: target.exact === true,
+      // The full window, when the target is the auto-compact threshold: the
+      // detail text names both so "x of 38k" is not read as the window.
+      contextLimit: model.normalizePositiveInteger(data.contextLimit),
     };
   }
 
@@ -200,6 +203,11 @@
         jt('chat.contextUsage.tokensBeforeAutoCompact', '{used} of {limit} tokens before auto-compact ({source})', { used: usedLabel, limit: limitLabel, source: summary.sourceLabel })
       );
       lines.push(remainingLabel + ' remaining');
+      if (summary.contextLimit > summary.limit) {
+        lines.push(
+          jt('chat.contextUsage.tokenContextWindow', '{used} of {limit} token context window ({source})', { used: usedLabel, limit: formatTokenCount(summary.contextLimit), source: summary.sourceLabel })
+        );
+      }
       if (summary.severity === 'danger') lines.push(jt('chat.contextUsage.autoCompactionImminent', 'Nearly full — auto-compaction is imminent.'));
       else if (summary.severity === 'warning') lines.push(jt('chat.contextUsage.approachingAutoCompaction', 'Approaching auto-compaction.'));
     } else {

@@ -42,11 +42,13 @@ from sidecar.runtime.chat_decision_support import (
     StructuredSystemPrompt,
     ToolResolutionContext,
     apply_budget_check,
+    budget_meter_fields,
     build_search_index,
     check_budget,
     compact_context,
     compute_deferral_set,
     estimate_messages_tokens,
+    estimate_tool_schema_tokens,
     is_feature_flag_enabled,
     normalize_deferral_mode,
     policy_for_mode,
@@ -78,6 +80,7 @@ append_session_environment_runtime_system_message = (
 append_interrupted_turn_receipts_runtime_system_message = (
     _runtime_overlays.append_interrupted_turn_receipts_runtime_system_message
 )
+ContextCompactionStartedEvent = _loop_events.ContextCompactionStartedEvent
 ContextCompactedEvent = _loop_events.ContextCompactedEvent
 build_request_system_messages = _system_messages.build_request_system_messages
 ToolBudgetFilterInput = _tool_budget_filter.ToolBudgetFilterInput
@@ -128,21 +131,8 @@ def _build_chat_decision(
         terminal_error_code=str(terminal_error_code or "").strip() or None,
         terminal_subcode=str(terminal_subcode or "").strip() or None,
         terminal_error_retryable=bool(terminal_error_retryable),
-        compact_threshold_tokens=_budget_compact_threshold(budget_tracker),
+        **budget_meter_fields(budget_tracker),
     )
-
-
-def _budget_compact_threshold(budget_tracker: BudgetTracker | None) -> int | None:
-    """Exact compaction trigger for the request's budget (None when unbudgeted)."""
-    if budget_tracker is None or budget_tracker.budget is None:
-        return None
-    try:
-        threshold = int(
-            budget_tracker.budget.auto_compact_threshold(int(budget_tracker.num_tools or 0))
-        )
-    except Exception:  # noqa: BLE001 — meter hint must never break a turn
-        return None
-    return threshold if threshold > 0 else None
 
 
 @dataclass(frozen=True)
@@ -223,6 +213,7 @@ def _prepare_context_budget(
         kernel._engine,
         num_tools=num_tools,
         reasoning_effort=context.reasoning_effort,
+        tool_schema_tokens=estimate_tool_schema_tokens(context.tool_payload) if num_tools else None,
     )
     if budget is None:
         return _BudgetPreflightResult(working_messages, budget_tracker)
@@ -309,6 +300,12 @@ def _run_context_compaction(
         if compaction.vision_token_surcharge
         else compaction.budget
     )
+    if context.runtime is not None:
+        context.runtime.emit_safe(
+            ContextCompactionStartedEvent(
+                "preflight", int(compaction.status.tokens_used or 0), len(compaction_messages)
+            )
+        )
     compaction_result = compact_context(
         compaction_messages,
         compaction_budget,
@@ -599,10 +596,8 @@ def _build_runtime_overlay_messages(
     )
     if memory_message:
         runtime_system_messages.append(memory_message)
-    # Model-identity overlay: every turn (including sub-agents), since the
-    # active engine/model can change turn-to-turn and each depth's request
-    # may be served by a different engine. Flag-gated, fail-closed inside the
-    # helper -- see append_model_identity_runtime_system_message.
+    # Resolve model identity on every turn and depth; the helper is flag-gated
+    # and fail-closed because requests may be served by different engines.
     append_model_identity_runtime_system_message(
         runtime_system_messages,
         config=kernel._config,
@@ -618,6 +613,7 @@ def _build_runtime_overlay_messages(
         runtime_system_messages,
         config=kernel._config,
         context_builder=kernel._context_builder,
+        execution_context=request_context.execution_context,
         tool_schemas=tool_payload,
         session_id=session_id,
         log_context=RuntimeOverlayLogContext(
@@ -821,7 +817,8 @@ def build_chat_decision(
         request_id=request_id,
         session_id=session_id,
     )
-    tool_runtime_liveness = _tool_runtime_liveness.snapshot_tool_runtime_liveness(kernel)
+    tool_runtime_liveness = _tool_runtime_liveness.snapshot_tool_runtime_liveness(
+        kernel, request_context=request_context)
     budget_filter_context = ToolBudgetFilterInput(
         kernel=kernel,
         feature_flags=feature_flags,
@@ -901,7 +898,10 @@ def build_chat_decision(
     # old Electron-side splice was silently inert.
     working_messages.extend(context_block_messages)
     working_messages.extend(semantic_history)
-    read_snapshot_cache = kernel._rebuild_read_snapshot_cache(canonical_session_messages)
+    read_snapshot_cache = kernel._rebuild_read_snapshot_cache(
+        canonical_session_messages,
+        execution_context=getattr(request_context, "execution_context", None),
+    )
     cache_break_detector = kernel._cache_break_detector if prompt_cache_enabled else None
     cache_source_key = kernel._cache_source_key(
         request_id=request_id,
@@ -910,24 +910,26 @@ def build_chat_decision(
     )
 
     # -- Budget check (feature-flag gated) ---------------------------------
-    budget_result = _prepare_context_budget(
-        _BudgetPreflightContext(
-            kernel=kernel,
-            feature_flags=feature_flags,
-            tool_payload=tool_payload,
-            prompt_cache_enabled=prompt_cache_enabled,
-            request_id=request_id,
-            session_id=session_id,
-            system_prompt_text=system_prompt_text,
-            runtime=runtime,
-            cache_break_detector=cache_break_detector,
-            cache_source_key=cache_source_key,
-            reasoning_effort=reasoning_effort,
-            input_complete=semantic_admission.input_complete,
-        ),
-        working_messages=working_messages,
-        runtime_system_messages=runtime_system_messages,
-        vision_token_surcharge=request_context.vision_token_surcharge,
+    continuation_resume = getattr(runtime, "continuation_resume", None)
+    budget_context = _BudgetPreflightContext(
+        kernel=kernel, feature_flags=feature_flags, tool_payload=tool_payload,
+        prompt_cache_enabled=prompt_cache_enabled, request_id=request_id,
+        session_id=session_id, system_prompt_text=system_prompt_text, runtime=runtime,
+        cache_break_detector=cache_break_detector, cache_source_key=cache_source_key,
+        reasoning_effort=reasoning_effort, input_complete=semantic_admission.input_complete,
+    )
+
+    def _initialize_deferred_budget() -> _BudgetPreflightResult:
+        return _prepare_context_budget(
+            budget_context, working_messages=working_messages,
+            runtime_system_messages=runtime_system_messages,
+            vision_token_surcharge=request_context.vision_token_surcharge,
+        )
+
+    budget_result = (
+        _BudgetPreflightResult(working_messages, None)
+        if callable(continuation_resume)
+        else _initialize_deferred_budget()
     )
     working_messages = budget_result.working_messages
     budget_tracker = budget_result.budget_tracker
@@ -954,7 +956,12 @@ def build_chat_decision(
         observation_store=getattr(kernel._engine, "_tool_observation_store", None),
         request_context=request_context,
     )
-    loop_result = run_tool_loop(
+    loop_runner = run_tool_loop if not callable(continuation_resume) else (
+        lambda **kwargs: continuation_resume(
+            deferred_budget_initializer=_initialize_deferred_budget, **kwargs
+        )
+    )
+    loop_result = loop_runner(
         runtime=effective_runtime,
         kernel=kernel,
         request_context=request_context,

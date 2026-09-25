@@ -8,6 +8,7 @@ from sidecar.ai.error_codes import CMP_LOOP_REPEATED_OBSERVATIONS
 from sidecar.ai.routing.loop_events import (
     ApprovalRequestedEvent,
     ApprovalResolvedEvent,
+    ContextCompactionStartedEvent,
     ContextCompactedEvent,
     ContextUsageEvent,
     HeartbeatEvent,
@@ -695,6 +696,43 @@ def test_serialize_loop_event_heartbeat_includes_elapsed_seconds() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_serialize_loop_event_context_compaction_started_is_ephemeral() -> None:
+    event = ContextCompactionStartedEvent(
+        phase="preflight",
+        tokens_before=8123,
+        message_count=17,
+    )
+
+    payload = _serialize_loop_event(
+        event,
+        "req-compact-started",
+        trace_id="trace-compact-started",
+        session_id="sess-compact-started",
+    )
+
+    assert payload == {
+        "jsonrpc": "2.0",
+        "api_version": API_VERSION,
+        "method": "context.compaction_started",
+        "params": {
+            "api_version": API_VERSION,
+            "request_id": "req-compact-started",
+            "trace_id": "trace-compact-started",
+            "session_id": "sess-compact-started",
+            "phase": "preflight",
+            "tokens_before": 8123,
+            "message_count": 17,
+        },
+    }
+    assert _serialize_turn_event(
+        event,
+        "req-compact-started",
+        trace_id=None,
+        session_id=None,
+        seq=1,
+    ) is None
+
+
 def test_serialize_loop_event_context_compacted_emits_correct_fields() -> None:
     """ContextCompactedEvent emits a context.compacted notification."""
     payload = _serialize_loop_event(
@@ -833,6 +871,24 @@ def test_serialize_turn_event_thinking_reasoning_kind_emits_reasoning_delta() ->
     assert event["payload"]["thinking_id"] == "think-turn-1"
     assert event["payload"]["kind"] == "reasoning"
     assert event["seq"] == 3
+
+
+def test_serialize_turn_event_uses_logical_turn_without_retargeting_stream_identity() -> None:
+    payload = _serialize_turn_event(
+        ThinkingEvent(
+            thinking_id="think-attempt-2", delta="Resumed reasoning",
+            kind="reasoning", persist=False,
+        ),
+        "stream-attempt-2", trace_id=None, session_id="session-logical",
+        seq=4, turn_id="turn-logical",
+    )
+
+    assert payload is not None
+    event = payload["params"]
+    assert event["turn_id"] == "turn-logical"
+    assert event["stream_id"] == "stream-attempt-2"
+    assert event["event_id"].startswith("stream-attempt-2:")
+    assert event["part_id"].startswith("stream-attempt-2:")
 
 
 def test_serialize_turn_event_thinking_persist_true_emits_reasoning_delta() -> None:

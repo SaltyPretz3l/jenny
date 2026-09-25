@@ -471,6 +471,71 @@ def test_verify_user_policy_overrides_the_auto_default() -> None:
         assert decision.decision == expected, stored
 
 
+def _manifest_descriptor(name: str) -> MCPToolDescriptor:
+    return next(d for d in manifest_descriptors(config=None) if d.name == name)
+
+
+def test_the_models_own_scratch_state_defaults_to_auto() -> None:
+    """Owner decision 2026-09-22: approval is for the user's files and commands.
+
+    The in-session todo list and inert create_artifact documents are the
+    model's own scratch state, so they no longer ask (Claude Code parity).
+    Mirrors services/tools/tool-policy-evaluator.js; the two must agree.
+    """
+    cases = (
+        ("todo_write", {"todos": [{"content": "Outline", "status": "pending"}]}),
+        ("create_artifact", {"artifact_kind": "document", "title": "Notes", "content": "# Notes"}),
+        (
+            "create_artifact",
+            {"artifact_kind": "document", "title": "Plan", "content": "a", "file_name": "plan.md"},
+        ),
+    )
+    for name, arguments in cases:
+        decision = evaluate_tool_policy(
+            descriptor=_manifest_descriptor(name),
+            arguments=arguments,
+            mode="chat",
+            snapshot=None,
+        )
+        assert decision.decision == "auto", (name, arguments)
+        assert decision.stage == "tool_default"
+        assert decision.matched_rule_id is None
+
+
+def test_executable_artifacts_still_ask() -> None:
+    for arguments in (
+        {"artifact_kind": "script", "title": "Run", "content": "echo hi"},
+        {"artifact_kind": "document", "title": "Page", "content": "<p>", "file_name": "page.html"},
+        {"artifact_kind": "document", "title": "Code", "content": "x = 1", "language": "python"},
+    ):
+        decision = evaluate_tool_policy(
+            descriptor=_manifest_descriptor("create_artifact"),
+            arguments=arguments,
+            mode="chat",
+            snapshot=None,
+        )
+        assert decision.decision == "ask", arguments
+
+
+def test_user_policy_overrides_the_scratch_state_default() -> None:
+    for name, arguments in (
+        ("todo_write", {"todos": []}),
+        ("create_artifact", {"artifact_kind": "document", "title": "Notes", "content": "x"}),
+    ):
+        for stored in ("ask", "deny"):
+            decision = evaluate_tool_policy(
+                descriptor=_manifest_descriptor(name),
+                arguments=arguments,
+                mode="chat",
+                snapshot=ToolPolicySnapshot(
+                    version=2,
+                    legacy_policies=((name, stored),),
+                    rules=(),
+                ),
+            )
+            assert decision.decision == stored, (name, stored)
+
+
 def test_verify_undeclared_action_fails_closed_to_ask() -> None:
     descriptor = next(d for d in manifest_descriptors(config=None) if d.name == "verify")
 

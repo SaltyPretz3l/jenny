@@ -362,3 +362,18 @@ test('toast store dismissAll clears the queue and its timers', () => {
   timerHarness.advance(60000);
   assert.equal(store.getSnapshot().length, 0);
 });
+
+test('toast store dismissBySource with a session scope keeps other sessions\' toasts', () => {
+  const store = createToastStore({ maxVisible: 8 });
+  store.enqueue({ message: 'Global', source: 'chat-stream', dedupeKey: 'chat-stream:startup-error' });
+  store.enqueue({ message: 'Mine', source: 'chat-stream', sessionId: 'sess-a', dedupeKey: 'chat-stream:sess-a' });
+  store.enqueue({ message: 'Theirs', source: 'chat-stream', sessionId: 'sess-b', dedupeKey: 'chat-stream:approval:sess-b' });
+  store.enqueue({ message: 'Other source', source: 'memory', sessionId: 'sess-a' });
+
+  store.dismissBySource('chat-stream', { sessionId: 'sess-a' });
+  assert.deepEqual(store.getSnapshot().map((toast) => toast.message).sort(), ['Other source', 'Theirs']);
+  assert.equal(store.getSnapshot().find((toast) => toast.message === 'Theirs').sessionId, 'sess-b');
+
+  store.dismissBySource('chat-stream');
+  assert.deepEqual(store.getSnapshot().map((toast) => toast.message), ['Other source'], 'unscoped keeps clearing the whole source');
+});

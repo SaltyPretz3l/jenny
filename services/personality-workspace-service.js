@@ -395,20 +395,21 @@ class PersonalityWorkspaceService {
     }
   }
 
-  async _readAllEntries() {
+  async _readAllEntries({ includeMemory = true } = {}) {
     const entries = {};
     for (const definition of FIXED_FILE_DEFINITIONS) {
+      if (!includeMemory && definition.key === FILE_KEYS.MEMORY) continue;
       entries[definition.key] = await this._readFileEntry(definition);
     }
     return entries;
   }
 
-  async _compile() {
-    const entries = await this._readAllEntries();
+  async _compile({ includeMemory = true } = {}) {
+    const entries = await this._readAllEntries({ includeMemory });
     const { content, sections, backstopClipped } = compilePersonalitySections({
       personality: entries[FILE_KEYS.PERSONALITY].body,
       user: entries[FILE_KEYS.USER].body,
-      memory: entries[FILE_KEYS.MEMORY].body,
+      memory: entries[FILE_KEYS.MEMORY]?.body || '',
     });
     if (backstopClipped) {
       this._log('WARN', 'personality_workspace.compiled_backstop_clipped', {
@@ -469,8 +470,13 @@ class PersonalityWorkspaceService {
    *
    * @returns {Promise<string>}
    */
-  async getCompiledContext() {
+  async getCompiledContext({ projectId = 'project_general' } = {}) {
+    const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./projects/project-schema');
+    if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
     await this.ensureSeeded();
+    // Historical profile notes have no project provenance. Only General may
+    // receive them; global voice/user preferences remain shared deliberately.
+    if (projectId !== GENERAL_PROJECT_ID) return (await this._compile({ includeMemory: false })).content;
     return (await this._compiledSnapshot()).content;
   }
 

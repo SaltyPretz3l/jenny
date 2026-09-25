@@ -15,6 +15,7 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.hosted_file_io import (
     configure_hosted_file_io,
     open_regular_file,
+    scoped_hosted_file_io,
     write_hosted_bytes_atomic,
 )
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -111,6 +112,20 @@ def test_host_rejects_hardlink_fifo_socket_and_symlink(tmp_path: Path):
         assert outside.read_text(encoding="utf-8") == "private"
     finally:
         endpoint.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+def test_scoped_host_root_fd_must_match_captured_identity(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+
+    with pytest.raises(ToolExecutionFailure), scoped_hosted_file_io(
+        str(root.resolve()),
+        enabled=True,
+        expected_device_id=str(root.stat().st_dev),
+        expected_inode=str(root.stat().st_ino + 1),
+    ):
+        pytest.fail("mismatched hosted root descriptor was admitted")
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")

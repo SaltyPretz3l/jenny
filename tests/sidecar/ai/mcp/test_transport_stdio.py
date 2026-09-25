@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import sys
 import threading
+import time
 from itertools import count
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,7 @@ from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.mcp import process_containment, transport_command_policy, transport_stdio
 from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.mcp.process_containment import MCPProcessContainment
+from sidecar.ai.mcp.transport_lifecycle import ToolLifecycleTracker
 from sidecar.ai.mcp.transport_stdio import StdioMCPTransport
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.multiplexer import TurnCancellationHandle
@@ -280,10 +283,11 @@ def test_concurrent_request_timeout_does_not_terminate_other_pending_call(
     second_queue: queue.Queue[dict[str, Any]] = queue.Queue()
     transport._pending_responses = {1: first.response_queue, 2: second_queue}  # type: ignore[attr-defined]
 
-    with pytest.raises(MCPError, match="response timed out"):
+    with pytest.raises(MCPError, match="response timed out") as excinfo:
         transport._take_next_response(first, observe_cancel=True)  # noqa: SLF001
 
     assert terminated == []
+    assert excinfo.value.transport_terminated is False
     second_queue.put({"jsonrpc": "2.0", "id": 2, "result": {"ok": True}})
     second = transport_stdio._PendingRequest(  # noqa: SLF001
         request_id=2,
@@ -330,6 +334,68 @@ def test_only_pending_request_timeout_still_terminates_transport(
         transport._take_next_response(pending, observe_cancel=True)  # noqa: SLF001
 
     assert terminated == ["timeout"]
+
+
+class _ExitedProcess:
+    def poll(self) -> int:
+        return 1
+
+
+def test_only_pending_request_timeout_reports_a_confirmed_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _stub_transport()
+    transport._process = _ExitedProcess()  # type: ignore[attr-defined]
+    transport._containment = None  # type: ignore[attr-defined]
+    transport._ensure_request_routing_state()  # noqa: SLF001
+    monkeypatch.setattr(
+        transport,
+        "_read_response_line",
+        lambda **_kwargs: (_ for _ in ()).throw(transport_stdio._ResponseTimeout()),
+    )
+    monkeypatch.setattr(transport, "_terminate_after_reader_failure", lambda _reason: None)
+    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+        request_id=1,
+        method="only",
+        response_queue=queue.Queue(),
+        deadline=999_999_999.0,
+        cancel_handle=None,
+        on_output_chunk=None,
+    )
+    transport._pending_responses = {1: pending.response_queue}  # type: ignore[attr-defined]
+
+    with pytest.raises(MCPError, match="response timed out") as excinfo:
+        transport._take_next_response(pending, observe_cancel=True)  # noqa: SLF001
+
+    assert excinfo.value.transport_terminated is True
+
+
+def test_a_dispatched_call_timing_out_behind_another_reader_stays_unknown() -> None:
+    # The server is still running the call (another caller holds the read
+    # lock), so its outcome is unknown, never "not started" or "lost".
+    transport = _stub_transport()
+    transport._ensure_request_routing_state()  # noqa: SLF001
+    lifecycle = transport._request_lifecycle()  # noqa: SLF001
+    lifecycle.started_supported = True
+    started_event, operation_id = lifecycle.begin(7)
+    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+        request_id=7,
+        method="tools/call",
+        response_queue=queue.Queue(),
+        deadline=time.monotonic() + 0.05,
+        cancel_handle=None,
+        on_output_chunk=None,
+        started_event=started_event,
+        operation_id=operation_id,
+    )
+    transport._response_read_lock.acquire()  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(MCPError, match="waiting to read a response") as excinfo:
+            transport._await_request_result(pending)  # noqa: SLF001
+    finally:
+        transport._response_read_lock.release()  # type: ignore[attr-defined]
+
+    assert excinfo.value.completion_status == "unknown"
 
 
 def test_send_request_timeout_includes_waiting_for_the_transport_lock() -> None:
@@ -686,6 +752,46 @@ def test_process_containment_builds_minimal_posix_env_and_limits(
     assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
     assert kwargs["env"]["PYTHONUNBUFFERED"] == "1"
     assert callable(kwargs["preexec_fn"])
+
+
+def test_process_containment_minimal_env_pins_one_blas_thread_only_under_a_memory_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(process_containment, "read_environment_value", lambda key, default="": default)
+
+    capped = process_containment._minimal_env(  # noqa: SLF001
+        MCPServerConfig(name="docs", transport="stdio", command="docs-mcp", memory_limit_mb=512),
+        command_path=None,
+    )
+    uncapped = process_containment._minimal_env(  # noqa: SLF001
+        MCPServerConfig(name="docs", transport="stdio", command="docs-mcp", memory_limit_mb=None),
+        command_path=None,
+    )
+
+    assert capped["OPENBLAS_NUM_THREADS"] == "1"
+    assert "OPENBLAS_NUM_THREADS" not in uncapped
+
+
+def test_process_containment_minimal_env_forwards_ocr_and_media_site_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_values = {
+        "JENNY_ENABLE_PDF_OCR_RAPID": "0",
+        "JENNY_PDF_OCR_SITE_DIR": "C:/ocr-site",
+        "JENNY_SIDECAR_MEDIA_SITE_DIR": "C:/media-site",
+    }
+    monkeypatch.setattr(
+        process_containment,
+        "read_environment_value",
+        lambda key, default="": env_values.get(key, default),
+    )
+
+    env = process_containment._minimal_env(  # noqa: SLF001
+        MCPServerConfig(name="docs", transport="stdio", command="docs-mcp"),
+        command_path=None,
+    )
+
+    assert {key: env[key] for key in env_values} == env_values
 
 
 def test_process_containment_minimal_env_passes_posix_user_context(
@@ -1279,3 +1385,173 @@ def test_first_party_pipe_loss_after_started_is_classified() -> None:
 
     assert raised.value.completion_status == "started_response_lost"
     assert raised.value.operation_id == "op_server"
+
+
+@pytest.mark.parametrize(
+    ("emit_started", "corrupt_line", "expected_status"),
+    [
+        (True, "RapidOCR noise", "started_response_lost"),
+        (False, "RapidOCR noise", "not_started"),
+        (True, "[]", "started_response_lost"),
+    ],
+)
+def test_corrupt_response_stream_terminates_server_and_classifies_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    emit_started: bool,
+    corrupt_line: str,
+    expected_status: str,
+) -> None:
+    script = tmp_path / "corrupt_mcp_server.py"
+    script.write_text(
+        "import json, sys, time\n"
+        "emit_started = sys.argv[1] == 'True'\n"
+        "corrupt_line = sys.argv[2]\n"
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request.get('method') == 'initialize':\n"
+        "        result = {'protocolVersion': '2025-03-26', 'capabilities': "
+        "{'experimental': {'jenny_tool_lifecycle': "
+        "{'started_notification': 'tool/started'}}}}\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], "
+        "'result': result}), flush=True)\n"
+        "    elif request.get('method') == 'tools/call':\n"
+        "        if emit_started:\n"
+        "            print(json.dumps({'jsonrpc': '2.0', 'method': 'tool/started', "
+        "'params': {'request_id': request['id'], 'operation_id': 'op_server', "
+        "'generation_id': 'gen_server'}}), flush=True)\n"
+        "        print(corrupt_line, flush=True)\n"
+        "        time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(transport_stdio, "_validate_stdio_command", lambda _config: None)
+    transport = StdioMCPTransport(
+        MCPServerConfig(
+            name="corrupt",
+            transport="stdio",
+            command=sys.executable,
+            args=(str(script), str(emit_started), corrupt_line),
+        ),
+        request_timeout_seconds=2.0,
+    )
+    process = transport._process  # noqa: SLF001
+
+    try:
+        with pytest.raises(MCPError) as raised:
+            transport.call_tool("read_file", {"path": "document.pdf"})
+
+        assert raised.value.code == "CMP-MCP-0005", raised.value.message
+        assert raised.value.transport_terminated is True
+        assert raised.value.completion_status == expected_status
+        process.wait(timeout=1.0)
+        assert process.poll() is not None
+    finally:
+        transport.close()
+
+
+def test_corrupt_stream_fails_every_pending_call_promptly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Astra review of F21: a dead stdio pipe queued one sentinel, so only one of
+    several concurrent callers saw it; the rest waited out their deadlines and
+    reported an unknown outcome, keeping their resources uncertain."""
+    script = tmp_path / "corrupt_after_three.py"
+    server_lines = [
+        'import json, sys, time',
+        'calls = 0',
+        'for line in sys.stdin:',
+        '    request = json.loads(line)',
+        "    if request.get('method') == 'initialize':",
+        "        caps = {'experimental': {'jenny_tool_lifecycle': {'started_notification': 'tool/started'}}}",
+        "        result = {'protocolVersion': '2025-03-26', 'capabilities': caps}",
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)",
+        "    elif request.get('method') == 'tools/call':",
+        "        params = {'request_id': request['id'], 'operation_id': 'op_%s' % request['id'], 'generation_id': 'gen'}",
+        "        print(json.dumps({'jsonrpc': '2.0', 'method': 'tool/started', 'params': params}), flush=True)",
+        '        calls += 1',
+        '        if calls == 3:',
+        "            print('RapidOCR noise', flush=True)",
+        '            time.sleep(30)',
+    ]
+    script.write_text("\n".join(server_lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(transport_stdio, "_validate_stdio_command", lambda _config: None)
+    transport = StdioMCPTransport(
+        MCPServerConfig(name="corrupt", transport="stdio", command=sys.executable, args=(str(script),)),
+        request_timeout_seconds=20.0,
+    )
+    errors: list[MCPError] = []
+
+    def call() -> None:
+        try:
+            transport.call_tool("read_file", {"path": "document.pdf"})
+        except MCPError as error:
+            errors.append(error)
+
+    started = time.monotonic()
+    threads = [threading.Thread(target=call) for _ in range(3)]
+    try:
+        for thread in threads:
+            thread.start()
+            time.sleep(0.2)
+        for thread in threads:
+            thread.join(timeout=15)
+    finally:
+        transport.close()
+
+    assert time.monotonic() - started < 10
+    assert len(errors) == 3
+    assert [error.completion_status for error in errors] == ["started_response_lost"] * 3
+
+
+def test_process_containment_passes_operation_ledger_root_override_through(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The builtin server resolves its durable operation-ledger root from
+    # JENNY_OPERATION_LEDGER_ROOT when it is started without a ledger argument
+    # (tests/conftest.py sets it per test). The containment allowlist dropped
+    # it, so those servers wrote into the real ~/.companion ledger and replayed
+    # receipts recorded by earlier runs.
+    command = tmp_path / "python.exe"
+    command.write_text("", encoding="utf-8")
+    env_values = {
+        "SYSTEMROOT": r"C:\Windows",
+        "JENNY_OPERATION_LEDGER_ROOT": str(tmp_path / "operation-ledger"),
+        "JENNY_SOME_OTHER_SETTING": "leaks-nothing",
+    }
+    monkeypatch.setattr(process_containment, "_is_windows", lambda: True)
+    monkeypatch.setattr(process_containment, "_is_posix", lambda: False)
+    monkeypatch.setattr(
+        process_containment,
+        "read_environment_value",
+        lambda key, default="": env_values.get(key, default),
+    )
+
+    containment = MCPProcessContainment(
+        MCPServerConfig(name="builtin", transport="stdio", command=str(command))
+    )
+
+    env = containment.popen_kwargs()["env"]
+
+    assert env["JENNY_OPERATION_LEDGER_ROOT"] == env_values["JENNY_OPERATION_LEDGER_ROOT"]
+    assert "JENNY_SOME_OTHER_SETTING" not in env
+
+
+def test_timeout_on_a_server_left_running_classifies_unknown_not_lost() -> None:
+    lifecycle = ToolLifecycleTracker()
+    lifecycle.started_supported = True
+    kept_running = MCPError(
+        code="CMP-MCP-0004", message="response timed out", retryable=True, transport_terminated=False,
+    )
+    terminated = MCPError(
+        code="CMP-MCP-0004", message="response timed out", retryable=True, transport_terminated=True,
+    )
+
+    unknown = lifecycle.classify_error(kept_running, operation_id="op", started=True)
+    lost = lifecycle.classify_error(terminated, operation_id="op", started=True)
+
+    assert unknown.completion_status == "unknown"
+    assert unknown.transport_terminated is False
+    assert lost.completion_status == "started_response_lost"
+    assert lost.transport_terminated is True

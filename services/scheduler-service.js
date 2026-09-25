@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { normalizeString } = require('../renderer/shared/string-utils');
-const { redactLogValue } = require('./log-entry-normalizer');
+const { collapseRedactedPathTails, redactLogValue } = require('./log-entry-normalizer');
 const {
   SCHEDULED_TASKS_SCHEMA_VERSION,
 } = require('./scheduler-schema-version');
@@ -47,9 +47,7 @@ const DEFAULT_LOCK_STALE_MS = 15000;
 function sanitizeLifecycleError(error) {
   const bounded = normalizeString(error?.message || error).slice(0, 240);
   const redacted = normalizeString(redactLogValue(bounded));
-  return redacted
-    .replace(/\[redacted:path\](?:[\\/][^\s"'`<>|]+)*/g, '[redacted]')
-    .slice(0, 240);
+  return collapseRedactedPathTails(redacted, '[redacted]').slice(0, 240);
 }
 
 class SchedulerService extends EventEmitter {

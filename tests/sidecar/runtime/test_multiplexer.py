@@ -124,7 +124,31 @@ def test_approval_reader_factory_cancels_when_turn_is_cancelled() -> None:
         with pytest.raises(ApprovalResponseCancelledError):
             reader(1.0)
         thread.join(timeout=1.0)
+        assert 1001 not in multiplexer._approval_waiters  # noqa: SLF001
     finally:
+        multiplexer.close()
+
+
+def test_approval_reader_stays_registered_across_timeout_for_extension() -> None:
+    incoming: queue.Queue[dict[str, object]] = queue.Queue()
+    multiplexer = StdioTransportMultiplexer(
+        reader=_queued_reader(incoming),
+        write_message=lambda _message: None,
+        logger=logging.getLogger("tests.multiplexer"),
+    )
+    try:
+        reader = multiplexer.approval_reader_factory(1003)
+
+        with pytest.raises(TimeoutError):
+            reader(0.0)
+        assert 1003 in multiplexer._approval_waiters  # noqa: SLF001
+
+        incoming.put({"jsonrpc": "2.0", "id": 1003, "result": {"approved": True}})
+        incoming.put({"jsonrpc": "2.0", "id": 43, "method": "initialize", "params": {}})
+        assert multiplexer.read_request()["method"] == "initialize"
+        assert reader(0.2)["result"]["approved"] is True
+    finally:
+        reader.close()  # type: ignore[attr-defined]
         multiplexer.close()
 
 
@@ -517,6 +541,20 @@ def test_outbound_writer_raises_transport_backpressure(caplog) -> None:
             )
             for record in caplog.records
         )
+        hard = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", "") == "sidecar.runtime.transport_backpressure"
+        ]
+        assert hard
+        # The JSON formatter reads record.data only; bare extra fields vanish.
+        data = getattr(hard[0], "data", None)
+        assert isinstance(data, dict)
+        # The data lane keeps the control reserve out of its own high-water mark.
+        assert data["high_water_mark_bytes"] + data["control_reserve_bytes"] == 1024
+        assert data["lane"] == "data"
+        assert data["next_frame_bytes"] > 0
+        assert getattr(hard[0], "component", "") == "runtime.transport"
     finally:
         writer.close()
 

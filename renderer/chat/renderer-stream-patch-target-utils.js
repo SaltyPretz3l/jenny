@@ -10,6 +10,44 @@
   // The live bubble is the ground truth for which article is streaming.
   const STREAMING_BUBBLE_SELECTOR = '[data-streaming-bubble="true"]';
 
+  function resolveReasoningPatchBlocks(existingBlocks, nextStack, scope, rowModelList, getBlockKey) {
+    const nextBlocks = Array.from(nextStack.querySelectorAll('.reasoning-row-block'));
+    if (!rowModelList || !scope?.matches?.('.chat-row[data-row-kind="reasoning"]')) {
+      return nextBlocks;
+    }
+
+    // A checkpoint row owns only its phase; the incoming stack owns the message.
+    // Align local blocks by key, and leave already-rendered sibling phases alone.
+    const nextByKey = new Map(nextBlocks.map((block, index) => [getBlockKey(block, index), block]));
+    const localKeys = new Set(existingBlocks.map(getBlockKey));
+    if (nextByKey.size !== nextBlocks.length || localKeys.size !== existingBlocks.length) {
+      return null;
+    }
+    const alignedBlocks = existingBlocks.map((block, index) => nextByKey.get(getBlockKey(block, index)));
+    if (alignedBlocks.some((block) => !block)) {
+      return null;
+    }
+    const otherBlocks = Array.from(rowModelList.querySelectorAll('.reasoning-row-block'))
+      .filter((block) => !scope.contains(block));
+    const otherByKey = new Map(otherBlocks.map((block, index) => [getBlockKey(block, index), block]));
+    if (otherByKey.size !== otherBlocks.length) {
+      return null;
+    }
+    // A sibling phase is left alone only while its rendered status and settled
+    // fingerprint (summary, labels, body) still match the incoming stack.
+    const sameAttribute = (left, right, name) => left.getAttribute(name) === right.getAttribute(name);
+    for (const [key, nextBlock] of nextByKey) {
+      if (localKeys.has(key)) continue;
+      const renderedBlock = otherByKey.get(key);
+      if (!renderedBlock
+        || !sameAttribute(renderedBlock, nextBlock, 'data-reasoning-status')
+        || !sameAttribute(renderedBlock, nextBlock, 'data-reasoning-fp')) {
+        return null;
+      }
+    }
+    return alignedBlocks;
+  }
+
   function createStreamPatchTargetUtils(deps) {
     const settings = deps || {};
     const getRuntime = typeof settings.getRuntime === 'function'
@@ -253,5 +291,6 @@
 
   return {
     createStreamPatchTargetUtils,
+    resolveReasoningPatchBlocks,
   };
 });

@@ -167,7 +167,7 @@
 
 /* [data-menu-open] is set by openPanelOverflowMenu(): without it the dots fade
    out the instant the pointer leaves the sidebar for the menu they opened. */
-.sidebar:hover .chats-tool-button,
+.view-panel:hover .chats-tool-button,
 .chats-tool-button:focus-visible,
 .chats-tool-button[data-menu-open] {
   opacity: 1;
@@ -267,7 +267,7 @@
 
 .conversation-groups {
   flex: 1;
-  min-height: 0;
+  min-block-size: 176px; /* three session rows, border-box: 16px end padding + the group kicker + 3 x 42px; the pinned sections above yield by their lists */
   overflow-y: auto;
   padding: 0 var(--space-4) var(--space-8);
   scrollbar-width: thin;
@@ -368,18 +368,13 @@
 }
 
 .session-row__dot {
-  display: none;
-  order: 1;
+  /* Reserve the slot so titles align; transparent means nothing to say. */
+  display: block;
   flex: 0 0 auto;
   width: var(--session-row-dot-size);
   height: var(--session-row-dot-size);
   border-radius: var(--radius-pill);
-  background: var(--text-muted);
-}
-
-.session-row[data-session-dominant-state="streaming"] .session-row__dot,
-.session-row:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot {
-  display: block;
+  background: transparent;
 }
 
 .session-row[data-session-dominant-state="streaming"] .session-row__dot {
@@ -389,6 +384,9 @@
 .session-row:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot {
   background: var(--sidebar-state-approval-color);
 }
+
+.session-row:is([data-session-dominant-state="idle"], [data-session-dominant-state="open"])[data-session-last-outcome="completed"] .session-row__dot { background: var(--text-muted); }
+.session-row:is([data-session-dominant-state="idle"], [data-session-dominant-state="open"])[data-session-last-outcome="failed"] .session-row__dot { background: var(--text-danger-emphasis); }
 
 @keyframes sidebar-state-pulse {
   from { opacity: 0.68; }

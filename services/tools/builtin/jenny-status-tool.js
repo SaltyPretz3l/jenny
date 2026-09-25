@@ -104,6 +104,8 @@ module.exports = {
 
     try {
       const options = normalizeStatusOptions(input);
+      if (context.executionAuthority) options.executionAuthority = context.executionAuthority;
+      if (!options.session_id && context.sessionId) options.session_id = context.sessionId;
       const status = await backendService.getJennyStatus(options);
       return {
         content: JSON.stringify(status, null, 2),

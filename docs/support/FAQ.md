@@ -191,7 +191,7 @@ model is active before editing personality files.
 
 ### Can I use a GGUF file I already have?
 
-Yes. **Settings → Model library** lists what Ollama has pulled and the GGUF
+Yes. **Settings → Models** lists what Ollama has pulled and the GGUF
 files in folders you add (**Add folder…**). Models found that way run on the
 managed `llama-server`. Jenny estimates fit from the file's real size and
 parameter count and tells you what will fit in your VRAM before loading.

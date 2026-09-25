@@ -50,6 +50,7 @@
       getCloseOrchestrator, getConfirmDialog, getWorkspaceRootApi,
       showShellErrorToast, appendClientLog, getGitFeature, getFeatureFlags, panelDeps,
       getAttachmentsApi, getTerminalPanel, getBottomPanel,
+      getProjectSwitcher, peekProjectSwitcher,
     } = ctx || {};
     const treeUtils = resolveModule('rendererIdeTree', './renderer-ide-tree');
     const treeDndUtils = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
@@ -74,12 +75,29 @@
         buildTerminalCdCommand(shell, rootPath, relPath)
       ));
     }
+    // Projects v2: the header title is the current project (switcher glue is
+    // lazy; until it loads the title reads "Workspace" and the first render
+    // after load repaints it). Without a switcher the header stays "Explorer".
+    const hasProjectSwitcher = typeof getProjectSwitcher === 'function';
+    let switcherLoadKicked = false;
+    function kickProjectSwitcherLoad() {
+      if (switcherLoadKicked || !hasProjectSwitcher) return;
+      switcherLoadKicked = true;
+      Promise.resolve(getProjectSwitcher()).then((switcher) => {
+        if (!switcher || disposed) return;
+        return Promise.resolve(switcher.refresh()).then(() => { if (!disposed) tree?.repaintHeader?.(); });
+      }).catch(() => {});
+    }
     const treeDeps = {
       getDom, escapeHtml, getIde: () => getIde(), getWorkspaceFsApi,
       onOpenFile: (path, options) => openFile(path, options),
       onEntryDeleted: (path, kind) => getFileLifecycle()?.handleTreeEntryDeleted(path, kind),
       onEntryRenamed: (fromPath, toPath, kind, meta) => getFileLifecycle()?.handleTreeEntryRenamed(fromPath, toPath, kind, meta),
       onChooseWorkspaceRoot: () => getChooseWorkspaceRoot()?.(),
+      getProjectTitle: hasProjectSwitcher
+        ? () => { kickProjectSwitcherLoad(); return peekProjectSwitcher?.()?.title?.() || jt('projects.switcher.workspace', 'Workspace'); }
+        : null,
+      onOpenProjectMenu: (anchor) => Promise.resolve(getProjectSwitcher?.()).then((switcher) => switcher?.openSwitcher(anchor)).catch(() => {}),
       buildFileContextMenuItems: (path) => buildFileContextMenuItems(path),
       buildDirectoryContextMenuItems: (path, options = {}) => [
         { label: jt('ide.explorer.findInFolder', 'Find in Folder'), action: () => getSearchPanel()?.beginScopedSearch?.(path) },
@@ -212,6 +230,8 @@
     let autoRevealTimer = null;
     let autoRevealBound = false;
     let disposed = false;
+    let projectsChangedWindow = null;
+    const handleProjectsChanged = () => { if (!disposed) tree?.repaintHeader?.(); };
 
     function clearAutoRevealTimer() {
       if (autoRevealTimer === null) {
@@ -249,6 +269,11 @@
       tree?.bindEvents();
       if (isQolEnabled()) dnd?.bindEvents();
       if (isImportEnabled()) treeImport?.bindEvents();
+      const eventWindow = globalRef.window || globalRef;
+      if (hasProjectSwitcher && !projectsChangedWindow && typeof eventWindow.addEventListener === 'function') {
+        projectsChangedWindow = eventWindow;
+        projectsChangedWindow.addEventListener('jenny:projects-changed', handleProjectsChanged);
+      }
       if (!isQolEnabled() || autoRevealBound) {
         return;
       }
@@ -270,6 +295,8 @@
         autoRevealBound = false;
       }
       autoRevealWindow = null;
+      projectsChangedWindow?.removeEventListener?.('jenny:projects-changed', handleProjectsChanged);
+      projectsChangedWindow = null;
       dnd?.dispose();
       treeImport?.dispose();
       tree?.dispose();

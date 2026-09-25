@@ -14,6 +14,7 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.memory.contracts import (
     DEFAULT_LIST_PAGE_SIZE,
+    GENERAL_PROJECT_ID,
     MAX_LIST_PAGE_SIZE,
     MAX_RECALL_QUERY_CHARS,
     MAX_SESSION_ID_CHARS,
@@ -75,6 +76,7 @@ def save_memory_candidate(
     session_id: Any,
     candidate: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
 ) -> SaveMemoryCandidateResult:
     normalized_session_id = require_bounded_text(
         session_id,
@@ -144,6 +146,7 @@ def save_memory_candidate(
         source_excerpt=source_excerpt,
         family_key=family_key,
         provenance="user_approved",
+        project_id=project_id,
     )
     return SaveMemoryCandidateResult(
         memory=memory,
@@ -214,6 +217,8 @@ def list_memories_page(
     cursor: Any,
     limit: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
+    all_projects: bool = False,
 ) -> dict[str, object]:
     safe_limit = normalize_positive_limit(
         limit,
@@ -226,6 +231,8 @@ def list_memories_page(
         snapshot_max_id=snapshot_max_id,
         after_id=after_id,
         legacy_offset=legacy_offset,
+        project_id=project_id,
+        all_projects=all_projects,
     )
     return {
         "memories": [serialize_approved_memory(row) for row in rows],
@@ -238,6 +245,8 @@ def list_pending_memories_page(
     cursor: Any,
     limit: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
+    all_projects: bool = False,
 ) -> dict[str, object]:
     safe_limit = normalize_positive_limit(
         limit,
@@ -250,6 +259,8 @@ def list_pending_memories_page(
         snapshot_max_id=snapshot_max_id,
         after_id=after_id,
         legacy_offset=legacy_offset,
+        project_id=project_id,
+        all_projects=all_projects,
     )
     return {
         "candidates": [serialize_pending_memory_candidate(row) for row in rows],
@@ -262,6 +273,7 @@ def update_memory(
     memory_id: Any,
     patch: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
 ) -> ApprovedMemory:
     resolved_memory_id = _parse_memory_id(memory_id)
     if not isinstance(patch, dict):
@@ -281,7 +293,9 @@ def update_memory(
         raise ValueError("patch.lesson_text is required")
 
     approved = approved_memory_api(memory_store)
-    existing_memory = approved.get_memory_by_id(resolved_memory_id)
+    existing_memory = approved.get_memory_by_id(
+        resolved_memory_id, project_id=project_id
+    )
     if existing_memory is None:
         raise ValueError("memory not found")
 
@@ -290,13 +304,19 @@ def update_memory(
         title=title,
         lesson_text=lesson_text,
         remove_provenance=patch.get("remove_provenance") is True,
+        project_id=project_id,
     )
 
 
 def delete_memory(
-    *, memory_id: Any, memory_store: MemoryStore | MemoryService
+    *,
+    memory_id: Any,
+    memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
 ) -> bool:
-    return approved_memory_api(memory_store).delete_memory(_parse_memory_id(memory_id))
+    return approved_memory_api(memory_store).delete_memory(
+        _parse_memory_id(memory_id), project_id=project_id
+    )
 
 
 def delete_pending_memory(
@@ -304,6 +324,7 @@ def delete_pending_memory(
     session_id: Any,
     content_fingerprint: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
 ) -> bool:
     normalized_session_id = _normalize_spaces(str(session_id or ""))
     normalized_fingerprint = _normalize_spaces(str(content_fingerprint or "")).lower()
@@ -314,6 +335,7 @@ def delete_pending_memory(
     return pending_memory_api(memory_store).delete_pending_candidate(
         session_id=normalized_session_id,
         content_fingerprint=normalized_fingerprint,
+        project_id=project_id,
     )
 
 
@@ -322,6 +344,8 @@ def recall_memories(
     query: Any,
     limit: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
+    include_general: bool = False,
 ) -> list[dict[str, object]]:
     normalized_query = require_bounded_text(
         query,
@@ -336,7 +360,10 @@ def recall_memories(
     return [
         serialize_approved_memory(memory)
         for memory in approved_memory_api(memory_store).recall_memories(
-            normalized_query, limit=normalized_limit
+            normalized_query,
+            limit=normalized_limit,
+            project_id=project_id,
+            include_general=include_general,
         )
     ]
 
@@ -346,6 +373,8 @@ def recall_recent_memories(
     lesson_kind: Any,
     limit: Any,
     memory_store: MemoryStore | MemoryService,
+    project_id: str = GENERAL_PROJECT_ID,
+    include_general: bool = False,
 ) -> list[dict[str, object]]:
     normalized_lesson_kind = _normalize_spaces(str(lesson_kind or "")).lower()
     if not normalized_lesson_kind:
@@ -360,6 +389,8 @@ def recall_recent_memories(
         for memory in approved_memory_api(memory_store).get_recent_memories_by_kind(
             normalized_lesson_kind,
             normalized_limit,
+            project_id=project_id,
+            include_general=include_general,
         )
     ]
 
@@ -378,6 +409,7 @@ def serialize_approved_memory(memory: ApprovedMemory) -> dict[str, object]:
         "provenance": memory.provenance,
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
+        "project_id": memory.project_id,
     }
 
 

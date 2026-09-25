@@ -9,6 +9,13 @@ const {
   startManagedSidecarChatStream,
 } = require('../../services/backend/managed-sidecar-chat');
 const {
+  initializeSessionExecutionAuthority,
+} = require('../../services/projects/application-execution-composition');
+const {
+  initializeApplicationProjects,
+} = require('../../services/projects/application-project-scope');
+const { ToolPermissionStore } = require('../../services/tools/tool-permission-store');
+const {
   cleanupTrackedResources,
   trackDirectory,
 } = require('../helpers/resource-cleanup');
@@ -17,8 +24,8 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-function createManagedChatServiceStub(store) {
-  return {
+function createManagedChatServiceStub(store, userDataPath) {
+  const service = {
     activeStreams: new Map(),
     pendingToolApprovals: new Map(),
     currentModel: 'mock-v1',
@@ -45,6 +52,12 @@ function createManagedChatServiceStub(store) {
     },
     async _restartManagedSidecar() {},
   };
+  service.toolPermissionStore = new ToolPermissionStore(
+    path.join(userDataPath, 'tool-permissions.json')
+  );
+  initializeApplicationProjects(service, { userDataPath });
+  initializeSessionExecutionAuthority(service);
+  return service;
 }
 
 test('managed sidecar chat forwards session_start_date and persists tool search metadata for reload', async () => {
@@ -59,7 +72,7 @@ test('managed sidecar chat forwards session_start_date and persists tool search 
     },
   });
 
-  const service = createManagedChatServiceStub(store);
+  const service = createManagedChatServiceStub(store, userDataPath);
   const captured = {};
   service.sidecarClient = {
     chatSend: async (params, options = {}) => {
@@ -194,7 +207,7 @@ test('managed sidecar chat recovers an orphaned active_turn before starting a fr
     status: 'streaming',
   });
 
-  const service = createManagedChatServiceStub(store);
+  const service = createManagedChatServiceStub(store, userDataPath);
   const captured = {};
   let resolveChatSend;
   service.sidecarClient = {

@@ -16,7 +16,7 @@ from sidecar.ai.error_codes import (
 from sidecar.ai.tools.builtins.file_atomic_write import (
     build_write_metadata,
     mutation_failure_metadata,
-    write_bytes_atomic,
+    write_bytes_atomic,  # noqa: F401 - compatibility re-export for existing callers.
     write_hosted_bytes_after_read,
 )
 from sidecar.ai.tools.builtins.file_history import (
@@ -195,10 +195,10 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             retryable=False,
         )
     headings_requested = "headings" in arguments
-    if headings_requested and any(key in arguments for key in ("offset", "limit", "pages")):
+    if headings_requested and {"offset", "limit", "pages", "cursor"} & arguments.keys():
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
-            message="tool argument 'headings' is mutually exclusive with offset, limit, and pages",
+            message="'headings' is mutually exclusive with offset, limit, pages, and cursor",
             retryable=False,
         )
     if headings_requested and resolved.suffix.lower() not in {".md", ".markdown", ".mdown"}:
@@ -219,6 +219,7 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             resolved,
             relative_path=relative_path,
             pages_argument=arguments.get("pages"),
+            cursor_argument=arguments.get("cursor"),
         )
     rich_file_kind = RICH_FILE_SUFFIXES.get(resolved.suffix.lower())
     if _FILESYSTEM_SETTINGS["rich_files_enabled"] and rich_file_kind is not None:
@@ -915,10 +916,12 @@ def _write_file_locked(
     checkpoint = checkpoint_result
 
     try:
-        if hosted_file_io_enabled():
-            write_hosted_bytes_after_read(resolved, encoded, expected=expected_bytes)
-        else:
-            write_bytes_atomic(resolved, encoded, workspace=workspace)
+        write_hosted_bytes_after_read(
+            resolved,
+            encoded,
+            expected=expected_bytes,
+            workspace=workspace,
+        )
     except ToolExecutionFailure as error:
         failure_metadata = mutation_failure_metadata(error, relative_path, journal, prepared)
         return failure_result(

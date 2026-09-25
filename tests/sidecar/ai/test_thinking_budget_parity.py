@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -38,10 +39,15 @@ class _HeadroomEngine:
 @pytest.mark.parametrize(
     ("engine", "max_tokens", "expected"),
     [
-        (_BudgetTokensEngine(), 16_384, 262_144),
-        (_HeadroomEngine(), 16_384, 65_536),
-        (object(), 16_384, 65_536),
-        (object(), 4_096, 65_536),
+        # Engine-reported headroom sits on top of the answer budget: the whole
+        # headroom is thinking room, converted at the measured 3.2 chars/token.
+        (_BudgetTokensEngine(), 16_384, 209_715),
+        (_HeadroomEngine(), 16_384, 52_428),
+        # No engine hook: thinking and the answer share one num_predict, so the
+        # guard gets 65% of it and the rest stays available to answer with.
+        (object(), 16_384, 34_076),
+        (object(), 4_096, 8_518),
+        # No resolvable token budget at all falls back to the char floor.
         (None, 0, 65_536),
     ],
 )
@@ -51,6 +57,29 @@ def test_engine_and_fallback_derivations(
     expected: int,
 ) -> None:
     assert thinking_guard.resolve_thinking_budget_chars(engine, max_tokens) == expected
+
+
+@pytest.mark.parametrize("max_tokens", [16_384, 8_192, 4_096, 1_024])
+def test_shared_pool_budget_trips_before_the_provider_token_cap(
+    max_tokens: int,
+) -> None:
+    """The guard must be reachable on a shared num_predict pool.
+
+    The old ``max(max_tokens * 4, 65_536)`` char budget needed ~20k tokens of
+    reasoning at 16,384 max_tokens, so llama-server always hit ``n_predict``
+    first and FINISH_REASON_THINKING_BUDGET could never be raised locally.
+    """
+    budget_chars = thinking_guard.resolve_thinking_budget_chars(object(), max_tokens)
+    budget_tokens = budget_chars / thinking_guard.THINKING_BUDGET_CHARS_PER_TOKEN
+
+    assert budget_tokens < max_tokens
+    assert thinking_guard.resolve_thinking_budget_tokens(object(), max_tokens) < max_tokens
+
+
+def test_shared_pool_budget_leaves_answer_room() -> None:
+    """16,384 reasoning tokens spent the whole budget; 65% leaves room to act."""
+    assert thinking_guard.resolve_thinking_budget_tokens(object(), 16_384) == 10_649
+    assert thinking_guard.resolve_thinking_budget_tokens(None, 0) is None
 
 
 class _EffectiveBudgetEngine(_OllamaGenerationMixin):
@@ -67,6 +96,8 @@ def test_budget_never_exceeds_effective_num_predict() -> None:
     engine = _EffectiveBudgetEngine()
 
     assert engine._thinking_budget_tokens(16_384) == 3_616
+    assert thinking_guard.resolve_thinking_budget_tokens(engine, 16_384) == 3_616
+    # 3,616 x 3.2 = 11,571 chars, raised to the engine floor.
     assert thinking_guard.resolve_thinking_budget_chars(engine, 16_384) == 16_384
 
 
@@ -233,3 +264,35 @@ def test_continuation_kill_switch_default_on(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_CONTINUATION", "0")
     assert thinking_guard.thinking_budget_continuation_enabled() is False
+
+def test_vllm_tool_stream_uses_a_fresh_guard_on_the_continuation_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guard tripped on call N must not suppress call N+1 (the checkpoint continuation)."""
+    repeated = "Checking the request intent carefully. " * 50
+    lines = [
+        *(
+            "data: " + json.dumps({"choices": [{"delta": {"reasoning_content": repeated}}]})
+            for _ in range(3)
+        ),
+        'data: {"choices": [{"delta": {"content": "answer"}}]}',
+        "data: [DONE]",
+    ]
+    engine, _response = _patch_vllm_stream(monkeypatch, lines)
+
+    first_events, first_result = _drain(
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=16_384)
+    )
+    second_events, second_result = _drain(
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=16_384)
+    )
+
+    def _thinking(events: list[Any]) -> list[str]:
+        return [e.text for e in events if getattr(e, "kind", "") == "thinking"]
+
+    # Both calls see the same stream; both suppress the third repetition and
+    # neither call inherits the other's latched guard.
+    assert len(_thinking(first_events)) == 2
+    assert len(_thinking(second_events)) == 2
+    assert first_result.content == "answer"
+    assert second_result.content == "answer"

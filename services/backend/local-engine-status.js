@@ -4,7 +4,8 @@ const {
   buildManagedStatusSnapshot,
 } = require('./managed-sidecar-lifecycle');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
-const { resolveManagedConfiguredModel } = require('./managed-sidecar-config');
+const { resolveManagedConfiguredModel, resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config');
+const { sameLocalOrigin } = require('../local-origin');
 
 // Inactivity watchdog budget for managed model acquisition. During Ollama's
 // "verifying sha256 digest" phase the sidecar emits the status once and then
@@ -492,6 +493,18 @@ function buildLocalEngineStatusSnapshot(service, overrides = {}) {
   return buildManagedStatusSnapshot(service, overrides);
 }
 
+// The sidecar initialize talks only to the configured engine. With llama-server
+// as that engine, startup still waited ~8.8 s on Ollama's GPU discovery
+// (2026-09-22 diagnostics). An openai-compatible endpoint may be Ollama's own
+// /v1, so only an endpoint that is known and not Ollama skips the wait.
+function initializeNeedsOllama(service) {
+  if (service.currentEngineType !== 'openai-compatible') return true;
+  const ollama = service.ollamaManager || {};
+  const ollamaUrl = `http://${ollama._host || '127.0.0.1'}:${Number(ollama._port) || 11434}`;
+  const apiUrl = resolveOpenAICompatibleApiUrl(service);
+  return !apiUrl || sameLocalOrigin(apiUrl, ollamaUrl);
+}
+
 module.exports = {
   DEFAULT_ABSOLUTE_TIMEOUT_MS,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
@@ -499,6 +512,7 @@ module.exports = {
   buildLocalEngineStatusSnapshot,
   buildObservedBackendStatus,
   initializeManagedSidecarWithTimeout,
+  initializeNeedsOllama,
   normalizeProgress,
   setModelLifecycle,
 };

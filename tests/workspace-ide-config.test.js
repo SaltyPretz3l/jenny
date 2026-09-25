@@ -813,7 +813,7 @@ test('normalizeWorkspaceIde backfills + clamps the chat dock triad (no CONFIG_VE
   // Width: the dock's OWN 280/2400/380 bounds (not the secondary 160/480/260).
   assert.equal(normalizeWorkspaceIde({ chatDockWidth: 400 }).chatDockWidth, 400);
   assert.equal(normalizeWorkspaceIde({ chatDockWidth: 9999 }).chatDockWidth, 2400);
-  assert.equal(normalizeWorkspaceIde({ chatDockWidth: 10 }).chatDockWidth, 280);
+  assert.equal(normalizeWorkspaceIde({ chatDockWidth: 10 }).chatDockWidth, 320);
   assert.equal(normalizeWorkspaceIde({ chatDockWidth: 400.7 }).chatDockWidth, 400);
   assert.equal(normalizeWorkspaceIde({ chatDockWidth: 'wide' }).chatDockWidth, 380);
 });
@@ -837,7 +837,7 @@ test('v36 migration adds the generated-directory preference and preserves explic
 });
 
 test('explorer sort mode round-trips as an additive global preference', () => {
-  assert.equal(CONFIG_VERSION, 53);
+  assert.equal(CONFIG_VERSION, 55);
   const state = normalizeState({
     version: CONFIG_VERSION,
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,

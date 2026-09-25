@@ -30,7 +30,6 @@ function createService(initialize) {
     _lastEngineFallback: null,
     _modelLifecycle: { state: 'unloaded' },
     _emitServiceLog() {},
-    _normalizeManagedReasoningEfforts() {},
     sidecarManager: {
       process: sidecarProcess,
       getStatus() { return { phase: 'ready', pid: 42 }; },

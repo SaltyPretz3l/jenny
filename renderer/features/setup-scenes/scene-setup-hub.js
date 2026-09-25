@@ -150,12 +150,14 @@
     var openStep = typeof d.openStep === 'function' ? d.openStep : function () {};
     var finish = typeof d.finish === 'function' ? d.finish : function () { return Promise.resolve(); };
     var attemptComplete = typeof d.attemptComplete === 'function' ? d.attemptComplete : null;
+    var refreshState = typeof d.refreshState === 'function' ? d.refreshState : null;
     var appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : function () {};
     var rootEl = null;
     var unbindClicks = null;
     var focusTimer = null;
     var disposed = false;
     var detectGeneration = 0;
+    var refreshGeneration = 0;
     var finishGateOpen = false;
     var finishInFlight = false;
     var skipInFlight = {};
@@ -221,14 +223,72 @@
       if (target && typeof target.focus === 'function') target.focus();
     }
 
+    function stepsSignature(state) {
+      return JSON.stringify(state && state.steps || {});
+    }
+
+    // The hub's snapshot dates from when it opened, and the backend readiness
+    // cache can predate a model that finished loading since. A fresh probe
+    // backfills the steps an active model already satisfies.
+    function refreshSetupState() {
+      if (!refreshState) return Promise.resolve(false);
+      var generation = ++refreshGeneration;
+      var before = stepsSignature(setupState);
+      return Promise.resolve().then(refreshState).then(function applyRefreshed(next) {
+        if (disposed || generation !== refreshGeneration || !next) return false;
+        setupState = next;
+        return stepsSignature(next) !== before;
+      }, function logRefreshFailure(error) {
+        if (!disposed) {
+          appendClientLog('WARN', 'setup.hub_refresh_failed', {
+            message: error && error.message ? error.message : String(error),
+          });
+        }
+        return false;
+      });
+    }
+
+    // A rerender replaces every control, so return focus to the same action the
+    // user was on; Enter must not land on a different button.
+    function focusedControlSelector() {
+      var doc = rootEl && rootEl.ownerDocument;
+      var active = doc && doc.activeElement;
+      if (!active || !rootEl.contains(active)) return null;
+      var modalAction = active.getAttribute('data-step-modal-action');
+      if (modalAction) return '[data-step-modal-action="' + modalAction + '"]';
+      var action = active.getAttribute('data-action');
+      if (!action) return '';
+      var stepId = active.getAttribute('data-step-id');
+      return '[data-action="' + action + '"]' + (stepId ? '[data-step-id="' + stepId + '"]' : '');
+    }
+
+    function refreshAfterMount() {
+      void refreshSetupState().then(function rerenderChangedSteps(changed) {
+        if (!changed || disposed || !rootEl || finishInFlight) return;
+        var selector = focusedControlSelector();
+        render();
+        if (selector === null) return;
+        var target = selector ? rootEl.querySelector(selector) : null;
+        if (target && typeof target.focus === 'function') target.focus();
+        else focusFirstUnresolvedRequired();
+      });
+    }
+
     async function handleFinish() {
+      if (finishInFlight) return;
+      if (sceneUtils.computeSetupHealth(setupState).state !== 'complete' && refreshState) {
+        finishInFlight = true;
+        render();
+        await refreshSetupState();
+        if (disposed) return;
+        finishInFlight = false;
+      }
       if (sceneUtils.computeSetupHealth(setupState).state !== 'complete') {
         finishGateOpen = true;
         render();
         focusWarningFix();
         return;
       }
-      if (finishInFlight) return;
       if (!attemptComplete) return finish({ force: false });
       finishInFlight = true;
       render();
@@ -309,10 +369,12 @@
         focusFirstUnresolvedRequired();
         focusTimer = setTimeout(focusFirstUnresolvedRequired, 0);
         detectEngine();
+        refreshAfterMount();
       },
       dispose: function dispose() {
         disposed = true;
         detectGeneration += 1;
+        refreshGeneration += 1;
         if (focusTimer !== null) clearTimeout(focusTimer);
         focusTimer = null;
         if (typeof unbindClicks === 'function') unbindClicks();

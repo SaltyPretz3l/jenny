@@ -6,10 +6,11 @@ import argparse
 import json
 import logging
 import re
-import sys
+import sys  # noqa: F401 - tests patch builtin_server.sys.argv.
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
@@ -26,12 +27,17 @@ from sidecar.ai.host_policy import (
     host_policy_from_cli,
     host_tool_decision,
 )
+from sidecar.ai.mcp.builtin_request_scope import (
+    TRUSTED_EXECUTION_CONTEXT_KEY,
+    builtin_request_scope,
+)
 from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
     configure_stdio,
     install_termination_handler,
     start_stdin_pump,
+    write_protocol_line,
 )
 from sidecar.ai.mcp.builtin_server_ledger import (
     LedgerBracket,
@@ -57,6 +63,7 @@ from sidecar.ai.mcp.exceptions import (
 from sidecar.ai.tools.assembly import ToolAssemblyContext, assemble_tool_contract
 from sidecar.ai.tools.builtins import cancellation, output_chunk_slot
 from sidecar.ai.tools.builtins.lsp.tools import shutdown_lsp_tools
+from sidecar.ai.tools.builtins.owned_process_observation import observe_owned_process_invocation
 from sidecar.ai.tools.builtins.worktree_change_tracking import run_with_worktree_observation
 from sidecar.ai.tools.catalog import (
     BUILTIN_MCP_SERVER_NAME,
@@ -76,6 +83,7 @@ from sidecar.ai.tools.sanitization import strip_surrogates
 from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime.diagnostics import log_tool_execution
+from sidecar.runtime.media_site import activate_optional_sites
 
 ToolHandler = Callable[[dict[str, object], WorkspaceGuard], object]
 logger = logging.getLogger(__name__)
@@ -117,6 +125,7 @@ TRANSPORT_ARGUMENT_KEYS: tuple[str, ...] = (
     "_jenny_session_offline_lockdown",
     "_jenny_read_only",
     "_jenny_approved_plan",
+    TRUSTED_EXECUTION_CONTEXT_KEY,
 )
 
 def _default_tools(  # noqa: PLR0913
@@ -162,6 +171,7 @@ def _default_tools(  # noqa: PLR0913
     rich_files_enabled: bool = False,
     knowledge_enabled: bool = False,
     knowledge_roots: tuple[str, ...] = (),
+    request_scoped_authority: bool = False,
     lsp_enabled: bool = False,
     lsp_command_typescript: str | None = None,
     lsp_command_python: str | None = None,
@@ -236,8 +246,17 @@ def _default_tools(  # noqa: PLR0913
             "git_tracking": git_tracking_enabled,
         },
     }
+    # The owned builtin process is reused across project requests. Register the
+    # knowledge handlers once even when the legacy startup config is disabled;
+    # the AI request contract still hides them unless the captured request has
+    # knowledge roots, and the handler itself requires a per-call registry.
+    registry_config = {
+        **config,
+        "tools_knowledge_enabled": knowledge_enabled or request_scoped_authority,
+        "knowledge_roots": knowledge_roots if knowledge_enabled else (),
+    }
     bindings = build_tool_bindings(
-        config=config,
+        config=registry_config,
         include_shell=shell_enabled and not desktop_policy.enforced,
     )
     bindings["operation_status"] = lambda arguments, workspace: operation_status_tool(
@@ -246,7 +265,7 @@ def _default_tools(  # noqa: PLR0913
         generation_id=SERVER_GENERATION_ID,
     )
     descriptors = build_tool_catalog(
-        config=config,
+        config=registry_config,
         bound_names=bindings.keys(),
         bound_server_name=BUILTIN_MCP_SERVER_NAME,
     )
@@ -254,7 +273,7 @@ def _default_tools(  # noqa: PLR0913
         descriptors,
         ToolAssemblyContext(
             surface=BUILTIN_MCP_SURFACE,
-            config=config,
+            config=registry_config,
             engine_supports_tool_calling=True,
             mode="assist",
             plan_mode=False,
@@ -302,8 +321,7 @@ _SNAPSHOT_LEASES = SnapshotLeaseStore()
 def _write_response(payload: dict[str, Any]) -> None:
     line = _safe_json_dumps(payload) + "\n"
     with _STDOUT_WRITE_LOCK:
-        sys.stdout.write(line)
-        sys.stdout.flush()
+        write_protocol_line(line)
 
 
 def _make_output_chunk_writer(message_id: Any) -> Callable[[dict[str, object]], None]:
@@ -429,7 +447,10 @@ def _prepare_call_arguments(
     validated["_jenny_operation_id"] = operation_id
     validated["_jenny_server_generation_id"] = SERVER_GENERATION_ID
     session_id = session_scope(validated)
-    workspace_key = str(workspace.require_root().resolve()).casefold()
+    workspace_key = (
+        str(workspace.require_root().resolve()).casefold()
+        if workspace.root is not None or workspace.root_error else ""
+    )
     scope = f"{session_id}\0{workspace_key}"
     return (
         _SNAPSHOT_LEASES.inject(
@@ -522,7 +543,7 @@ def _unpack_tool_output(
     )
 
 
-def _handle_tools_call(  # noqa: PLR0911
+def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
     message_id: Any,
     tools: dict[str, BuiltinTool],
     workspace: WorkspaceGuard,
@@ -566,12 +587,29 @@ def _handle_tools_call(  # noqa: PLR0911
         )
     raw_arguments = params.get("arguments")
     arguments = strip_plan_artifact_write_arg(raw_arguments)
+    scope_carrier: dict[str, object] = {}
+    if isinstance(arguments, dict) and TRUSTED_EXECUTION_CONTEXT_KEY in arguments:
+        scope_carrier[TRUSTED_EXECUTION_CONTEXT_KEY] = arguments.get(
+            TRUSTED_EXECUTION_CONTEXT_KEY
+        )
+        arguments = dict(arguments)
+        arguments.pop(TRUSTED_EXECUTION_CONTEXT_KEY, None)
     call_arguments, ledger_key, trace_id = ledger_call_arguments(arguments)
     trace = PhaseTrace(tool=tool.name, call_id=str(message_id), trace_id=trace_id)
     started_at = time.perf_counter()
     bracket = LedgerBracket(None, ledger_key, {}, "")
+    process_observation = None
+    execution_may_have_started = False
     try:
-        with trace:
+        request_scope = builtin_request_scope(
+            scope_carrier,
+            legacy_workspace=workspace,
+            host_config=host_config,
+        )
+        if request_scope is not None:
+            workspace = request_scope.workspace
+        scope_binding = request_scope if request_scope is not None else nullcontext()
+        with scope_binding, trace:
             _raise_if_breaker_open(tool.name)
             with trace.phase("validate"):
                 validated_arguments, operation_id, scope = _prepare_call_arguments(
@@ -583,6 +621,9 @@ def _handle_tools_call(  # noqa: PLR0911
             workspace.observe_mutation_tool_call(tool.name, validated_arguments)
             if call_side_effecting is None:
                 call_side_effecting = tool.side_effecting
+            # Ledger recovery can refer to an earlier invocation. From this
+            # boundary onward, retain uncertainty unless the owner proves cleanup.
+            execution_may_have_started = True
             bracket = LedgerBracket.start(
                 tool_name=tool.name,
                 side_effecting=call_side_effecting,
@@ -607,7 +648,9 @@ def _handle_tools_call(  # noqa: PLR0911
             output_chunk_slot.begin_tool_call(_make_output_chunk_writer(message_id))
             try:
                 _write_tool_started(message_id, operation_id)
-                with trace.phase("execute"):
+                with trace.phase("execute"), observe_owned_process_invocation(
+                    tool.name
+                ) as process_observation:
                     output = run_with_worktree_observation(
                         side_effecting=tool.side_effecting,
                         tool_name=tool.name,
@@ -643,6 +686,7 @@ def _handle_tools_call(  # noqa: PLR0911
             success=False,
             error_code=error.code,
         )
+        cleanup = process_observation.resource_cleanup() if process_observation else None
         return _error_response(
             message_id,
             error.code,
@@ -650,6 +694,10 @@ def _handle_tools_call(  # noqa: PLR0911
             retryable=error.retryable,
             metadata={
                 **error_data,
+                **({"resource_cleanup": cleanup} if cleanup else {}),
+                "completion_status": (
+                    "unknown" if execution_may_have_started else "not_started"
+                ),
                 "operation_id": locals().get("operation_id"),
                 "generation_id": SERVER_GENERATION_ID,
             },
@@ -677,6 +725,8 @@ def _handle_tools_call(  # noqa: PLR0911
         metadata,
         trusted_attachments,
     ) = _unpack_tool_output(output)
+    if process_observation is not None:
+        process_observation.add_metadata(metadata)
     bracket.settle_result(
         tool_name=tool.name,
         success=bool(success),
@@ -801,6 +851,8 @@ def _parse_bool_arg(value: object) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> None:
     configure_stdio()
+    # Source-mode launches skip sidecar.__main__; frozen ones already ran this (no-op).
+    activate_optional_sites()
     parser = build_argument_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
@@ -815,6 +867,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "host_mode": host_policy.mode,
         "host_execution_policy_version": host_policy.version,
         "desktop_execution_policy_version": desktop_policy.version,
+        "workspace_recovery_root": args.workspace_recovery_root,
+        "pre_change_snapshot_root": args.pre_change_snapshot_root,
     }
     ledger_root_arg = str(args.operation_ledger_root or "").strip()
     configure_operation_ledger(
@@ -915,6 +969,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         rich_files_enabled=rich_files_enabled,
         knowledge_enabled=knowledge_enabled,
         knowledge_roots=knowledge_roots,
+        request_scoped_authority=True,
         lsp_enabled=lsp_enabled,
         lsp_command_typescript=str(args.lsp_command_typescript).strip() or None,
         lsp_command_python=str(args.lsp_command_python).strip() or None,
@@ -940,7 +995,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 break
             try:
                 payload = json.loads(stripped)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 _write_response(
                     _error_response(None, CMP_MCP_PROTOCOL_FAILED, "invalid json payload")
                 )

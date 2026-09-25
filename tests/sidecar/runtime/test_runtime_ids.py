@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from sidecar.runtime.runtime_ids import (
+    GuardedRuntimeDirectory,
     RuntimeIdError,
     new_monitor_id,
     parse_monitor_id,
@@ -63,3 +66,23 @@ def test_new_monitor_id_always_parses() -> None:
     generated = {new_monitor_id() for _ in range(32)}
     assert len(generated) == 32
     assert all(parse_monitor_id(value) == value for value in generated)
+
+
+def test_child_directory_accepts_a_concurrent_creator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two ledger writers can both miss the directory and race to create it; the
+    loser must reuse the winner's directory, not fail the whole write."""
+    root = GuardedRuntimeDirectory.create_trusted_root(tmp_path / "root")
+    real_mkdir = Path.mkdir
+
+    def mkdir_after_another_process(self: Path, *args: object, **kwargs: object) -> None:
+        real_mkdir(self)
+        raise FileExistsError(17, "created by another process", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", mkdir_after_another_process)
+
+    child = root.child_directory("operations", create=True)
+
+    assert child is not None
+    assert child.path == (tmp_path / "root" / "operations").resolve()

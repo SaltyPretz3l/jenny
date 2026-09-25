@@ -4,6 +4,8 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const { pipeChildLogs } = require('./backend/child-process-logging');
+const { resolveLlamaServerOutputLevel } = require('./backend/llama-server-stderr-level');
+const { createEngineActivityForwarder } = require('./backend/engine-activity-lines');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { forceKillProcessTreeSync, verifyProcessExitedSync } = require('./backend/sidecar-shutdown');
 const { isProcessAlive, wait } = require('./backend/process-utils');
@@ -15,6 +17,7 @@ const {
   normalizeLogger,
   probeExistingServer,
   probeHealth,
+  probeVisionSupport,
   stripLatestTag,
   waitForReadiness,
 } = require('./llama-server-readiness');
@@ -23,6 +26,7 @@ const {
 const {
   PID_FILENAME,
   buildPidRecordCommand,
+  clearOwnedPidFile,
   clearPidFile,
   getPidFilePath,
   llamaServerIdentityConfirmed,
@@ -31,12 +35,78 @@ const {
   shutdownLlamaServerSync,
   writePidFile,
 } = require('./llama-server-pidfile');
+// GGUF discovery (main / drafter / projector classification and pairing) lives
+// in a sibling module; re-exported below for the same reason.
+const {
+  normalizeModelTagForFilename,
+  pairProjector,
+  resolveGgufPath,
+  resolveProjectorPath,
+  splitGgufFiles,
+} = require('./llama-server-gguf-files');
 
 const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 3_000;
 // Per-launch api-key files (see startLlamaServer). Swept on every launch so a
 // main process that died mid-startup cannot leave secrets behind.
 const API_KEY_FILE_PATTERN = /^llama-server-[0-9a-f]{8}\.key$/;
+// A build that cannot read the model file exits during load and says why only
+// on stderr: a quant type newer than the build ("invalid ggml type 142") or an
+// architecture it predates. Load errors come first, so a bounded prefix of
+// stderr is enough to classify the exit. Each pattern starts at the loader
+// function that prints it, after llama.cpp's optional log prefix (a
+// --log-timestamps stamp, the level letter), so a path or a metadata value
+// that merely contains the phrase never matches.
+const UNSUPPORTED_MODEL_PATTERNS = [
+  /^(?:\d+(?:\.\d+){3} )?(?:[IWED] )?gguf_\w+: tensor '[^']*' has invalid ggml type \d+/,
+  /^(?:\d+(?:\.\d+){3} )?(?:[IWED] )?llama_model_load: error loading model: (?:error loading model architecture: )?unknown model architecture: '/,
+];
+// eslint-disable-next-line no-control-regex -- llama.cpp's --log-colors codes.
+const LOG_COLOR_CODES = /\u001b\[[\d;]*m/g;
+const MAX_LOAD_FAILURE_LINES = 2_000;
+// The build's folder as it appears in the build's own output ("loaded CUDA
+// backend from <folder>\ggml-cuda.dll"): a folder the user named, often under
+// their user name, so logged lines carry this token instead.
+const RUNTIME_FOLDER_TOKEN = '[llama-server folder]';
+// Lines still in the pipe when the exit is noticed arrive after it; a closed
+// stderr means none are left. Bounded because a stream may never report it.
+const STDERR_SETTLE_TIMEOUT_MS = 250;
 
+// Replaces the build's folder in a logged line, in any case on win32 and with
+// either separator. A drive or filesystem root is left alone: replacing it
+// would rewrite every path in every line (a network share's root names the
+// share, so it is replaced). A folder that starts with a separator matches
+// only from the start of a separator run, so a long run costs linear time.
+function runtimeFolderRedactor(binaryPath, platform) {
+  const folder = path.dirname(String(binaryPath || ''));
+  const parts = folder.replace(/[\\/]+$/, '').split(/[\\/]+/);
+  if (!path.isAbsolute(folder) || !parts.some((part) => part && !/^[A-Za-z]:$/.test(part))) {
+    return (line) => line;
+  }
+  const pattern = new RegExp(
+    (parts[0] === '' ? '(?<![\\\\/])' : '')
+      + parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+'),
+    platform === 'win32' ? 'gi' : 'g'
+  );
+  return (line) => line.replace(pattern, RUNTIME_FOLDER_TOKEN);
+}
+
+function stderrSettled(child, timeoutMs) {
+  const stream = child && child.stderr;
+  if (!stream || stream.readableEnded || stream.destroyed || typeof stream.once !== 'function') {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      stream.removeListener('end', done);
+      stream.removeListener('close', done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    stream.once('end', done);
+    stream.once('close', done);
+  });
+}
 
 function forceKillAndClearConfirmedPid({
   pid,
@@ -46,11 +116,14 @@ function forceKillAndClearConfirmedPid({
   platform,
   spawnSyncImpl,
   isProcessAliveImpl,
+  childExitedRef,
 }) {
+  // An exited child was reaped (its pid may be another process's by now).
+  if (childExitedRef && childExitedRef.exited) return true;
   forceKillProcessTreeSync(pid, { platform, spawnSyncImpl });
   const exited = verifyProcessExitedSync(pid, { isProcessAliveImpl });
   if (exited) {
-    clearPidFile(pidPath);
+    clearOwnedPidFile(pidPath, pid);
     return true;
   }
   log('WARN', 'llama.server.force_kill_unconfirmed', {
@@ -59,112 +132,6 @@ function forceKillAndClearConfirmedPid({
     retained: true,
   });
   return false;
-}
-
-function isUnsafeFilenameCharacter(character) {
-  return character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character);
-}
-
-function normalizeModelTagForFilename(modelTag) {
-  return Array.from(stripLatestTag(modelTag))
-    .map((character) => (isUnsafeFilenameCharacter(character) ? '_' : character))
-    .join('')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-// MTP drafters (mtp-*.gguf) and vision projectors (mmproj*.gguf) are
-// documented to live next to the main model — never serve one AS the main
-// model. Sorted so every consumer picks the same first main candidate.
-function splitGgufFiles(names) {
-  const ggufs = (Array.isArray(names) ? names : [])
-    .filter((name) => /\.gguf$/i.test(String(name)))
-    .map(String)
-    .sort();
-  return {
-    main: ggufs.filter((name) => !/^(mtp-|mmproj)/i.test(name)),
-    drafters: ggufs.filter((name) => /^mtp-/i.test(name)),
-    projectors: ggufs.filter((name) => /^mmproj/i.test(name)),
-  };
-}
-
-function resolveGgufPath({
-  modelTag,
-  userDataPath = '',
-  repoRoot = process.cwd(),
-  fsImpl = fs,
-} = {}) {
-  const alias = stripLatestTag(modelTag);
-  const filenameTag = normalizeModelTagForFilename(modelTag);
-  if (!filenameTag) {
-    return { path: '', projectorPath: '', reason: 'model_tag_empty' };
-  }
-
-  const candidateDirs = [];
-  if (userDataPath) {
-    candidateDirs.push(path.join(userDataPath, 'models', filenameTag));
-  }
-  candidateDirs.push(path.join(repoRoot, '.jenny', 'models', filenameTag));
-
-  for (const dir of candidateDirs) {
-    try {
-      // A directory holding only auxiliaries (e.g. a partial download) means
-      // the main model is genuinely absent: keep scanning and let the
-      // standard not_found path report it.
-      const split = splitGgufFiles(fsImpl.readdirSync(dir));
-      if (split.main.length > 0) {
-        return {
-          path: path.join(dir, split.main[0]),
-          projectorPath: pairProjector(dir, split.main[0], split),
-          reason: 'resolved',
-        };
-      }
-    } catch (error) {
-      if (error && error.code !== 'ENOENT' && error.code !== 'ENOTDIR') {
-        return { path: '', projectorPath: '', reason: `read_dir_failed:${error.code || 'unknown'}` };
-      }
-    }
-  }
-
-  if (alias.toLowerCase().startsWith('gemma4-e4b-it-')) {
-    const legacyPath = path.join(repoRoot, 'gemma-4-E4B-it-UD-Q5_K_XL.gguf');
-    try {
-      if (fsImpl.statSync(legacyPath).isFile()) {
-        return { path: legacyPath, projectorPath: '', reason: 'resolved_legacy' };
-      }
-    } catch (_error) {
-      /* fall through to not_found */
-    }
-  }
-
-  return { path: '', projectorPath: '', reason: 'not_found' };
-}
-
-// Shared pairing rule: a lone main model owns the directory's projector; otherwise the stems must match.
-function pairProjector(dir, modelFile, { main, projectors }) {
-  if (projectors.length === 0) return '';
-  if (main.length === 1) return path.join(dir, projectors[0]);
-  const stem = (filename) => path.basename(filename, path.extname(filename))
-    .replace(/^mmproj[-_]/i, '').toLowerCase();
-  const modelStem = stem(modelFile);
-  const paired = projectors.find((projector) => {
-    const projectorStem = stem(projector);
-    return Boolean(modelStem && projectorStem)
-      && (modelStem.includes(projectorStem) || projectorStem.includes(modelStem));
-  });
-  return paired ? path.join(dir, paired) : '';
-}
-
-function resolveProjectorPath({ modelPath, fsImpl = fs } = {}) {
-  try {
-    if (!String(modelPath || '').trim()) {
-      return '';
-    }
-    const dir = path.dirname(modelPath);
-    return pairProjector(dir, modelPath, splitGgufFiles(fsImpl.readdirSync(dir)));
-  } catch (_error) {
-    return '';
-  }
 }
 
 function resolveBinaryPath({
@@ -193,10 +160,6 @@ function resolveBinaryPath({
   }
   return '';
 }
-
-
-
-
 
 // Any llama-server-*.key left in userData belongs to a launch whose main
 // process died before readiness settled; the server it authenticated is gone
@@ -253,28 +216,13 @@ function buildLaunchArgs({
   return args;
 }
 
-async function probeVisionSupport(baseUrl, {
-  timeoutMs = 2_000,
-  apiKey = '',
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  try {
-    const response = await requestWithTimeout(new URL('/props', baseUrl).toString(), {
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-      timeoutMs,
-      fetchImpl,
-    });
-    if (!response || response.ok !== true) return false;
-    const payload = await response.json();
-    return payload?.modalities?.vision === true;
-  } catch (_error) {
-    return false;
-  }
-}
-
 async function startLlamaServer({
   modelTag,
   binaryPath = '',
+  // Which build this launch runs (the manager's resolveLaunchRuntime): a
+  // bounded label for logs, and whether a load failure blames the bundled one.
+  runtimeLabel = '',
+  runtimeSource = '',
   modelPath = '',
   projectorPath: preResolvedProjectorPath,
   userDataPath = '',
@@ -290,6 +238,11 @@ async function startLlamaServer({
   // Fired once when a spawned child exits (never for a reused server); the
   // manager uses it to surface a crash. Never awaited, must not throw.
   onExit = null,
+  // Throttled engine-liveness sink. llama-server prints per-slot decode
+  // telemetry while the model composes a buffered tool call — the one signal
+  // that separates "still generating" from "hung" for the sidecar's stream
+  // inactivity watchdog (services/backend/engine-activity-lines.js).
+  onEngineActivity = null,
   logger,
   platform = process.platform,
   spawnImpl = spawn,
@@ -396,7 +349,7 @@ async function startLlamaServer({
   });
 
   log('INFO', 'llama.server.spawn', {
-    binary: resolvedBinary,
+    runtime: runtimeLabel || (binaryPath ? 'custom' : 'bundled'),
     model: resolvedModel,
     mmproj: projectorPath,
     host,
@@ -424,18 +377,51 @@ async function startLlamaServer({
       command: buildPidRecordCommand(resolvedBinary, args),
     });
   }
-  pipeChildLogs(child, { logger: log, prefix: 'llama.server' });
+  let loadFailure = '';
+  let inspectedLines = 0;
+  const forwardEngineActivity = createEngineActivityForwarder({ onEngineActivity });
+  const redactFolder = runtimeFolderRedactor(resolvedBinary, platform);
+  pipeChildLogs(child, {
+    // Logged lines carry the folder token; classification reads the raw line.
+    logger: (level, event, details) => log(level, event, typeof details?.line === 'string'
+      ? { ...details, line: redactFolder(details.line) }
+      : details),
+    prefix: 'llama.server',
+    resolveLevel: resolveLlamaServerOutputLevel,
+    onOutput: ({ stream, line }) => {
+      if (stream !== 'stderr') {
+        return;
+      }
+      // Before the load-failure early-outs: decode telemetry arrives long
+      // after the inspection budget is spent, and that is exactly when the
+      // watchdog needs it.
+      if (forwardEngineActivity) {
+        forwardEngineActivity(line);
+      }
+      if (loadFailure || inspectedLines >= MAX_LOAD_FAILURE_LINES) {
+        return;
+      }
+      inspectedLines += 1;
+      const plain = line.replace(LOG_COLOR_CODES, '');
+      if (UNSUPPORTED_MODEL_PATTERNS.some((pattern) => pattern.test(plain))) {
+        loadFailure = 'model_unsupported';
+      }
+    },
+  });
 
   const childExitedRef = { exited: false };
+  // Set by stop()/stopSync(): an exit we asked for is not an anomaly.
+  const stopHandleState = { stopped: false };
   let exitInfo = null;
   child.on('exit', (code, signal) => {
     childExitedRef.exited = true;
     exitInfo = { code, signal };
-    clearPidFile(pidPath);
-    log(code === 0 ? 'INFO' : 'WARN', 'llama.server.exited', {
+    clearOwnedPidFile(pidPath, child.pid);
+    log(code === 0 || stopHandleState.stopped ? 'INFO' : 'WARN', 'llama.server.exited', {
       pid: child.pid || 0,
       code,
       signal: String(signal || ''),
+      requested: stopHandleState.stopped,
     });
     if (typeof onExit === 'function') {
       try {
@@ -445,8 +431,9 @@ async function startLlamaServer({
   });
   child.on('error', (error) => {
     childExitedRef.exited = true;
+    // The code only: a spawn error's message carries the executable's path.
     log('ERROR', 'llama.server.spawn_error', {
-      message: String(error && error.message || error),
+      code: String(error && error.code || 'spawn_failed'),
     });
   });
 
@@ -472,7 +459,19 @@ async function startLlamaServer({
       platform,
       spawnSyncImpl,
       isProcessAliveImpl,
+      childExitedRef,
     });
+    if (message === 'child_exited_before_ready') {
+      if (!loadFailure) {
+        await stderrSettled(child, STDERR_SETTLE_TIMEOUT_MS);
+      }
+      if (loadFailure) {
+        // Names whose build could not read the file; never the path.
+        const blamed = runtimeSource === 'bundled' || (!runtimeSource && !binaryPath) ? 'bundled' : 'custom';
+        log('WARN', 'llama.server.model_unsupported', { runtime: runtimeLabel || blamed });
+        throw new Error(`llama_server_${loadFailure}:${blamed}`, { cause: error });
+      }
+    }
     throw error;
   }
 
@@ -490,6 +489,7 @@ async function startLlamaServer({
       platform,
       spawnSyncImpl,
       isProcessAliveImpl,
+      childExitedRef,
     });
     removeApiKeyFile();
     throw new Error('llama_server_readiness_timeout');
@@ -497,8 +497,6 @@ async function startLlamaServer({
 
   removeApiKeyFile();
   log('INFO', 'llama.server.ready', { pid: child.pid || 0, baseUrl });
-
-  const stopHandleState = { stopped: false };
 
   // Resolves { confirmed } — false when even the force kill could not be
   // verified, so the owner (the manager) never records a clean stop for a
@@ -509,7 +507,7 @@ async function startLlamaServer({
     }
     stopHandleState.stopped = true;
     if (childExitedRef.exited || !child.pid) {
-      clearPidFile(pidPath);
+      clearOwnedPidFile(pidPath, child.pid);
       return { confirmed: true };
     }
     const pid = child.pid;
@@ -519,7 +517,7 @@ async function startLlamaServer({
     const deadline = Date.now() + Math.max(Number(timeoutMs) || DEFAULT_GRACEFUL_STOP_TIMEOUT_MS, 500);
     while (Date.now() < deadline) {
       if (childExitedRef.exited || !isProcessAliveImpl(pid)) {
-        clearPidFile(pidPath);
+        clearOwnedPidFile(pidPath, pid);
         return { confirmed: true };
       }
       await wait(100);
@@ -532,6 +530,7 @@ async function startLlamaServer({
       platform,
       spawnSyncImpl,
       isProcessAliveImpl,
+      childExitedRef,
     });
     return { confirmed };
   }
@@ -543,7 +542,7 @@ async function startLlamaServer({
     stopHandleState.stopped = true;
     const pid = child.pid;
     if (!pid || childExitedRef.exited) {
-      clearPidFile(pidPath);
+      clearOwnedPidFile(pidPath, pid);
       return;
     }
     forceKillAndClearConfirmedPid({
@@ -580,6 +579,7 @@ module.exports = {
   getPidFilePath,
   llamaServerIdentityConfirmed,
   normalizeModelTagForFilename,
+  pairProjector,
   probeExistingServer,
   probeHealth,
   probeVisionSupport,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID
 from sidecar.ai.memory.service import (
     MemoryService,
     approved_memory_api,
@@ -41,11 +42,16 @@ GENERIC_CAPTURE_VALUES = {
 
 
 def _is_memory_suppressed(
-    memory_store: MemoryStore | MemoryService, fingerprint: str
+    memory_store: MemoryStore | MemoryService,
+    fingerprint: str,
+    *,
+    project_id: str,
 ) -> bool:
     pending = pending_memory_api(memory_store)
     checker = getattr(pending, "is_memory_suppressed", None)
-    return bool(checker(fingerprint)) if callable(checker) else False
+    return (
+        bool(checker(fingerprint, project_id=project_id)) if callable(checker) else False
+    )
 
 # ── Regex building blocks ─────────���───────────────────────────────────
 _PERSON_NAME_TOKEN_PATTERN = (
@@ -554,6 +560,7 @@ def serialize_pending_memory_candidate(candidate: PendingMemoryCandidate) -> dic
         "category": candidate.category,
         "created_at": candidate.created_at,
         "updated_at": candidate.updated_at,
+        "project_id": candidate.project_id,
     }
 
 
@@ -565,21 +572,29 @@ def suggest_memories(
     messages: Any,
     memory_store: MemoryStore | MemoryService,
     session_id: Any = None,
+    project_id: str = GENERAL_PROJECT_ID,
 ) -> list[dict[str, object]]:
     normalized_session_id = _normalize_spaces(str(session_id or ""))
     approved = approved_memory_api(memory_store)
     pending = pending_memory_api(memory_store)
     if normalized_session_id:
-        pending_candidates = pending.get_pending_candidates(normalized_session_id)
+        pending_candidates = pending.get_pending_candidates(
+            normalized_session_id, project_id=project_id
+        )
         filtered_pending_candidates = []
         for candidate in pending_candidates:
             if (
-                approved.has_memory_fingerprint(candidate.content_fingerprint)
-                or _is_memory_suppressed(memory_store, candidate.content_fingerprint)
+                approved.has_memory_fingerprint(
+                    candidate.content_fingerprint, project_id=project_id
+                )
+                or _is_memory_suppressed(
+                    memory_store, candidate.content_fingerprint, project_id=project_id
+                )
             ):
                 pending.delete_pending_candidate(
                     session_id=normalized_session_id,
                     content_fingerprint=candidate.content_fingerprint,
+                    project_id=project_id,
                 )
                 continue
             filtered_pending_candidates.append(candidate)
@@ -619,8 +634,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -641,8 +658,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -663,8 +682,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -685,8 +706,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -707,8 +730,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -733,8 +758,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -759,8 +786,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)
@@ -784,8 +813,10 @@ def suggest_memories(
             if fingerprint in seen_fingerprints:
                 continue
             if approved.has_memory_fingerprint(
-                fingerprint
-            ) or _is_memory_suppressed(memory_store, fingerprint):
+                fingerprint, project_id=project_id
+            ) or _is_memory_suppressed(
+                memory_store, fingerprint, project_id=project_id
+            ):
                 continue
             suggestions.append(candidate_payload)
             seen_fingerprints.add(fingerprint)

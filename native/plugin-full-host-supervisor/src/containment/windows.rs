@@ -1,5 +1,6 @@
 use crate::process_tree::TerminationProof;
 use super::WorkloadLimits;
+use super::output_reader::{OutputReaderHandle, OutputReaderOwner};
 use crate::transport::{host_request, secret_request, validate_host_response};
 use sha2::Digest;
 use std::ffi::OsStr;
@@ -52,6 +53,7 @@ pub struct ContainedProcess {
     session_id: String,
     session_epoch: u64,
     proof_timeout_ms: u64,
+    stderr_reader: OutputReaderOwner,
 }
 
 // The process object is owned by one supervisor session and every mutable
@@ -60,11 +62,12 @@ pub struct ContainedProcess {
 // them after the final session reference is released.
 unsafe impl Send for ContainedProcess {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TerminationHandle {
     job: usize,
     process: usize,
     proof_timeout_ms: u64,
+    stderr_reader: OutputReaderHandle,
 }
 
 fn job_tree_empty(job: HANDLE) -> bool {
@@ -98,11 +101,16 @@ impl TerminationHandle {
         let reaped = killed && !process.is_null()
             && unsafe { WaitForSingleObject(process, wait_ms) } == WAIT_OBJECT_0;
         let tree_empty = killed && wait_for_tree_empty(job, self.proof_timeout_ms);
+        let reader_deadline = Instant::now()
+            + Duration::from_millis(self.proof_timeout_ms.clamp(1_000, 60_000));
+        let output_readers_terminated = tree_empty
+            && self.stderr_reader.wait_until(reader_deadline);
         TerminationProof {
             known: true,
             reaped,
             contained: true,
             tree_empty,
+            output_readers_terminated,
             escalated: true,
             surviving_process_count: if tree_empty { 0 } else { 1 },
         }
@@ -128,7 +136,8 @@ impl Drop for ContainedProcess {
 impl ContainedProcess {
     pub fn termination_handle(&self) -> TerminationHandle {
         TerminationHandle { job: self.job as usize, process: self.process as usize,
-            proof_timeout_ms: self.proof_timeout_ms }
+            proof_timeout_ms: self.proof_timeout_ms,
+            stderr_reader: self.stderr_reader.handle() }
     }
     pub fn peer_identity_digest(&self) -> String {
         hex::encode(sha2::Sha256::digest(self.session_key))
@@ -350,14 +359,14 @@ pub fn terminate_or_prove_absent(session_id: &str, session_epoch: u64,
     if job.is_null() {
         let absent = unsafe { GetLastError() } == ERROR_FILE_NOT_FOUND;
         return TerminationProof { known: absent, reaped: absent, contained: absent,
-            tree_empty: absent, escalated: false,
+            tree_empty: absent, output_readers_terminated: false, escalated: false,
             surviving_process_count: if absent { 0 } else { 1 } };
     }
     let killed = unsafe { TerminateJobObject(job, 1) } != 0;
     let tree_empty = killed && wait_for_tree_empty(job, proof_timeout_ms);
     unsafe { CloseHandle(job); }
     TerminationProof { known: killed && tree_empty, reaped: killed && tree_empty, contained: true,
-        tree_empty, escalated: true,
+        tree_empty, output_readers_terminated: false, escalated: true,
         surviving_process_count: if tree_empty { 0 } else { 1 } }
 }
 
@@ -555,17 +564,7 @@ pub fn launch(path: &Path, session_id: &str, session_epoch: u64,
         return Err("session_key_generation_failed".to_string());
     }
     let stderr = unsafe { File::from_raw_handle(stderr_read.cast()) };
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut buffer = Vec::with_capacity(4096);
-        loop {
-            buffer.clear();
-            match reader.read_until(b'\n', &mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-        }
-    });
+    let stderr_reader = OutputReaderOwner::drain(stderr);
     Ok(ContainedProcess {
         pid: process.dwProcessId,
         job,
@@ -579,5 +578,6 @@ pub fn launch(path: &Path, session_id: &str, session_epoch: u64,
         session_id: String::new(),
         session_epoch: 0,
         proof_timeout_ms: limits_profile.forced_termination_proof_ms,
+        stderr_reader,
     })
 }

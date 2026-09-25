@@ -6,7 +6,7 @@ import logging
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context.builder import (
@@ -24,7 +24,6 @@ from sidecar.ai.context.token_budget import (
 )
 from sidecar.ai.engines.base import BaseEngine, EngineMessage
 from sidecar.ai.error_codes import CMP_TSRCH_DEFERRED_TOOL
-from sidecar.ai.mcp.client import MCPClient
 from sidecar.ai.routing import chat_decision as _cd
 from sidecar.ai.routing import engine_messages as _em
 from sidecar.ai.routing import tool_execution as _te
@@ -46,6 +45,9 @@ from sidecar.protocol import CHAT_THINKING_KIND_STATUS
 from sidecar.runtime.chat_models import ChatRequestContext
 from sidecar.runtime.diagnostics import log_event
 
+if TYPE_CHECKING:
+    from sidecar.ai.mcp.client import MCPClient
+
 logger = logging.getLogger(__name__)
 MAX_LOOP_ITERATIONS = 8
 
@@ -64,6 +66,7 @@ class ApprovalRequest:
     policy_decision_id: str | None = None
     policy_scope: str | None = None
     policy_consequence: str | None = None
+    one_off_only: bool = False
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -80,6 +83,8 @@ class ApprovalRequest:
             payload["policy_scope"] = self.policy_scope
         if self.policy_consequence:
             payload["policy_consequence"] = self.policy_consequence
+        if self.one_off_only:
+            payload["one_off_only"] = True
         return payload
 
 
@@ -122,10 +127,14 @@ class ChatDecision:
     terminal_error_code: str | None = None
     terminal_subcode: str | None = None
     terminal_error_retryable: bool = False
-    # Exact auto-compaction trigger (budget.auto_compact_threshold) for the
-    # request's TokenBudget, so the renderer meter denominator matches the
-    # sidecar trigger. None when the token_budget flag is off.
+    # Exact auto-compaction trigger for the request's TokenBudget in
+    # whole-prompt tokens (budget.meter_compact_threshold), so the renderer
+    # meter denominator matches the sidecar trigger. None when the token_budget
+    # flag is off.
     compact_threshold_tokens: int | None = None
+    # The tool-schema reserve inside compact_threshold_tokens; the meter adds
+    # it to the message-only estimate so both sides count the same prompt.
+    context_tool_overhead_tokens: int | None = None
 
 
 class AgentKernel:
@@ -528,6 +537,7 @@ class AgentKernel:
         max_tokens: int,
         prompt_cache_enabled: bool,
         runtime: LoopRuntime | None = None,
+        purpose: str = "compaction_summary",
     ) -> Any:
         return _build_compaction_generate_fn_runtime(
             self,
@@ -535,6 +545,7 @@ class AgentKernel:
             max_tokens=max_tokens,
             prompt_cache_enabled=prompt_cache_enabled,
             runtime=runtime,
+            purpose=purpose,
         )
 
     # -- Self-evaluation retry helpers --------------------------------------
@@ -634,6 +645,7 @@ class AgentKernel:
         plan_mode: bool = False,
         read_only: bool = False,
         request_disabled_tools: frozenset[str] = frozenset(),
+        policy_snapshot: Any | None = None,
     ) -> Any:
         return _te.filter_tool_calls_by_policy(
             self,
@@ -645,6 +657,7 @@ class AgentKernel:
             plan_mode=plan_mode,
             read_only=read_only,
             request_disabled_tools=request_disabled_tools,
+            policy_snapshot=policy_snapshot,
         )
 
     def _update_read_snapshot_cache(
@@ -654,6 +667,7 @@ class AgentKernel:
         tool_name: str,
         success: bool,
         metadata: dict[str, object],
+        execution_context: Any | None = None,
     ) -> None:
         _te.update_read_snapshot_cache(
             self,
@@ -661,13 +675,18 @@ class AgentKernel:
             tool_name=tool_name,
             success=success,
             metadata=metadata,
+            execution_context=execution_context,
         )
 
     def _rebuild_read_snapshot_cache(
         self,
         canonical_session_messages: list[dict[str, object]] | None,
+        *,
+        execution_context: Any | None = None,
     ) -> dict[str, dict[str, object]]:
-        return _te.rebuild_read_snapshot_cache(self, canonical_session_messages)
+        return _te.rebuild_read_snapshot_cache(
+            self, canonical_session_messages, execution_context=execution_context
+        )
 
     def _freeze_effective_execution_inputs(
         self,
@@ -679,6 +698,8 @@ class AgentKernel:
         plan_mode: bool = False,
         read_only: bool = False,
         trusted_plan_artifact_write: bool | None = None,
+        execution_context: Any | None = None,
+        turn_id: str | None = None,
     ) -> Any:
         return _te.freeze_effective_execution_inputs(
             self,
@@ -689,6 +710,8 @@ class AgentKernel:
             plan_mode=plan_mode,
             read_only=read_only,
             trusted_plan_artifact_write=trusted_plan_artifact_write,
+            execution_context=execution_context,
+            turn_id=turn_id,
         )
 
     def _execute_tool_search(
@@ -720,6 +743,9 @@ class AgentKernel:
         trusted_plan_artifact_write: bool | None = None,
         audit_metadata: dict[str, object] | None = None,
         runtime: LoopRuntime | None = None,
+        on_dispatch_ready: Callable[[], None] | None = None,
+        restored_inputs: Any | None = None,
+        on_frozen_input: Callable[[Any], Any] | None = None,
     ) -> ToolExecutionOutcome:
         return _te.execute_tool(
             self,
@@ -731,6 +757,8 @@ class AgentKernel:
             trusted_plan_artifact_write=trusted_plan_artifact_write,
             audit_metadata=audit_metadata,
             runtime=runtime,
+            on_dispatch_ready=on_dispatch_ready,
+            restored_inputs=restored_inputs, on_frozen_input=on_frozen_input,
         )
 
     @staticmethod

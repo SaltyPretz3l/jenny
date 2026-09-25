@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from sidecar.ai.routing.loop_events import LoopEvent
 from sidecar.ai.routing.tool_observation import (
@@ -25,6 +25,9 @@ from sidecar.runtime.turn_state import (
     TURN_STATE_TIMEOUT,
 )
 
+if TYPE_CHECKING:
+    from sidecar.ai.routing.tool_resource_deferral import BeforeToolDispatchContinuation
+
 
 def _noop_emit(_event: LoopEvent) -> None:
     """Default no-op emitter for non-streaming callers and tests."""
@@ -36,12 +39,19 @@ class LoopRuntime:
 
     emit: Callable[[LoopEvent], None] = _noop_emit
     request_id: str = ""
+    logical_turn_id: str | None = None
     trace_id: str = ""
     session_id: str = ""
     notification_writer: Callable[[dict[str, Any]], None] | None = None
     electron_tool_writer: Callable[[dict[str, Any]], None] | None = None
     electron_tool_reader: Callable[[float], dict[str, Any]] | None = None
     electron_tool_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None = None
+    operation_admission: Callable[..., dict[str, Any]] | None = None
+    inference_admission: Callable[[Any], Any] | None = None
+    continuation_checkpoint: (
+        Callable[[BeforeToolDispatchContinuation], Mapping[str, Any]] | None
+    ) = None
+    continuation_resume: Callable[..., Any] | None = None
     max_iterations: int = 8
     # Absolute iteration numbering for this run starts at ``iteration_base + 1``.
     # Non-zero only on approval-resume: the resumed loop must CONTINUE the
@@ -67,6 +77,8 @@ class LoopRuntime:
     tool_call_limit: int | None = None
     provider_cost_expected: bool = False
     tool_calls_consumed: int = 0
+    quota_registry: Any | None = field(default=None, repr=False)
+    quota_discipline_enabled: bool | None = None
     pre_dispatch_emitted_call_ids: set[str] = field(default_factory=set)
     # TURN-scoped de-collision namespace for canonical tool-call ids. The
     # synthetic id formula is a pure function of (request_id, provider,
@@ -78,6 +90,7 @@ class LoopRuntime:
     # instead of letting it overwrite the first iteration's durable
     # tool_use/tool_result rows.
     turn_call_ids: set[str] = field(default_factory=set)
+    dependency_resume: dict[str, Any] | None = field(default=None, repr=False)
     emitted_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     tool_result_emitted_call_ids: set[str] = field(default_factory=set)
     # Most-recent iteration's visible-text deltas buffered without flushing

@@ -34,7 +34,10 @@
     }
 
     function buildToolCallRow(turnId, events, toolCallId, context) {
-      const row = createBaseRow('tool_call', turnId, events);
+      const anchor = events.find((event) => event.kind === 'tool_use') || events[0];
+      const row = createBaseRow('tool_call', turnId, events, anchor?.primary_message_id);
+      row.row_id = `row:${normalizeId(anchor?.event_id)}`;
+      row.first_event_sort_key = Array.isArray(anchor?.sort_key) ? anchor.sort_key.slice() : [];
       const payload = {
         tool_call_id: normalizeId(toolCallId),
         tool_name: '',
@@ -180,6 +183,7 @@
     // IFF the call is awaiting approval and unresolved. The streaming reducer
     // mirrors this payload shape so live and hydrated rows reconcile cleanly; the
     // `22-approval-pending` corpus scenario enforces presence parity.
+    // A turn sealed by sealTurnRows keeps its gap row as a settled `interrupted` receipt.
     function buildApprovalGapRow(turnId, events, toolCallId, context) {
       const row = createBaseRow('approval_gap', turnId, events);
       const payload = {
@@ -221,6 +225,7 @@
         if (policyScope) payload.policy_scope = policyScope;
         if (policyConsequence) payload.policy_consequence = policyConsequence;
         if (reason) payload.reason = reason;
+        if (toolUsePayload.one_off_only === true) payload.one_off_only = true;
       }
       for (const event of events) {
         if (event.kind !== 'approval_requested') {
@@ -240,6 +245,7 @@
         if (policyScope) payload.policy_scope = policyScope;
         if (policyConsequence) payload.policy_consequence = policyConsequence;
         if (reason) payload.reason = reason;
+        if (event.payload && event.payload.one_off_only === true) payload.one_off_only = true;
       }
       row.tool_call_id = payload.tool_call_id;
       row.payload = payload;

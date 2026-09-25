@@ -833,6 +833,23 @@ def test_memory_policy_defaults_only_when_present() -> None:
     assert policy is not None
     assert policy.enabled is True
     assert policy.include_response_style is True
+    assert policy.project_id == "project_general"
+
+
+def test_memory_policy_accepts_valid_project_scope() -> None:
+    policy = memory_policy_from_params(
+        {"memory_policy": {"project_id": "project_runtime_chat"}}
+    )
+    assert policy is not None
+    assert policy.project_id == "project_runtime_chat"
+
+
+@pytest.mark.parametrize("project_id", [None, "general", "project_bad space"])
+def test_memory_policy_rejects_malformed_explicit_project_scope(
+    project_id: object,
+) -> None:
+    with pytest.raises(ValueError, match="project_id"):
+        memory_policy_from_params({"memory_policy": {"project_id": project_id}})
 
 
 def test_memory_policy_accepts_authoritative_opt_out() -> None:

@@ -19,6 +19,7 @@ from sidecar.runtime.memory import (
     _validate_capture,
     delete_pending_memory,
     list_memories_page,
+    list_pending_memories_page,
     save_memory_candidate,
     suggest_memories,
     update_memory,
@@ -36,6 +37,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
     confidence: float,
     source_excerpt: str,
     category: str = "",
+    project_id: str = "project_general",
 ) -> int:
     timestamp = datetime.now(timezone.utc).isoformat()
     cursor = store._connection.execute(  # noqa: SLF001
@@ -43,8 +45,8 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
             confidence, source_excerpt, content_fingerprint, family_key,
-            category, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+            category, created_at, updated_at, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -58,6 +60,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
             category,
             timestamp,
             timestamp,
+            project_id,
         ),
     )
     store._connection.commit()  # noqa: SLF001
@@ -346,7 +349,7 @@ def test_suggest_project_context_no_vector_db(empty_store: MemoryStore) -> None:
 
 
 # ---------------------------------------------------------------------------
-# suggest_memories â€” routine / goal / important person patterns
+# suggest_memories — routine / goal / important person patterns
 # ---------------------------------------------------------------------------
 
 
@@ -655,6 +658,47 @@ def test_suggest_memories_deletes_stale_pending_candidates_and_falls_back(
     assert empty_store.get_pending_candidates("session-1") == []
 
 
+def test_suggestion_cleanup_and_suppression_are_project_scoped(
+    empty_store: MemoryStore,
+) -> None:
+    for project_id in ("project_alpha", "project_beta"):
+        _insert_pending_candidate(
+            empty_store,
+            session_id="session-1",
+            source_request_id=f"request-{project_id}",
+            title="Preference: tea",
+            lesson_text="The user prefers tea.",
+            lesson_kind="preference",
+            confidence=0.9,
+            source_excerpt="I prefer tea",
+            project_id=project_id,
+        )
+    empty_store.save_memory(
+        session_id="session-1",
+        title="Preference: tea",
+        lesson_text="The user prefers tea.",
+        lesson_kind="preference",
+        confidence=0.9,
+        source_excerpt="I prefer tea",
+        project_id="project_alpha",
+    )
+
+    suggestions = suggest_memories(
+        session_id="session-1",
+        messages=[],
+        memory_store=empty_store,
+        project_id="project_beta",
+    )
+
+    assert [item["project_id"] for item in suggestions] == ["project_beta"]
+    assert empty_store.get_pending_candidates(
+        "session-1", project_id="project_alpha"
+    ) == []
+    assert len(
+        empty_store.get_pending_candidates("session-1", project_id="project_beta")
+    ) == 1
+
+
 def test_delete_pending_memory_removes_matching_candidate(empty_store: MemoryStore) -> None:
     fingerprint = _build_fingerprint("preference", "The user prefers tea.")
     _insert_pending_candidate(
@@ -754,3 +798,130 @@ def test_approved_memory_cursor_is_snapshot_stable_during_concurrent_changes(
 
     legacy_page = list_memories_page(cursor="2", limit=2, memory_store=empty_store)
     assert len(legacy_page["memories"]) == 2
+
+
+def test_all_project_memory_pages_keep_snapshot_and_legacy_cursor_semantics(
+    empty_store: MemoryStore,
+) -> None:
+    expected_projects = {"project_general", "project_alpha", "project_beta"}
+    for project_id in expected_projects:
+        empty_store.save_memory(
+            session_id=f"session-{project_id}",
+            title=f"Layered memory {project_id}",
+            lesson_text=f"Layered tea preference for {project_id}.",
+            lesson_kind="preference",
+            confidence=0.9,
+            source_excerpt="layered tea preference",
+            project_id=project_id,
+        )
+
+    first_rows, cursor = empty_store.get_memories_page(
+        limit=2,
+        project_id="ignored-with-all-projects",
+        all_projects=True,
+    )
+    assert isinstance(cursor, tuple)
+    second_rows, next_cursor = empty_store.get_memories_page(
+        limit=2,
+        snapshot_max_id=cursor[0],
+        after_id=cursor[1],
+        all_projects=True,
+    )
+    assert next_cursor is None
+    assert {row.project_id for row in [*first_rows, *second_rows]} == expected_projects
+
+    legacy_rows, legacy_cursor = empty_store.get_memories_page(
+        limit=2, legacy_offset=0, all_projects=True
+    )
+    assert legacy_cursor == 2
+    legacy_tail, _ = empty_store.get_memories_page(
+        limit=2, legacy_offset=legacy_cursor, all_projects=True
+    )
+    assert {row.project_id for row in [*legacy_rows, *legacy_tail]} == expected_projects
+
+
+def test_all_project_pending_pages_serialize_project_scope(
+    empty_store: MemoryStore,
+) -> None:
+    for project_id in ("project_general", "project_alpha", "project_beta"):
+        _insert_pending_candidate(
+            empty_store,
+            session_id=f"session-{project_id}",
+            source_request_id=f"request-{project_id}",
+            title=f"Pending {project_id}",
+            lesson_text=f"The user prefers pending item {project_id}.",
+            lesson_kind="preference",
+            confidence=0.9,
+            source_excerpt="pending item",
+            project_id=project_id,
+        )
+
+    first_page = list_pending_memories_page(
+        cursor=None,
+        limit=2,
+        memory_store=empty_store,
+        all_projects=True,
+    )
+    second_page = list_pending_memories_page(
+        cursor=first_page["next_cursor"],
+        limit=2,
+        memory_store=empty_store,
+        all_projects=True,
+    )
+
+    candidates = [*first_page["candidates"], *second_page["candidates"]]
+    assert {candidate["project_id"] for candidate in candidates} == {
+        "project_general",
+        "project_alpha",
+        "project_beta",
+    }
+
+
+def test_layered_recall_includes_general_but_never_other_projects(
+    empty_store: MemoryStore,
+) -> None:
+    for project_id in ("project_general", "project_alpha", "project_beta"):
+        empty_store.save_memory(
+            session_id=f"session-{project_id}",
+            title=f"Layered tea {project_id}",
+            lesson_text=f"Layered tea guidance for {project_id}.",
+            lesson_kind="response_style",
+            confidence=0.9,
+            source_excerpt="layered tea guidance",
+            project_id=project_id,
+        )
+
+    alpha_only = empty_store.recall_memories(
+        "layered tea", limit=5, project_id="project_alpha"
+    )
+    layered = empty_store.recall_memories(
+        "layered tea",
+        limit=5,
+        project_id="project_alpha",
+        include_general=True,
+    )
+    recent = empty_store.get_recent_memories_by_kind(
+        "response_style",
+        5,
+        project_id="project_alpha",
+        include_general=True,
+    )
+    prompt = empty_store.recall_memories_for_prompt(
+        "layered tea",
+        limit=5,
+        max_prompt_tokens=10_000,
+        project_id="project_alpha",
+        include_general=True,
+    )
+    general = empty_store.recall_memories(
+        "layered tea",
+        limit=5,
+        project_id="project_general",
+        include_general=True,
+    )
+
+    assert {row.project_id for row in alpha_only} == {"project_alpha"}
+    assert {row.project_id for row in layered} == {"project_alpha", "project_general"}
+    assert {row.project_id for row in recent} == {"project_alpha", "project_general"}
+    assert {row.project_id for row in prompt} == {"project_alpha", "project_general"}
+    assert {row.project_id for row in general} == {"project_general"}

@@ -472,7 +472,12 @@ async function loadRendererApp({
   // latency that would otherwise delay render-gating setDocument() awaits.
   // Real injection (Monaco on artifact edit, Mermaid mid-stream) is owner GUI smoke.
   window.scriptLoaderUtils = {
-    ensureScript() { return Promise.resolve(false); },
+    async ensureScript({ src } = {}) {
+      if (!['renderer/shell/renderer-orchestration-view.js', 'renderer/shell/renderer-orchestration-controller.js'].includes(src)) return false;
+      const scriptPath = path.join(root, src);
+      vm.runInContext(fs.readFileSync(scriptPath, 'utf8'), context, { filename: scriptPath });
+      return true;
+    },
     _resetForTests() {},
   };
   // Optional window globals seeded BEFORE the renderer scripts run, for state a

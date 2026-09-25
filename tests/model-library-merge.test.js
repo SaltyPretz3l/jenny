@@ -121,6 +121,8 @@ test('no managed input preserves the projection with neutral engine and accelera
       mtp: { eligible: false, enabled: false, headroomMb: 0 },
       serving: false,
       servingPort: 0,
+      customBuild: 0,
+      libraryGguf: false,
       source: 'both',
     }],
   });

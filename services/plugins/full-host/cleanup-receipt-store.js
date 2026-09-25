@@ -12,6 +12,7 @@ class FullHostCleanupReceiptStore {
     this._dir = joinPath(baseDir, 'runtime');
     this._now = now;
     this._chain = Promise.resolve();
+    this._live = new Set();
   }
 
   _exclusive(operation) {
@@ -28,9 +29,22 @@ class FullHostCleanupReceiptStore {
     return read.value;
   }
 
-  record({ session = {}, result = {}, reason = 'termination_unproven' } = {}) {
+  reserve({ session = {} } = {}) {
+    return this._record({ session, result: { cleanup_status: 'launch_reserved' },
+      reason: 'host_launch_reserved' }, true);
+  }
+
+  record(record = {}) { return this._record(record, false); }
+
+  _record({ session = {}, result = {}, reason = 'termination_unproven' } = {}, live = false) {
     return this._exclusive(async () => {
+      const key = JSON.stringify([session.session_id, session.session_epoch]);
+      if (!live) this._live.delete(key);
       const state = await this._read();
+      if (typeof session.session_id !== 'string' || !session.session_id
+        || !Number.isSafeInteger(session.session_epoch) || session.session_epoch < 1) {
+        return { ok: false, reason: 'cleanup_receipt_invalid' };
+      }
       const receipt = {
         session_id: session.session_id,
         session_epoch: session.session_epoch,
@@ -43,27 +57,39 @@ class FullHostCleanupReceiptStore {
         cleanup_status: result.cleanup_status || 'termination_failed',
         recorded_at: new Date(this._now()).toISOString(),
       };
-      state.receipts = state.receipts.filter((item) => !(
+      const existingIndex = state.receipts.findIndex((item) => item && typeof item === 'object' && (
         item.session_id === receipt.session_id && item.session_epoch === receipt.session_epoch
       ));
-      state.receipts.push(receipt);
-      state.receipts = state.receipts.slice(-MAX_RECEIPTS);
+      if (live && existingIndex >= 0) return { ok: false, reason: 'cleanup_receipt_identity_exists' };
+      if (existingIndex < 0 && state.receipts.length >= MAX_RECEIPTS) {
+        return { ok: false, reason: 'cleanup_receipt_store_capacity' };
+      }
+      if (existingIndex >= 0) {
+        receipt.recorded_at = new Date(this._now()).toISOString();
+        state.receipts[existingIndex] = { ...state.receipts[existingIndex],
+          ...Object.fromEntries(Object.entries(receipt).filter(([, value]) => value !== undefined)) };
+      } else state.receipts.push(receipt);
       await writeJsonFileAtomic(this._facade, this._dir, FILE_NAME, state);
+      if (live) this._live.add(key);
       return { ok: true, receipt };
     }).catch(() => ({ ok: false, reason: 'cleanup_receipt_store_unavailable' }));
   }
 
-  list() {
-    return this._exclusive(async () => ({ ok: true, receipts: (await this._read()).receipts }))
+  list({ includeLive = false } = {}) {
+    return this._exclusive(async () => ({ ok: true, receipts: (await this._read()).receipts
+      .filter((item) => includeLive || !this._live.has(JSON.stringify([
+        item?.session_id, item?.session_epoch,
+      ]))) }))
       .catch(() => ({ ok: false, reason: 'cleanup_receipt_store_unavailable', receipts: [] }));
   }
 
   settle(receipt = {}) {
     return this._exclusive(async () => {
+      this._live.delete(JSON.stringify([receipt.session_id, receipt.session_epoch]));
       const state = await this._read();
-      state.receipts = state.receipts.filter((item) => !(
+      state.receipts = state.receipts.filter((item) => !(item && typeof item === 'object' && (
         item.session_id === receipt.session_id && item.session_epoch === receipt.session_epoch
-      ));
+      )));
       await writeJsonFileAtomic(this._facade, this._dir, FILE_NAME, state);
       return { ok: true };
     }).catch(() => ({ ok: false, reason: 'cleanup_receipt_store_unavailable' }));

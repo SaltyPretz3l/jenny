@@ -150,3 +150,33 @@ test('the lifecycle deadline reaches emergency cleanup while a runtime stage is 
   assert.equal(probe.logs.length, logCount);
   assert.deepEqual(events, ['emergency', 'exit:0']);
 });
+
+for (const [label, cleanupConfirmed, expected] of [
+  ['a settled runtime', true, true],
+  ['a runtime with unsettled work', false, false],
+]) {
+  test(`emergency shutdown after a requested runtime shutdown judges ${label} by its settled state`, () => {
+    // The awaited quit path always requests the runtime shutdown first, so the
+    // emergency stage used to read "requested" and report unconfirmed on every quit.
+    const logs = [];
+    const sessionRuntime = {
+      beginShutdown: () => ({ requested: true, completion: Promise.resolve({ ok: cleanupConfirmed }) }),
+      isCleanupConfirmed: () => cleanupConfirmed,
+    };
+    const controller = createRuntimeShutdownController({
+      app: { getPath: () => '' },
+      getBackendService: () => ({ sessionRuntime }),
+      llamaServerManager: { stopSync() {} },
+      shutdownManagedSidecarSyncImpl: () => ({ hadState: false }),
+      shutdownLlamaServerSyncImpl: () => ({ hadState: false }),
+      shutdownAnyLocalOllamaSyncImpl: () => ({ skipped: 'no_owned_state' }),
+      log: (level, event, fields) => logs.push({ level, event, fields }),
+    });
+    controller.runEmergencyRuntimeShutdownSync();
+    const terminal = logs.find(({ fields }) => fields?.stage === 'emergency_fallback');
+    assert.equal(terminal.fields.runtimeShutdownRequested, true);
+    assert.equal(terminal.fields.runtimeCleanupConfirmed, cleanupConfirmed);
+    assert.equal(terminal.fields.confirmed, expected);
+    assert.equal(terminal.level, expected ? 'INFO' : 'WARN');
+  });
+}

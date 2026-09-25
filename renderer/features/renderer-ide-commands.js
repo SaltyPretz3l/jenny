@@ -327,6 +327,8 @@
       const key = String(event.key).toLowerCase();
       if (ctrl && key === 's' && !event.shiftKey && !event.altKey) {
         event.preventDefault();
+        // Pane-owned saves run in the bubble phase after in-pane editors commit.
+        if (event.target?.closest?.('[data-ide-save-shortcut="pane"]')) return;
         saveActiveFile();
         return;
       }

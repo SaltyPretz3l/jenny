@@ -26,6 +26,7 @@ test('hosted run_command uses the injected worker broker and foreground contract
     status: () => ({ available: true }),
     async execute(input, context) {
       observed = { input, context };
+      await context.beforeAdmission();
       return {
         status: 'completed',
         exit_code: 0,
@@ -52,7 +53,9 @@ test('hosted run_command uses the injected worker broker and foreground contract
   assert.deepEqual(observed.input, {
     command: 'printf ok', cwd: 'src', timeoutSeconds: 5, expectedExitCodes: [0],
   });
+  assert.equal(typeof observed.context.beforeAdmission, 'function');
   assert.deepEqual(observed.context, {
+    beforeAdmission: observed.context.beforeAdmission,
     sessionId: 'session-1', streamId: 'stream-1', signal: null,
   });
 });

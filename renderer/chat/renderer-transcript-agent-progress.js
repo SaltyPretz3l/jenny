@@ -51,7 +51,7 @@
 
     const stepsHtml = steps.map((step) => {
       const display = resolveAgentStepDisplay(step);
-      const stage = humanizeStage(step && step.stage) || 'Working';
+      const stage = humanizeStage(step && step.stage) || jt('chat.thinking.workingStage', 'Working');
     const summary = String((step && step.summary) || '').trim() || jt('chat.thinking.working', 'Working on it.');
       const percent = Number.isFinite(Number(step && step.percent))
         ? Math.min(100, Math.max(0, Math.round(Number(step.percent))))

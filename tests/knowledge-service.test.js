@@ -4,6 +4,7 @@ const path = require('path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { FileJsonStore } = require('../services/backend/file-json-store');
 const { KnowledgeService } = require('../services/knowledge-service');
 const {
   cleanupTrackedResources,
@@ -47,8 +48,10 @@ test('addFolder persists a root and a new instance reflects it', () => {
   assert.ok(fs.existsSync(knowledgePath(userDataPath)), 'knowledge.json must be written on first add');
 
   const persisted = JSON.parse(fs.readFileSync(knowledgePath(userDataPath), 'utf8'));
-  assert.equal(persisted.schemaVersion, 1);
+  assert.equal(persisted.schemaVersion, 2);
+  assert.equal(persisted.revision, 1);
   assert.equal(persisted.roots.length, 1);
+  assert.equal(persisted.roots[0].project_id, 'project_general');
   assert.equal(fs.realpathSync(persisted.roots[0].path), fs.realpathSync(folder));
 
   const reloaded = makeService(userDataPath);
@@ -152,7 +155,7 @@ test('future schema stays read-only and preserves the original bytes', () => {
   assert.deepEqual(fs.readFileSync(knowledgePath(userDataPath)), original);
 });
 
-test('persisted roots are validated independently and capped before publication', () => {
+test('an incompatible legacy registry is preserved and cannot authorize roots', () => {
   const { userDataPath, rootsHome } = makeTempDirs('jenny-knowledge-loaded-validation');
   const first = path.join(rootsHome, 'first');
   const second = path.join(rootsHome, 'second');
@@ -175,33 +178,23 @@ test('persisted roots are validated independently and capped before publication'
       { id: 'overflow', path: overflow },
     ],
   }), 'utf8');
+  const original = fs.readFileSync(knowledgePath(userDataPath));
   const warnings = [];
   const service = makeService(userDataPath, {
     maxRoots: 2,
     logger: (level, event, details) => warnings.push({ level, event, details }),
   });
 
-  assert.deepEqual(
-    service.getStateSnapshot().roots.map((root) => ({ id: root.id, path: root.path })),
-    [
-      { id: 'first', path: fs.realpathSync(first) },
-      { id: 'second', path: fs.realpathSync(second) },
-    ]
-  );
-  assert.deepEqual(
-    warnings.map((entry) => [entry.level, entry.event, entry.details.reason]),
-    [
-      ['WARN', 'knowledge.persisted_root_rejected', 'invalid_path'],
-      ['WARN', 'knowledge.persisted_root_rejected', 'not_a_directory'],
-      ['WARN', 'knowledge.persisted_root_rejected', 'duplicate'],
-      ['WARN', 'knowledge.persisted_root_rejected', 'sensitive_path'],
-      ['WARN', 'knowledge.persisted_root_rejected', 'limit_reached'],
-    ]
-  );
-  assert.deepEqual(service.getSidecarConfig().knowledge_roots, [
-    fs.realpathSync(first),
-    fs.realpathSync(second),
-  ]);
+  const snapshot = service.getStateSnapshot();
+  assert.deepEqual(snapshot.roots, []);
+  assert.equal(snapshot.readOnly, true);
+  assert.equal(snapshot.reason, 'invalid_schema');
+  assert.deepEqual(service.getSidecarConfig(), {
+    tools_knowledge_enabled: false,
+    knowledge_roots: [],
+  });
+  assert.ok(warnings.some((entry) => entry.event === 'knowledge.invalid_legacy_schema'));
+  assert.deepEqual(fs.readFileSync(knowledgePath(userDataPath)), original);
 });
 
 test('a persisted root whose path is currently missing is kept, not pruned', () => {
@@ -211,7 +204,10 @@ test('a persisted root whose path is currently missing is kept, not pruned', () 
   const offline = path.join(rootsHome, 'unplugged-drive');
   fs.writeFileSync(knowledgePath(userDataPath), JSON.stringify({
     schemaVersion: 1,
-    roots: [{ id: 'offline', path: offline }, { id: 'present', path: present }],
+    roots: [
+      { id: 'offline', path: offline, label: '', addedAt: '2025-01-01T00:00:00.000Z' },
+      { id: 'present', path: present, label: '', addedAt: '2025-01-02T00:00:00.000Z' },
+    ],
   }), 'utf8');
   const service = makeService(userDataPath);
 
@@ -230,16 +226,16 @@ test('failed persistence retains the prior roots and emits no change', () => {
   fs.mkdirSync(first, { recursive: true });
   fs.mkdirSync(second, { recursive: true });
   let rejectWrites = false;
-  const fsImpl = {
-    ...fs,
-    writeFileSync(...args) {
+  const diskStore = new FileJsonStore(knowledgePath(userDataPath));
+  const store = {
+    write(value) {
       if (rejectWrites) {
         throw new Error('disk full');
       }
-      return fs.writeFileSync(...args);
+      return diskStore.write(value);
     },
   };
-  const service = makeService(userDataPath, { fsImpl });
+  const service = makeService(userDataPath, { store });
   const events = [];
   service.on('changed', (snapshot) => events.push(snapshot));
   const added = service.addFolder({ path: first });

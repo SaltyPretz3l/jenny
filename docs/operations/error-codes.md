@@ -1,7 +1,7 @@
 # CMP-* Error Code Registry
 
 **Schema version:** 1
-**Last reconciled:** 2026-09-08
+**Last reconciled:** 2026-09-09
 
 This is the single source of truth for every `CMP-<DOMAIN>-<NNNN>` error code emitted by Jenny's sidecar (Python) and backend services (Node). Codes are wire-stable identifiers attached to error payloads (`error_code` field) so that the renderer and ops tooling can route, classify, and surface failures consistently.
 
@@ -17,15 +17,27 @@ This is the single source of truth for every `CMP-<DOMAIN>-<NNNN>` error code em
 
 Each row in the per-domain tables below has the following columns:
 
-- **Constant** â€” Python or Node identifier as defined in the source-of-truth file.
-- **Wire code** â€” the literal `CMP-<DOMAIN>-<NNNN>` string emitted on the wire.
-- **Meaning** â€” one-line description of the failure condition.
-- **Retryable** â€” `Yes` (transient; retry policy will re-attempt), `No` (terminal; surface to user), `Conditional` (depends on caller context).
-- **Terminal classification** â€” how the chat/tool runtime classifies the error: `runtime_error`, `denied`, `cancelled`, `timeout`, `preempted`, `question_batch`, or `internal` (never reaches user).
-- **User-visible message** â€” what the renderer shows; `internal-only` if the code never escapes the sidecar.
-- **Example raise site** â€” `path:line` of one representative raise site (not exhaustive). `DEAD` means the code is defined but not raised anywhere outside its definition file.
+- **Constant** — Python or Node identifier as defined in the source-of-truth file.
+- **Wire code** — the literal `CMP-<DOMAIN>-<NNNN>` string emitted on the wire.
+- **Meaning** — one-line description of the failure condition.
+- **Retryable** — `Yes` (transient; retry policy will re-attempt), `No` (terminal; surface to user), `Conditional` (depends on caller context).
+- **Terminal classification** — how the chat/tool runtime classifies the error: `runtime_error`, `denied`, `cancelled`, `timeout`, `preempted`, `question_batch`, or `internal` (never reaches user).
+- **User-visible message** — what the renderer shows; `internal-only` if the code never escapes the sidecar.
+- **Example raise site** — `path:line` of one representative raise site (not exhaustive). `DEAD` means the code is defined but not raised anywhere outside its definition file.
 
 ---
+
+## PROJECT - `CMP-PROJECT-NNNN` (4 codes)
+
+Application project authority uses canonical session summaries and revalidates
+the captured root. Missing or invalid authority never selects another project.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `PROJECT_ERROR_CODES.INVALID` | `CMP-PROJECT-0001` | Malformed project identity | No | denied | The stored project identity is invalid. | `services/projects/application-project-scope.js` |
+| `PROJECT_ERROR_CODES.NOT_FOUND` | `CMP-PROJECT-0002` | Canonical project or session missing | No | denied | The project or session could not be found. | `services/projects/application-project-scope.js` |
+| `PROJECT_ERROR_CODES.UNAVAILABLE` | `CMP-PROJECT-0003` | Project storage, root or hosted boundary unavailable | Conditional | denied | Project storage or its workspace is unavailable. | `services/projects/application-project-scope.js` |
+| `PROJECT_ERROR_CODES.STALE` | `CMP-PROJECT-0004` | Captured project authority is no longer current | No | denied | Project access changed. Review the project before trying again. | `services/projects/application-project-scope.js` |
 
 ## HOST - `CMP-HOST-NNNN` (7 codes)
 
@@ -80,7 +92,7 @@ an Electron result envelope, not a chat/tool terminal event.
 
 ---
 
-## TOOL â€” `CMP-TOOL-NNNN` (43 codes, 0 dead)
+## TOOL — `CMP-TOOL-NNNN` (44 codes, 0 dead)
 
 Tool-execution failures: approval denials, workspace policy violations, IO errors, validation failures from built-in tools.
 
@@ -130,8 +142,9 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED` / `TOOL_ERROR_CODES.PLACEHOLDER_ARGUMENTS_REJECTED` (Node) | `CMP-TOOL-0044` | Model echoed the schema example instead of real arguments (the whole argument object is the generated minimal example and that example contains a `<string>`/`<value>` placeholder, or -- for a side-effecting or descriptor-less tool -- any argument value is such a placeholder); settled before dispatch so the call never reaches the pre-mutation auto-checkpoint | No | `runtime_error` | "Tool '{name}' was not executed: the arguments are the schema example placeholders, not real values. Supply real arguments, or if no tool is needed, answer the user directly." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PRECONDITION_UNMET` | `CMP-TOOL-0045` | A declared tool precondition (e.g. `git_repo` for the git read tools and worktree change tracking) is unmet at call time; the tool stays listed but blocked until the precondition is satisfied | No | `runtime_error` | "'{cwd}' is not a git repository..." (git ops) / "worktree tracking requires a git repository within the workspace" | [sidecar/ai/tools/builtins/git_ops.py](../../sidecar/ai/tools/builtins/git_ops.py) |
 | `CMP_TOOL_PAUSED_UNATTENDED` | `CMP-TOOL-0046` | Auto run changed to prompt after the batch approval scan, so a side-effecting call was paused before dispatch | Yes | `runtime_error` | "Tool '{tool_id}' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
+| `CMP_TOOL_PDF_ADDON_MISSING` | `CMP-TOOL-0047` | Optional PDF reading add-on is not installed or could not be loaded | No | `unavailable` | "PDF reading needs the optional PDF reading add-on, which is not installed. Tell the user they can install it in Settings › Tools › PDF reading add-on. Do not retry this PDF until they say it is installed." | [sidecar/ai/tools/builtins/filesystem_content.py](../../sidecar/ai/tools/builtins/filesystem_content.py) |
 
-## MEM â€” `CMP-MEM-NNNN` (9 codes, 0 dead)
+## MEM — `CMP-MEM-NNNN` (9 codes, 0 dead)
 
 Approved-memory store: persistence, validation, schema migration.
 
@@ -147,7 +160,7 @@ Approved-memory store: persistence, validation, schema migration.
 | `CMP_MEMORY_ROW_QUARANTINED` | `CMP-MEM-0008` | One malformed legacy row was quarantined while the store remained available | No | `runtime_error` | "A malformed memory row was quarantined." | [sidecar/ai/memory/store.py](../../sidecar/ai/memory/store.py) |
 | `CMP_MEMORY_BACKGROUND_TIMEOUT` | `CMP-MEM-0009` | A bounded background memory worker exceeded its deadline | Yes | `runtime_error` | "A background memory task timed out." | [sidecar/runtime/subprocess_manager.py](../../sidecar/runtime/subprocess_manager.py) |
 
-## MODE â€” `CMP-MODE-NNNN` (1 active code, 1 retired number)
+## MODE — `CMP-MODE-NNNN` (1 active code, 1 retired number)
 
 Companion-mode policy violations.
 
@@ -156,7 +169,7 @@ Companion-mode policy violations.
 | (retired) | `CMP&#8209;MODE&#8209;0001` | Retired; number reserved | - | - | - | Retired |
 | `CMP_MODE_TOOL_BLOCKED` | `CMP-MODE-0002` | Tool blocked by current mode | No | `runtime_error` | "This tool is unavailable in {mode} mode." | [sidecar/ai/tools/assembly.py:151](../../sidecar/ai/tools/assembly.py#L151) |
 
-## MCP â€” `CMP-MCP-NNNN` (9 codes, 0 dead)
+## MCP — `CMP-MCP-NNNN` (9 codes, 0 dead)
 
 External MCP server integration.
 
@@ -172,7 +185,7 @@ External MCP server integration.
 | `CMP_MCP_RESOURCE_INVALID` | `CMP-MCP-0008` | MCP resource request is malformed | No | `runtime_error` | "MCP resource request is invalid." | [sidecar/ai/mcp/client.py:742](../../sidecar/ai/mcp/client.py#L742) |
 | `CMP_MCP_TOOL_SURFACE_CHANGED` | `CMP-MCP-0009` | Approved MCP server advertised a materially different tool surface | No | `runtime_error` | "MCP tool review is stale; review this connection again." | [sidecar/ai/mcp/client.py](../../sidecar/ai/mcp/client.py) |
 
-## CTX â€” `CMP-CTX-NNNN` (2 codes, 0 dead)
+## CTX — `CMP-CTX-NNNN` (2 codes, 0 dead)
 
 Context-builder failures: skill loading, workspace, compaction.
 
@@ -189,7 +202,7 @@ Configuration / setup preconditions: a required setting is missing (not a runtim
 |---|---|---|---|---|---|---|
 | `CMP_CFG_WORKSPACE_MISSING` | `CMP-CFG-0001` | Request explicitly enabled only workspace-requiring tools, but no workspace root is configured (the default no-root case degrades silently instead) | No | `runtime_error` | "Every enabled tool requires a workspace root, but none is configured. Set a workspace root in Settings, then try again." | [sidecar/runtime/request_dispatch.py:820](../../sidecar/runtime/request_dispatch.py#L820) |
 
-## LOOP â€” `CMP-LOOP-NNNN` (12 Python + 3 Node peer codes, 0 dead)
+## LOOP — `CMP-LOOP-NNNN` (12 Python + 3 Node peer codes, 0 dead)
 
 Tool-loop runtime: stop conditions, generation failures, validation.
 
@@ -209,7 +222,7 @@ Tool-loop runtime: stop conditions, generation failures, validation.
 | `CMP_LOOP_REPEATED_OBSERVATIONS` | `CMP-LOOP-0018` | Deterministic harness detected repeated tool observations | No | `runtime_error` | "Tool loop is repeating observations; stopping." | [sidecar/ai/routing/loop_stop.py](../../sidecar/ai/routing/loop_stop.py) |
 | `CMP_LOOP_STUCK_SUSPECTED` | `CMP-LOOP-0019` | Deterministic harness suspected a semantic stuck loop | No | `runtime_error` | "Tool loop appears stuck; stopping." | [sidecar/ai/routing/loop_stop.py](../../sidecar/ai/routing/loop_stop.py) |
 
-## AI â€” `CMP-AI-NNNN` (5 active Python codes + 2 Node peer codes, 2 retired numbers)
+## AI — `CMP-AI-NNNN` (5 active Python codes + 2 Node peer codes, 2 retired numbers)
 
 Engine layer (model load/connection/generation). Python engine errors flow through the typed exception hierarchy in [sidecar/ai/exceptions.py](../../sidecar/ai/exceptions.py), which sets `error_code` from imported constants in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py). Node peers cover Electron-owned provider classification and managed Ollama preflight paths.
 
@@ -223,7 +236,7 @@ Engine layer (model load/connection/generation). Python engine errors flow throu
 | `CMP_AI_UNSUPPORTED_MODAL` | `CMP-AI-0006` | Unsupported modality | No | `runtime_error` | "This model doesn't support {modality}." | [sidecar/ai/engines/ollama.py:700](../../sidecar/ai/engines/ollama.py#L700) |
 | (retired) | `CMP&#8209;AI&#8209;0007` | Retired; number reserved | - | - | - | Retired |
 
-## CHAT â€” `CMP-CHAT-NNNN` (2 Python + 1 Node = 3 codes, 0 dead)
+## CHAT — `CMP-CHAT-NNNN` (2 Python + 1 Node = 3 codes, 0 dead)
 
 Chat-stream parameter validation and serialization.
 
@@ -366,7 +379,7 @@ Electron-owned Home (formerly Companion Home) follow-up validation failures.
 |---|---|---|---|---|---|---|
 | `COMPANION_ERROR_CODES.FOLLOW_UP_INVALID` | `CMP-COMPANION-0001` | Follow-up label/body exceeds companion limits | No | `runtime_error` | "Follow-up label/body exceeds the configured limit." | [services/shell-config-service.js](../../services/shell-config-service.js) |
 
-## SRV â€” `CMP-SRV-NNNN` (1 code, 0 dead)
+## SRV — `CMP-SRV-NNNN` (1 code, 0 dead)
 
 Service-lifecycle errors.
 
@@ -374,7 +387,7 @@ Service-lifecycle errors.
 |---|---|---|---|---|---|---|
 | `CMP_SRV_INITIALIZE_FAILED` | `CMP-SRV-0001` | Service initialization failed | No | `runtime_error` | internal-only | [sidecar/runtime/request_dispatch.py:1348](../../sidecar/runtime/request_dispatch.py#L1348) |
 
-## REMOTE â€” `CMP-REMOTE-NNNN` (12 Node codes, 0 dead)
+## REMOTE — `CMP-REMOTE-NNNN` (12 Node codes, 0 dead)
 
 Remote Control command admission, authority, bounded transport, and resynchronization errors. The runtime values are owned by `ERROR_CODES` in the remote wire contract.
 
@@ -393,15 +406,20 @@ Remote Control command admission, authority, bounded transport, and resynchroniz
 | `ERROR_CODES.invalid_request` | `CMP-REMOTE-0011` | A remote frame or command violates the versioned wire contract | No | `runtime_error` | "The remote request is invalid." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
 | `ERROR_CODES.epoch_invalid` | `CMP-REMOTE-0012` | A command or frame belongs to an invalidated Remote Control live epoch | Yes | `runtime_error` | "Remote Control was restarted. Reconnect your phone." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
 
-## RUNTIME â€” `CMP-RUNTIME-NNNN` (1 code, 0 dead)
+## RUNTIME — `CMP-RUNTIME-NNNN` (6 codes, 0 dead)
 
 Per-stream / per-process resource ceilings (see resource-budgets.md).
 
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
-| `CMP_RESOURCE_EXCEEDED` | `CMP-RUNTIME-0001` | Active turn / process resource ceiling exceeded | Conditional | `runtime_error` | "Resource limit exceeded." | [sidecar/server.py:255](../../sidecar/server.py#L255) |
+| `CMP_RESOURCE_EXCEEDED` / `RUNTIME_ERROR_CODES.RESOURCE_EXCEEDED` | `CMP-RUNTIME-0001` | Active turn / process resource ceiling exceeded | Conditional | `runtime_error` | "Resource limit exceeded." | [sidecar/server.py:255](../../sidecar/server.py#L255) |
+| `RUNTIME_ERROR_CODES.ADMISSION_REJECTED` | `CMP-RUNTIME-0002` | Invalid operation, authority, or continuation evidence | No | Request rejection | Internal reason only | [runtime-continuation-managed.js](../../services/backend/runtime-continuation-managed.js) |
+| `RUNTIME_ERROR_CODES.INVALID_REQUEST` | `CMP-RUNTIME-0003` | Malformed closed application request | No | Request rejection | Stable reason only | [application-service.js](../../services/session-runtime/application-service.js) |
+| `RUNTIME_ERROR_CODES.NOT_FOUND` | `CMP-RUNTIME-0004` | Requested runtime work is absent | No | Request rejection | Stable reason only | [application-service.js](../../services/session-runtime/application-service.js) |
+| `RUNTIME_ERROR_CODES.UNAVAILABLE` | `CMP-RUNTIME-0005` | Runtime inspection is unavailable | Conditional | Request rejection | Stable reason only | [application-service.js](../../services/session-runtime/application-service.js) |
+| `RUNTIME_ERROR_CODES.STALE` | `CMP-RUNTIME-0006` | Pagination revision is stale | Yes, with a fresh page | Request rejection | Stable reason only | [application-service.js](../../services/session-runtime/application-service.js) |
 
-## PROTO â€” `CMP-PROTO-NNNN` (3 codes, 0 dead)
+## PROTO — `CMP-PROTO-NNNN` (3 codes, 0 dead)
 
 Protocol version and request identity contracts.
 
@@ -411,7 +429,7 @@ Protocol version and request identity contracts.
 | `CMP_PROTO_DUPLICATE_REQUEST_ID` | `CMP-PROTO-0002` | Duplicate active JSON-RPC request id | No | `runtime_error` | internal-only | [sidecar/server.py:269](../../sidecar/server.py#L269) |
 | `CMP_PROTO_INVALID_ENVELOPE` | `CMP-PROTO-0003` | Invalid inbound JSON-RPC envelope | No | `runtime_error` | "Invalid JSON-RPC request." | [sidecar/runtime/rpc.py:57](../../sidecar/runtime/rpc.py#L57) |
 
-## PERSIST â€” `CMP-PERSIST-NNNN` (3 Node codes, 0 dead)
+## PERSIST — `CMP-PERSIST-NNNN` (3 Node codes, 0 dead)
 
 Electron-owned persistence and import/export failures.
 
@@ -464,6 +482,8 @@ Workspace IDE page filesystem failures from `WorkspaceIdeService`, `VersionedWor
 | `WORKSPACE_FS_ERROR_CODES.IMAGE_TOO_LARGE` | `CMP-WORKSPACEFS-0012` | Image exceeds the preview read cap (10 MB) | No | `runtime_error` | "Image is too large to preview." | [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING` | `CMP-WORKSPACEFS-0013` | Existing bytes are not strict UTF-8 text, carry an unsupported BOM, or editor text cannot round-trip safely | No | `runtime_error` | "File is not valid editable UTF-8 text." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.IMAGE_UNSUPPORTED` | `CMP-WORKSPACEFS-0014` | Versioned media read requested a path whose canonical/requested extension is not on the narrow image MIME allowlist | No | `runtime_error` | "Only supported workspace image files can be opened as images." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
+| `WORKSPACE_FS_ERROR_CODES.DOCUMENT_UNSUPPORTED` | `CMP-WORKSPACEFS-0015` | Versioned document read/write requested a path whose extension is not `.pdf`/`.docx`, whose bytes lack the format's magic (`%PDF-` / `PK`), or whose format field mismatches; the renderer also raises it when no viewer pane can load the bytes | No | `runtime_error` | "Only supported workspace documents (PDF, DOCX) can be opened as documents." | [services/versioned-workspace-file-documents.js](../../services/versioned-workspace-file-documents.js) |
+| `WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE` | `CMP-WORKSPACEFS-0016` | Versioned document read/write exceeds the 32 MiB document cap | No | `runtime_error` | "This document is larger than the document size limit." | [services/versioned-workspace-file-documents.js](../../services/versioned-workspace-file-documents.js) |
 | `WORKSPACE_FS_ERROR_CODES.WRITE_CONFLICT` | `CMP-WORKSPACEFS-0020` | On-disk mtime, opaque identity/hash version, or post-open file identity differs from the editor snapshot | Conditional | `runtime_error` | "File changed on disk since it was last loaded." | [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.ATOMIC_WRITE_FAILED` | `CMP-WORKSPACEFS-0021` | Exclusive temp was durable but atomic replacement failed; cleanup preserves the original target | Conditional | `runtime_error` | "The file could not be replaced atomically; the original was left intact." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.IO_FAILED` | `CMP-WORKSPACEFS-0022` | A versioned file IO seam failed and was safely bounded/redacted | Conditional | `runtime_error` | "The workspace file operation failed safely." | [services/versioned-workspace-file-service.js](../../services/versioned-workspace-file-service.js) |
@@ -536,7 +556,7 @@ Headless harness errors (request-dispatch testbed).
 |---|---|---|---|---|---|---|
 | `CMP_HARNESS_TURN_NOT_FOUND` | `CMP-HARN-0001` | Harness turn id not found | No | `runtime_error` | "Turn not found." | [sidecar/runtime/request_dispatch_harness.py:234](../../sidecar/runtime/request_dispatch_harness.py#L234) |
 
-## WEB â€” `CMP-WEB-NNNN` (6 codes, 0 dead)
+## WEB — `CMP-WEB-NNNN` (6 codes, 0 dead)
 
 Web-fetch tool: SSRF, rate limiting, fetch failures.
 
@@ -549,7 +569,7 @@ Web-fetch tool: SSRF, rate limiting, fetch failures.
 | `CMP_WEB_CONTENT_TOO_LARGE` | `CMP-WEB-0006` | Response exceeds size limit | No | `runtime_error` | "Response too large." | [sidecar/ai/tools/builtins/web.py:446](../../sidecar/ai/tools/builtins/web.py#L446) |
 | `CMP_WEB_INVALID_URL` | `CMP-WEB-0007` | URL parse failed | No | `runtime_error` | "Invalid URL: {url}." | [sidecar/ai/tools/builtins/web.py:506](../../sidecar/ai/tools/builtins/web.py#L506) |
 
-## CACHE â€” `CMP-CACHE-NNNN` (1 code, 0 dead)
+## CACHE — `CMP-CACHE-NNNN` (1 code, 0 dead)
 
 Prompt-cache instrumentation.
 
@@ -557,7 +577,7 @@ Prompt-cache instrumentation.
 |---|---|---|---|---|---|---|
 | `CMP_CACHE_BREAK_DETECTED` | `CMP-CACHE-0001` | Prompt-cache break detected | No | `internal` | internal-only (telemetry) | [sidecar/ai/routing/generation_runtime.py:489](../../sidecar/ai/routing/generation_runtime.py#L489) |
 
-## TSRCH â€” `CMP-TSRCH-NNNN` (2 active codes, 1 retired number)
+## TSRCH — `CMP-TSRCH-NNNN` (2 active codes, 1 retired number)
 
 Tool-search subsystem (deferred-tool resolution).
 
@@ -567,7 +587,7 @@ Tool-search subsystem (deferred-tool resolution).
 | `CMP_TSRCH_INVALID_QUERY` | `CMP-TSRCH-0002` | Tool search query invalid | No | `runtime_error` | "Tool search query invalid." | [sidecar/ai/tools/tool_search_handler.py:43](../../sidecar/ai/tools/tool_search_handler.py#L43) |
 | `CMP_TSRCH_DEFERRED_TOOL` | `CMP-TSRCH-0003` | Tool requires deferred resolution | No | `runtime_error` | "Tool requires search-then-call." | [sidecar/ai/routing/router.py:363](../../sidecar/ai/routing/router.py#L363) |
 
-## CLOUD â€” `CMP-CLOUD-NNNN` (4 codes, 0 dead)
+## CLOUD — `CMP-CLOUD-NNNN` (4 codes, 0 dead)
 
 Cloud-engine HTTP layer; raised by the shared provider HTTP service.
 
@@ -590,7 +610,7 @@ Node-side transport errors between backend and Python sidecar (timeouts, aborts,
 | `SIDECAR_ERROR_CODES.TRANSPORT` | `CMP-SIDECAR-0004` | Transport-level framing/encode error | No | `runtime_error` | internal-only | [services/backend/sidecar-client.js:346](../../services/backend/sidecar-client.js#L346) |
 | `SIDECAR_ERROR_CODES.RPC` | `CMP-SIDECAR-0005` | JSON-RPC error from sidecar | Conditional | `runtime_error` | internal-only | [services/backend/sidecar-client.js:682](../../services/backend/sidecar-client.js#L682) |
 
-## INTERACTIVE â€” `CMP-INTERACTIVE-NNNN` (6 codes, 0 dead)
+## INTERACTIVE — `CMP-INTERACTIVE-NNNN` (6 codes, 0 dead)
 
 Interactive-protocol invariants (mixed-batch detection in chat-stream and tool-loop; Wave F adds the plan-proposal siblings).
 
@@ -633,7 +653,7 @@ The enforced check is now `python scripts/checks/check_error_codes.py`, which re
 
 Codes are tagged `Retryable: Yes/No/Conditional` in the tables above. The runtime consumes this via two complementary mechanisms:
 
-1. **`CompanionError.retryable: bool`** â€” set by the raiser. Defined in [sidecar/exceptions.py](../../sidecar/exceptions.py). Default: `False`. Subclasses in [sidecar/ai/exceptions.py](../../sidecar/ai/exceptions.py) override the default per error class (e.g. `EngineConnectionError` and `RateLimitError` default to `True`).
+1. **`CompanionError.retryable: bool`** — set by the raiser. Defined in [sidecar/exceptions.py](../../sidecar/exceptions.py). Default: `False`. Subclasses in [sidecar/ai/exceptions.py](../../sidecar/ai/exceptions.py) override the default per error class (e.g. `EngineConnectionError` and `RateLimitError` default to `True`).
 
 2. **Call-site retry decisions** — the flag is read directly at the boundaries that choose to re-attempt (engine transports, tool dispatch); there is no central retry wrapper.
 
@@ -645,9 +665,9 @@ Codes are tagged `Retryable: Yes/No/Conditional` in the tables above. The runtim
 
 Errors surface to the renderer through three channels:
 
-1. **`tool.result`** events with `is_error: true` â€” tool failures in the loop. Renderer reads `error_code` and `message` and styles them as a tool error bubble.
-2. **`chat.error`** events â€” terminal chat failures. Renderer shows them as a system message with the wire code visible for support.
-3. **`runtime_error`** terminal classifier â€” escapes the loop and ends the turn.
+1. **`tool.result`** events with `is_error: true` — tool failures in the loop. Renderer reads `error_code` and `message` and styles them as a tool error bubble.
+2. **`chat.error`** events — terminal chat failures. Renderer shows them as a system message with the wire code visible for support.
+3. **`runtime_error`** terminal classifier — escapes the loop and ends the turn.
 
 ### Live-event recovery metadata (error-surfacing EH-W1)
 
@@ -655,7 +675,7 @@ As of the error-surfacing overhaul, the `chat.error` channel (2) and the `runtim
 
 ### Codes whose message is not actionable enough
 
-The following codes surface to the user but their current message reads like a developer log line. Recommended rewording (separate follow-up â€” not part of this bundle):
+The following codes surface to the user but their current message reads like a developer log line. Recommended rewording (separate follow-up — not part of this bundle):
 
 | Code | Current message (paraphrase) | Recommended rewording |
 |---|---|---|
@@ -697,8 +717,8 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 - **2026-05-23** - Added the Node peer for `CMP-AI-0002` managed Ollama preflight failures and reconciled the AI registry notes with typed sidecar exception imports.
 - **2026-05-06** - Phase 4C reconciliation: documented deterministic-harness sentinel codes, promoted remaining backend CMP literals to Node registry constants, added Node AI/CLOUD classifier peers, and enabled registry drift checks.
 - **2026-04-26** - Added Node-side ARTIFACT peer constants for canonical `CMP-ARTIFACT-*` wire codes and documented artifact workspace error-code propagation through rejected IPC bridge calls.
-- **2026-04-26** â€” Added Node-side TOOL peer constants for canonical `CMP-TOOL-*` wire codes and documented Electron tool-loop propagation of executor `errorCode` values through stream events, turn-event payloads, and persisted `tool_result.error_code`.
-- **2026-04-19** â€” Initial registry. Bundle 5A of `BACKEND_PROMPT_LIFECYCLE_REVIEW.md`. Promoted 13 string-literal sites to constants (6 SYM-RPC, 5 backend, 2 in `services/session-recovery-service.js` + `services/backend/turn-diagnostic-dump.js`), created `services/backend/error-codes.js`, audited 138 codes total (42 dead).
+- **2026-04-26** — Added Node-side TOOL peer constants for canonical `CMP-TOOL-*` wire codes and documented Electron tool-loop propagation of executor `errorCode` values through stream events, turn-event payloads, and persisted `tool_result.error_code`.
+- **2026-04-19** — Initial registry. Bundle 5A of `BACKEND_PROMPT_LIFECYCLE_REVIEW.md`. Promoted 13 string-literal sites to constants (6 SYM-RPC, 5 backend, 2 in `services/session-recovery-service.js` + `services/backend/turn-diagnostic-dump.js`), created `services/backend/error-codes.js`, audited 138 codes total (42 dead).
 
 ## UPD - desktop updater (3 codes)
 

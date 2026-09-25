@@ -44,6 +44,8 @@ const UI_LANGUAGE_TAGS = Object.freeze([
 const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
 const UNATTENDED_GUARD_MINUTES_DEFAULT = 0;
 const UNATTENDED_GUARD_MINUTES_MAX = 120;
+const AUTO_APPROVE_STREAK_CAP_DEFAULT = 50;
+const AUTO_APPROVE_STREAK_CAP_MAX = 500;
 
 function normalizeUiLanguage(value) {
   if (typeof value !== 'string') return 'en';
@@ -65,6 +67,14 @@ function normalizeUnattendedGuardMinutes(value) {
   if (!Number.isFinite(parsed) || parsed < 0) return UNATTENDED_GUARD_MINUTES_DEFAULT;
   if (parsed === 0) return 0;
   return Math.min(UNATTENDED_GUARD_MINUTES_MAX, Math.max(1, Math.trunc(parsed)));
+}
+
+function normalizeAutoApproveStreakCap(value) {
+  if (!['number', 'string'].includes(typeof value)
+    || (typeof value === 'string' && !value.trim())) return AUTO_APPROVE_STREAK_CAP_DEFAULT;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return AUTO_APPROVE_STREAK_CAP_DEFAULT;
+  return Math.min(AUTO_APPROVE_STREAK_CAP_MAX, Math.max(0, Math.trunc(parsed)));
 }
 
 function normalizeCompanion(value = {}) {
@@ -269,6 +279,8 @@ function normalizeWorkspaceState(value = {}, validSessionIds = null) {
 }
 
 module.exports = {
+  AUTO_APPROVE_STREAK_CAP_DEFAULT,
+  AUTO_APPROVE_STREAK_CAP_MAX,
   DEFAULT_COMPANION,
   DEFAULT_FEATURE_OVERRIDES,
   DEFAULT_MEMORY,
@@ -284,6 +296,7 @@ module.exports = {
   cloneFeatureOverrides,
   hasOwnConfigField,
   isToolsWorktreeEnabled,
+  normalizeAutoApproveStreakCap,
   normalizeCompanion,
   normalizeMaxBudgetUsd,
   normalizeMemorySettings,

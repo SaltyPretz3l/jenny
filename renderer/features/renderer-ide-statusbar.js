@@ -328,7 +328,7 @@
       const ide = getIde();
       const path = String(ide.activeTabPath || '');
       const visible = Boolean(path) && !isDiffTab(path);
-      const statusVisible = visible && getDocumentKind(path) !== 'image';
+      const statusVisible = visible && !['image', 'document'].includes(getDocumentKind(path));
       if (dom.ideStatusBar) {
         const markup = statusVisible ? buildStatusMarkup(path) : '';
         if (dom.ideStatusBar.__jennyIdeStatusMarkup !== markup) {

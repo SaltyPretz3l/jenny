@@ -9,6 +9,7 @@ const {
 } = require('./backend/session-store-logging');
 const { FEATURE_OVERRIDE_KEYS, TOOL_SETTING_KEYS } = require('./feature-flags');
 const { normalizeLocalEngines } = require('./shell-config-engines');
+const { applySessionRuntimePatch } = require('./shell-config-session-runtime');
 const {
   CONFIG_VERSION,
   DEFAULT_CHAT_UI,
@@ -29,6 +30,7 @@ const {
   MAX_FOLLOW_UP_LABEL_CHARS,
   WORKSPACE_WRITE_DELAY_MS,
   cloneState,
+  normalizeAutoApproveStreakCap,
   normalizeChatUiSettings,
   normalizeWindowUiSettings,
   normalizeAssistantIdentity,
@@ -118,6 +120,7 @@ class ShellConfigService extends EventEmitter {
     clearTimeoutImpl = clearTimeout,
   } = {}) {
     super();
+    this.setMaxListeners(32); // eleven main-process 'changed' subscribers (2026-09-15); Node warns past 10
     if (!userDataPath) {
       throw new Error('userDataPath is required for ShellConfigService.');
     }
@@ -130,8 +133,7 @@ class ShellConfigService extends EventEmitter {
       typeof getValidWorkspaceSessionIds === 'function' ? getValidWorkspaceSessionIds : null;
     this._nowProvider = typeof nowProvider === 'function' ? nowProvider : () => new Date();
     this.resourcesPath = String(resourcesPath || '').trim();
-    this._workspaceWriteDelayMs =
-      Math.max(0, Number(workspaceWriteDelayMs) || WORKSPACE_WRITE_DELAY_MS);
+    this._workspaceWriteDelayMs = Math.max(0, Number(workspaceWriteDelayMs) || WORKSPACE_WRITE_DELAY_MS);
     this._workspaceWriteTimer = null;
     this._workspaceWriteDirty = false;
     this._workspaceWriteRetryCount = 0;
@@ -321,12 +323,9 @@ class ShellConfigService extends EventEmitter {
       uiLanguage: normalizeUiLanguage(this.state.uiLanguage),
       use24HourTime: this.state.use24HourTime === true,
       safetyMode: normalizeSafetyMode(this.state.safetyMode),
-      unattendedGuardMinutes: normalizeUnattendedGuardMinutes(
-        this.state.unattendedGuardMinutes
-      ),
+      autoApproveStreakCap: normalizeAutoApproveStreakCap(this.state.autoApproveStreakCap), unattendedGuardMinutes: normalizeUnattendedGuardMinutes(this.state.unattendedGuardMinutes),
     };
   }
-
   getUiLanguage() {
     return normalizeUiLanguage(this.state.uiLanguage);
   }
@@ -612,6 +611,7 @@ class ShellConfigService extends EventEmitter {
     if (Object.prototype.hasOwnProperty.call(patch || {}, 'unattendedGuardMinutes')) {
       this.updateUnattendedGuardMinutes(patch.unattendedGuardMinutes);
     }
+    if (Object.prototype.hasOwnProperty.call(patch || {}, 'autoApproveStreakCap')) this.updateAutoApproveStreakCap(patch.autoApproveStreakCap);
     this._updateNormalizedSection(
       patch,
       'chatUi',
@@ -736,6 +736,14 @@ class ShellConfigService extends EventEmitter {
     return result.snapshot.commandSandbox;
   }
 
+  updateSessionRuntime(patch) {
+    const sessionRuntime = applySessionRuntimePatch(this.state.sessionRuntime, patch);
+    const result = this._commitState({ ...this.state, sessionRuntime }, 'session_runtime_updated');
+    if (!result.persisted) throw Object.assign(new Error('session_runtime_config_write_failed'),
+      { reason: 'session_runtime_config_write_failed' });
+    return result.snapshot.sessionRuntime;
+  }
+
   updateFeatureSettings(patch = {}) {
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
     const nextTools = normalizeToolsSettings({
@@ -830,8 +838,13 @@ class ShellConfigService extends EventEmitter {
     );
   }
 
-  getLocalEngines() {
-    return normalizeLocalEngines(this.state.localEngines);
+  getLocalEngines() { return normalizeLocalEngines(this.state.localEngines); }
+  updateStartupModelLoad(enabled) {
+    const current = this.getLocalEngines();
+    const startupModelLoad = Boolean(enabled);
+    if (startupModelLoad === current.startupModelLoad) return current;
+    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, startupModelLoad });
+    return this._writeState({ ...this.state, localEngines }, 'startup_model_load_updated').localEngines;
   }
 
   updateLocalEngineAcceleration(patch) {
@@ -843,13 +856,8 @@ class ShellConfigService extends EventEmitter {
       },
     });
     const current = this.getLocalEngines().openaiCompatible.acceleration;
-    if (JSON.stringify(localEngines.openaiCompatible.acceleration) === JSON.stringify(current)) {
-      return this.getState();
-    }
-    return this._writeState(
-      { ...this.state, localEngines },
-      'local_engine_acceleration_updated'
-    );
+    if (JSON.stringify(localEngines.openaiCompatible.acceleration) === JSON.stringify(current)) return this.getState();
+    return this._writeState({ ...this.state, localEngines }, 'local_engine_acceleration_updated');
   }
 
   updateManagedLlamaServer(patch) {
@@ -916,12 +924,13 @@ class ShellConfigService extends EventEmitter {
   updateUnattendedGuardMinutes(value) {
     const unattendedGuardMinutes = normalizeUnattendedGuardMinutes(value);
     if (unattendedGuardMinutes === this.state.unattendedGuardMinutes) return this.getState();
-    return this._writeState(
-      { ...this.state, unattendedGuardMinutes },
-      'unattended_guard_minutes_updated'
-    );
+    return this._writeState({ ...this.state, unattendedGuardMinutes }, 'unattended_guard_minutes_updated');
   }
-
+  updateAutoApproveStreakCap(value) {
+    const autoApproveStreakCap = normalizeAutoApproveStreakCap(value);
+    if (autoApproveStreakCap === this.state.autoApproveStreakCap) return this.getState();
+    return this._writeState({ ...this.state, autoApproveStreakCap }, 'auto_approve_streak_cap_updated');
+  }
   saveSetupEndpoint({ engineType, port, apiUrl } = {}) {
     const preferredEngineType = normalizePreferredEngineType(engineType);
     if (!['ollama', 'vllm', 'openai-compatible'].includes(preferredEngineType)) {

@@ -21,6 +21,9 @@
       }
       const minHeight = 28;
       const maxHeight = 144;
+      // CSS can cap the dock below maxHeight, and text predictions can be low.
+      // Let the browser decide when the rendered box needs a scrollbar.
+      chatInput.style.overflowY = 'auto';
       const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
       if (_pretextUtils && _pretextUtils.isEnabled(state)) {
         const pretextFont = _pretextUtils.resolveFontString(chatInput);
@@ -33,7 +36,6 @@
           if (predicted) {
             const predictedHeight = Math.min(Math.max(Math.ceil(predicted.height), minHeight), maxHeight);
             chatInput.style.height = predictedHeight + 'px';
-            chatInput.style.overflowY = predicted.height > maxHeight ? 'auto' : 'hidden';
             if (typeof updateComposerSafeOffset === 'function') {
               updateComposerSafeOffset({ force: true, syncViewport: true });
             }
@@ -42,13 +44,10 @@
         }
       }
       chatInput.style.height = '0px';
-      // Capture the raw content height while the box is collapsed; basing the
-      // overflow decision on this pre-clamp measurement avoids relying on
-      // scrollHeight after the height has been pinned to maxHeight.
+      // Measure while collapsed so deleting text can shrink the composer.
       const rawHeight = chatInput.scrollHeight;
       const nextHeight = Math.min(Math.max(rawHeight, minHeight), maxHeight);
       chatInput.style.height = `${nextHeight}px`;
-      chatInput.style.overflowY = rawHeight > maxHeight ? 'auto' : 'hidden';
       if (typeof updateComposerSafeOffset === 'function') {
         updateComposerSafeOffset({
           force: true,

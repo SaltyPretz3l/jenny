@@ -235,6 +235,30 @@ test('accepts an uncatalogued Ollama context up to its exact native limit with a
   )));
 });
 
+test('inspects the managed llama-server model it serves for its trained window, not Ollama', async () => {
+  // 2026-09-18: Bonsai 2 served on llama-server had no native window (Ollama
+  // answered model_not_found), so every Tune context above 32768 was refused.
+  const harness = createHarness({
+    engineType: 'openai-compatible',
+    nativeContextLength: 0,
+    modelInspection: {
+      modelId: 'ternary-bonsai-2-27b-pq2_0', available: true, nativeContextLength: 262144, reason: '',
+    },
+    modelRecommendations: [],
+  });
+  harness.service.backendService.currentModel = 'ternary-bonsai-2-27b-pq2_0';
+
+  const result = await harness.service.update({ modelId: 'ternary-bonsai-2-27b-pq2_0', contextLength: 65536 });
+
+  assert.equal(result.status, 'applied');
+  assert.equal(result.preflight.warning, 'hardware_fit_unverified');
+  assert.equal(result.preflight.contextLimit, 262144);
+  assert.deepEqual(harness.inspectionCalls, [{
+    requestedEngineType: 'openai-compatible',
+    options: { inspectModelId: 'ternary-bonsai-2-27b-pq2_0' },
+  }]);
+});
+
 test('accepts a non-catalog model whose scaled estimate fits, with the estimated fit warning', async () => {
   const harness = createHarness({
     nativeContextLength: 0,

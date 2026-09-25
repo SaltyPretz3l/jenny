@@ -282,6 +282,19 @@ def _split_latest_user_round(
     return list(messages), []
 
 
+# The parser's and size guards' own messages. Only these reach the failure
+# log: a generator can raise ValueError with provider or prompt text.
+_LOGGABLE_SUMMARY_ERRORS = frozenset(
+    {
+        "Empty compaction response",
+        "Missing <summary> block in compaction response",
+        "Empty <summary> block in compaction response",
+        "Compaction response exceeded size limit",
+        "Compaction summary exceeded size limit",
+    }
+)
+
+
 def _summary_failure_code(error: Exception) -> str:
     if isinstance(error, TimeoutError):
         return "summary_timeout"
@@ -365,6 +378,7 @@ def compact_context(
         # compacted result. A prior summary row is NOT part of that run; it
         # lands in `conversation` and is re-folded into the fresh summary.
         if summary_source and recent_round:
+            raw_response = None
             try:
                 prompt_tokens = estimate_messages_tokens(
                     build_full_compaction_messages(
@@ -389,8 +403,10 @@ def compact_context(
                     logger.info(
                         "Summariser input admitted under the window limit.",
                         extra={
-                            "stripped_messages": admission.stripped_messages,
-                            "dropped_messages": admission.dropped_messages,
+                            "data": {
+                                "stripped_messages": admission.stripped_messages,
+                                "dropped_messages": admission.dropped_messages,
+                            },
                         },
                     )
                 raw_response = generate_fn(compaction_messages)
@@ -465,9 +481,11 @@ def compact_context(
                     "Full compaction produced no token reduction; falling back "
                     "to microcompaction.",
                     extra={
-                        "reason_code": summary_failure_code,
-                        "tokens_before": tokens_before,
-                        "tokens_after": tokens_after,
+                        "data": {
+                            "reason_code": summary_failure_code,
+                            "tokens_before": tokens_before,
+                            "tokens_after": tokens_after,
+                        },
                     },
                 )
             except Exception as exc:  # noqa: BLE001
@@ -477,9 +495,21 @@ def compact_context(
                 logger.warning(
                     "Full compaction failed; falling back to microcompaction.",
                     extra={
-                        "failure_count": breaker.failure_count,
-                        "reason_code": summary_failure_code,
-                        "error_type": type(exc).__name__,
+                        "data": {
+                            "failure_count": breaker.failure_count,
+                            "reason_code": summary_failure_code,
+                            "error_type": type(exc).__name__,
+                            "response_chars": (
+                                len(str(raw_response))
+                                if raw_response is not None
+                                else None
+                            ),
+                            **(
+                                {"error_message": str(exc)}
+                                if str(exc) in _LOGGABLE_SUMMARY_ERRORS
+                                else {}
+                            ),
+                        },
                     },
                 )
         else:

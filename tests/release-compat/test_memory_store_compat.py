@@ -6,7 +6,7 @@ The test materializes the script into a temp DB, opens a :class:`MemoryStore`
 (which triggers the migration cascade in
 ``sidecar/ai/memory/store_migrations.py``), and asserts:
 
-* PRAGMA user_version is bumped to :data:`SCHEMA_VERSION` (currently 7)
+* PRAGMA user_version is bumped to :data:`SCHEMA_VERSION` (currently 8)
 * legacy data survives the migration
 * version-specific invariants hold (e.g. v2 → v3 fingerprint -> family_key
   mapping fires; v4 → v5 normalizes empty provenance to ``unknown_legacy``)
@@ -76,8 +76,8 @@ def _index_names(db_path: Path) -> set[str]:
         connection.close()
 
 
-def test_memory_compat_empty_database_initializes_to_v7(tmp_path: Path) -> None:
-    """A bare DB at user_version=0 migrates to the full v7 schema."""
+def test_memory_compat_empty_database_initializes_to_v8(tmp_path: Path) -> None:
+    """A bare DB at user_version=0 migrates to the full v8 schema."""
     db_path = tmp_path / "memory.db"
     _materialize_db("memory-empty", db_path)
     assert _read_user_version(db_path) == 0
@@ -93,16 +93,18 @@ def test_memory_compat_empty_database_initializes_to_v7(tmp_path: Path) -> None:
             "memory_quarantine",
         ):
             cols = _table_columns(db_path, table)
-            assert cols, f"table '{table}' missing after empty -> v6 migration"
+            assert cols, f"table '{table}' missing after empty -> v8 migration"
+            if table != "memory_quarantine":
+                assert "project_id" in cols
         assert store.get_all_memories() == []
     finally:
         store.close()
 
 
-def test_memory_compat_v1_purges_raw_entries_and_creates_v7_tables(
+def test_memory_compat_v1_purges_raw_entries_and_creates_current_tables(
     tmp_path: Path,
 ) -> None:
-    """v1 -> v7: legacy raw exchanges are purged and approved schema lands."""
+    """v1 -> current: legacy raw exchanges are purged and approved schema lands."""
     db_path = tmp_path / "memory.db"
     _materialize_db("memory-v1", db_path)
     assert _read_user_version(db_path) == 1
@@ -206,11 +208,11 @@ def test_memory_compat_v5_adds_retention_indexes_without_dropping_rows(
             build_content_digest("preference", "The user prefers concise answers.")
         ]
         assert {
-            "idx_memories_updated_id",
-            "idx_memories_kind_updated",
-            "idx_memories_session_updated",
-            "idx_memory_extraction_runs_created",
-            "idx_pending_memory_updated_id",
+            "idx_memories_project_updated",
+            "idx_memories_project_kind_updated",
+            "idx_memories_project_session_updated",
+            "idx_memory_extraction_project_created",
+            "idx_pending_memory_project_updated",
         } <= _index_names(db_path)
     finally:
         store.close()
@@ -232,7 +234,7 @@ def test_memory_compat_v6_hashes_identities_quarantines_collision_and_purges_raw
             "response_style", "Use concise answers."
         )
         status = store.status_snapshot()
-        assert status["counts"]["quarantined"] == 1
+        assert status["operational_counts"]["quarantined"] == 1
         assert store._connection.execute(  # noqa: SLF001
             """
             SELECT status FROM memory_extraction_runs

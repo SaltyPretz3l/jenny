@@ -195,6 +195,52 @@ test('session recovery replays journaled turn events for interrupted active turn
   assert.deepEqual(journal.list(created.id, 'stream_1'), []);
 });
 
+test('session recovery fences a logical turn journal to its fresh attempt stream', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-turn-event-logical-'));
+  trackDirectory(userDataPath);
+  const sessionStore = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'));
+  const journal = new TurnEventJournal(path.join(userDataPath, 'turn-event-journal.json'));
+  const created = sessionStore.createSession({ title: 'Logical interrupted turn' });
+  sessionStore.setActiveTurn(created.id, {
+    request_id: 'turn_logical', turn_id: 'turn_logical', stream_id: 'stream_attempt',
+    user_message_id: 'user_logical', started_at: '2026-04-26T10:00:00.000Z',
+    last_event_at: '2026-04-26T10:00:01.000Z', status: 'streaming',
+  });
+  journal.append(created.id, 'turn_logical', [{
+    event_id: 'stream_attempt:tool_use:0', turn_id: 'turn_logical', kind: 'tool_use',
+    tool_call_id: 'call_1', payload: { tool_name: 'read_file' },
+  }]);
+
+  const result = recoverTurnEventJournal({ sessionStore, journal });
+
+  assert.equal(result.replayed, 1);
+  assert.equal(result.blocked, 0);
+  assert.deepEqual(journal.list(created.id, 'turn_logical'), []);
+});
+
+test('session recovery retains journal evidence from a different attempt stream', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-turn-event-stale-'));
+  trackDirectory(userDataPath);
+  const sessionStore = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'));
+  const journal = new TurnEventJournal(path.join(userDataPath, 'turn-event-journal.json'));
+  const created = sessionStore.createSession({ title: 'Stale interrupted attempt' });
+  sessionStore.setActiveTurn(created.id, {
+    request_id: 'turn_logical', turn_id: 'turn_logical', stream_id: 'stream_current',
+    user_message_id: 'user_logical', started_at: '2026-04-26T10:00:00.000Z',
+    last_event_at: '2026-04-26T10:00:01.000Z', status: 'streaming',
+  });
+  journal.append(created.id, 'turn_logical', [{
+    event_id: 'stream_stale:tool_use:0', turn_id: 'turn_logical', kind: 'tool_use',
+    tool_call_id: 'call_1', payload: { tool_name: 'read_file' },
+  }]);
+
+  const result = recoverTurnEventJournal({ sessionStore, journal });
+
+  assert.equal(result.replayed, 0);
+  assert.equal(result.blocked, 1);
+  assert.equal(journal.list(created.id, 'turn_logical').length, 1);
+});
+
 test('session recovery RETAINS the journal when the turn-event append fails to persist', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-turn-event-journal-fail-'));
   trackDirectory(userDataPath);

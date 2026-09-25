@@ -21,6 +21,7 @@
 // an explicit model load, and by the health-pill Restart row — is the recovery
 // gate, so a permanently failing binary cannot restart-loop.
 
+const fs = require('fs');
 const path = require('path');
 
 const {
@@ -37,14 +38,23 @@ const {
   resolveLaunchAcceleration,
   shouldRetryWithoutAcceleration,
 } = require('./llama-server-acceleration-launch');
+const {
+  createRuntimePickRegistry,
+  describeRuntimeLabel,
+  resolveLaunchRuntime,
+  runtimeFolderToken,
+} = require('./llama-server-runtime');
 
 const STATES = Object.freeze(['stopped', 'starting', 'ready', 'stopping', 'crashed']);
 const MTP_MODES = Object.freeze(['off', 'mtp', 'ngram']);
 
 // Only the five keys a caller may steer; everything else is dropped so an IPC
-// payload can never smuggle launch arguments in. Mirrors the persisted-config
-// normalizer in shell-config-engines.js (absolute .gguf or Ollama blob path, bounded draft).
-function normalizeSpec(spec) {
+// payload can never smuggle launch arguments in, and never an executable: the
+// binary is the model's saved runtime (accepted only from a main-owned pick) or
+// the bundled build. Mirrors the persisted-config normalizer in
+// shell-config-engines.js (a local absolute .gguf or Ollama blob path, never a
+// network one; bounded draft).
+function normalizeSpec(spec, { platform = process.platform } = {}) {
   const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : null;
   if (!source) {
     return null;
@@ -54,7 +64,7 @@ function normalizeSpec(spec) {
   const modelPath = String(source.modelPath || '').trim();
   const profileId = String(source.profileId || '').trim().toLowerCase();
   if (modelTag && !/[\r\n\0]/.test(modelTag)) normalized.modelTag = modelTag;
-  if (isManagedModelPath(modelPath)) {
+  if (isManagedModelPath(modelPath, { platform })) {
     normalized.modelPath = modelPath;
   }
   if (profileId && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(profileId)) normalized.profileId = profileId;
@@ -92,6 +102,10 @@ function createLlamaServerManager({
   // to re-broker the (per-launch) api key to the sidecar when a server comes
   // up. Exceptions are swallowed.
   onStateChange = () => {},
+  // Passed straight to each launch: the lifecycle forwards llama-server's
+  // decode telemetry here so the sidecar's stream-inactivity watchdog can tell
+  // a busy engine from a hung one.
+  onEngineActivity = null,
   log = () => {},
   lifecycle = llamaServerLifecycle,
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
@@ -107,6 +121,15 @@ function createLlamaServerManager({
   // The normalized spec the current (or last) launch was steered by; restart()
   // and a crash recovery without a spec relaunch exactly this.
   let lastSpec = null;
+  // Builds the user picked this session (llama-server-runtime.js); the
+  // engines.updateSettings write accepts a new runtime path only from here.
+  const runtimePicks = createRuntimePickRegistry();
+  // The executable the tracked server was spawned from. Main-only: getStatus()
+  // crosses IPC, so the status carries just the bounded runtimeLabel.
+  let runningBinaryPath = '';
+  // The tag the tracked server was launched for, unstripped: status.alias drops
+  // ':latest', but per-model settings are keyed by the full tag.
+  let runningModelTag = '';
   let chain = Promise.resolve();
   const status = {
     pid: 0,
@@ -119,6 +142,7 @@ function createLlamaServerManager({
     accelerationDrafter: '',
     contextSize: 0,
     mmproj: '',
+    runtimeLabel: '',
     reused: false,
     lastError: '',
     changedAt: 0,
@@ -133,8 +157,13 @@ function createLlamaServerManager({
       throw new Error(`llama_server_manager_invalid_state:${next}`);
     }
     state = next;
+    const down = ['stopped', 'crashed'].includes(next);
+    if (down) {
+      runningBinaryPath = '';
+      runningModelTag = '';
+    }
     Object.assign(status, patch, {
-      ...(['stopped', 'crashed'].includes(next) ? { mmproj: '' } : {}),
+      ...(down ? { mmproj: '', runtimeLabel: '' } : {}),
       changedAt: now(),
     });
     // The observer's return value (a promise for the 'ready' re-brokering of
@@ -182,6 +211,38 @@ function createLlamaServerManager({
       : lifecycle.resolveGgufPath?.({ modelTag, userDataPath: resolveUserDataPath(), repoRoot: rootDir })?.projectorPath || '';
   }
 
+  function localEngineSettings() {
+    return getShellConfigService()?.getLocalEngines?.() || null;
+  }
+
+  function managedSettings() {
+    return localEngineSettings()?.openaiCompatible?.managed || null;
+  }
+
+  function persistedEntryFor(managed, modelTag) {
+    const perModel = managed?.perModel;
+    const key = managedModelKey(modelTag);
+    return perModel && typeof perModel === 'object' && Object.prototype.hasOwnProperty.call(perModel, key)
+      ? perModel[key] || null
+      : null;
+  }
+
+  // The executable a launch of this model would run: env override > the
+  // model's saved build > bundled. Resolved once per launch so the spawn and
+  // the acceleration probe can never disagree.
+  function resolveRuntimeFor(settings, managed, modelTag) {
+    const entry = persistedEntryFor(managed, modelTag);
+    const runtime = resolveLaunchRuntime({
+      binaryOverride: settings.binaryOverride,
+      runtimePath: typeof entry?.runtimePath === 'string' ? entry.runtimePath : '',
+      resolveBundledPath: () => lifecycle.resolveBinaryPath?.({
+        repoRoot: rootDir,
+        resourcesPath: processRef.resourcesPath,
+      }) || '',
+    });
+    return { runtime, runtimeBuild: Number(entry?.runtimeBuild) || 0 };
+  }
+
   // Builds everything the launch needs from (explicit spec) > (env) > (persisted
   // managed config) > (profile) > defaults. With no spec and no managed config
   // this is byte-for-byte the pre-manager boot path.
@@ -209,7 +270,18 @@ function createLlamaServerManager({
     const modelTag = spec?.modelTag
       || settings.modelTagOverride
       || (profile ? profile.modelTag : DEFAULT_MANAGED_SHELL_MODEL);
-    const modelPath = spec?.modelPath || settings.modelPathOverride || '';
+    // The persisted path is the last-used model's own file: a spec naming any
+    // other model must not inherit it, or that file would be served under the
+    // other model's name (and on its build). The env path is a global fallback.
+    const inheritsPath = settings.modelPathSource !== 'config' || !spec?.modelTag
+      || managedModelKey(spec.modelTag) === managedModelKey(settings.modelTagOverride);
+    const modelPath = spec?.modelPath || (inheritsPath ? settings.modelPathOverride : '') || '';
+    const { runtime, runtimeBuild } = resolveRuntimeFor(settings, managed, modelTag);
+    if (runtime.error) {
+      // A saved build that is gone fails the launch: nothing is spawned or
+      // probed, and it never falls back to the bundled build.
+      return { settings, profileError: '', profileId, modelTag, runtimeError: runtime.error };
+    }
     const resolvedUserDataPath = resolveUserDataPath();
     const projectorPath = resolveSpecProjector(modelTag, modelPath);
     const featureFlags = buildFeatureFlagsImpl(
@@ -247,11 +319,11 @@ function createLlamaServerManager({
       settings: modelPath === settings.modelPathOverride
         ? settings
         : { ...settings, modelPathOverride: modelPath },
+      binaryPath: runtime.binaryPath,
       profile: effectiveProfile,
       featureFlags,
       shellAcceleration,
       repoRoot: rootDir,
-      resourcesPath: processRef.resourcesPath,
       userDataPath: resolvedUserDataPath,
       log,
     });
@@ -262,10 +334,14 @@ function createLlamaServerManager({
       profileError: '',
       modelTag,
       modelPath,
+      runtimeShadowed: runtime.shadowed,
       accel,
       launchOptions: {
         modelTag,
-        binaryPath: settings.binaryOverride,
+        binaryPath: runtime.binaryPath,
+        // After the acceleration probe, so a probed build reads from the cache.
+        runtimeLabel: describeRuntimeLabel(runtime, { runtimeBuild }),
+        runtimeSource: runtime.source,
         modelPath,
         projectorPath,
         userDataPath: resolvedUserDataPath,
@@ -280,10 +356,12 @@ function createLlamaServerManager({
     };
   }
 
-  // An exit reported while a launch of the same generation is still
-  // 'starting': the child died between answering its readiness probe and the
-  // launch recording it. launch() consults this before promoting the handle.
-  let earlyExit = null;
+  // Exits reported while a launch of the same generation is still 'starting',
+  // by pid: the child died between answering its readiness probe and the launch
+  // recording it. launch() consults this before promoting the handle. Keyed by
+  // pid because the killed accelerated attempt's late exit shares this hook
+  // with its retry and must not overwrite the retry's.
+  let earlyExits = new Map();
 
   function onChildExit(startGeneration, info) {
     // Only the handle we are currently tracking may move the state; a stale
@@ -292,7 +370,7 @@ function createLlamaServerManager({
       return;
     }
     if (state === 'starting') {
-      earlyExit = { generation: startGeneration, info: info || {} };
+      if (info && info.pid) earlyExits.set(info.pid, info);
       return;
     }
     if (state !== 'ready') {
@@ -323,8 +401,32 @@ function createLlamaServerManager({
     });
   }
 
+  // A saved build deleted or renamed after the plan resolved it fails the spawn
+  // with a generic error: name it the way the plan would have, and never spawn
+  // the missing file again for the unaccelerated retry.
+  function vanishedRuntimeError(launchOptions) {
+    if (launchOptions.runtimeSource !== 'saved') {
+      return '';
+    }
+    try {
+      if (fs.statSync(launchOptions.binaryPath).isFile()) {
+        return '';
+      }
+    } catch (error) {
+      // Only a build that is gone; a refused stat (antivirus, permissions)
+      // proves nothing, so the usual retry decides.
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+        return '';
+      }
+    }
+    return `llama_server_runtime_missing:${runtimeFolderToken(launchOptions.binaryPath)}`;
+  }
+
   async function launch(plan) {
     const { accel, profile, launchOptions } = plan;
+    if (plan.runtimeShadowed) {
+      log('WARN', 'llama.server.runtime_env_shadowed', { model: managedModelKey(plan.modelTag) });
+    }
     if (accel.reason !== 'flag_off') {
       log('INFO', 'llama.server.acceleration_resolved', {
         mode: accel.mode,
@@ -336,7 +438,7 @@ function createLlamaServerManager({
     }
     emitStartupAuditMark('llama-server-start', { source: 'main' });
     const startGeneration = ++generation;
-    earlyExit = null;
+    earlyExits = new Map();
     let abortController = new AbortController();
     startupAbortController = abortController;
     let accelerationMode = accel.extraArgs.length > 0 ? accel.mode : 'off';
@@ -358,8 +460,13 @@ function createLlamaServerManager({
           extraArgs: [...profileExtraArgs, ...accel.extraArgs],
           abortSignal: abortController.signal,
           onExit,
+          onEngineActivity,
         });
       } catch (error) {
+        const vanished = vanishedRuntimeError(launchOptions);
+        if (vanished) {
+          throw new Error(vanished, { cause: error });
+        }
         if (!shouldRetryWithoutAcceleration({
           error, accelExtraArgs: accel.extraArgs, aborted: abortController.signal.aborted,
         })) {
@@ -379,6 +486,7 @@ function createLlamaServerManager({
           extraArgs: profileExtraArgs,
           abortSignal: abortController.signal,
           onExit,
+          onEngineActivity,
         });
       }
       if (startGeneration !== generation) {
@@ -389,13 +497,14 @@ function createLlamaServerManager({
         } catch (_error) { /* best effort only */ }
         return getStatus();
       }
-      if (earlyExit && earlyExit.generation === startGeneration
-        && nextHandle.pid && earlyExit.info.pid === nextHandle.pid) {
-        const early = earlyExit.info;
-        earlyExit = null;
+      const early = nextHandle.pid ? earlyExits.get(nextHandle.pid) : null;
+      earlyExits = new Map();
+      if (early) {
         throw new Error(`llama_server_exited:${early.code != null ? early.code : early.signal || 'unknown'}`);
       }
       handle = nextHandle;
+      runningBinaryPath = nextHandle.reused ? '' : String(launchOptions.binaryPath || '');
+      runningModelTag = String(launchOptions.modelTag || '');
       if (nextHandle.reused) {
         log('INFO', 'llama.server.start_skipped_reused', { baseUrl: nextHandle.baseUrl });
       } else {
@@ -416,6 +525,7 @@ function createLlamaServerManager({
         accelerationDrafter: reportedDrafter,
         contextSize: reportedContextSize,
         mmproj: nextHandle.reused ? 'unknown' : String(nextHandle.mmproj || ''),
+        runtimeLabel: nextHandle.reused ? 'unknown' : String(launchOptions.runtimeLabel || ''),
         lastError: '',
       });
       emitStartupAuditMark('llama-server-ready', {
@@ -441,7 +551,7 @@ function createLlamaServerManager({
         startupAbortController = null;
       }
       handle = null;
-      const message = String(error && error.message || error);
+      const message = vanishedRuntimeError(launchOptions) || String(error && error.message || error);
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
         accelerationDrafter: '', contextSize: 0, lastError: message,
@@ -459,6 +569,13 @@ function createLlamaServerManager({
         error: plan.profileError,
       });
       setState('stopped', { lastError: `profile_invalid:${plan.profileError}` });
+      return Promise.resolve(getStatus());
+    }
+    if (plan.runtimeError) {
+      log('WARN', 'llama.server.runtime_missing', {
+        runtime: plan.runtimeError.slice('llama_server_runtime_missing:'.length),
+      });
+      setState('stopped', { alias: stripLatestTag(plan.modelTag), lastError: plan.runtimeError });
       return Promise.resolve(getStatus());
     }
     return launch(plan);
@@ -486,7 +603,7 @@ function createLlamaServerManager({
       return false;
     }
     // Size-preserving key: 'ornith:9b' and 'ornith:27b' are different servers.
-    if (spec.modelTag && managedModelKey(spec.modelTag) !== managedModelKey(status.alias)) {
+    if (spec.modelTag && managedModelKey(spec.modelTag) !== managedModelKey(runningModelTag || status.alias)) {
       return true;
     }
     if (spec.modelPath && spec.modelPath !== status.modelPath) {
@@ -494,6 +611,17 @@ function createLlamaServerManager({
     }
     if (spec.profileId && spec.profileId !== status.profileId) {
       return true;
+    }
+    // A build change applies to the model it belongs to. A reused server's
+    // executable is not ours to replace (stopCurrent() cannot kill it), so it
+    // is skipped rather than relaunched in a loop.
+    if (runningBinaryPath) {
+      const managed = managedSettings();
+      const settings = resolveSettingsImpl({ env: processRef.env, repoRoot: rootDir, managed });
+      const { runtime } = resolveRuntimeFor(settings, managed, spec.modelTag || runningModelTag || status.alias);
+      if (runtime.error || runtime.binaryPath !== runningBinaryPath) {
+        return true;
+      }
     }
     // Every launch-steering spec key must be compared or it silently never takes
     // effect. A reused server reports contextSize 0 because this process never
@@ -557,17 +685,42 @@ function createLlamaServerManager({
       if (state === 'ready') {
         await stopCurrent();
       }
-      return launchFromSpec(spec || lastSpec);
+      return launchFromSpec(spec || refreshedLastSpec());
     });
   }
 
-  // Always replaces the server; without a spec it relaunches the last one.
+  // A relaunch without a spec takes the last model with its CURRENT saved
+  // engine settings, built exactly as a Use builds them (backend-runtime.js),
+  // so a Tune Apply (build, MTP, GGUF file) is live after the restart. Before
+  // any Use (boot autostart) that model is the last-used one, unless an env
+  // model or profile chose the launch.
+  function refreshedLastSpec() {
+    const managed = managedSettings();
+    const modelTag = lastSpec?.modelTag || (lastSpec ? '' : String(
+      resolveSettingsImpl({ env: processRef.env, repoRoot: rootDir, managed }).modelTagOverride || ''
+    ));
+    if (!modelTag) {
+      return lastSpec;
+    }
+    const entry = persistedEntryFor(managed, modelTag);
+    if (!entry || entry.engine !== 'llama-server') {
+      return lastSpec;
+    }
+    return normalizeSpec({
+      modelTag,
+      modelPath: entry.modelPath,
+      profileId: managed?.profileId,
+      mtp: entry.mtp,
+    });
+  }
+
+  // Always replaces the server; without a spec it relaunches the last model.
   function restart(rawSpec) {
     const spec = normalizeSpec(rawSpec);
     abortStartup();
     return serialize(async () => {
       await stopCurrent();
-      return launchFromSpec(spec || lastSpec);
+      return launchFromSpec(spec || refreshedLastSpec());
     });
   }
 
@@ -584,12 +737,25 @@ function createLlamaServerManager({
       try {
         lifecycle.sweepStaleApiKeyFiles?.(resolveUserDataPath());
       } catch (_error) { /* best effort; the launch sweeps again */ }
-      const plan = resolveLaunchPlan(null);
-      if (!plan.settings.autostart) {
-        log('INFO', 'llama.server.autostart_disabled');
+      // Decided before any plan: resolving one probes the saved build.
+      const startupModelLoad = localEngineSettings()?.startupModelLoad !== false;
+      const settings = resolveSettingsImpl({
+        env: processRef.env,
+        repoRoot: rootDir,
+        managed: managedSettings(),
+        startupModelLoad,
+      });
+      if (!settings.autostart) {
+        const envAutostartOverride = /^(1|true|yes|on|0|false|no|off)$/i
+          .test(String(processRef.env.JENNY_LLAMA_SERVER_AUTOSTART || '').trim());
+        log('INFO', 'llama.server.autostart_disabled',
+          !startupModelLoad && !envAutostartOverride ? { reason: 'startup_model_load_off' } : undefined);
         return getStatus();
       }
-      return launchFromPlan(plan);
+      // The last-used model starts with its saved engine settings (MTP, file,
+      // build), as a Use would, and that spec is recorded, so an identical Use
+      // keeps this server. An env model or profile keeps the global settings.
+      return launchFromSpec(refreshedLastSpec());
     });
   }
 
@@ -635,6 +801,7 @@ function createLlamaServerManager({
     getBaseUrl,
     getStatus,
     restart,
+    runtimePicks,
     settled,
     start: ensureRunning,
     startFromSettings,

@@ -342,3 +342,40 @@ test('orphan cleanup refuses an incomplete canonical session reference scan', (t
   assert.throws(() => commands.pruneExpired(), /empty stub/);
   assert.equal(fs.existsSync(path.join(root, 'host-attachments.json')), false);
 });
+
+
+test('expired staged images remain owned by durable paused work across reconstruction', async t => {
+  const { RuntimeStore } = require('../../services/session-runtime/store');
+  const root = makeTemp(t); const backend = makeBackend(root);
+  let commands = createAssetCommands({ backend, userDataPath: root });
+  const selected = commands.upload({ deviceId: 'device_1', bytes: pngBytes(), displayName: 'kept.png', mimeType: 'image/png' });
+  const orphan = commands.upload({ deviceId: 'device_1', bytes: pngBytes(), displayName: 'orphan.png', mimeType: 'image/png' });
+  const resolved = await commands.resolveAttachments([selected.attachment.id], { deviceId: 'device_1', sessionId: 'session_1' });
+  const orphanResolved = await commands.resolveAttachments([orphan.attachment.id], { deviceId: 'device_1', sessionId: 'session_1' });
+  const storePath = path.join(root, 'session-runtime');
+  backend.sessionRuntime = { store: new RuntimeStore(storePath) };
+  const work = backend.sessionRuntime.store.submit({ idempotencyKey: 'durable_image', projectId: 'project_1',
+    sessionId: 'session_1', purpose: 'chat', workId: 'work_image', turnId: 'turn_image',
+    input: { schema_version: 1, kind: 'immediate_chat', request: { attachments: resolved.attachments } },
+    authority: { project_id: 'project_1', root_path: root, root_id: 'root_1', root_revision: 1, device_id: '1', inode: '2' } }).record;
+  const metadataPath = path.join(root, 'host-attachments.json');
+  const metadata = readJson(metadataPath);
+  for (const record of metadata.records) {
+    record.expires_at = Date.now() - 1; record.created_at = record.expires_at - STAGED_TTL_MS;
+  }
+  writeJson(metadataPath, metadata);
+  backend.sessionRuntime.store = new RuntimeStore(storePath);
+  assert.equal(backend.sessionRuntime.store.get(work.work_id).status, 'paused');
+  commands = createAssetCommands({ backend, userDataPath: root }); commands.pruneExpired();
+  assert.equal(fs.existsSync(resolved.attachments[0].assetPath), true);
+  assert.equal(fs.existsSync(orphanResolved.attachments[0].assetPath), false);
+  backend.sessionRuntime.store.readOnly = true;
+  assert.throws(() => createAssetCommands({ backend, userDataPath: root }).pruneExpired(), /runtime_references_unavailable/);
+  backend.sessionRuntime.store.readOnly = false;
+  const paused = backend.sessionRuntime.store.get(work.work_id);
+  backend.sessionRuntime.store.transition(work.work_id, { expectedRevision: paused.revision, to: 'cancelled', reason: 'owner_cancel' });
+  const old = new Date(Date.now() - STAGED_TTL_MS - 60000);
+  fs.utimesSync(resolved.attachments[0].assetPath, old, old);
+  createAssetCommands({ backend, userDataPath: root }).pruneExpired();
+  assert.equal(fs.existsSync(resolved.attachments[0].assetPath), false, 'terminal unreferenced media returns to normal expiry');
+});

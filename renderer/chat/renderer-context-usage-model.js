@@ -1,10 +1,6 @@
-/**
- * Pure context-meter state and estimation model (UMD).
- *
- * Owns bounded per-session usage records, approximate history shaping, manual
- * compaction projections, and target resolution. Rendering stays in
- * renderer-context-usage-utils.js.
- */
+/* Pure context-meter state and estimation model (UMD): bounded per-session
+ * usage records, approximate history shaping, manual compaction projections,
+ * and target resolution. Rendering stays in renderer-context-usage-utils.js. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -79,12 +75,20 @@
     }
     if (kind === 'question_batch') return safeStringify(message?.interactive_batch);
     if (kind === 'interactive_round_recap') return safeStringify(message?.interactive_round_recap);
-    if (Array.isArray(message && message.visible_segments) && message.visible_segments.length) {
-      return message.visible_segments.map(function mapSegment(segment) {
+    var text = Array.isArray(message && message.visible_segments) && message.visible_segments.length
+      ? message.visible_segments.map(function mapSegment(segment) {
         return String(segment && segment.text || '');
-      }).join('');
-    }
-    return String(message && message.content || '');
+      }).join('')
+      : String(message && message.content || '');
+    // A streaming turn holds its reasoning in the window now, so the live
+    // estimate counts it; settled turns do not re-send it (gate 2026-09-20).
+    var live = isStreamingMessage(message) && message.reasoning && Array.isArray(message.reasoning.entries)
+      ? message.reasoning.entries : [];
+    return text + live.map(function mapEntry(entry) { return String(entry && entry.text || ''); }).join('');
+  }
+
+  function isStreamingMessage(message) {
+    return Boolean(message) && String(message.status || '') === 'streaming';
   }
 
   function safeStringify(value) {
@@ -266,13 +270,11 @@
       + normalizeNonnegativeInteger(opts.overheadTokens)
       + estimateAttachmentTokens(opts.attachments);
     if (usedTokens <= 0) return null;
-    /* Continuity with the last authoritative reading (Cause B of the meter
-     * accuracy work): the caller passes the stored record's threshold so the
-     * fallback renders against the SAME denominator (no ~2x percentage jump
-     * when the estimate takes over), and its usedTokens as a floor so a model
-     * switch cannot collapse the numerator to the bare chars/4 sum. The floor
-     * only applies when the estimate is already renderable — a deliberately
-     * empty scope (fresh) still reads as empty. */
+    /* Continuity with the last authoritative reading (Cause B): the stored
+     * record's threshold keeps the fallback on the SAME denominator (no ~2x
+     * jump), and its usedTokens floors the numerator so a model switch cannot
+     * collapse it to the bare chars/4 sum. The floor applies only when the
+     * estimate is already renderable — a fresh scope still reads as empty. */
     var priorUsedTokens = normalizePositiveInteger(opts.priorUsedTokens);
     if (priorUsedTokens > usedTokens) usedTokens = priorUsedTokens;
     var contextLimit = normalizePositiveInteger(opts.contextLimit);
@@ -302,11 +304,10 @@
     return { limit: 0, type: '', exact: false };
   }
 
-  /* Which lane produced a usage record. 'terminal' is the turn's authoritative
-   * chat.done reading; 'preflight'/'iteration' are the ephemeral mid-turn
-   * context.usage snapshots that keep the ring moving during a long agentic
-   * turn. Only the payload TYPE decides this — a mid-turn payload's own
-   * `phase` field is a refinement, never a way to claim terminal authority. */
+  /* Which lane produced a usage record: 'terminal' is the turn's chat.done
+   * reading; 'preflight'/'iteration' are ephemeral mid-turn snapshots. Only
+   * the payload TYPE decides this — a mid-turn payload's own `phase` field is
+   * a refinement, never a way to claim terminal authority. */
   function normalizeUsagePhase(payload) {
     if (String(payload && payload.type || '') !== 'context_usage') return 'terminal';
     return payload.phase === 'preflight' ? 'preflight' : 'iteration';
@@ -366,9 +367,8 @@
     return [
       normalizeHistoryScope(opts.historyScope),
       normalizePositiveInteger(opts.contextLimit),
-      /* Both continuity inputs are part of the estimate's value, so both must
-       * be part of the memo key — an omitted signature input means a stale
-       * cached estimate survives the stored record changing. */
+      /* Both continuity inputs shape the estimate, so both join the memo key;
+       * an omitted input lets a stale estimate survive the record changing. */
       normalizePositiveInteger(opts.compactThresholdTokens),
       normalizePositiveInteger(opts.priorUsedTokens),
       String(opts.model || '').trim(),
@@ -399,10 +399,9 @@
     }
 
     /* Terminal ALWAYS writes. A mid-turn snapshot is dropped when it would
-     * regress its own turn's already-settled terminal reading (late arrival),
-     * or when it carries no new information — the ring must not repaint for an
-     * identical number. Precedence is scoped by turnId, so a mid-turn snapshot
-     * for turn N+1 always supersedes turn N's terminal record. */
+     * regress its own turn's settled terminal reading (late arrival) or carries
+     * no new number. Precedence is scoped by turnId, so a mid-turn snapshot for
+     * turn N+1 always supersedes turn N's terminal record. */
     function supersedesStoredUsage(prior, record) {
       if (record.phase === 'terminal') return true;
       if (!prior || !prior.turnId || prior.turnId !== record.turnId) return true;
@@ -464,11 +463,16 @@
       if (!key) return buildContextUsageEstimate(messages, estimateOptions);
       var list = Array.isArray(messages) ? messages : [];
       var signature = buildEstimateSignature(estimateOptions);
+      // The live tail grows in place (same array, same length): its length
+      // joins the memo key so a streaming turn keeps the meter moving.
+      var last = list[list.length - 1];
+      var tailLength = isStreamingMessage(last) ? getMessageTokenText(last).length : 0;
       var cached = estimateBySession.get(key);
       if (
         cached
         && cached.messages === list
         && cached.messageCount === list.length
+        && cached.tailLength === tailLength
         && cached.signature === signature
       ) {
         cached.updatedAt = now();
@@ -478,6 +482,7 @@
       estimateBySession.set(key, {
         messages: list,
         messageCount: list.length,
+        tailLength: tailLength,
         signature: signature,
         value: value,
         updatedAt: now(),

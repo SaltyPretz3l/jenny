@@ -127,6 +127,7 @@ def build_vision_chat_response(
     image_attachments: list[dict[str, object]],
     brain_container: BrainContainer,
     invalid_params_code: int,
+    inference_admission: Any | None = None,
     post_response_callback: Any | None = None,
 ) -> ChatResponse:
     stack = brain_container.stack
@@ -178,6 +179,9 @@ def build_vision_chat_response(
             model=stack.config.model,
             initial_max_tokens=_vision_max_tokens(engine),
             feature_flags=stack.config.feature_flags,
+            request_id=request_id,
+            session_id=session_id,
+            inference_admission=inference_admission,
         )
     except NotImplementedError as error:
         raise ChatRequestError(

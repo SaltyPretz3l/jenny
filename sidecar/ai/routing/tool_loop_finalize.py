@@ -20,13 +20,20 @@ from sidecar.ai.routing.thinking_checkpoint import (
     checkpoint_carry_similarity,
     checkpoint_no_progress,
     checkpoint_phase_summary,
+    is_context_window_exhausted,
     is_thinking_budget_checkpoint,
+    resolve_checkpoint_context_window,
     resolve_checkpoint_limit,
     thinking_budget_continuation_enabled,
+    thinking_budget_exhausted_wind_down,
 )
+from sidecar.runtime.local_engine.request_context import set_next_provider_call_purpose
 from sidecar.runtime.turn_state import TERMINAL_SUBCODE_THINKING_BUDGET
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
+ACCEPTED_PLAN_FALLBACK_RESPONSE = (
+    "Got it. I'll hold off on building this plan until you say so."
+)
 
 
 class _FinalResponseMixin:
@@ -215,6 +222,150 @@ class _FinalResponseMixin:
             ),
         )
 
+    def _finish_stream_cut_off(
+        self, result: Any, response_text: str, iteration: int
+    ) -> Any | None:
+        """Finish a generation whose stream ended without a clean terminal.
+
+        Returns None when the finish reason is clean enough to keep the text.
+        """
+
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        request_id = self.request_id
+        finish_reason = str(getattr(result, "finish_reason", "") or "").strip().lower()
+        if finish_reason in {"incomplete", "error", "thinking_budget"} or (
+            finish_reason == "length"
+            and (
+                not response_text.strip()
+                or getattr(result, "tool_call_truncated", False) is True
+            )
+        ):
+            error_message = {
+                "incomplete": (
+                    "The response was cut off before it finished — the model ran out of "
+                    "output tokens or the stream ended early. Partial output may appear "
+                    "above; retry to try again."
+                ),
+                "error": (
+                    "The model provider reported a stream error before the response "
+                    "finished. Retry to try again."
+                ),
+                "thinking_budget": (
+                    "The model spent its entire thinking budget without reaching a final "
+                    "answer, so the turn was stopped. Retry, or lower the reasoning effort."
+                ),
+                "length": (
+                    "The model used its entire output budget before producing an answer. "
+                    "Retry, or lower the reasoning effort."
+                ),
+            }[finish_reason]
+            status_text = {
+                "incomplete": "The model response ended before completion.",
+                "error": "The model provider reported a stream error.",
+                "thinking_budget": "The model exhausted its thinking budget.",
+                "length": "The model exhausted its output budget.",
+            }[finish_reason]
+            reasoning_text = str(result.thinking_text or "").strip()
+            _tl_hub.log_event(
+                logger,
+                logging.WARNING,
+                component="ai.router",
+                event="ai.router.stream_terminal_not_clean",
+                message="Model generation ended without a clean stream terminal.",
+                status="failure",
+                data={
+                    "finish_reason": finish_reason,
+                    "iteration": iteration,
+                    "response_length": len(response_text),
+                },
+                request_id=request_id,
+            )
+            self.runtime.audit(
+                _tl_hub.KIND_TURN_FAILED,
+                summary=(
+                    f"stream_{finish_reason} iteration={iteration} "
+                    f"response_length={len(response_text)}"
+                ),
+            )
+            return self._finish(
+                _tl_hub.ToolLoopResult(
+                    thinking_text=reasoning_text or status_text,
+                    thinking_kind=(
+                        _tl_hub.CHAT_THINKING_KIND_REASONING
+                        if reasoning_text
+                        else _tl_hub.CHAT_THINKING_KIND_STATUS
+                    ),
+                    persist_thinking=bool(reasoning_text),
+                    response_text=error_message,
+                    approval_request=None,
+                    approval_plan=None,
+                    outcomes=self.outcomes,
+                    usage_totals=self.usage_totals,
+                    streamed_event_types=self.streamed_event_types,
+                    completion_source="model",
+                    terminal_error_code=CMP_STREAM_INCOMPLETE,
+                    terminal_subcode=(
+                        TERMINAL_SUBCODE_THINKING_BUDGET
+                        if finish_reason == "thinking_budget"
+                        else None
+                    ),
+                    terminal_error_retryable=True,
+                ),
+                reason=f"stream_{finish_reason}",
+            )
+        return None
+
+    def _finish_accepted_plan_reply(self, result: Any, iteration: int) -> Any:
+        """End the turn after the one toolless reply to an accepted-not-built plan.
+
+        No nudge, recovery, or verification path runs: the user asked Jenny to
+        hold, so nothing may re-enter a tool-capable iteration.
+        """
+
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        response_text = _tl_hub.sanitize_assistant_output(
+            str(result.content or ""),
+            max_chars=_tl_hub.MAX_RESPONSE_CHARS,
+        )
+        cut_off = self._finish_stream_cut_off(result, response_text, iteration)
+        if cut_off is not None:
+            return cut_off
+        completion_source = "model"
+        if not response_text.strip():
+            response_text = ACCEPTED_PLAN_FALLBACK_RESPONSE
+            completion_source = "deterministic_tool_fallback"
+            _tl_hub._emit_deterministic_response_tokens(
+                runtime=self.runtime,
+                streamed_event_types=self.streamed_event_types,
+                response_text=response_text,
+            )
+        reasoning_text = str(result.thinking_text or "").strip()
+        self.runtime.audit(
+            _tl_hub.KIND_TURN_COMPLETED,
+            summary=f"accepted_plan_reply chars={len(response_text)}",
+        )
+        return self._finish(
+            _tl_hub.ToolLoopResult(
+                thinking_text=reasoning_text or self.thinking_text,
+                thinking_kind=(
+                    _tl_hub.CHAT_THINKING_KIND_REASONING
+                    if reasoning_text
+                    else _tl_hub.CHAT_THINKING_KIND_STATUS
+                ),
+                persist_thinking=bool(reasoning_text),
+                response_text=response_text,
+                approval_request=None,
+                approval_plan=None,
+                outcomes=self.outcomes,
+                usage_totals=self.usage_totals,
+                streamed_event_types=self.streamed_event_types,
+                completion_source=completion_source,
+            ),
+            reason="accepted_plan_reply",
+        )
+
     def _run_verification_gate(self, _iteration: int) -> Any:
         """Run the turn-finalization verification gate, if it applies.
 
@@ -264,6 +415,32 @@ class _FinalResponseMixin:
         )
         return decision
 
+    def _is_continuable_checkpoint(self, result: Any) -> bool:
+        """A checkpoint-shaped result while continuation is on.
+
+        Shared with the empty-final shortcut in tool_loop_calls: a post-tool
+        completion cut at a thinking-budget checkpoint is not "empty", so the
+        checkpoint ladder below continues it instead of winding the turn down
+        (owner gate 2026-09-20: a long post-tool think died at its first
+        checkpoint).
+        """
+        context_window = resolve_checkpoint_context_window(
+            self.kernel._engine,
+            self.kernel._config,
+        )
+        return thinking_budget_continuation_enabled() and is_thinking_budget_checkpoint(
+            result,
+            context_window=context_window,
+        )
+
+    def _defers_empty_final(self, result: Any) -> bool:
+        """Checkpoint and context-full stops are not "empty": the ladder below owns both."""
+        context_window = resolve_checkpoint_context_window(self.kernel._engine, self.kernel._config)
+        return self._is_continuable_checkpoint(result) or is_context_window_exhausted(
+            result,
+            context_window=context_window,
+        )
+
     def _handle_final_response(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         result: Any,
@@ -297,15 +474,33 @@ class _FinalResponseMixin:
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime, self.streamed_event_types, reason="reflexive_retry")
                 return None
+        context_window = resolve_checkpoint_context_window(
+            self.kernel._engine,
+            self.kernel._config,
+        )
+        if is_context_window_exhausted(result, context_window=context_window):
+            return _tl_hub.tool_loop_compaction.recover_context_window_exhaustion(
+                self,
+                result,
+                iteration=_iteration,
+                num_tools=_tl_hub.count_full_tool_schemas(self.tool_payload),
+                wind_down=_tl_hub.tool_loop_recovery.budget_exhausted_wind_down,
+            )
         limit = 0
-        if thinking_budget_continuation_enabled() and is_thinking_budget_checkpoint(result):
+        checkpoint_shape = self._is_continuable_checkpoint(result)
+        if checkpoint_shape:
             limit = resolve_checkpoint_limit(self.kernel._engine, self.kernel._config)
+        # Set when the turn is a thinking-budget checkpoint that cannot continue,
+        # so it winds down with a cause instead of the canned empty-generation
+        # sentence or a bare retryable terminal error.
+        exhausted_reason: str | None = None
         if self.thinking_budget_checkpoints < limit and _iteration < self.iteration_total:
             text = str(result.thinking_text or "")
             carry = text[-CHECKPOINT_CARRY_CHARS:]
             previous_carry = getattr(self, "last_checkpoint_carry", None)
             if checkpoint_no_progress(previous_carry, carry):
                 similarity = checkpoint_carry_similarity(previous_carry, carry)
+                exhausted_reason = "no_progress"
                 _tl_hub.log_event(
                     logger,
                     logging.WARNING,
@@ -334,12 +529,33 @@ class _FinalResponseMixin:
                                 self, "prompt_cache_enabled", False
                             ),
                             runtime=self.runtime,
+                            purpose="reasoning_summary",
                         )
                         return generate_fn(build_reasoning_summary_messages(elided))
 
                 self.thinking_budget_checkpoints += 1
                 self.working_messages.extend(
-                    build_checkpoint_messages(text, summarize=summarize)
+                    build_checkpoint_messages(
+                        text,
+                        summarize=summarize,
+                        tool_call_truncated=(
+                            getattr(result, "tool_call_truncated", False) is True
+                        ),
+                    )
+                )
+                terminal = _tl_hub.tool_loop_compaction.check_checkpoint_context(
+                    self,
+                    result,
+                    iteration=_iteration,
+                    num_tools=_tl_hub.count_full_tool_schemas(self.tool_payload),
+                    wind_down=_tl_hub.tool_loop_recovery.budget_exhausted_wind_down,
+                )
+                if terminal is not None:
+                    return terminal
+                # The next provider call is the continuation, not a fresh
+                # answer: tag it so the turn diagnostics keep the calls apart.
+                set_next_provider_call_purpose(
+                    getattr(self.kernel, "_engine", None), "checkpoint_continuation"
                 )
                 runtime.next_reasoning_phase_summary = checkpoint_phase_summary(
                     self.thinking_budget_checkpoints
@@ -361,83 +577,18 @@ class _FinalResponseMixin:
                     session_id=session_id,
                 )
                 return None
-        finish_reason = str(getattr(result, "finish_reason", "") or "").strip().lower()
-        if finish_reason in {"incomplete", "error", "thinking_budget"} or (
-            finish_reason == "length" and not response_text.strip()
-        ):
-            error_message = {
-                "incomplete": (
-                    "The response was cut off before it finished — the model ran out of "
-                    "output tokens or the stream ended early. Partial output may appear "
-                    "above; retry to try again."
-                ),
-                "error": (
-                    "The model provider reported a stream error before the response "
-                    "finished. Retry to try again."
-                ),
-                "thinking_budget": (
-                    "The model spent its entire thinking budget without reaching a final "
-                    "answer, so the turn was stopped. Retry, or lower the reasoning effort."
-                ),
-                "length": (
-                    "The model used its entire output budget before producing an answer. "
-                    "Retry, or lower the reasoning effort."
-                ),
-            }[finish_reason]
-            status_text = {
-                "incomplete": "The model response ended before completion.",
-                "error": "The model provider reported a stream error.",
-                "thinking_budget": "The model exhausted its thinking budget.",
-                "length": "The model exhausted its output budget.",
-            }[finish_reason]
-            reasoning_text = str(result.thinking_text or "").strip()
-            _tl_hub.log_event(
-                logger,
-                logging.WARNING,
-                component="ai.router",
-                event="ai.router.stream_terminal_not_clean",
-                message="Model generation ended without a clean stream terminal.",
-                status="failure",
-                data={
-                    "finish_reason": finish_reason,
-                    "iteration": _iteration,
-                    "response_length": len(response_text),
-                },
-                request_id=request_id,
+        elif checkpoint_shape and self.thinking_budget_checkpoints >= limit:
+            # Spent ladder. Running out of *iterations* instead keeps the
+            # existing retryable CMP-STREAM-INCOMPLETE terminal below: the turn
+            # budget, not the thinking budget, is what ended it.
+            exhausted_reason = "checkpoint_limit"
+        if exhausted_reason is not None:
+            return thinking_budget_exhausted_wind_down(
+                self, result, reason=exhausted_reason
             )
-            self.runtime.audit(
-                _tl_hub.KIND_TURN_FAILED,
-                summary=(
-                    f"stream_{finish_reason} iteration={_iteration} "
-                    f"response_length={len(response_text)}"
-                ),
-            )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text=reasoning_text or status_text,
-                    thinking_kind=(
-                        _tl_hub.CHAT_THINKING_KIND_REASONING
-                        if reasoning_text
-                        else _tl_hub.CHAT_THINKING_KIND_STATUS
-                    ),
-                    persist_thinking=bool(reasoning_text),
-                    response_text=error_message,
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source="model",
-                    terminal_error_code=CMP_STREAM_INCOMPLETE,
-                    terminal_subcode=(
-                        TERMINAL_SUBCODE_THINKING_BUDGET
-                        if finish_reason == "thinking_budget"
-                        else None
-                    ),
-                    terminal_error_retryable=True,
-                ),
-                reason=f"stream_{finish_reason}",
-            )
+        cut_off = self._finish_stream_cut_off(result, response_text, _iteration)
+        if cut_off is not None:
+            return cut_off
         if len(raw_content) > _tl_hub.MAX_RESPONSE_CHARS:
             _tl_hub.log_event(
                 logger,

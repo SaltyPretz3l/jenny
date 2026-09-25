@@ -211,8 +211,8 @@ def test_run_ci_uses_sidecar_coverage_gate() -> None:
 
     node_stage = next(stage for stage in module.STAGES if stage.name == "node_test_safe")
     assert node_stage.env == {"JENNY_TEST_WORKERS": "10"}
-    assert "--timeout-ms=600000" in node_stage.command
-    assert module.DEFAULT_GLOBAL_TIMEOUT_SECONDS == 900
+    assert "--timeout-ms=1200000" in node_stage.command
+    assert module.DEFAULT_GLOBAL_TIMEOUT_SECONDS == 1800
 
     package_stage = next(stage for stage in module.STAGES if stage.name == "smoke_packaged_flow")
     assert package_stage.wave == 3

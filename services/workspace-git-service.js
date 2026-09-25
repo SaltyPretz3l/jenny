@@ -25,6 +25,11 @@ const {
   runWorkspaceGit,
 } = require('./workspace-git-executor');
 const { branchNameIsSafe, baseRefIsSafe } = require('./worktree-service');
+const { isContainedGitRunner } = require('./contained-git-runner');
+const {
+  createWorkspaceGitResources,
+  isWorkspaceGitResourceError,
+} = require('./workspace-git-resources');
 const {
   createCheckpointTransactionRunner,
   createWorkspaceGitCheckpointApi,
@@ -96,13 +101,18 @@ class WorkspaceGitService {
     logger = null,
     trashItemImpl = null,
     rootContextProvider = null,
+    resourceAdmissionProvider = null,
   } = {}) {
     if (!configService) {
       throw new TypeError('WorkspaceGitService requires configService');
     }
     this._configService = configService;
     this._featureFlagProvider = typeof featureFlagProvider === 'function' ? featureFlagProvider : null;
-    this._exec = exec;
+    if (resourceAdmissionProvider !== null && !isContainedGitRunner(exec)) {
+      throw new TypeError('WorkspaceGitService resource admission requires a contained Git runner.');
+    }
+    this._resources = createWorkspaceGitResources({ resourceAdmissionProvider });
+    this._exec = this._resources.wrapExecutor(exec);
     this._fs = fs;
     this._path = path;
     this._pathPolicy = new ToolPathPolicy({ fs, path, logger });
@@ -125,6 +135,12 @@ class WorkspaceGitService {
         notARepo: (op) => this._notARepo(op),
         notToplevel: (op) => notRepoToplevelResult(op),
         execFailure: (op, result) => this._execFailure(op, result),
+        runWithResources: (operation, handler) => this._resources.run({
+          root: operation.root,
+          signal: operation.signal,
+          validate: operation.isCurrent,
+        }, handler),
+        isResourceError: isWorkspaceGitResourceError,
       }),
       exec: this._exec,
       execFailure: (op, result) => this._execFailure(op, result),
@@ -223,13 +239,22 @@ class WorkspaceGitService {
     const operation = this._operations.acquire({ kind: 'read', signal });
     if (!operation.acquired) return this._unavailable(op, operation.code);
     try {
-      const detect = await detectRepoScope(this._exec, operation.root, { signal: operation.signal, fs: this._fs, isCurrent: operation.isCurrent });
-      if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
-      if (detect.failure) return this._execFailure(op, detect.failure);
-      if (!detect.isRepo) return this._notARepo(op);
-      if (!detect.isToplevel) return notRepoToplevelResult(op);
-      const result = await handler(operation.root, operation.signal);
-      return operation.isCurrent() ? result : this._unavailable(op, 'root_changed');
+      return await this._resources.run({
+        root: operation.root,
+        signal: operation.signal,
+        validate: operation.isCurrent,
+      }, async () => {
+        const detect = await detectRepoScope(this._exec, operation.root, { signal: operation.signal, fs: this._fs, isCurrent: operation.isCurrent });
+        if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
+        if (detect.failure) return this._execFailure(op, detect.failure);
+        if (!detect.isRepo) return this._notARepo(op);
+        if (!detect.isToplevel) return notRepoToplevelResult(op);
+        const result = await handler(operation.root, operation.signal);
+        return operation.isCurrent() ? result : this._unavailable(op, 'root_changed');
+      });
+    } catch (error) {
+      if (isWorkspaceGitResourceError(error)) return this._unavailable(op, error.reason);
+      throw error;
     } finally {
       operation.release();
     }
@@ -248,12 +273,23 @@ class WorkspaceGitService {
     try {
       return await this._operations.runSerialized(
         operation.context?.rootId || operation.root,
-        async () => this._runWriteOperation(op, {
-          operation,
-          validate,
-          validatePaths,
-          buildArgs,
-        })
+        async () => {
+          try {
+            return await this._resources.run({
+              root: operation.root,
+              signal: operation.signal,
+              validate: operation.isCurrent,
+            }, async () => this._runWriteOperation(op, {
+              operation,
+              validate,
+              validatePaths,
+              buildArgs,
+            }));
+          } catch (error) {
+            if (isWorkspaceGitResourceError(error)) return this._unavailable(op, error.reason);
+            throw error;
+          }
+        }
       );
     } finally {
       operation.release();

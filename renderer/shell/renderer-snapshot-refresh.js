@@ -33,10 +33,17 @@
       };
       const shell = getShell();
       if (!shell) return;
+      // Terminal postwork passes noteStep so a slow refresh names its slow call.
+      // Untimed callers keep the exact await sequence (no extra microtasks).
+      const timed = (step, call) => {
+        if (typeof refreshOptions.noteStep !== 'function') return call();
+        const startedAt = Date.now();
+        return Promise.resolve(call()).finally(() => refreshOptions.noteStep(step, Date.now() - startedAt));
+      };
 
       let settings = null;
       try {
-        settings = await shell.engines.getSettings();
+        settings = await timed('getSettings', () => shell.engines.getSettings());
         if (!commit(() => {
           state.localEngines = settings?.localEngines || null;
           state.preferredEngineType = String(settings?.preferredEngineType || '');
@@ -53,14 +60,14 @@
       }
 
       let status = null;
-      try { status = await shell.status.get(); } catch (_error) { /* keep null */ }
+      try { status = await timed('statusGet', () => shell.status.get()); } catch (_error) { /* keep null */ }
       if (!commit(() => { state.status = status; })) return;
 
       if (refreshOptions.includeModels !== false) {
         let models = null;
         let modelsReadSucceeded = false;
         try {
-          models = await shell.models.list();
+          models = await timed('modelsList', () => shell.models.list());
           modelsReadSucceeded = true;
         } catch (_error) { /* keep null */ }
         if (!commit(() => { state.modelList = models; })) return;

@@ -34,6 +34,29 @@ def test_live_run_mode_notification_updates_turn_without_resolving_pending_appro
             "method": "session.run_mode_updated",
             "params": {
                 "session_id": "session-live-mode",
+                "approval_mode": "prompt",
+                "read_only": False,
+                "reason": "unattended_idle",
+            },
+        })
+        incoming.put({
+            "jsonrpc": "2.0",
+            "id": 76,
+            "method": "initialize",
+            "params": {},
+        })
+
+        routed = multiplexer.read_request()
+
+        assert routed["method"] == "initialize"
+        assert handle.live_run_mode.snapshot() == ("prompt", False)
+        assert handle.live_run_mode.is_paused_unattended() is True
+
+        incoming.put({
+            "jsonrpc": "2.0",
+            "method": "session.run_mode_updated",
+            "params": {
+                "session_id": "session-live-mode",
                 "approval_mode": "auto_run",
                 "read_only": False,
             },
@@ -50,11 +73,57 @@ def test_live_run_mode_notification_updates_turn_without_resolving_pending_appro
 
         assert routed["method"] == "initialize"
         assert handle.live_run_mode.snapshot() == ("auto_run", False)
+        assert handle.live_run_mode.is_paused_unattended() is False
         assert approval_reader(0.1) == {
             "jsonrpc": "2.0",
             "id": 1901,
             "result": {"approved": True},
         }
+    finally:
+        multiplexer.close()
+
+
+def test_live_run_mode_notification_ignores_non_string_reason() -> None:
+    incoming: queue.Queue[dict[str, object]] = queue.Queue()
+    multiplexer = StdioTransportMultiplexer(
+        reader=_queued_reader(incoming),
+        write_message=lambda _message: None,
+        logger=logging.getLogger("tests.multiplexer.run_mode"),
+    )
+    try:
+        handle = multiplexer.register_turn(
+            request_id="req-live-mode-reason",
+            trace_id=None,
+            session_id="session-live-mode-reason",
+            approval_mode="auto_run",
+            read_only=False,
+        )
+        handle.live_run_mode.update(
+            approval_mode="prompt",
+            read_only=False,
+            paused_unattended=True,
+        )
+        incoming.put({
+            "jsonrpc": "2.0",
+            "method": "session.run_mode_updated",
+            "params": {
+                "session_id": "session-live-mode-reason",
+                "approval_mode": "auto_run",
+                "read_only": False,
+                "reason": 42,
+            },
+        })
+        incoming.put({
+            "jsonrpc": "2.0",
+            "id": 80,
+            "method": "initialize",
+            "params": {},
+        })
+
+        multiplexer.read_request()
+
+        assert handle.live_run_mode.snapshot() == ("auto_run", False)
+        assert handle.live_run_mode.is_paused_unattended() is False
     finally:
         multiplexer.close()
 

@@ -62,11 +62,15 @@ function registerRemoteIpc(ipcMain, {
   env,
   mainLifecycle,
   getMainWindow,
+  powerMonitor,
   sendBridgeEvent = () => {},
   log = () => {},
   createWiring = createRemoteRuntimeWiring,
 } = {}) {
   const pluginSubscribers = new Set();
+  const runtimePowerMonitor = powerMonitor || (
+    process.versions.electron ? require('electron').powerMonitor : undefined
+  );
   let pluginService = null;
   let wiring = null;
   let facade = null;
@@ -138,6 +142,7 @@ function registerRemoteIpc(ipcMain, {
         env,
         mainLifecycle,
         getMainWindow,
+        powerMonitor: runtimePowerMonitor,
         pluginStateSource,
         log,
       });

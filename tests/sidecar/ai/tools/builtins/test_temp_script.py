@@ -126,14 +126,22 @@ def test_temp_script_cleans_up_when_execution_is_cancelled(
 
 
 def test_temp_script_output_is_bounded(tmp_path: Path) -> None:
+    # ~60 KB as 300 long lines, not 3000 short ones: cmd's cost is per line, and
+    # under the parallel sidecar lane the 3000-line loop outran the 10 s default
+    # timeout. The explicit timeout keeps this bound test off the timeout contract.
+    line = "0123456789" * 20
     script = (
-        "@for /L %%i in (1,1,3000) do @echo 01234567890123456789\r\n"
+        f"@for /L %%i in (1,1,300) do @echo {line}\r\n"
         if os.name == "nt"
-        else "i=0; while [ $i -lt 3000 ]; do echo 01234567890123456789; i=$((i+1)); done\n"
+        else f"i=0; while [ $i -lt 300 ]; do echo {line}; i=$((i+1)); done\n"
     )
 
-    result = run_temp_script_tool({"script": script}, WorkspaceGuard(str(tmp_path)))
+    result = run_temp_script_tool(
+        {"script": script, "timeout_seconds": 60},
+        WorkspaceGuard(str(tmp_path)),
+    )
 
+    assert result.metadata.get("timed_out") is not True, result.metadata
     assert result.success is True
     assert len(result.output) < 25_000
     assert "...[truncated]" in result.output

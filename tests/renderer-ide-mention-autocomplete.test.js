@@ -35,11 +35,12 @@ function buildDom() {
   );
 }
 
-function makeController(dom, { enabled = true, readFile, now, files, listMeta, listAllFiles } = {}) {
+function makeController(dom, { enabled = true, readFile, readText, now, files, listMeta, listAllFiles } = {}) {
   const win = dom.window;
   const doc = win.document;
   const calls = { readFile: [], listAllFiles: 0 };
   const fsApi = {
+    ...(readText ? { readText } : {}),
     listAllFiles: async () => {
       calls.listAllFiles += 1;
       if (typeof listAllFiles === 'function') {
@@ -146,6 +147,53 @@ test('collectMentionContents resolves each present mention via workspaceFs.readF
   assert.equal(contents.length, 1);
   assert.equal(contents[0].path, 'src/app.js');
   assert.match(contents[0].content, /BODY OF src\/app\.js/);
+});
+
+test('versioned mentions carry the identity of the actual read and reject another root', async t => {
+ const dom = buildDom();
+ t.after(() => dom.window.close());
+ let resultRoot = 'root-a';
+ const { controller, win, doc, calls } = makeController(dom, {
+  listMeta: () => ({ rootId: 'root-a', generation: 1 }),
+  readText: async () => ({ ok: true, rootId: resultRoot, generation: 1, content: 'Bound contents' }),
+ });
+ t.after(() => controller.dispose());
+ controller.attach();
+ const input = typeTrigger(win, doc, '@app');
+ await flush();
+ input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+ assert.deepEqual(await controller.collectMentionContents(), [
+  { path: 'src/app.js', content: 'Bound contents', workspace_id: 'root-a' },
+ ]);
+ resultRoot = 'root-b';
+ assert.deepEqual(await controller.collectMentionContents(), []);
+ assert.deepEqual(calls.readFile, []);
+});
+
+test('a root reset invalidates earlier successful mentions while another read is pending', async t => {
+ const dom = buildDom();
+ t.after(() => dom.window.close());
+ let finishSlow;
+ const slow = new Promise(resolve => { finishSlow = resolve; });
+ const { controller, win, doc } = makeController(dom, {
+  listMeta: () => ({ rootId: 'root-a', generation: 1 }),
+  readText: ({ path }) => path === 'src/app.js'
+   ? Promise.resolve({ ok: true, rootId: 'root-a', generation: 1, content: 'First completed' }) : slow,
+ });
+ t.after(() => controller.dispose());
+ controller.attach();
+ typeTrigger(win, doc, '@app');
+ await flush();
+ doc.querySelector('[data-ide-mention-path="src/app.js"]').click();
+ typeTrigger(win, doc, '@src/app.js @util');
+ await flush();
+ doc.querySelector('[data-ide-mention-path="src/deep/util.js"]').click();
+ assert.deepEqual(controller.collectMentionPaths(), ['src/app.js', 'src/deep/util.js']);
+ const collection = controller.collectMentionContents();
+ await flush();
+ controller.resetForRoot();
+ finishSlow({ ok: false });
+ assert.deepEqual(await collection, []);
 });
 
 test('a mention removed from the text is no longer collected', async () => {

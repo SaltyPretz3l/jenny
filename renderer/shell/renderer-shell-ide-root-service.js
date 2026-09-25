@@ -39,7 +39,14 @@
   const STATE_DIR_REJECTION_TOASTS = {
     workspace_root_is_state_dir: STATE_DIR_ROOT_TOAST,
     workspace_root_inside_state_dir: STATE_DIR_SEGMENT_TOAST,
+    // Projects v2 switch-by-project refusals (workspace-project-switch.js).
+    project_not_found: jt('ide.root.projectMissing', 'That project no longer exists.'),
+    project_root_unavailable: jt('ide.root.projectFolderUnavailable', 'That project has no folder to open.'),
   };
+  const PROJECT_SWITCHER_SCRIPTS = Object.freeze([
+    ['renderer/features/renderer-project-menu.js', 'rendererProjectMenu'],
+    ['renderer/features/renderer-project-switcher.js', 'rendererProjectSwitcher'],
+  ]);
 
   function unavailableOutcome(mode) {
     return {
@@ -122,6 +129,17 @@
     let ideController = null;
     let transitionController = null;
     let externalRequestUnsubscribe = null;
+    let projectSwitcher = null;
+    let projectSwitcherLoad = null;
+    // Disposal fence for the lazy switcher: a load that finishes after the
+    // window's cleanup ran must not create (or keep) the singleton.
+    let facadeDisposed = false;
+    registerCleanup(() => {
+      facadeDisposed = true;
+      projectSwitcher?.dispose();
+      projectSwitcher = null;
+      projectSwitcherLoad = null;
+    });
 
     function appendLog(...args) {
       try { callbacks.appendClientLog?.(...args); } catch (_error) { /* best-effort */ }
@@ -221,6 +239,7 @@
           getTurnViewModelsForActiveSession: (...args) => callbacks.getTurnViewModelsForActiveSession?.(...args),
           onSendToJenny: (payload) => ideSendController?.handleSendToJenny?.(payload),
           activateWorkspaceSession: (...args) => callbacks.activateWorkspaceSession?.(...args),
+          getProjectSwitcher, peekProjectSwitcher,
         },
       }) || null;
       return ideController;
@@ -308,16 +327,93 @@
         notifyFailure(outcome);
         return outcome;
       }
+      const syncHere = request?.viaSwitcher !== true;
+      // A folder pick can provision a new project; which ids existed before is
+      // read now, before the dialog, not after the commit (F33).
+      const baseline = syncHere && mode === 'choose' ? await captureProjectBaseline() : undefined;
       const outcome = await controller[mode](request || {});
       if (outcome?.committed === true && outcome?.degraded === true) {
         notifyDegraded(outcome);
       }
+      if (outcome?.committed === true && syncHere) {
+        await syncProjectsAfterCommit(outcome, mode, baseline);
+      }
       return outcome;
+    }
+
+    async function captureProjectBaseline() {
+      try {
+        const switcher = await getProjectSwitcher();
+        return switcher && !facadeDisposed ? await switcher.captureBaseline() : null;
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    // Every committed transition, whichever surface started it (welcome page,
+    // Settings, the composer nudge, an external request), runs the switcher's
+    // post-commit sync: list refresh, Chats filter, chat follow, announce.
+    // Switcher-initiated runs (request.viaSwitcher) sync themselves.
+    async function syncProjectsAfterCommit(outcome, mode, baseline) {
+      try {
+        const switcher = await getProjectSwitcher();
+        if (!switcher || facadeDisposed) return;
+        await switcher.afterTransition(outcome, { announceNew: mode === 'choose', forceList: mode !== 'project', baseline });
+      } catch (error) {
+        appendLog('WARN', 'workspace.project_sync_failed', { mode, code: String(error?.code || error?.message || 'sync_failed').slice(0, 80) });
+      }
+    }
+
+    // The shared project menu + switcher glue load on first use (no startup
+    // <script> slot) and live once per window; every surface reaches them here.
+    function peekProjectSwitcher() {
+      return projectSwitcher;
+    }
+
+    async function getProjectSwitcher() {
+      if (projectSwitcher) return projectSwitcher;
+      if (projectSwitcherLoad) return projectSwitcherLoad;
+      projectSwitcherLoad = (async () => {
+        for (const [src, name] of PROJECT_SWITCHER_SCRIPTS) {
+          const loaded = windowRef[name]
+            || await windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef[name]) });
+          if (facadeDisposed) { projectSwitcherLoad = null; return null; }
+          if (!loaded || !windowRef[name]) {
+            appendLog('WARN', 'workspace.project_switcher_load_failed', { src });
+            projectSwitcherLoad = null;
+            return null;
+          }
+        }
+        projectSwitcher = windowRef.rendererProjectSwitcher.createProjectSwitcher({
+          state, windowRef, workspaceRootService,
+          openSettingsSection: (...args) => callbacks.openSettingsSection?.(...args),
+          showToast: (message) => callbacks.showToastMessage?.(message, { title: jt('ide.root.workspaceTitle', 'Workspace'), tone: 'info', dedupeKey: 'projects:created' }),
+          showError: (message) => callbacks.showShellErrorToast?.(message, { title: jt('ide.root.workspaceTitle', 'Workspace'), dedupeKey: 'projects:move-failed' }),
+          appendClientLog: (...args) => appendLog(...args),
+          refreshSessions: (...args) => callbacks.refreshSessions?.(...args),
+          // Chat follow goes through workspace-tab authority (tab state,
+          // navigation guards, rollback), never the raw conversation loader.
+          openSession: (...args) => callbacks.activateWorkspaceSession?.(...args),
+          newChat: () => callbacks.handleCreateSession?.(),
+        });
+        if (facadeDisposed) {
+          projectSwitcher.dispose();
+          projectSwitcher = null;
+          projectSwitcherLoad = null;
+          return null;
+        }
+        projectSwitcher.bind();
+        return projectSwitcher;
+      })();
+      return projectSwitcherLoad;
     }
 
     const workspaceRootService = {
       choose: (request) => run('choose', request),
       clear: (request) => run('clear', request),
+      switchToProject: (projectId, request) => run('project', { ...(request || {}), projectId: String(projectId || '') }),
+      getProjectSwitcher,
+      peekProjectSwitcher,
       async getState() {
         const bridge = getBridge();
         return typeof bridge?.getState === 'function' ? bridge.getState.call(bridge) : null;

@@ -108,6 +108,64 @@ def build_approval_request(  # noqa: PLR0913 - router-owned value factory seam
     )
 
 
+def record_auto_approval(live_run_mode: Any | None) -> None:
+    if live_run_mode is not None:
+        live_run_mode.record_auto_approval()
+
+
+def streak_cap_request(
+    live_run_mode: Any | None,
+    cap: int,
+    call: Any,
+    descriptor: Any,
+    mode: str,
+) -> Any | None:
+    if live_run_mode is None:
+        return None
+    if cap > 0 and live_run_mode.auto_approvals >= cap:
+        from sidecar.ai.routing.router import ApprovalRequest  # noqa: PLC0415
+
+        return _replace(
+            build_approval_request(
+                ApprovalRequest,
+                call,
+                descriptor,
+                mode=mode,
+                reason=f"{cap} consecutive automatic approvals in this turn. Approve to continue.",
+                policy_decision=None,
+            ),
+            one_off_only=True,
+        )
+    live_run_mode.record_auto_approval()
+    return None
+
+
+def paused_unattended_approval_request(
+    live_run_mode: Any | None,
+    call_side_effecting: bool | None,
+    call: Any,
+    descriptor: Any,
+    mode: str,
+) -> Any | None:
+    if (
+        live_run_mode is None
+        or live_run_mode.snapshot()[0] != "prompt"
+        or not live_run_mode.is_paused_unattended()
+        or call_side_effecting is not True
+    ):
+        return None
+    from sidecar.ai.routing.router import ApprovalRequest  # noqa: PLC0415
+
+    return build_approval_request(
+        ApprovalRequest,
+        call,
+        descriptor,
+        mode=mode,
+        reason="The model requested a side-effecting MCP tool call.",
+        policy_decision=None,
+    )
+
+
 @dataclass(frozen=True)
 class RouteApplyResult:
     """Outcome of :func:`apply_route_policy_pre_dispatch`.

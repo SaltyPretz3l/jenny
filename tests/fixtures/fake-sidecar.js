@@ -721,6 +721,8 @@ function handleMessage(message) {
     const toolsStatus = buildToolsStatus(config, availableTools);
     writeMessage(resultResponse(message.id, {
       api_version: API_VERSION,
+      runtime_inference_admission_version: process.argv.includes('--old-runtime-protocol') ? 0 : 1,
+      runtime_tool_resource_admission_version: 1,
       server_version: '0.1.0',
       active_engine: currentActiveEngine,
       active_model: currentActiveModel,

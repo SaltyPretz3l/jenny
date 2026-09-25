@@ -1105,11 +1105,22 @@ def test_validate_approval_plan_raises_on_tool_contract_mismatch() -> None:
             plan_mode: bool = False,
             read_only: bool = False,
             trusted_plan_artifact_write: bool | None = None,
+            execution_context: Any = None,
+            turn_id: str | None = None,
         ) -> FrozenExecutionInputs:
-            _ = tool_contract, plan_mode, read_only, trusted_plan_artifact_write
+            _ = (
+                tool_contract,
+                plan_mode,
+                read_only,
+                trusted_plan_artifact_write,
+                execution_context,
+            )
             return frozen_input
 
-        def _rebuild_read_snapshot_cache(self, canonical: Any) -> dict:
+        def _rebuild_read_snapshot_cache(
+            self, canonical: Any, *, execution_context: Any = None
+        ) -> dict:
+            _ = canonical, execution_context
             return dict(live_read_snapshot_cache)
 
         _active_cancel_handle = None
@@ -1536,6 +1547,8 @@ def test_validate_approval_plan_builds_summary_with_non_list_components() -> Non
             plan_mode: bool = False,
             read_only: bool = False,
             trusted_plan_artifact_write: bool | None = None,
+            execution_context: Any = None,
+            turn_id: str | None = None,
         ) -> FrozenExecutionInputs:
             _ = (
                 call,
@@ -1545,10 +1558,14 @@ def test_validate_approval_plan_builds_summary_with_non_list_components() -> Non
                 plan_mode,
                 read_only,
                 trusted_plan_artifact_write,
+                execution_context,
             )
             return frozen_input
 
-        def _rebuild_read_snapshot_cache(self, canonical: Any) -> dict:
+        def _rebuild_read_snapshot_cache(
+            self, canonical: Any, *, execution_context: Any = None
+        ) -> dict:
+            _ = canonical, execution_context
             return {}
 
         _active_cancel_handle = None

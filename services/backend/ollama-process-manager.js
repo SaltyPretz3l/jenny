@@ -21,6 +21,10 @@ const { classifyOllamaCrash } = require('./ollama-crash-diagnostics');
 const { resolveOllamaOutputLevel } = require('./ollama-stderr-level');
 const { ollamaBinaryPath } = require('../ollama-runtime-paths');
 const {
+  ENGINE_ACTIVITY_THROTTLE_MS,
+  isEngineActivityLine,
+} = require('./engine-activity-lines');
+const {
   TRAY_CONFLICT_REMEDIATION,
   buildTrayConflictWarnDetails,
   detectOllamaTrayConflictAsync,
@@ -33,26 +37,6 @@ const {
 // enough to keep log payloads bounded.
 const STDERR_TAIL_MAX_LINES = 20;
 
-// Engine-liveness heartbeat (2026-07-11 CMP-LOOP-0015 RCA): Ollama streams
-// NOTHING to the chat client while the model composes a buffered tool call,
-// but its embedded llama.cpp server prints per-slot telemetry on stderr every
-// few seconds while decoding (and progress lines during prompt eval / model
-// load). Lines matching these prefixes are forwarded — throttled — to the
-// sidecar's stream-inactivity watchdog as proof the engine is busy, not hung.
-// Deliberately EXCLUDES `srv` lines ("all slots are idle" is not activity)
-// and [GIN] access logs (the shell's own /api/tags polls would defeat the
-// watchdog entirely).
-const ENGINE_ACTIVITY_LINE_PATTERNS = [
-  /^slot\s+\w+/i, // per-slot lifecycle: launch/operator/print_timing/release
-  /^cmn\s/i, // reasoning-budget transitions during active decode
-  /^(llama_|load_tensors|llm_load|ggml_)/i, // model (re)load progress
-];
-const ENGINE_ACTIVITY_THROTTLE_MS = 5000;
-
-function isEngineActivityLine(line) {
-  const text = String(line || '');
-  return ENGINE_ACTIVITY_LINE_PATTERNS.some((pattern) => pattern.test(text));
-}
 // How many tail lines to attach to the durable ollama.exited / startup_failed
 // ERROR events.
 const STDERR_TAIL_EMIT_LINES = 15;
@@ -844,8 +828,11 @@ class OllamaProcessManager {
     }
     this._resetLiveOwnership();
 
-    await this._killProcessTree(ownedPid, { force: false }).catch(() => null);
-    const stoppedGracefully = await this._waitForProcessExit(ownedPid, STOP_GRACE_MS);
+    // Windows taskkill without /F only posts WM_CLOSE, which a windowless
+    // `ollama serve` never handles, so the grace wait always ran out.
+    const graceful = this._platform !== 'win32';
+    if (graceful) await this._killProcessTree(ownedPid, { force: false }).catch(() => null);
+    const stoppedGracefully = graceful && await this._waitForProcessExit(ownedPid, STOP_GRACE_MS);
     if (!stoppedGracefully) {
       await this._killProcessTree(ownedPid, { force: true }).catch(() => null);
       try {

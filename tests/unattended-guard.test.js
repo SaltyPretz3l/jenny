@@ -24,16 +24,26 @@ function createHarness({
     active_turn: { stream_id: 'stream-1' },
   }]]);
   const pauseCalls = [];
+  const runtimePauseCalls = [];
+  const pauseOrder = [];
   const bridgeEvents = [];
   const logs = [];
   const intervals = [];
   const cleared = [];
   const backend = {
     activeStreams,
+    sessionRuntime: {
+      pausePending(options) {
+        pauseOrder.push('runtime');
+        runtimePauseCalls.push(options);
+        return { paused: 1 };
+      },
+    },
     sessionStore: {
       listSessionRecords: () => [...sessions.values()],
     },
     pauseSessionAutoRun(sessionId, options) {
+      pauseOrder.push('active');
       pauseCalls.push({ sessionId, options });
       if (currentPauseResult instanceof Error) throw currentPauseResult;
       return currentPauseResult;
@@ -64,6 +74,8 @@ function createHarness({
     intervals,
     logs,
     pauseCalls,
+    pauseOrder,
+    runtimePauseCalls,
     sessions,
     setEnabled: (value) => { currentEnabled = value; },
     setIdleSeconds: (value) => { currentIdleSeconds = value; },
@@ -71,6 +83,19 @@ function createHarness({
     setThresholdMinutes: (value) => { currentThresholdMinutes = value; },
   };
 }
+
+test('idle threshold pauses queued auto work without requiring an active stream', () => {
+  const harness = createHarness({ idleSeconds: 300 });
+  harness.activeStreams.clear();
+
+  harness.guard.tick();
+
+  assert.deepEqual(harness.runtimePauseCalls, [{
+    sessionId: 'session-1', reason: 'unattended_idle',
+  }]);
+  assert.deepEqual(harness.pauseCalls, []);
+  assert.equal(harness.logs.at(-1).event, 'unattended_guard.pending_paused');
+});
 
 test('idle threshold requests one unattended pause per auto stream', () => {
   const harness = createHarness({ idleSeconds: 299 });
@@ -82,6 +107,7 @@ test('idle threshold requests one unattended pause per auto stream', () => {
   harness.guard.tick();
   harness.guard.tick();
 
+  assert.deepEqual(harness.pauseOrder.slice(0, 2), ['runtime', 'active']);
   assert.deepEqual(harness.pauseCalls, [{
     sessionId: 'session-1',
     options: { streamId: 'stream-1', reason: 'unattended_idle', idleSeconds: 300 },

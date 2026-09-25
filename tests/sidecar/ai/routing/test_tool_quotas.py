@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sidecar.ai.config import parse_runtime_config
 from sidecar.ai.routing.tool_quotas import (
     ToolQuotaPolicy,
@@ -10,6 +12,7 @@ from sidecar.ai.routing.tool_quotas import (
     policy_from_config,
 )
 from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.runtime.cooldowns import CooldownRegistry
 
 
 def _call(tool_id: str, *, call_id: str = "", arguments: dict[str, object] | None = None):
@@ -159,7 +162,7 @@ def test_refund_web_call_releases_budget() -> None:
     assert registry._web_calls == 2
 
     # Refund a failed web call → a slot frees up (no block, so no cooldown side effect).
-    assert registry.refund_web_call(_call("web_search"), tool_contract=None) is True
+    assert registry.refund_web_call(_call("web_search", call_id="web-0"), tool_contract=None) is True
     assert registry._web_calls == 1
 
     allowed = registry.filter_calls([_call("web_search", call_id="web-2")], tool_contract=None)
@@ -224,7 +227,7 @@ def test_refund_web_call_keeps_session_count() -> None:
     assert registry.session_tool_call_count == 1
     assert registry._web_calls == 1
 
-    registry.refund_web_call(_call("web_search"), tool_contract=None)
+    registry.refund_web_call(_call("web_search", call_id="w0"), tool_contract=None)
 
     assert registry._web_calls == 0
     # The coarse per-session runaway breaker still counts the attempt.
@@ -279,3 +282,60 @@ def test_only_successful_web_calls_count_toward_cap() -> None:
     # The next web call is blocked at the per-turn cap.
     third = registry.filter_calls([_call("web_search", call_id="w4")], tool_contract=None)
     assert [blocked.metadata["quota_scope"] for blocked in third.blocked] == ["web_per_turn"]
+
+
+def test_quota_snapshot_preserves_original_baseline_admissions_and_idempotent_refunds():
+    policy = ToolQuotaPolicy(max_web_tool_calls_per_turn=2, max_tool_calls_per_session=4)
+    def clock() -> CooldownRegistry:
+        return CooldownRegistry(clock=lambda: 100.0, wall_clock=lambda: 1000.0)
+
+    registry = ToolQuotaRegistry(policy, session_tool_call_count=1, cooldown_registry=clock())
+    calls = [_call("web_search", call_id="success"), _call("web_search", call_id="failure"),
+             _call("ask_user", call_id="pending")]
+    assert len(registry.filter_calls(calls, tool_contract=None).allowed) == 3
+    snapshot = registry.snapshot()
+    restored = ToolQuotaRegistry.from_snapshot(snapshot, policy=policy, cooldown_registry=clock())
+    restored.validate_pending_admissions([calls[-1]], tool_contract=None)
+    assert restored.snapshot() == snapshot
+    failed = SimpleNamespace(tool_name="web_search", call_id="failure", success=False)
+    assert restored.refund_web_call_for_outcome(failed, tool_contract=None)
+    assert not restored.refund_web_call_for_outcome(failed, tool_contract=None)
+    assert not restored.refund_web_call_for_outcome(SimpleNamespace(
+        tool_name="web_search", call_id="success", success=True), tool_contract=None)
+    assert restored.session_tool_call_count == 4
+    assert restored._web_calls == 1
+    assert restored.filter_calls([_call("read_file", call_id="new")], tool_contract=None).blocked
+    again = ToolQuotaRegistry.from_snapshot(restored.snapshot(), policy=policy, cooldown_registry=clock())
+    assert not again.refund_web_call_for_outcome(failed, tool_contract=None)
+    assert again.session_tool_call_count == 4
+
+
+def test_quota_blocked_calls_never_refund_a_different_admission():
+    registry = ToolQuotaRegistry(ToolQuotaPolicy(max_web_tool_calls_per_turn=1))
+    registry.filter_calls([_call("web_search", call_id="charged"), _call("web_search", call_id="blocked")], tool_contract=None)
+    assert not registry.refund_web_call_for_outcome(SimpleNamespace(
+        tool_name="web_search", call_id="blocked", success=False), tool_contract=None)
+    assert registry._web_calls == 1
+
+
+@pytest.mark.parametrize("mutation", ["identity", "arguments", "classification", "policy", "duplicate"])
+def test_quota_restore_rejects_drift(mutation):
+    registry = ToolQuotaRegistry()
+    call = _call("read_file", call_id="pending", arguments={"path": "one"})
+    registry.filter_calls([call], tool_contract=None)
+    saved = registry.snapshot()
+    policy = registry.policy
+    contract = None
+    if mutation == "identity":
+        call = _call("read_file", call_id="foreign", arguments={"path": "one"})
+    elif mutation == "arguments":
+        call = _call("read_file", call_id="pending", arguments={"path": "other"})
+    elif mutation == "classification":
+        contract = SimpleNamespace(entry=lambda _name: SimpleNamespace(descriptor=SimpleNamespace(tool_family="web")))
+    elif mutation == "policy":
+        policy = ToolQuotaPolicy(max_tool_calls_per_session=199)
+    else:
+        saved["admissions"] *= 2
+    with pytest.raises(ValueError):
+        restored = ToolQuotaRegistry.from_snapshot(saved, policy=policy)
+        restored.validate_pending_admissions([call], tool_contract=contract)

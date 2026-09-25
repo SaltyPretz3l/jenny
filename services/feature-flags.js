@@ -63,16 +63,19 @@ const FEATURE_OVERRIDE_KEYS = Object.freeze([
   // is behaviourally coherent but NOT byte-identical markup.
   'text_spellcheck',
   // remote_control is user-overridable from Settings > Remote Control.
-  // DEFAULT-ON; JENNY_ENABLE_REMOTE_CONTROL=0 is an emergency
-  // deny that stored overrides cannot defeat.
+  // DEFAULT-OFF for 1.2.0 (owner, 2026-09-22: the relay is not deployed);
+  // JENNY_ENABLE_REMOTE_CONTROL=0 is an emergency deny that stored overrides
+  // cannot defeat.
   'remote_control',
 ]);
 
 const FORCE_DENY_ENV_KEYS = Object.freeze({
+  session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME',
   remote_control: 'JENNY_ENABLE_REMOTE_CONTROL',
 });
 
 const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
+  'session_runtime',
   'agent_executor',
   'task_lifecycle',
   'multiplexer',
@@ -81,11 +84,14 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'canonical_m3_rollout',
   'canonical_turn_events',
   'canonical_bridge',
+  'canonical_text_primary',
   'chat_tool_trace_rows_fix',
   'chat_stream_paint_v2',
   'chat_stream_token_fade',
   'aggregate_checkpoints',
+  'reasoning_status_v2',
   'reasoning_wire_deltas',
+  'failure_retry_reasoning_carry',
   'stream_envelope_v2',
   'canonical_renderer_projection',
   'workspace_manifest',
@@ -345,9 +351,12 @@ function normalizeFeatureOverrides(value = {}) {
 function buildFeatureFlagDefaults(env = process.env) {
   const fe = (key, defaultValue = true) =>
     isFeatureEnabledByDefault(env[`JENNY_ENABLE_${key}`], defaultValue);
-  const canonicalM3Rollout = fe('CANONICAL_M3_ROLLOUT', false);
+  // Canonical M3 is DEFAULT-ON; one rollout override rolls both derived flags back.
+  // Set JENNY_ENABLE_CANONICAL_M3_ROLLOUT=0 to disable both derived flags.
+  const canonicalM3Rollout = fe('CANONICAL_M3_ROLLOUT', true);
   const canonicalM3Default = (key, defaultValue = false) =>
     fe(key, canonicalM3Rollout === true ? true : defaultValue);
+  const canonicalTextPrimary = fe('CANONICAL_TEXT_PRIMARY', false);
 
   return {
     skills_system: fe('SKILLS_SYSTEM'),
@@ -407,6 +416,11 @@ function buildFeatureFlagDefaults(env = process.env) {
     // entry text is untouched. DEFAULT-ON; set JENNY_ENABLE_REASONING_PRETTIFY=0
     // to roll back to the raw join (byte-identical pre-feature markup).
     reasoning_prettify: fe('REASONING_PRETTIFY', true),
+    // reasoning_status_v2 unifies marker bounds, restores synthesized updates
+    // after organic-marker silence, adds redacted telemetry, and promotes the
+    // live label. DEFAULT-ON; JENNY_ENABLE_REASONING_STATUS_V2=0 restores the
+    // legacy prompt, permanent synthesis disablement, markup, and logging.
+    reasoning_status_v2: fe('REASONING_STATUS_V2', true),
     // vision_unified_turn sends current-turn images through the normal tool loop.
     // DEFAULT-ON; set JENNY_ENABLE_VISION_UNIFIED_TURN=0 to restore the legacy
     // single-shot vision path for one release.
@@ -430,12 +444,15 @@ function buildFeatureFlagDefaults(env = process.env) {
     // install since its own default-on flip, so true preserves live behavior.
     // Set JENNY_ENABLE_PHASE_EVENTS=0 to roll back.
     phase_events: fe('PHASE_EVENTS', true),
-    // canonical_m3_rollout enables the full canonical stack as a manual canary.
+    // canonical_m3_rollout keeps the canonical stack default-on with one rollback.
     canonical_m3_rollout: canonicalM3Rollout,
-    // canonical_turn_events emits additive turn.event notifications beside legacy stream methods.
+    // canonical_turn_events follows canonical_m3_rollout unless independently overridden.
     canonical_turn_events: canonicalM3Default('CANONICAL_TURN_EVENTS'),
-    // canonical_bridge lets Electron project accepted turn.event payloads into the existing stream seam.
+    // canonical_bridge follows the same rollout and projects accepted turn.event payloads.
     canonical_bridge: canonicalM3Default('CANONICAL_BRIDGE'),
+    // DEFAULT-OFF until canonical text transport is lossless: display projections
+    // must not redact or truncate text, and oversized chunks must split instead of cap.
+    ...(canonicalTextPrimary ? { canonical_text_primary: true } : {}),
     // chat_tool_trace_rows_fix (Ht-E) gates the settled-tool trace-row
     // partition on the non-coalescing turn fallback path (the f34016f
     // regression fix). DEFAULT-ON since 2026-07-01 (owner-directed flip for
@@ -469,6 +486,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // coalescer (stream-envelope-shape.js) still replaces edits by id and must
     // be taught to fold them in a deferred slice.
     reasoning_wire_deltas: fe('REASONING_WIRE_DELTAS', false),
+    failure_retry_reasoning_carry: fe('FAILURE_RETRY_REASONING_CARRY', false),
     // stream_envelope_v2 gates the bridge-to-renderer delta envelope rollout.
     // DEFAULT-OFF, and deliberately still off: the chat-timeline consolidation
     // closed 2026-08-26 having decided this is a SEPARATE transport migration,
@@ -731,18 +749,10 @@ function buildFeatureFlagDefaults(env = process.env) {
     // [data-search-hit]). No sidecar/IPC/CONFIG_VERSION surface. DEFAULT-ON;
     // set JENNY_ENABLE_SETTINGS_SEARCH=0 to roll back to the plain nav rail.
     settings_search: fe('SETTINGS_SEARCH', true),
-    // model_management_ui gates the Settings > Models "Model library" group
-    // (pull-with-progress + guarded delete). Default-ON; set
-    // JENNY_ENABLE_MODEL_MANAGEMENT_UI=0 to roll back to today's Settings >
-    // Models exactly (parity: no pull row, no delete, no group rendered).
+    // model_management_ui gates the Model library that renders inside Settings >
+    // Models (pull-with-progress, guarded delete, GGUF folders); set
+    // JENNY_ENABLE_MODEL_MANAGEMENT_UI=0 to hide it.
     model_management_ui: fe('MODEL_MANAGEMENT_UI'),
-    // model_library_section moves the Model library out of the Settings > Models
-    // card into its own registry section rendering the shared card grid
-    // (renderer/shell/model-library/). Requires model_management_ui. DEFAULT-ON;
-    // JENNY_ENABLE_MODEL_LIBRARY_SECTION=0 restores the legacy flat-row
-    // #modelLibraryGroup inside the Models card exactly, and hides the new nav
-    // item. Legacy module + this flag retire together in the cleanup wave.
-    model_library_section: fe('MODEL_LIBRARY_SECTION'),
     // setup_hub replaces the linear first-run wizard with the checklist hub
     // (any-order steps, per-step skip, explicit finish gate). Renderer-only.
     // DEFAULT-ON; JENNY_ENABLE_SETUP_HUB=0 removes the guided surface entirely
@@ -790,7 +800,8 @@ function buildFeatureFlagDefaults(env = process.env) {
     // in Settings (FEATURE_OVERRIDE_KEYS).
     ollama_tray_remediation: fe('OLLAMA_TRAY_REMEDIATION', true),
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
-    remote_control: fe('REMOTE_CONTROL', true),
+    remote_control: fe('REMOTE_CONTROL', false),
+    session_runtime: fe('SESSION_RUNTIME', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
     // model_fit_estimates gates the pure-estimator fit computed for installed
     // local models that have no config/model-recommendation-catalog.json

@@ -398,6 +398,7 @@
               pendingMemoryStatus: getElementById('pendingMemoryStatus'),
               pendingMemoryList: getElementById('pendingMemoryList'),
               pendingMemoryMoreHost: getElementById('pendingMemoryMoreHost'),
+              memoryProjectFilterHost: getElementById('memoryProjectFilterHost'),
               memoryKindFilterHost: getElementById('memoryKindFilterHost'),
               memorySearchHost: getElementById('memorySearchHost'),
               approvedMemoryCount: getElementById('approvedMemoryCount'),
@@ -460,9 +461,15 @@
         renderComposerState: (...args) => renderComposerState(...args),
         renderAll: (...args) => renderAll(...args),
         refreshWorkspaceRootDependents: (...args) => refreshWorkspaceRootDependents(...args),
+        // Projects v2 switcher: "Manage projects…" and the moved-chat list reload.
+        openSettingsSection: (...args) => openSettingsSection(...args),
+        refreshSessions: () => loadSessions(state.currentSessionId, { skipOpenCurrent: true }),
       },
     }) || null;
     const workspaceRootService = ideRootService?.workspaceRootService || null;
+    const getProjectSwitcher = () => (typeof workspaceRootService?.getProjectSwitcher === 'function' ? workspaceRootService.getProjectSwitcher() : Promise.resolve(null));
+    // Projects v2: deleting the project the Workspace is bound to closes the Workspace.
+    const clearWorkspaceRoot = (request) => (typeof workspaceRootService?.clear === 'function' ? workspaceRootService.clear(request || {}) : Promise.resolve(null));
     let ideController = null;
     function ensureIdeController() {
       ideController = ideRootService?.ensureIdeController?.() || null;
@@ -894,6 +901,8 @@
       hydrateCachedLazyShellState,
       queueStartupLazyHydration,
       handleWorkspaceRootChoose,
+      clearWorkspaceRoot,
+      getProjectSwitcher,
       getPersonalityActiveFileSafe,
       getPersonalityDraftSafe: (...args) => {
         ensurePersonalityController();

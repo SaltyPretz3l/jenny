@@ -405,7 +405,7 @@
     }) || { remember() {}, rememberById() {}, clear() {}, replay() { return 0; } };
     const replayReasoningHandoff = () => reasoningHandoff.replay();
 
-    function patchReasoningStack(article, patchModel, doc) {
+    function patchReasoningStack(article, patchModel, doc, rowModelList) {
       const hasThinkingMarkup = Object.prototype.hasOwnProperty.call(patchModel || {}, 'thinkingMarkup');
       if (!hasThinkingMarkup) {
         return { patched: false, requiresFullFallback: false, hasThinkingMarkup: false };
@@ -442,8 +442,10 @@
       }
 
       const existingBlocks = Array.from(existingStack.querySelectorAll('.reasoning-row-block'));
-      const nextBlocks = Array.from(nextStack.querySelectorAll('.reasoning-row-block'));
-      if (existingBlocks.length !== nextBlocks.length) {
+      const nextBlocks = streamPatchTargetUtils.resolveReasoningPatchBlocks(
+        existingBlocks, nextStack, article, rowModelList, getReasoningBlockKey
+      );
+      if (!nextBlocks || existingBlocks.length !== nextBlocks.length) {
         return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
       }
       for (let index = 0; index < existingBlocks.length; index += 1) {
@@ -531,26 +533,39 @@
       return durationMs + SETTLE_DURATION_MARGIN_MS;
     }
 
+    // Every expanded panel in scope, each judged by ITS OWN block. A first-match
+    // lookup re-clamped an earlier, user-opened thought on every patch of a later
+    // streaming phase (the flicker) and never released the live tail (the scroll
+    // fight). Owner gate 2026-09-20.
     function syncExpandedThinkingPanelHeight(article) {
-      const panel = article?.querySelector?.('.reasoning-row-panel.expanded');
-      if (!panel || panel.hidden) {
-        return;
-      }
+      const panels = article?.querySelectorAll?.('.reasoning-row-panel.expanded');
+      if (!panels || !panels.length) return;
+      for (const panel of panels) syncOneExpandedThinkingPanel(panel);
+    }
+
+    function syncOneExpandedThinkingPanel(panel) {
+      if (!panel || panel.hidden) return;
       if (autocollapseUtils.isReasoningPanelCollapsing?.(panel)) return;
       if (reducedMotionQuery.matches) {
         panel.style.maxHeight = 'none';
         return;
       }
-      // While this block is the live streaming tail, let the body grow freely:
-      // re-clamping max-height to scrollHeight every patch (with a max-height
-      // transition live) fights both the per-unit reveal and the scroll-follow.
-      // On flip to complete/error the else-branch writes the measured height in
-      // that same frame, so click-to-collapse still animates from a real value.
+      // The live streaming tail grows freely: re-clamping to scrollHeight every
+      // patch fights the per-unit reveal and the scroll-follow. On flip to
+      // complete/error the pin below writes a measured height in that frame.
       const block = panel.closest?.('.reasoning-row-block');
       if (block?.getAttribute?.('data-reasoning-status') === 'streaming') {
         panel.style.maxHeight = 'none';
         return;
       }
+      // A settled panel (settled class, or a px pin from its own expand/flip)
+      // is at rest; only the flip-from-streaming case (inline 'none') and a
+      // never-pinned panel take the pin.
+      const inlineMaxHeight = String(panel.style.maxHeight || '');
+      const settled = typeof thinkingPanelSettleUtils.isThinkingPanelSettled === 'function'
+        ? thinkingPanelSettleUtils.isThinkingPanelSettled(panel)
+        : panel.classList.contains('reasoning-row-panel--settled');
+      if (inlineMaxHeight !== 'none' && (settled || inlineMaxHeight !== '')) return;
       panel.style.maxHeight = `${Math.max(panel.scrollHeight || 0, panel.offsetHeight || 0)}px`;
       // The flip-to-complete pin above is a single scrollHeight snapshot: if
       // layout/fonts settle late, or the panel reflows afterward (e.g. a dock
@@ -714,7 +729,7 @@
         })();
         let patchedSurgically = false;
         const existingBubble = article.querySelector('[data-streaming-bubble="true"]');
-        const reasoningPatch = patchReasoningStack(segmentScope, patchModel, article.ownerDocument);
+        const reasoningPatch = patchReasoningStack(segmentScope, patchModel, article.ownerDocument, rowModelList);
         const needsReasoningOnlyStructuralFallback = reasoningPatch.requiresFullFallback
           && reasoningPatch.hasThinkingMarkup
           && !existingBubble

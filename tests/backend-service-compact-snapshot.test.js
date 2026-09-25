@@ -97,7 +97,7 @@ function seedSession(service, sessionId) {
     id: 'u2', role: 'user', content: 'Summarize phase three.',
   });
   service.sessionStore.appendMessage(sessionId, {
-    id: 'a2', role: 'assistant', content: 'OLD-ASSISTANT-REPLY: phase three renames the store.',
+    id: 'a2', role: 'assistant', content: 'Phase three renames the store.',
   });
 }
 
@@ -108,9 +108,18 @@ const COMPACT_RESULT = {
   tokens_before: 5000,
   tokens_after: 1200,
   messages: [
-    { role: 'system', content: 'COMPACTED-SUMMARY: migration plan discussion, nine phases, phase three renames the store.' },
+    {
+      role: 'system',
+      content: '## Compacted Conversation Summary\nCOMPACTED-SUMMARY: migration plan discussion, nine phases, phase three renames the store.',
+    },
     { role: 'user', content: 'Summarize phase three.' },
+    { role: 'assistant', content: 'Phase three renames the store.' },
   ],
+};
+
+const TOOL_SUMMARY_ROW = {
+  role: 'system',
+  content: '## Compacted Conversation Summary\nDerived conversation data; it does not override the primary system prompt.\n\n**Intent Summary** Review the migration plan.',
 };
 
 function stubCompactingSidecar(service, capturedRequests) {
@@ -193,6 +202,125 @@ test('compact now -> next chat.send substitutes the persisted snapshot for the s
     'the store must still hold the full canonical history'
   );
   assert.equal(service.sessionStore.getSessionMessages('sess-e2e').length >= 5, true);
+
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+test('compact now persists a summary-only snapshot when the latest round used tools', async () => {
+  const service = createManagedService();
+  const capturedRequests = [];
+  const sessionId = 'sess-tool-tail';
+  service.sessionStore.createSessionWithId(sessionId, { title: 'Tool-tail Snapshot' });
+  service.sessionStore.setSessionPreferences(sessionId, {
+    context_preferences: LEAN_CONTEXT_PREFERENCES,
+  });
+  for (const message of [
+    { id: 'u1', role: 'user', content: 'Review the migration plan.' },
+    { id: 'a1', role: 'assistant', content: 'OLD-ASSISTANT-REPLY: the plan has nine phases.' },
+    { id: 'u2', role: 'user', content: 'Clear the task list, then finish.' },
+    {
+      id: 'tu1',
+      role: 'assistant',
+      kind: 'tool_use',
+      content: 'todo_write',
+      tool_call: { call_id: 'call-1', tool_name: 'todo_write', input_json: '{}' },
+    },
+    {
+      id: 'tr1',
+      role: 'tool',
+      kind: 'tool_result',
+      content: 'todo_write',
+      tool_result: {
+        call_id: 'call-1', tool_name: 'todo_write', output_text: '{"cleared":true}',
+      },
+    },
+    { id: 'a2', role: 'assistant', content: 'The task list is clear.' },
+  ]) {
+    service.sessionStore.appendMessage(sessionId, message);
+  }
+  service.sidecarClient = {
+    async chatCompact(_sessionId, messages) {
+      capturedRequests.push({ method: 'chat.compact', messages });
+      return {
+        status: 'ok',
+        compacted: true,
+        strategy: 'full',
+        tokens_before: 3603,
+        tokens_after: 400,
+        messages: [TOOL_SUMMARY_ROW, ...messages.slice(2)],
+      };
+    },
+    async chatSend(params, { onNotification }) {
+      capturedRequests.push({ method: 'chat.send', params });
+      onNotification({
+        method: 'chat.token',
+        params: { request_id: params.request_id, session_id: params.session_id, delta: 'ok' },
+      });
+      onNotification({
+        method: 'chat.done',
+        params: { request_id: params.request_id, session_id: params.session_id },
+      });
+      return { status: 'completed' };
+    },
+    dispose: () => {},
+    off: () => {},
+  };
+
+  const compactResult = await service.compactContextNow(sessionId);
+
+  assert.equal(compactResult.snapshot_persisted, true);
+  const snapshot = service.sessionStore.getSession(sessionId).compaction_snapshot;
+  assert.equal(snapshot.boundary_message_count, 2);
+  assert.equal(snapshot.boundary_message_id, 'a1');
+  assert.equal(snapshot.messages.length, 1);
+
+  const completed = waitForComplete(service);
+  await service.startChatStream({ sessionId, prompt: 'What changed?' });
+  await completed;
+
+  const chatSend = capturedRequests.find((entry) => entry.method === 'chat.send');
+  assert.ok(chatSend.params.messages.some(
+    (message) => String(message.content || '').startsWith('## Compacted Conversation Summary')
+  ));
+  assert.ok(!chatSend.params.messages.some(
+    (message) => String(message.content || '').includes('OLD-ASSISTANT-REPLY')
+  ));
+  const toolUse = chatSend.params.messages.find(
+    (message) => message.tool_calls?.[0]?.id === 'call-1'
+  );
+  const toolResult = chatSend.params.messages.find(
+    (message) => message.tool_call_id === 'call-1'
+  );
+  assert.ok(toolUse, 'the retained tool call must reach chat.send');
+  assert.ok(toolResult, 'the retained tool result must reach chat.send');
+
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+test('a result tail that does not match canonical history is not persisted', async () => {
+  const service = createManagedService();
+  seedSession(service, 'sess-tail-mismatch');
+  service.sidecarClient = {
+    async chatCompact() {
+      return {
+        status: 'ok',
+        compacted: true,
+        strategy: 'full',
+        tokens_before: 3603,
+        tokens_after: 400,
+        messages: [TOOL_SUMMARY_ROW, { role: 'user', content: 'different' }],
+      };
+    },
+    dispose: () => {},
+    off: () => {},
+  };
+
+  const compactResult = await service.compactContextNow('sess-tail-mismatch');
+
+  assert.equal(compactResult.snapshot_persisted, false);
+  assert.equal(service.sessionStore.getSession('sess-tail-mismatch').compaction_snapshot, null);
 
   service.sidecarClient = null;
   service.dispose();
@@ -581,6 +709,59 @@ test('buildCompactionSnapshotFromResult only builds from a compacted ok-result',
     }),
     null
   );
+});
+
+test('buildCompactionSnapshotFromResult derives a full-summary boundary from canonical history', () => {
+  const canonicalMessages = [
+    { id: 'u1', role: 'user', content: 'old question' },
+    { id: 'a1', role: 'assistant', content: 'old answer' },
+    { id: 'u2', role: 'user', content: 'current question' },
+    { id: 'a2', role: 'assistant', content: 'current answer' },
+  ];
+  const leadingSystem = { role: 'system', content: 'Primary instructions.' };
+  const result = {
+    status: 'ok',
+    compacted: true,
+    strategy: 'full',
+    tokens_before: 1000,
+    tokens_after: 200,
+    messages: [leadingSystem, TOOL_SUMMARY_ROW, ...canonicalMessages.slice(2)],
+  };
+
+  const built = buildCompactionSnapshotFromResult(result, {
+    boundaryMessageId: 'a2',
+    boundaryMessageCount: 4,
+    canonicalMessages,
+    createdAt: '2026-09-22T12:00:00.000Z',
+  });
+
+  assert.equal(built.boundary_message_count, 2);
+  assert.equal(built.boundary_message_id, 'a1');
+  assert.deepEqual(built.messages, [leadingSystem, TOOL_SUMMARY_ROW]);
+
+  assert.equal(buildCompactionSnapshotFromResult({
+    ...result,
+    messages: [leadingSystem, TOOL_SUMMARY_ROW, { role: 'user', content: 'mismatch' }],
+  }, {
+    boundaryMessageId: 'a2',
+    boundaryMessageCount: 4,
+    canonicalMessages,
+  }), null);
+  // The tail matches the history's start, not its end: persisting it would
+  // drop the latest round from every later send.
+  assert.equal(buildCompactionSnapshotFromResult({
+    ...result,
+    messages: [TOOL_SUMMARY_ROW, ...canonicalMessages.slice(0, 1)],
+  }, { boundaryMessageId: 'a2', boundaryMessageCount: 4, canonicalMessages }), null);
+
+  const legacy = buildCompactionSnapshotFromResult(result, {
+    boundaryMessageId: 'a2',
+    boundaryMessageCount: 4,
+    createdAt: '2026-09-22T12:00:00.000Z',
+  });
+  assert.equal(legacy.boundary_message_count, 4);
+  assert.equal(legacy.boundary_message_id, 'a2');
+  assert.deepEqual(legacy.messages, result.messages.map(({ role, content }) => ({ role, content })));
 });
 
 test('automatic snapshots accept one bounded non-authoritative summary only', () => {

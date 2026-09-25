@@ -104,6 +104,20 @@ test('renderApprovalBlock emits Allow once / Always allow / Deny buttons', () =>
   assert.equal(root.querySelectorAll('.tool-approval-actions > button').length, 3);
 });
 
+test('renderApprovalBlock hides Always allow for one-off-only approvals', () => {
+  const root = parseFragment(renderApprovalBlock({
+    toolCallId: 'call_streak_cap',
+    toolName: 'write_file',
+    oneOffOnly: true,
+    mode: 'card',
+  }));
+
+  assert.ok(root.querySelector('[data-approval-scope="once"]'));
+  assert.equal(root.querySelector('.tool-approve-always-btn'), null);
+  assert.ok(root.querySelector('.tool-deny-btn'));
+  assert.equal(root.querySelectorAll('.tool-approval-actions > button').length, 2);
+});
+
 test('renderApprovalBlock falls back to a default prompt when none is supplied', () => {
   const inlineHtml = renderApprovalBlock({
     toolCallId: 'call_1',

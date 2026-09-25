@@ -2,10 +2,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { PassThrough } = require('stream');
 
 const { UpdateService } = require('../services/update-service');
 const {
@@ -38,11 +40,18 @@ function makeApp({ version = '0.1.0', isPackaged = true } = {}) {
 class FakeAutoUpdater extends EventEmitter {
   constructor(updateInfo = {}) {
     super();
+    const installerBytes = Buffer.from('Jenny installer 0.2.0');
+    this.downloadedFile = path.join(makeTempDir(), 'Jenny-0.2.0.exe');
+    fs.writeFileSync(this.downloadedFile, installerBytes);
     this.updateInfo = {
       version: '0.2.0',
       releaseName: 'Jenny 0.2.0',
       releaseNotes: '## Fixes\n\n- Safer updater path',
-      files: [{ url: 'Jenny-0.2.0.exe', sha512: 'abc123' }],
+      files: [{
+        url: 'Jenny-0.2.0.exe',
+        sha512: crypto.createHash('sha512').update(installerBytes).digest('base64'),
+        size: installerBytes.length,
+      }],
       ...updateInfo,
     };
     this.calls = [];
@@ -64,8 +73,8 @@ class FakeAutoUpdater extends EventEmitter {
       total: 1000,
       bytesPerSecond: 250,
     });
-    this.emit('update-downloaded', this.updateInfo);
-    return Promise.resolve(['Jenny-0.2.0.exe']);
+    this.emit('update-downloaded', { ...this.updateInfo, downloadedFile: this.downloadedFile });
+    return Promise.resolve([this.downloadedFile]);
   }
 
   quitAndInstall() {
@@ -101,8 +110,8 @@ class DeferredAutoUpdater extends FakeAutoUpdater {
     });
     return new Promise((resolve) => {
       this._resolveDownload = () => {
-        this.emit('update-downloaded', this.updateInfo);
-        resolve(['Jenny-0.2.0.exe']);
+        this.emit('update-downloaded', { ...this.updateInfo, downloadedFile: this.downloadedFile });
+        resolve([this.downloadedFile]);
       };
     });
   }
@@ -467,4 +476,77 @@ test('UpdateService prefers an injected updater but still defers setup until an 
   assert.equal(loaderCalls, 0);
   assert.equal(updater.autoDownload, false);
   assert.deepEqual(updater.calls, ['checkForUpdates']);
+});
+
+test('UpdateService guards every updater request destination', () => {
+  const updater = new FakeAutoUpdater();
+  const created = [];
+  const originalExecutor = {
+    createRequest(options, callback) {
+      created.push(options);
+      callback(new EventEmitter());
+      return new EventEmitter();
+    },
+  };
+  updater.httpExecutor = originalExecutor;
+  const service = new UpdateService({
+    app: makeApp({ version: '0.1.0' }),
+    autoUpdater: updater,
+    storePath: path.join(makeTempDir(), 'updates.json'),
+  });
+
+  assert.equal(service._resolveAutoUpdater(), true);
+  const executor = updater.httpExecutor;
+  assert.notEqual(executor, originalExecutor);
+  assert.throws(() => executor.createRequest({
+    protocol: 'http:', hostname: 'api.github.com', path: '/release.yml',
+  }, () => {}), {
+    code: 'update-destination-refused', host: 'api.github.com', protocol: 'http:',
+  });
+  assert.throws(() => executor.createRequest({
+    protocol: 'https:', hostname: 'outside.invalid', path: '/payload.exe',
+  }, () => {}), {
+    code: 'update-destination-refused', host: 'outside.invalid', protocol: 'https:',
+  });
+  let callbackInvoked = false;
+  executor.createRequest({
+    protocol: 'https:', hostname: 'objects.githubusercontent.com', path: '/payload.exe',
+  }, () => { callbackInvoked = true; });
+  assert.equal(callbackInvoked, true);
+  assert.equal(created.length, 1);
+});
+
+test('UpdateService aborts updater metadata beyond one MiB', async () => {
+  const updater = new FakeAutoUpdater();
+  const request = new EventEmitter();
+  let responseCallback;
+  let aborted = false;
+  request.end = () => {};
+  request.abort = () => { aborted = true; };
+  updater.httpExecutor = {
+    createRequest(_options, callback) {
+      responseCallback = callback;
+      return request;
+    },
+  };
+  const service = new UpdateService({
+    app: makeApp({ version: '0.1.0' }),
+    autoUpdater: updater,
+    storePath: path.join(makeTempDir(), 'updates.json'),
+  });
+  assert.equal(service._resolveAutoUpdater(), true);
+
+  const pending = updater.httpExecutor.request({
+    protocol: 'https:', hostname: 'api.github.com', path: '/release.yml',
+  });
+  const response = new PassThrough();
+  response.statusCode = 200;
+  response.headers = {};
+  responseCallback(response);
+  response.write(Buffer.alloc(1024 * 1024));
+  response.write(Buffer.alloc(1));
+
+  await assert.rejects(pending, { code: 'update-metadata-too-large' });
+  assert.equal(response.destroyed, true);
+  assert.equal(aborted, true);
 });

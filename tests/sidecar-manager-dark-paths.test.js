@@ -170,6 +170,27 @@ test('managed sidecar spawns with JENNY_PARENT_PID so the sidecar can guard agai
   assert.equal(env.PYTHONUNBUFFERED, '1');
 });
 
+test('resolveExtraEnv is read at every spawn; an empty value drops an inherited key', async (t) => {
+  const previous = process.env.JENNY_SIDECAR_PDF_ADDON_DIR;
+  process.env.JENNY_SIDECAR_PDF_ADDON_DIR = 'inherited-dir';
+  t.after(() => {
+    if (previous === undefined) delete process.env.JENNY_SIDECAR_PDF_ADDON_DIR;
+    else process.env.JENNY_SIDECAR_PDF_ADDON_DIR = previous;
+  });
+  let extra = { JENNY_SIDECAR_PDF_ADDON_DIR: '' };
+  const { manager, spawnCalls } = buildManager({
+    ctor: { resolveExtraEnv: () => extra, gracefulStopTimeoutMs: 1, forcedStopTimeoutMs: 1 },
+  });
+
+  await manager.start();
+  assert.equal(spawnCalls[0].options.env.JENNY_SIDECAR_PDF_ADDON_DIR, undefined);
+
+  await manager.stop();
+  extra = { JENNY_SIDECAR_PDF_ADDON_DIR: 'C:/addons/pdf/1.27.2.2' };
+  await manager.start();
+  assert.equal(spawnCalls[1].options.env.JENNY_SIDECAR_PDF_ADDON_DIR, 'C:/addons/pdf/1.27.2.2');
+});
+
 // ---------------------------------------------------------------------------
 // F8: the managed sidecar is a model-adjacent child. It re-spawns Python
 // workers and, with the opt-in codex-cli engine, a vendor CLI. `{...process.env}`

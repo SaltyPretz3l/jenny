@@ -1,0 +1,244 @@
+/* Workspace IDE DOCX editor pane. Loaded lazily by editor-host-panes. */
+
+.ide-docx-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  /* Keep a squeezed editor column's toolbar from painting over the chat dock. */
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+}
+
+.ide-docx-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.ide-docx-action {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 600 11px/1 var(--font-family-body);
+  cursor: pointer;
+}
+
+.ide-docx-action:hover,
+.ide-docx-action[aria-pressed="true"] {
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  color: var(--text-primary);
+}
+
+.ide-docx-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-docx-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ide-docx-toolbar-separator {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.ide-docx-notes {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ide-docx-documents {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  scrollbar-width: thin;
+}
+
+.ide-docx-doc {
+  box-sizing: border-box;
+  width: min(8.5in, 100%);
+  min-height: 11in;
+  margin: 0 auto;
+  padding: 0.8in 0.85in;
+  border: 1px solid var(--line);
+  outline: 0;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--text-primary) 18%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: 14px;
+  line-height: 1.5;
+  caret-color: var(--accent);
+}
+
+.ide-docx-p {
+  position: relative;
+  min-height: 1.5em;
+  margin: 0 0 0.7em;
+  overflow-wrap: anywhere;
+}
+
+.ide-docx-region {
+  position: relative;
+}
+
+.ide-docx-region-header,
+.ide-docx-region-footer {
+  min-height: 2.2em;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.ide-docx-region-header {
+  margin-block-end: 0.55in;
+  border-bottom: 1px dashed var(--line);
+}
+
+.ide-docx-region-body {
+  min-height: 7.7in;
+}
+
+.ide-docx-region-footer {
+  margin-block-start: 0.45in;
+  border-top: 1px dashed var(--line);
+}
+
+.ide-docx-region-label {
+  position: absolute;
+  inset-block-start: -1.55em;
+  inset-inline-end: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--text-faint);
+  font: 600 9px/1.35 var(--font-family-body);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.ide-docx-region-footer .ide-docx-region-label {
+  inset-block-start: 0.3em;
+}
+
+.ide-docx-p[data-style^="Heading"] {
+  margin-block: 0.85em 0.45em;
+  font-size: 1.55em;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.ide-docx-p[data-align="center"] { text-align: center; }
+.ide-docx-p[data-align="right"] { text-align: right; } /* rtl:physical -- w:jc="right" is a physical page alignment in the document, not a UI direction */
+.ide-docx-p[data-align="both"] { text-align: justify; }
+
+.ide-docx-p[data-list] {
+  padding-inline-start: 1.65em;
+}
+
+.ide-docx-p[data-list]::before {
+  position: absolute;
+  inset-inline-start: 0;
+  width: 1.25em;
+  content: attr(data-list-label);
+  color: var(--text-primary);
+  text-align: end;
+}
+
+.ide-docx-run {
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+
+.ide-docx-run.is-bold { font-weight: 700; }
+.ide-docx-run.is-italic { font-style: italic; }
+.ide-docx-run.is-underline { text-decoration: underline; }
+.ide-docx-run.is-strike { text-decoration: line-through; }
+.ide-docx-run.is-underline.is-strike { text-decoration: underline line-through; }
+.ide-docx-run.is-super { font-size: 0.72em; vertical-align: super; }
+
+.ide-docx-img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+  user-select: all;
+}
+
+.ide-docx-img.is-selected {
+  border-radius: 2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ide-docx-img-missing,
+.ide-docx-other {
+  border: 1px dashed var(--line);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font: 11px/1.4 var(--font-family-body);
+  user-select: all;
+}
+
+.ide-docx-img-missing {
+  display: inline-block;
+  padding: 2px 5px;
+  vertical-align: middle;
+}
+
+.ide-docx-other {
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.ide-docx-table {
+  width: 100%;
+  margin: 0 0 0.8em;
+  border-collapse: collapse;
+}
+
+.ide-docx-cell {
+  min-width: 40px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.ide-docx-cell .ide-docx-p {
+  margin-block-end: 0.25em;
+}
+
+.ide-docx-cell .ide-docx-p:last-child {
+  margin-block-end: 0;
+}
+
+@media (max-width: 760px) {
+  .ide-docx-documents { padding: 12px; }
+  .ide-docx-doc { min-height: 0; padding: 32px 28px; }
+}

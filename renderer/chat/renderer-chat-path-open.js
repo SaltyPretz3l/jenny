@@ -416,7 +416,7 @@
         windowRef: windowRef,
         showShellErrorToast: function showShellErrorToastAdapter(message, options) {
           showToastMessage(message, {
-            title: (options && options.title) || 'Workspace',
+            title: (options && options.title) || jt('chat.pathOpen.workspaceToastTitle', 'Workspace'),
             tone: 'danger',
             dedupeKey: (options && options.dedupeKey) || 'chat:path-menu',
           });

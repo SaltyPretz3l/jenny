@@ -190,7 +190,8 @@ def is_plan_artifact_write_eligible(
     ):
         return False
     normalized_name = str(tool_name or "").strip()
-    if normalized_name == "mermaid_generate":
+    # The todo list is in-memory session state, never a workspace write.
+    if normalized_name in {"mermaid_generate", "todo_write"}:
         return True
     return normalized_name == "create_artifact" and is_safe_plan_document(arguments)
 

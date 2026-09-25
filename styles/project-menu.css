@@ -1,0 +1,104 @@
+/* styles/project-menu.css - the shared project menu (Projects v2, 2026-09-20).
+ * One listbox for the Explorer header, the welcome page, the composer line and
+ * the Chats panel filter. Rides the app's .composer-popover chrome; rows reuse
+ * the popover row tokens. Imported from composer-workspace-nudge.css. */
+
+.project-menu {
+  z-index: 60;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding-block: var(--space-2);
+  padding-inline: 0;
+}
+
+.project-menu-heading {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.project-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: start;
+  cursor: pointer;
+}
+
+.project-menu-row:hover,
+.project-menu-row:focus-visible {
+  background: var(--surface-popover-row-hover, var(--surface-popover-row));
+}
+
+.project-menu-row:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.project-menu-row[disabled] {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.project-menu-row[disabled]:hover {
+  background: transparent;
+}
+
+.project-menu-check {
+  flex: 0 0 14px;
+  width: 14px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.project-menu-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.project-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-menu-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.project-menu-name--danger,
+.project-menu-detail--danger {
+  color: var(--state-danger, var(--text-danger));
+}
+
+.project-menu-count {
+  flex: 0 0 auto;
+  min-width: 1.5em;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.project-menu-separator {
+  height: 1px;
+  margin: var(--space-2) 0;
+  background: var(--line);
+}

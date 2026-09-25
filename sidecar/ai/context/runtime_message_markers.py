@@ -15,6 +15,7 @@ CONTEXT_PRESSURE_ADVISORY_HEADING = "## Context Pressure Advisory"
 PROMPT_EXPERIMENT_HEADING = "## Prompt Experiment"
 PLAN_MODE_OVERLAY_HEADING = "## Plan Mode"
 APPROVED_PLAN_OVERLAY_HEADING = "## Approved Plan"
+PLAN_REVISION_OVERLAY_HEADING = "## Plan Revision Requested"
 RESTORED_TOOL_CONTRACT_HEADING = "## Restored Tool Contract"
 # Repo-delta uses an XML-style tag rather than a "## " heading; the recognizer
 # is a plain ``startswith(tuple)`` so any stable literal prefix works, and the
@@ -31,6 +32,7 @@ RUNTIME_SYSTEM_MESSAGE_HEADINGS: tuple[str, ...] = (
     PROMPT_EXPERIMENT_HEADING,
     PLAN_MODE_OVERLAY_HEADING,
     APPROVED_PLAN_OVERLAY_HEADING,
+    PLAN_REVISION_OVERLAY_HEADING,
     RESTORED_TOOL_CONTRACT_HEADING,
     REPOSITORY_DELTA_HEADING,
     MODEL_IDENTITY_HEADING,

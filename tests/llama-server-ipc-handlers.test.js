@@ -151,6 +151,142 @@ describe('registerLlamaServerIpcHandlers', () => {
     assert.equal(result.entries.find((entry) => entry.tag === 'aux-only').mainGguf, '');
   });
 
+  test('listLocalGgufs lists a Bonsai-style folder as one vision model and never the projector', async (t) => {
+    // PrismML names its projector infix-style (<model>-mmproj-<quant>). The
+    // projector must set mmproj:true and never enter the main-model size index,
+    // or a same-size Ollama blob would be re-homed onto it as the model.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-ipc-bonsai-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const userDataPath = path.join(root, 'user-data');
+    const modelDir = path.join(userDataPath, 'models', 'ternary-bonsai-2-27b');
+    const blobPath = path.join(root, 'ollama', 'sha256-proj');
+    fs.mkdirSync(modelDir, { recursive: true });
+    fs.mkdirSync(path.dirname(blobPath), { recursive: true });
+    fs.writeFileSync(path.join(modelDir, 'Ternary-Bonsai-2-27B-PQ2_0.gguf'), 'model-bytes');
+    fs.writeFileSync(path.join(modelDir, 'Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf'), 'proj');
+    fs.writeFileSync(blobPath, 'blob');
+
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: () => null,
+      userDataPath,
+      repoRoot: path.join(root, 'repo'),
+      getOllamaTags: async () => ['bonsai:vision'],
+      getOllamaBlob: async () => ({ blobPath, mmprojPath: '' }),
+    });
+    const result = await ipc.invoke.get(invokeChannel('llamaServer.listLocalGgufs'))();
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.entries, [
+      {
+        tag: 'bonsai:vision',
+        dir: path.dirname(blobPath),
+        mainGguf: 'sha256-proj',
+        drafterGguf: '',
+        mmproj: false,
+        sizeBytes: 4,
+        source: 'ollama',
+      },
+      {
+        tag: 'ternary-bonsai-2-27b',
+        dir: modelDir,
+        mainGguf: 'Ternary-Bonsai-2-27B-PQ2_0.gguf',
+        drafterGguf: '',
+        mmproj: true,
+        sizeBytes: 11,
+        source: 'root',
+      },
+    ]);
+  });
+
+  test('listLocalGgufs reports mmproj per model, exactly as the launch pairs it [F2]', async (t) => {
+    // One flat folder holds a text model and the Bonsai pair: only Bonsai is vision.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-ipc-flat-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const flat = path.join(root, 'llmmodels');
+    fs.mkdirSync(flat, { recursive: true });
+    for (const name of ['Qwen3-8B-Q4_K_M.gguf', 'Ternary-Bonsai-2-27B-PQ2_0.gguf', 'Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf']) {
+      fs.writeFileSync(path.join(flat, name), 'x');
+    }
+
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: () => null,
+      userDataPath: path.join(root, 'user-data'),
+      repoRoot: path.join(root, 'repo'),
+      getPersistedModels: () => [
+        { tag: 'qwen3:8b', modelPath: path.join(flat, 'Qwen3-8B-Q4_K_M.gguf') },
+        { tag: 'ternary-bonsai-2-27b', modelPath: path.join(flat, 'Ternary-Bonsai-2-27B-PQ2_0.gguf') },
+      ],
+    });
+    const result = await ipc.invoke.get(invokeChannel('llamaServer.listLocalGgufs'))();
+
+    assert.deepEqual(result.entries.map(({ tag, mainGguf, mmproj }) => ({ tag, mainGguf, mmproj })), [
+      { tag: 'qwen3:8b', mainGguf: 'Qwen3-8B-Q4_K_M.gguf', mmproj: false },
+      { tag: 'ternary-bonsai-2-27b', mainGguf: 'Ternary-Bonsai-2-27B-PQ2_0.gguf', mmproj: true },
+    ]);
+  });
+
+  test('listLocalGgufs sizes a split model by its whole set, not its first shard', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-ipc-shards-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const dir = path.join(root, 'glm');
+    fs.mkdirSync(dir, { recursive: true });
+    // A second set and a plain quant in the same folder keep their own sizes.
+    const sizes = {
+      'GLM-4.6-UD-Q2_K_XL-00001-of-00003.gguf': 10, 'GLM-4.6-UD-Q2_K_XL-00002-of-00003.gguf': 20,
+      'GLM-4.6-UD-Q2_K_XL-00003-of-00003.gguf': 30, 'GLM-4.6-Q8_0-00001-of-00002.gguf': 7,
+      'GLM-4.6-Q8_0-00002-of-00002.gguf': 9, 'GLM-4.6-Q4_K_M.gguf': 5,
+    };
+    for (const [name, size] of Object.entries(sizes)) fs.writeFileSync(path.join(dir, name), Buffer.alloc(size));
+
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: () => null,
+      userDataPath: path.join(root, 'user-data'),
+      repoRoot: path.join(root, 'repo'),
+      getPersistedModels: () => [
+        { tag: 'glm-4.6-ud-q2_k_xl', modelPath: path.join(dir, 'GLM-4.6-UD-Q2_K_XL-00001-of-00003.gguf') },
+        { tag: 'glm-4.6-q8_0', modelPath: path.join(dir, 'GLM-4.6-Q8_0-00001-of-00002.gguf') },
+        { tag: 'glm-4.6-q4_k_m', modelPath: path.join(dir, 'GLM-4.6-Q4_K_M.gguf') },
+      ],
+    });
+    const result = await ipc.invoke.get(invokeChannel('llamaServer.listLocalGgufs'))();
+
+    assert.deepEqual(result.entries.map(({ tag, sizeBytes }) => ({ tag, sizeBytes })), [
+      { tag: 'glm-4.6-q4_k_m', sizeBytes: 5 },
+      { tag: 'glm-4.6-q8_0', sizeBytes: 16 },
+      { tag: 'glm-4.6-ud-q2_k_xl', sizeBytes: 60 },
+    ]);
+  });
+
+  test('listLocalGgufs shows each quant of a one-model snapshot as vision [R1]', async (t) => {
+    // unsloth's layout: several quants of one model beside generic projectors.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-ipc-snapshot-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const userDataPath = path.join(root, 'user-data');
+    const modelDir = path.join(userDataPath, 'models', 'gemma-3-4b-it');
+    fs.mkdirSync(modelDir, { recursive: true });
+    for (const name of ['gemma-3-4b-it-BF16.gguf', 'gemma-3-4b-it-Q4_K_M.gguf', 'mmproj-BF16.gguf', 'mmproj-F16.gguf']) {
+      fs.writeFileSync(path.join(modelDir, name), 'x');
+    }
+
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: () => null,
+      userDataPath,
+      repoRoot: path.join(root, 'repo'),
+      // The Q4_K_M quant, added from the library under its own tag.
+      getPersistedModels: () => [{ tag: 'unsloth-q4', modelPath: path.join(modelDir, 'gemma-3-4b-it-Q4_K_M.gguf') }],
+    });
+    const result = await ipc.invoke.get(invokeChannel('llamaServer.listLocalGgufs'))();
+
+    assert.deepEqual(result.entries.map(({ tag, mainGguf, mmproj }) => ({ tag, mainGguf, mmproj })), [
+      { tag: 'gemma-3-4b-it', mainGguf: 'gemma-3-4b-it-BF16.gguf', mmproj: true },
+      { tag: 'unsloth-q4', mainGguf: 'gemma-3-4b-it-Q4_K_M.gguf', mmproj: true },
+    ]);
+  });
+
   test('chooseGguf handles cancel, invalid picks, and a valid drafter sibling', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-picker-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

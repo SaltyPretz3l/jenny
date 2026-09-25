@@ -30,7 +30,10 @@ from sidecar.ai.tools.builtins.shell_security import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, canonicalize_tool_arguments
 from sidecar.ai.tools.models import ToolCallRequest
-from sidecar.ai.tools.plan_artifact_policy import is_plan_artifact_write_eligible
+from sidecar.ai.tools.plan_artifact_policy import (
+    is_plan_artifact_write_eligible,
+    is_safe_plan_document,
+)
 from sidecar.ai.tools.sanitization import sanitize_tool_output, scan_tool_arguments
 from sidecar.ai.tools.tool_actions import declared_action, effective_side_effecting
 
@@ -76,6 +79,9 @@ _DEFAULT_TOOL_DEFAULTS = {
     # Durable task-board writes have the same bounded, user-owned Open Loops
     # safety posture as the Electron-side Home actions.
     "task_board": POLICY_DECISION_AUTO,
+    # The in-session todo list is the model's own scratch state; approval is
+    # for the user's files and commands (owner, 2026-09-22).
+    "todo_write": POLICY_DECISION_AUTO,
 }
 _MAX_POLICY_REASON_CHARS = 240
 _MAX_POLICY_ID_CHARS = 80
@@ -219,6 +225,7 @@ class ToolPolicyFilterContext:
     plan_mode: bool = False
     read_only: bool = False
     request_disabled_tools: frozenset[str] = frozenset()
+    policy_snapshot: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -546,6 +553,22 @@ def evaluate_tool_policy(  # noqa: PLR0911 - explicit ordered policy precedence.
                 action=action,
             )
 
+        # An inert create_artifact document is scratch the model writes for its
+        # own reasoning; scripts and executable types keep the ask default.
+        if descriptor_name == "create_artifact" and is_safe_plan_document(arguments):
+            return _decision(
+                descriptor=descriptor,
+                snapshot=normalized,
+                details=_DecisionDetails(
+                    decision=POLICY_DECISION_AUTO,
+                    stage="tool_default",
+                    matched_rule_id=None,
+                    reason="built-in default for inert create_artifact documents",
+                    mode=mode,
+                ),
+                action=action,
+            )
+
         default_decision = _DEFAULT_TOOL_DEFAULTS.get(descriptor_name)
         if default_decision:
             return _decision(
@@ -745,7 +768,11 @@ def _filter_single_call(
         descriptor=descriptor,
         arguments=dict(call.arguments),
         mode=context.mode,
-        snapshot=getattr(kernel._config, "tool_policy_snapshot", None),
+        snapshot=(
+            context.policy_snapshot
+            if context.policy_snapshot is not None
+            else getattr(kernel._config, "tool_policy_snapshot", None)
+        ),
     )
     if (
         plan_artifact_write
@@ -768,7 +795,11 @@ def _hard_block_decision(
     context: ToolPolicyFilterContext,
     failure: ToolExecutionFailure,
 ) -> ToolPolicyDecision:
-    snapshot = _coerce_snapshot(getattr(kernel._config, "tool_policy_snapshot", None))
+    snapshot = _coerce_snapshot(
+        context.policy_snapshot
+        if context.policy_snapshot is not None
+        else getattr(kernel._config, "tool_policy_snapshot", None)
+    )
     return ToolPolicyDecision(
         decision=POLICY_DECISION_DENY,
         stage="hard_safety_deny",

@@ -1,4 +1,5 @@
 const SESSION_STORE_KEYS = [
+  'projectStore',
   'sessionStore',
   'shadowStore',
   'turnEventJournal',

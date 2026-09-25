@@ -128,8 +128,8 @@
   // under a fixed fingerprint so unit indices stay stable (the in-place
   // reconcile keys on index and compares fingerprints), which turns every
   // elided unit into one attribute compare per frame instead of an HTML parse
-  // plus a live DOM subtree. The start only moves forward for a phase (callers
-  // thread the previous start back in), so a tail re-chunk or a source
+  // plus a live DOM subtree. The elided character count only moves forward for
+  // a phase (callers thread it back in), so a tail re-chunk or a source
   // retraction never re-materialises earlier units mid-stream. The settled
   // (non-streaming) render never elides, so the full body appears when the
   // step completes.
@@ -142,23 +142,33 @@
     const list = Array.isArray(units) ? units : [];
     const windowChars = Number(options?.windowChars) > 0 ? Number(options.windowChars) : LIVE_WINDOW_CHARS;
     const lengthOf = (unit) => String(unit?.html || '').length;
-    // A re-chunk to fewer units than the previous start invalidates the
-    // start's index mapping, so the floor resets instead of pinning the window
-    // to the tail for the rest of the phase.
     const previous = Math.max(0, Math.floor(Number(previousStart) || 0));
-    const floor = previous < list.length ? previous : 0;
+    const priorEnd = Math.min(previous, Math.max(0, list.length - 1));
+    let previousElidedChars = Number(options?.previousElidedChars);
+    if (!Number.isFinite(previousElidedChars)) {
+      previousElidedChars = 0;
+      for (let index = 0; index < priorEnd; index += 1) previousElidedChars += lengthOf(list[index]);
+    }
+    previousElidedChars = Math.max(0, previousElidedChars);
     let total = 0;
     for (const unit of list) total += lengthOf(unit);
-    if (total <= windowChars) return floor;
-    let start = list.length;
-    let kept = 0;
-    while (start > 0 && kept + lengthOf(list[start - 1]) <= windowChars) {
-      kept += lengthOf(list[start - 1]);
-      start -= 1;
+    let start = 0;
+    if (total > windowChars) {
+      start = list.length;
+      let kept = 0;
+      while (start > 0 && kept + lengthOf(list[start - 1]) <= windowChars) {
+        kept += lengthOf(list[start - 1]);
+        start -= 1;
+      }
+      if (start === list.length) start = list.length - 1;
     }
-    // The tail unit is always live, even when it alone exceeds the window.
-    if (start === list.length) start = list.length - 1;
-    return Math.max(start, floor);
+    let elidedChars = 0;
+    for (let index = 0; index < start; index += 1) elidedChars += lengthOf(list[index]);
+    while (start < list.length - 1 && elidedChars < previousElidedChars) {
+      elidedChars += lengthOf(list[start]);
+      start += 1;
+    }
+    return start;
   }
 
   return {

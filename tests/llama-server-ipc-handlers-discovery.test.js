@@ -554,6 +554,8 @@ test('chooseLibraryFolder returns cancel and pick results without logging the pa
       showOpenDialog: async (...args) => { calls.push(args); return pickerResult; },
     },
     log: (...args) => logs.push(args),
+    // The picked folder is a Windows drive path on every host.
+    platform: 'win32',
   });
   const choose = ipc.invoke.get(invokeChannel('llamaServer.chooseLibraryFolder'));
 

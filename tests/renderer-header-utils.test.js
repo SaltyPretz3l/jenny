@@ -556,3 +556,38 @@ test('stale-by-failure with a fresh timestamp avoids the contradictory 0s-old co
   assert.match(dom.metricList.innerHTML, /data-stale="true" title="GPU sample may be stale"/);
   assert.doesNotMatch(dom.metricList.innerHTML, /0s old/);
 });
+
+// F37: a plugin/config refresh re-initializes the sidecar (ready ->
+// sidecar_spawned "Preparing model" -> ready). Session creation is owned by
+// Electron main and never touches the sidecar, so New Chat must not lock for
+// that window: a disabled #newChatButton silently swallows real clicks and the
+// strip/palette/IDE New Chat paths that call newChatButton.click().
+test('New Chat stays usable while the backend re-initializes and locks only when offline', () => {
+  const state = {
+    ui: { activeView: 'chat' },
+    auth: { authenticated: true },
+    backend: { phase: 'ready' },
+    features: { featureFlags: {} },
+    currentSessionId: 'session-1',
+    systemStats: null,
+  };
+  const newChatButton = { disabled: false };
+  const controller = createHeaderController({
+    state,
+    dom: { metricList: { innerHTML: '' }, sessionActionButton: null, newChatButton },
+  });
+  for (const phase of ['ready', 'model_unavailable', 'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying']) {
+    state.backend = { phase };
+    controller.renderHeader();
+    assert.equal(newChatButton.disabled, false, `New Chat stays enabled at ${phase}`);
+  }
+  for (const phase of ['failed', 'stopped', '']) {
+    state.backend = { phase };
+    controller.renderHeader();
+    assert.equal(newChatButton.disabled, true, `New Chat locks while the backend is offline (${phase || 'unknown'})`);
+  }
+  state.backend = { phase: 'sidecar_spawned' };
+  state.auth = { authenticated: false };
+  controller.renderHeader();
+  assert.equal(newChatButton.disabled, true, 'New Chat still requires an authenticated profile');
+});

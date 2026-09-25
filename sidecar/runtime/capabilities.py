@@ -12,6 +12,7 @@ from sidecar.ai.engines.catalog import (
     discover_openai_compatible_models,
     discover_vllm_models,
     resolve_ollama_base_url,
+    served_model_inspection,
 )
 from sidecar.ai.engines.chatgpt_subscription import (
     CHATGPT_MODEL_CONTEXT_LENGTHS,
@@ -25,10 +26,10 @@ from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
 from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
 from sidecar.runtime.local_engine.snapshot import (
-    active_app_profile_payload as _shared_active_app_profile_payload,
+    active_app_profile_payload as _active_app_profile_payload,
 )
 from sidecar.runtime.local_engine.snapshot import (
-    active_model_capabilities_payload as _shared_active_model_capabilities_payload,
+    active_model_capabilities_payload as _active_model_capabilities_payload,
 )
 from sidecar.runtime.local_engine.snapshot import (
     build_local_runtime_payload,
@@ -48,9 +49,10 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.1.1"
+SERVER_VERSION = "1.2.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
+_INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
 _OLLAMA_CATALOG_METADATA_FIELDS = (
     "source",
     "cached_at",
@@ -155,14 +157,6 @@ def _tools_available_from_status(
     ]
 
 
-def _active_model_capabilities_payload(engine: Any) -> dict[str, bool]:
-    return _shared_active_model_capabilities_payload(engine)
-
-
-def _active_app_profile_payload(runtime_config: Any) -> dict[str, Any] | None:
-    return _shared_active_app_profile_payload(runtime_config)
-
-
 def _initialize_visible_provider_capabilities(
     provider_capabilities: dict[str, ProviderCapability],
 ) -> dict[str, ProviderCapability]:
@@ -245,6 +239,10 @@ def initialize_response(
         "api_version": api_version,
         "result": {
             "api_version": api_version,
+            "runtime_inference_admission_version": 1,
+            "runtime_inference_budget_version": 1,
+            "runtime_tool_resource_admission_version": 1,
+            "runtime_continuation_version": 1,
             "server_version": SERVER_VERSION,
             "engines_available": available_engine_types(initialize_provider_capabilities),
             "provider_capabilities": provider_capabilities_payload(
@@ -453,6 +451,7 @@ def models_list_result(
             api_url=_runtime_api_url_for_engine(runtime_config, engine_type),
             api_key=runtime_config.openai_compatible_api_key if runtime_config else None,
         )
+        model_inspection = served_model_inspection(inspect_model_id, model_inspection, discovery)
         return _attach_model_inspection({
             "engine_type": engine_type,
             "models": discovery.models,
@@ -479,7 +478,7 @@ def _inspection_request(
     model_id = str(raw_model_id or "").strip()
     if not model_id or len(model_id) > MAX_OLLAMA_MODEL_ID_CHARS:
         return "", _unavailable_inspection("", "invalid_model_id")
-    if engine_type != "ollama":
+    if engine_type not in _INSPECTABLE_ENGINE_TYPES:
         return model_id, _unavailable_inspection(model_id, "unsupported_engine")
     return model_id, None
 

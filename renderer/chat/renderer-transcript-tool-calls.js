@@ -195,6 +195,7 @@
     const {
       escapeHtml,
       toolCallUtils,
+      getApprovalCardState,
     } = deps || {};
 
     /* Per-renderer expansion store. Reads from the override before falling
@@ -392,6 +393,8 @@
         ? toolCallUtils.getApprovalLabel(viewModel.toolName, viewModel.input)
         : jt('chat.toolCalls.approveTool', 'Approve {tool}?', { tool: viewModel.displayToolName || viewModel.toolName || jt('chat.toolCalls.thisTool', 'this tool') });
       return _renderApprovalBlock({
+        cardState: viewModel.approvalCard.state,
+        resumeKey: viewModel.approvalCard.resumeKey,
         toolCallId: viewModel.callId,
         approvalId: viewModel.approvalId,
         toolName: viewModel.toolName,
@@ -400,6 +403,7 @@
         policyScope: viewModel.policyScope,
         policyConsequence: viewModel.policyConsequence,
         reason: viewModel.reason,
+        oneOffOnly: viewModel.oneOffOnly,
         purpose: toolCallUtils.getApprovalPurpose
           ? toolCallUtils.getApprovalPurpose(viewModel.input) : '',
         facts: toolCallUtils.getApprovalFacts
@@ -441,7 +445,13 @@
       // Preserve the canonical raw substatus so consumers can distinguish preempted, cancelled, and timeout outcomes without re-deriving state.
       const rawTerminal = normalizeString(source.rawTerminal).toLowerCase();
       const icon = toolCallUtils.getToolIcon(toolName);
-      const statusLabel = toolCallUtils.getStatusLabel ? toolCallUtils.getStatusLabel(status) : status;
+      // A4: a pending approval the runtime no longer waits on reads Paused or
+      // Withdrawn, not "Action needed" (display only; the status stays).
+      const approvalCard = (status === 'awaiting_approval' && typeof getApprovalCardState === 'function'
+        && getApprovalCardState({ sessionId: source.sessionId, turnId: source.turnId, callId: source.callId })) || {};
+      const approvalCardLabel = { paused: jt('approval.block.paused', 'Paused'), inactive: jt('chat.toolCall.withdrawn', 'Withdrawn') }[approvalCard.state];
+      const statusLabel = approvalCardLabel
+        || (toolCallUtils.getStatusLabel ? toolCallUtils.getStatusLabel(status) : status);
       const resultMeta = source.resultMeta && typeof source.resultMeta === 'object' ? source.resultMeta : null;
       const input = source.input && typeof source.input === 'object' && !Array.isArray(source.input)
         ? source.input
@@ -533,6 +543,7 @@
         policyScope: source.policyScope,
         policyConsequence: source.policyConsequence,
         reason: source.reason,
+        oneOffOnly: source.oneOffOnly === true,
         toolName,
         toolKind,
         displayToolName,
@@ -547,10 +558,11 @@
         fileTargetLabel,
         runningStartedAtMs,
         isPending: status === 'awaiting_approval',
+        approvalCard,
         durationLabel,
         summary: dedupedSummary,
         lineCounts: toolCallUtils.getToolLineCounts(toolName, metadata, status, isError),
-        secondaryMeta: buildToolSecondaryMeta({ status, generatedArtifacts })
+        secondaryMeta: (approvalCardLabel ? '' : buildToolSecondaryMeta({ status, generatedArtifacts }))
           || (typeof toolCallUtils.formatToolResultMeta === 'function' ? toolCallUtils.formatToolResultMeta(toolName, metadata) : ''),
         defaultExpanded,
         expandFileDiffsByDefault,
@@ -602,6 +614,7 @@
         policyScope: tc.policy_scope,
         policyConsequence: tc.policy_consequence,
         reason: tc.reason,
+        oneOffOnly: tc.one_off_only === true,
         toolName: tc.tool_name,
         status,
         input: tc.input,
@@ -748,6 +761,7 @@
         policyScope: payload.policy_scope || toolUse.policy_scope,
         policyConsequence: payload.policy_consequence || toolUse.policy_consequence,
         reason: payload.reason || toolUse.reason,
+        oneOffOnly: payload.one_off_only === true || toolUse.one_off_only === true,
         toolName: (canonical && canonical.toolName) || payload.tool_name || toolUse.tool_name,
         displayToolName: canonical ? canonical.toolDisplayName : '',
         status: resolvedStatus,

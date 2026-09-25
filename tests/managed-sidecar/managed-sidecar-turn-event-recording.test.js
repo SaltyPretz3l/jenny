@@ -18,7 +18,7 @@ const {
 
 function makeService(persistedMessages) {
   return {
-    featureFlags: { phase_events: true },
+    featureFlags: { phase_events: true, canonical_turn_events: true },
     emit() {},
     _emitServiceLog() {},
     renameSession: async () => null,

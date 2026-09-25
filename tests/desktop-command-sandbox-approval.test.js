@@ -8,7 +8,10 @@ const { normalizeCommandSandbox } = require('../services/shell-config-command-sa
 function fixture(policy = 'ask') {
   const process = {};
   let submitted = 0;
+  const authority = Object.freeze({ project_id: 'project_test', root_path: '/workspace', root_id: 'root',
+    root_revision: 0, device_id: null, inode: null });
   const service = {
+    projectAuthority: { captureSession: () => authority, requireCurrent: () => authority },
     sidecarManager: { process }, _desktopPolicyProcess: process,
     activeStreams: new Map([['stream', {}]]),
     configService: { getState: () => ({ commandSandbox: { enabled: true }, safetyMode: 'normal' }) },
@@ -22,7 +25,8 @@ function fixture(policy = 'ask') {
     } },
   };
   const options = { input: { command: 'echo example' }, sessionId: 'session', streamId: 'stream', callId: 'call',
-    canonicalReadOnly: false, readOnly: false, planMode: false, authorize: async () => true };
+    canonicalReadOnly: false, readOnly: false, planMode: false, authorize: async () => true,
+    projectAuthority: authority };
   return { service, options, submitted: () => submitted };
 }
 test('denial, Plan and missing policy acknowledgement never submit', async () => {
@@ -102,6 +106,32 @@ test('explicit Always allow approval remains valid for the approved command', as
  setup.options.authorize = async () => { policy = 'auto'; return true; };
  assert.equal((await executeSandboxCommand(setup.service, setup.options)).success, true);
  assert.equal(setup.submitted(), 1);
+});
+
+test('sandbox policy reads remain bound to the captured project', async () => {
+ const setup = fixture();
+ const seen = [];
+ setup.service.toolPermissionStore.getSnapshot = authority => {
+  seen.push(authority);
+  return { version: 1, rules: [], legacy_policies: { run_command: 'ask' } };
+ };
+ assert.equal((await executeSandboxCommand(setup.service, setup.options)).success, true);
+ assert.ok(seen.length >= 3);
+ for (const authority of seen) assert.deepEqual(authority, setup.options.projectAuthority);
+});
+
+test('reassigned sessions and unavailable permission storage fail closed', async () => {
+ const setup = fixture();
+ setup.options.authorize = async () => {
+  setup.service.projectAuthority.captureSession = () => ({ ...setup.options.projectAuthority, project_id: 'project_other' });
+  return true;
+ };
+ assert.equal((await executeSandboxCommand(setup.service, setup.options)).success, false);
+ assert.equal(setup.submitted(), 0);
+ const unavailable = fixture();
+ unavailable.service.toolPermissionStore.getSnapshot = () => { throw new Error('unavailable'); };
+ assert.equal((await executeSandboxCommand(unavailable.service, unavailable.options)).success, false);
+ assert.equal(unavailable.submitted(), 0);
 });
 
 

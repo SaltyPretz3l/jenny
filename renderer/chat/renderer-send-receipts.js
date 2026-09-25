@@ -218,6 +218,17 @@
       return sealedReceipt;
     }
 
+    function holdForDurableSubmission(receipt) {
+      const active = receipt ? activeReceipts.get(receipt.id) : null;
+      if (!active || disposed) return null;
+      active.durableSubmissionOwner = true;
+      return function finish(accepted) {
+        active.durableSubmissionOwner = false;
+        active.canonicalAttachmentOwner = accepted === true;
+        if (disposed && !accepted) releaseOwnedAttachments(receipt.payload.attachments, { retainSendReceiptOutbox: false });
+      };
+    }
+
     function transferAttachmentsToCanonicalHistory(receipt) {
       const active = receipt ? activeReceipts.get(receipt.id) : null;
       if (!active || active.settled || disposed) return false;
@@ -401,8 +412,8 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
-      for (const { receipt, canonicalAttachmentOwner } of activeReceipts.values()) {
-        if (receipt.consumeDraft && !canonicalAttachmentOwner) {
+      for (const { receipt, canonicalAttachmentOwner, durableSubmissionOwner } of activeReceipts.values()) {
+        if (receipt.consumeDraft && !canonicalAttachmentOwner && !durableSubmissionOwner) {
           releaseOwnedAttachments(receipt.payload.attachments, { retainSendReceiptOutbox: false });
         }
       }
@@ -426,6 +437,7 @@
       settleAccepted,
       settleFailed,
       transferAttachmentsToCanonicalHistory,
+      holdForDurableSubmission,
     };
     state.sendReceiptController = api;
     return api;

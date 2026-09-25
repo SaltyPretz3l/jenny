@@ -108,6 +108,7 @@
         replayImageAttachments: request.replayImageAttachments,
         preserveComposerDraft: true,
         editedMessageId: request.sourceMessageId,
+        ...(request.runModeOverride ? { runModeOverride: request.runModeOverride } : {}),
         ...(failureRetry ? { failureRetry: true } : {}),
         sessionIdOverride: sessionId,
         onAuthoritativeStart: (startResult) => reconcileAcceptedRegenerate({

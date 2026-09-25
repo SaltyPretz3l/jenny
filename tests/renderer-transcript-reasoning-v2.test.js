@@ -123,6 +123,80 @@ test('preflight created compaction notice copy is unchanged', () => {
   assert.match(futureTurnsHtml, /Older turns were summarized for this request and future turns/);
 });
 
+test('compaction chip keeps a stable label while each variant sentence moves into the How row', () => {
+  const renderer = makeTranscriptThinkingRenderer();
+  const variants = [
+    {
+      context_compacted: { summaryStatus: 'created', phase: 'preflight' },
+      sentence: 'Older turns were summarized for this request',
+    },
+    {
+      context_compacted: { summaryStatus: 'not_applicable' },
+      sentence: 'Older context was trimmed to fit this request',
+    },
+    {
+      context_compacted: { summaryStatus: 'failed' },
+      sentence: 'Automatic summarization failed; a bounded fallback was used',
+    },
+    {
+      context_compacted: { strategy: 'narrowed', historyScopeFallback: 'recent' },
+      sentence: 'Request history was narrowed to the last 6 turns',
+    },
+  ];
+
+  for (const variant of variants) {
+    const html = renderer.renderContextCompactedNotice(variant);
+    assert.match(html, /context-compacted-notice-label">Context compacted<\/span>/);
+    assert.match(
+      html,
+      new RegExp(`context-compacted-notice-key">How<\\/span><span class="context-compacted-notice-value">${variant.sentence}`)
+    );
+  }
+});
+
+test('compaction notice renders the separator hairline and an optional escaped Summary row', () => {
+  const renderer = makeTranscriptThinkingRenderer();
+  const withSummary = renderer.renderContextCompactedNotice({
+    context_compacted: {
+      summaryStatus: 'created',
+      summaryExcerpt: 'Kept <the plan> & latest result.',
+    },
+  });
+  const withoutSummary = renderer.renderContextCompactedNotice({
+    context_compacted: { summaryStatus: 'created', summaryExcerpt: '' },
+  });
+
+  assert.match(withSummary, /data-timeline-divider="context-compacted"/);
+  assert.equal((withSummary.match(/class="context-compacted-notice-line"/g) || []).length, 2);
+  assert.match(
+    withSummary,
+    /context-compacted-notice-key">Summary<\/span><span class="context-compacted-notice-summary">Kept &lt;the plan&gt; &amp; latest result\.<\/span>/
+  );
+  assert.doesNotMatch(withoutSummary, /context-compacted-notice-summary/);
+  assert.doesNotMatch(withoutSummary, /context-compacted-notice-key">Summary<\/span>/);
+});
+
+test('multi-compaction body retains every entry and one Summary row for the latest entry', () => {
+  const html = makeTranscriptThinkingRenderer().renderContextCompactedNotice({
+    context_compactions: [
+      { summaryStatus: 'created', tokensBefore: 9000, tokensAfter: 6000, summaryExcerpt: 'Stale summary' },
+      { summaryStatus: 'not_applicable', tokensBefore: 6000, tokensAfter: 4500 },
+      { summaryStatus: 'failed', tokensBefore: 4500, tokensAfter: 3000, summaryExcerpt: 'Latest summary' },
+    ],
+  });
+
+  assert.equal((html.match(/class="context-compacted-notice-row"/g) || []).length, 4);
+  assert.match(html, /Compaction 1/);
+  assert.match(html, /Compaction 2/);
+  assert.match(html, /Compaction 3 \(latest\)/);
+  assert.match(html, /Compaction 1[\s\S]*Older turns were summarized for this request/);
+  assert.match(html, /Compaction 2[\s\S]*Older context was trimmed to fit this request/);
+  assert.match(html, /Compaction 3 \(latest\)[\s\S]*Automatic summarization failed; a bounded fallback was used/);
+  assert.equal((html.match(/class="context-compacted-notice-summary"/g) || []).length, 1);
+  assert.match(html, /context-compacted-notice-summary">Latest summary<\/span>/);
+  assert.doesNotMatch(html, /Stale summary/);
+});
+
 function buildMessage({
   id = 'msg_1',
   status = 'complete',

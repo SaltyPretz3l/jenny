@@ -52,6 +52,32 @@ function imageResult(path, fileVersion = 'vf2_image') {
   };
 }
 
+function documentResult(path, fileVersion = 'vf2_document') {
+  const format = path.toLowerCase().endsWith('.docx') ? 'docx' : 'pdf';
+  const content = format === 'docx' ? 'PK\u0003\u0004fake' : '%PDF-fake';
+  return {
+    ok: true,
+    path,
+    pathKey: path.toLowerCase(),
+    requestedPath: path,
+    requestedPathKey: path.toLowerCase(),
+    size: Buffer.byteLength(content),
+    mtimeMs: 10,
+    rootId: 'root-a',
+    generation: 4,
+    fileVersion,
+    kind: 'document',
+    format,
+    representation: 'base64',
+    mime: format === 'docx'
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : 'application/pdf',
+    base64: Buffer.from(content).toString('base64'),
+    editable: true,
+    truncated: false,
+  };
+}
+
 async function openDocument(operations, path = 'src/File.js') {
   const intent = operations.beginOpen(path);
   const read = await operations.readForOpen(intent);
@@ -330,6 +356,97 @@ test('image opens and watcher reloads share versioned document tokens and the ce
 
   await assert.rejects(pending, (error) => error.code === 'workspace_file_operation_stale');
   assert.equal(operations.getDocumentToken('assets/logo.png'), null);
+});
+
+test('document opens and reloads share formatted versioned tokens and the central queue', async () => {
+  const reloadStarted = deferred();
+  const reloadResult = deferred();
+  let reads = 0;
+  const api = {
+    async readDocument({ path }) {
+      reads += 1;
+      if (reads === 1) return documentResult(path);
+      reloadStarted.resolve();
+      return reloadResult.promise;
+    },
+  };
+  const operations = createIdeFileOperations({ getWorkspaceFsApi: () => api, platform: 'win32' });
+  const intent = operations.beginOpen('DOCS/REPORT.PDF');
+  const opened = await operations.readDocumentForOpen(intent);
+  const token = operations.commitBinaryDocumentOpen(intent, opened.payload);
+  assert.equal(token.documentKind, 'document');
+  assert.equal(token.format, 'pdf');
+  assert.equal(token.editable, true);
+
+  const snapshot = operations.captureReload('docs/report.pdf');
+  const pending = operations.readDocumentForReload(snapshot);
+  await reloadStarted.promise;
+  operations.reset({ rootId: 'root-b', generation: 5 });
+  reloadResult.resolve(documentResult('DOCS/REPORT.PDF', 'vf2_external'));
+
+  await assert.rejects(pending, (error) => error.code === 'workspace_file_operation_stale');
+  assert.equal(operations.getDocumentToken('docs/report.pdf'), null);
+});
+
+test('malformed document responses fail closed before document creation', async () => {
+  const mutations = [
+    { kind: 'image' },
+    { mime: 'application/octet-stream' },
+    { editable: false },
+    { size: 1 },
+    { format: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  ];
+  for (const mutation of mutations) {
+    const api = { readDocument: async () => ({ ...documentResult('docs/report.pdf'), ...mutation }) };
+    const operations = createIdeFileOperations({ getWorkspaceFsApi: () => api, platform: 'win32' });
+    const intent = operations.beginOpen('docs/report.pdf');
+    await assert.rejects(
+      operations.readDocumentForOpen(intent),
+      (error) => error.code === 'workspace_file_result_invalid'
+    );
+    assert.equal(operations.getDocumentToken('docs/report.pdf'), null);
+  }
+});
+
+test('document save sends base64 and format while a mid-save edit stays dirty', async () => {
+  const writeStarted = deferred();
+  const writeResult = deferred();
+  const writes = [];
+  const api = {
+    readDocument: async ({ path }) => documentResult(path),
+    async writeDocument(payload) {
+      writes.push(payload);
+      writeStarted.resolve();
+      return writeResult.promise;
+    },
+  };
+  const operations = createIdeFileOperations({ getWorkspaceFsApi: () => api, platform: 'win32' });
+  const intent = operations.beginOpen('docs/report.pdf');
+  const opened = await operations.readDocumentForOpen(intent);
+  operations.commitBinaryDocumentOpen(intent, opened.payload);
+  operations.noteEdit('docs/report.pdf');
+  operations.noteDirty('docs/report.pdf', true);
+  const base64 = Buffer.from('%PDF-saved').toString('base64');
+  const snapshot = operations.captureDocumentSave('docs/report.pdf', { base64 });
+  const pending = operations.writeDocument(snapshot);
+  await writeStarted.promise;
+  operations.noteEdit('docs/report.pdf');
+  operations.noteDirty('docs/report.pdf', true);
+  writeResult.resolve({
+    ok: true, path: 'docs/report.pdf', pathKey: 'docs/report.pdf', size: 10, mtimeMs: 20,
+    rootId: 'root-a', generation: 4, fileVersion: 'vf2_saved',
+  });
+
+  const result = await pending;
+  assert.deepEqual(writes, [{
+    path: 'docs/report.pdf', base64, format: 'pdf', expectedGeneration: 4,
+    expectedFileVersion: 'vf2_document',
+  }]);
+  assert.deepEqual(operations.acceptWrite(snapshot, result), { current: true, exactEdit: false });
+  const token = operations.getDocumentToken('docs/report.pdf');
+  assert.equal(token.fileVersion, 'vf2_saved');
+  assert.equal(token.editVersion, 2);
+  assert.equal(token.dirty, true);
 });
 
 test('preview reads are bounded/versioned and watcher invalidation prevents a late stale paint', async () => {

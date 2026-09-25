@@ -77,7 +77,7 @@ def test_decision_missing_result_returns_false() -> None:
     assert approval_decision_from_response({"id": 1000}, 1000) is False
 
 
-@pytest.mark.parametrize("decision", ["approved", "approved_auto", "rejected"])
+@pytest.mark.parametrize("decision", ["approved", "approved_auto", "accepted", "rejected"])
 def test_plan_decisions_authorize_handler_and_preserve_feedback(decision: str) -> None:
     resolution = approval_resolution_from_response(
         {"id": 1004, "result": {"decision": decision, "feedback": "Please revise"}},
@@ -86,6 +86,30 @@ def test_plan_decisions_authorize_handler_and_preserve_feedback(decision: str) -
     assert resolution.approved is True
     assert resolution.decision == decision
     assert resolution.feedback == "Please revise"
+
+
+@pytest.mark.parametrize("result", [
+    {"decision": "yolo", "approved": True},
+    {"decision": "build_now", "approved": True, "feedback": ""},
+    {"decision": "yolo"},
+])
+def test_unknown_decision_fails_closed_even_with_approved_true(result: dict) -> None:
+    resolution = approval_resolution_from_response({"id": 1010, "result": result}, 1010)
+    assert resolution.approved is False
+    assert resolution.status == "denied"
+
+
+@pytest.mark.parametrize("result", [
+    {"decision": "deny", "approved": True},
+    {"decision": "denied", "approved": True},
+    {"decision": " Denied ", "approved": True},
+    {"decision": "approve", "approved": False},
+    {"decision": "allow", "approved": False},
+])
+def test_conflicting_legacy_decision_and_bool_fail_closed(result: dict) -> None:
+    resolution = approval_resolution_from_response({"id": 1011, "result": result}, 1011)
+    assert resolution.approved is False
+    assert resolution.status == "denied"
 
 
 def test_plan_decision_rejects_non_string_feedback_as_malformed() -> None:
@@ -342,6 +366,46 @@ def test_request_tool_approval_zero_timeout_fails_closed_without_writing_or_read
     assert resolution.status == "timeout"
     assert written == []
     assert read_calls == []
+
+
+def test_request_tool_approval_extends_same_registered_waiter_after_timeout() -> None:
+    written: list[dict[str, object]] = []
+    registered_ids: list[int] = []
+    wait_timeouts: list[float] = []
+    close_calls = 0
+
+    def _factory(expected_id: int, **_kwargs: object):
+        registered_ids.append(expected_id)
+
+        def _read(timeout: float) -> dict[str, object]:
+            wait_timeouts.append(timeout)
+            if len(wait_timeouts) == 1:
+                raise TimeoutError("initial wait timed out")
+            return {"jsonrpc": "2.0", "id": expected_id, "result": {"approved": True}}
+
+        def _close() -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+        _read.close = _close  # type: ignore[attr-defined]
+        return _read
+
+    resolution = request_tool_approval(
+        {"request_id": "req_extension", "tool_name": "write_file"},
+        write_message=written.append,
+        read_message=lambda _timeout: {},
+        response_reader_factory=_factory,
+        timeout_seconds=1.0,
+        logger=_LOGGER,
+        extra_wait_seconds=lambda: 3.0,
+    )
+
+    assert resolution.approved is True
+    assert len(written) == 1
+    assert len(registered_ids) == 1
+    assert len(wait_timeouts) == 2
+    assert wait_timeouts[1] <= 3.0
+    assert close_calls == 1
 
 
 def test_request_tool_approval_registers_before_write_and_always_closes_waiter() -> None:

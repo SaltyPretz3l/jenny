@@ -58,9 +58,14 @@
   padding: 0;
 }
 
+.artifact-review-panel[data-artifact-review-mode="tasks"] {
+  background: var(--bg-base);
+  border-inline-start: 1px solid var(--line);
+}
+
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-surface {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   color: var(--text-primary);
@@ -68,25 +73,24 @@
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-header {
   display: grid;
-  gap: var(--space-3);
-  padding: 14px 14px 10px;
-  border-bottom: 1px solid var(--border-default);
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-6) var(--space-3);
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-header h2 {
-  margin: 0;
-  font-size: 15px;
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title-text {
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
   font-weight: 600;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-header p {
-  margin: 2px 0 0;
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-summary {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--tl-font-meta);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-filters {
   width: max-content;
+  margin: 0 var(--space-6) var(--space-3);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add {
@@ -94,32 +98,94 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--space-3);
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-default);
+  padding: 0 var(--space-6) var(--space-3);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add .inv-text-field-control {
-  min-height: 32px;
+  min-height: var(--space-16);
   resize: none;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-error {
-  padding: 7px 14px;
-  background: var(--state-danger-bg);
+  padding: var(--space-2) var(--space-6);
   color: var(--text-danger-emphasis);
-  font-size: 11px;
+  font-size: var(--tl-font-meta);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-list {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
 }
 
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-4) var(--space-6) var(--space-1);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group b {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check,
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
-  padding: 11px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+  align-items: start;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-text {
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-meta {
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-dot {
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  margin-top: var(--space-2);
+  border-radius: 50%;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="pending"] .task-rail-check-dot {
+  background: var(--text-decorative);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-dot {
+  background: var(--tl-status-active);
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-dot {
+  background: var(--tl-status-ok);
+  opacity: 0.7;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
   transition: background-color var(--motion-duration-feedback) var(--motion-ease-standard);
 }
 
@@ -131,7 +197,7 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-checkbox {
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-copy {
@@ -139,8 +205,9 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title {
-  font-size: 13px;
-  font-weight: 550;
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+  font-weight: 500;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -152,10 +219,10 @@
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-notes {
   display: -webkit-box;
-  margin-top: 4px;
+  margin-top: var(--space-2);
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--tl-font-ui);
   line-height: 1.45;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
@@ -163,7 +230,6 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row-actions,
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor-actions {
   display: flex;
   align-items: center;
@@ -171,21 +237,9 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta {
-  margin-top: 7px;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-timing,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-origin-session {
+  margin-top: var(--space-2);
   color: var(--text-muted);
-  font-size: 10px;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-timing.is-due {
-  color: var(--state-warning);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-origin-session {
-  margin-top: 4px;
+  font-size: var(--tl-font-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -207,18 +261,11 @@
   color: var(--text-primary);
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row-actions {
-  justify-content: flex-end;
-  margin-block: 8px 0;
-  margin-inline-start: 29px;
-  margin-inline-end: 27px;
-}
-
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor {
   display: grid;
   gap: var(--space-3);
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-default);
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor-actions {
@@ -226,9 +273,9 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-empty {
-  padding: 28px 18px;
+  padding: var(--space-7) var(--space-6);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--tl-font-ui);
   line-height: 1.5;
   text-align: center;
 }
@@ -238,10 +285,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 9px 12px;
-  border-top: 1px solid var(--border-default);
-  color: var(--text-muted);
-  font-size: 10px;
+  padding: var(--space-3) var(--space-6);
+  border-top: 1px solid var(--line);
+  color: var(--text-decorative);
+  font-size: var(--tl-font-meta);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row--flash {
@@ -249,6 +296,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-dot {
+    animation: none;
+  }
+
   .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
     transition: none;
   }

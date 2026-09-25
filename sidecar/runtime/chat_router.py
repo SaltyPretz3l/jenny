@@ -104,11 +104,29 @@ def _build_router_response(
     )
     from sidecar.ai.routing.loop_events import LoopEvent
     from sidecar.ai.routing.loop_runtime import LoopRuntime
+    from sidecar.runtime.continuation_checkpoint import build_continuation_checkpoint_callback
+    from sidecar.runtime.inference_admission import build_inference_admission_callback
+    from sidecar.runtime.operation_admission import build_operation_admission_callback
 
     runtime: LoopRuntime | None = None
     # One request-owned counter (W2-30-F07): shared with the dispatcher's
     # approval emissions and the resume runtime so seq never restarts at zero.
     seq_state = canonical_seq_state if canonical_seq_state is not None else {"seq": 0}
+    continuation_context = request_context.continuation_context
+    logical_turn_id = request_context.logical_turn_id or request_id
+    continuation_checkpoint = build_continuation_checkpoint_callback(
+        context=continuation_context, write_message=electron_tool_writer,
+        response_reader_factory=electron_tool_reader_factory, cancel_handle=cancel_handle,
+    )
+    hydrated_resume = request_context.runtime_continuation_resume
+    if hydrated_resume is not None:
+        from sidecar.runtime.chat_continuation_resume import resume_before_tool_dispatch
+
+    continuation_resume = (
+        (lambda **kwargs: resume_before_tool_dispatch(hydrated=hydrated_resume, **kwargs))
+        if hydrated_resume is not None
+        else None
+    )
     if stream_notifications and callable(notification_writer):
         canonical_turn_events_enabled = is_feature_flag_enabled(
             stack.config.feature_flags or {},
@@ -133,20 +151,45 @@ def _build_router_response(
                     trace_id=trace_id,
                     session_id=session_id,
                     seq=next_seq,
+                    turn_id=getattr(runtime, "logical_turn_id", None) or request_id,
                 )
                 if canonical_msg is not None:
                     seq_state["seq"] = next_seq
                     notification_writer(canonical_msg)
 
+        operation_admission = build_operation_admission_callback(
+            request_id=request_id,
+            session_id=session_id,
+            execution_context=request_context.execution_context,
+            write_message=electron_tool_writer,
+            response_reader_factory=electron_tool_reader_factory,
+            cancel_handle=cancel_handle,
+            continuation_enabled=continuation_context is not None,
+        )
+        inference_admission = build_inference_admission_callback(
+            request_id=request_id,
+            session_id=session_id,
+            execution_context=request_context.execution_context,
+            require_budget=request_context.inference_budget_required,
+            engine_type=stack.config.engine_type,
+            write_message=electron_tool_writer,
+            response_reader_factory=electron_tool_reader_factory,
+            cancel_handle=cancel_handle,
+        )
         runtime = LoopRuntime(
             emit=_serialize_and_write,
             request_id=request_id,
+            logical_turn_id=logical_turn_id,
             trace_id=trace_id or "",
             session_id=session_id or "",
             notification_writer=notification_writer,
             electron_tool_writer=electron_tool_writer,
             electron_tool_reader=electron_tool_reader,
             electron_tool_reader_factory=electron_tool_reader_factory,
+            operation_admission=operation_admission,
+            inference_admission=inference_admission,
+            continuation_checkpoint=continuation_checkpoint,
+            continuation_resume=continuation_resume,
             max_iterations=max_iterations_for_agent_surface(
                 stack.config,
                 mode=request_context.mode,
@@ -162,13 +205,37 @@ def _build_router_response(
             sub_agent_slot_allocator=getattr(stack, "sub_agent_slot_allocator", None),
         )
     else:
+        operation_admission = build_operation_admission_callback(
+            request_id=request_id,
+            session_id=session_id,
+            execution_context=request_context.execution_context,
+            write_message=electron_tool_writer,
+            response_reader_factory=electron_tool_reader_factory,
+            cancel_handle=cancel_handle,
+            continuation_enabled=continuation_context is not None,
+        )
+        inference_admission = build_inference_admission_callback(
+            request_id=request_id,
+            session_id=session_id,
+            execution_context=request_context.execution_context,
+            require_budget=request_context.inference_budget_required,
+            engine_type=stack.config.engine_type,
+            write_message=electron_tool_writer,
+            response_reader_factory=electron_tool_reader_factory,
+            cancel_handle=cancel_handle,
+        )
         runtime = LoopRuntime(
             request_id=request_id,
+            logical_turn_id=logical_turn_id,
             trace_id=trace_id or "",
             session_id=session_id or "",
             electron_tool_writer=electron_tool_writer,
             electron_tool_reader=electron_tool_reader,
             electron_tool_reader_factory=electron_tool_reader_factory,
+            operation_admission=operation_admission,
+            inference_admission=inference_admission,
+            continuation_checkpoint=continuation_checkpoint,
+            continuation_resume=continuation_resume,
             max_iterations=max_iterations_for_agent_surface(
                 stack.config,
                 mode=request_context.mode,

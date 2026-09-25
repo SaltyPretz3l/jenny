@@ -28,8 +28,10 @@ const {
   normalizeActiveTurnStatus,
   normalizePreferredModel,
   normalizeReasoningEffort,
+  normalizeSessionProjectId,
   normalizeSessionStartDate, normalizeToolCategoryOverrides,
 } = require('./session-normalizers');
+const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
 const { buildSessionPreferencesPatch, normalizeRunMode } = require('./session-preferences-patch');
 const {
   normalizeCompactionSnapshot,
@@ -69,18 +71,16 @@ const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
 } = require('../shell-config-followups-schema');
+const { preserveRuntimeContinuations } = require('./runtime-continuation-records');
+const { captureFailureRetryReasoning, normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 // TURN_EVENT_LOG_VERSION and the turn-event append/persist helpers now live in
 // ./session-turn-events (imported above and re-exported below); the constant is
 // still surfaced from this module for backward compatibility with importers.
 const DEFAULT_MAX_TURN_EVENTS_PER_SESSION = 5000;
 const DEFAULT_TURN_EVENT_COMPACTION_KEEP = 4000;
-// Trailing-edge coalesce window for per-session FileJsonStore instances is
-// opt-in: production wiring (services/backend/backend-service.js) passes a
-// non-zero writeDebounceMs; tests default to 0 (immediate writes) so they
-// don't need to flush before reading back from disk. With the per-session
-// split landing in this module, each write is O(one session) regardless of
-// total history size, but bursts during streaming (active-turn touches,
-// terminal phase) still benefit from coalescing.
+// Production opts into trailing-edge writes; tests stay immediate. The split
+// layout keeps each write O(one session), while streaming bursts still benefit
+// from coalescing. Debounced callers must flush or dispose before shutdown.
 const DEFAULT_WRITE_DEBOUNCE_MS = 0;
 const COMPOSER_DRAFT_CLIP_MARKER = '\n\n[clipped]';
 const MAX_COMPOSER_DRAFT_CHARS = MAX_FOLLOW_UP_LABEL_CHARS + 2 + MAX_FOLLOW_UP_BODY_CHARS;
@@ -176,6 +176,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
     : null;
   return {
     id: sessionId,
+    project_id: normalizeSessionProjectId(input.project_id, { legacyFallback: false }),
     title: clipTitle(input.title),
     session_type: sessionType,
     plugin_session: pluginSession,
@@ -207,6 +208,8 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
       ? Number(input.turn_generation)
       : 0,
     active_turn: normalizeActiveTurn(input.active_turn),
+    runtime_continuations: preserveRuntimeContinuations(input.runtime_continuations),
+    failure_retry_reasoning_snapshots: normalizeFailureRetryReasoningSnapshots(input.failure_retry_reasoning_snapshots),
     compaction_snapshot: normalizeCompactionSnapshot(input.compaction_snapshot),
     context_usage: normalizeSessionContextUsage(input.context_usage),
     branch_origin: normalizeBranchOrigin(input.branch_origin || input.branchOrigin),
@@ -228,8 +231,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
   };
 }
 
-// Concurrency contract: final session mutations route through one helper so
-// normalization, compaction, and persistence writes stay centralized.
+// Final mutations share one helper for normalization, compaction, and persistence.
 class ElectronSessionStore {
   constructor(filePath, {
     shellConfigService = null,
@@ -251,6 +253,8 @@ class ElectronSessionStore {
       migratePayload: (payload) => migrateStorePayload(payload, { normalizeMessage }),
       normalizeSession: (id, record) => normalizeSession(id, record),
       summarizeSession: (session) => this._toSummary(session),
+      migrateSummary: (summary, version) => ({ ...summary,
+        project_id: normalizeSessionProjectId(summary?.project_id, { legacyFallback: version < 21 }) }),
       writeDebounceMs,
       logger: this._logger,
       storeName: 'session_store',
@@ -281,22 +285,13 @@ class ElectronSessionStore {
     );
   }
 
-  // Compatibility shim for services/backend/session-store-mirror.js. Returns
-  // the cached index: `getIndexSnapshot()` already returns a fresh sessions
-  // map whose values are summary objects by reference, so a caller that adds
-  // a new entry without touching existing entries can pass the same payload
-  // back through `_write()` and the diff will write only the new entry. Don't
-  // reach into existing entries' `messages`/`turn_events` through this;
-  // those live in per-session files and are not loaded eagerly.
+  // Compatibility shim for session-store-mirror. Summary values are shared by
+  // reference; message and turn-event bodies remain in per-session files.
   _read() {
     return this._backend.getIndexSnapshot();
   }
 
-  // Compatibility shim for session-store-mirror's "insert a new session"
-  // pattern. Diffs `payload.sessions` against the cached index by reference:
-  // unchanged entries (same reference as cache) are skipped; new or replaced
-  // entries are upserted; missing entries are deleted. This keeps mirror's
-  // single-session add fast (O(1) upsert) instead of rewriting every session.
+  // Mirror compatibility: diff summary references so one insert stays O(1).
   _write(payload, { persist = true } = {}) {
     const incoming =
       payload && payload.sessions && typeof payload.sessions === 'object' && !Array.isArray(payload.sessions)
@@ -321,8 +316,6 @@ class ElectronSessionStore {
   }
 
   _withSessionMutation(sessionId, patch, { bumpUpdatedAt = true, persist = true } = {}) {
-    // `current` comes straight from the backend cache, which already holds a
-    // canonical normalizeSession() object and is only read by the spread below.
     const current = this._backend.getSession(sessionId);
     if (!current) {
       return null;
@@ -330,10 +323,7 @@ class ElectronSessionStore {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       return null;
     }
-    // Reuse already-normalized (tagged) message objects so an active turn's
-    // repeated patches don't re-walk the entire message array each commit, and
-    // tell the backend the record is already canonical so it skips a fourth
-    // normalize.
+    // Reuse tagged messages so repeated active-turn patches stay incremental.
     const next = normalizeSession(sessionId, {
       ...current,
       ...patch,
@@ -350,13 +340,15 @@ class ElectronSessionStore {
     return this._backend.flush();
   }
 
+  getTranscriptCachePressure() { return this._backend.getCachePressure(); }
+
+  onTranscriptCacheAvailable(listener) { return this._backend.onCacheAvailable(listener); }
+
   hasPendingWrites() {
     return this._backend.hasPendingWrites();
   }
 
-  // Force one session's cached record to disk immediately; true only when the
-  // bytes landed. Used by the turn-event persistence path to confirm durability
-  // before the crash-recovery journal is cleared.
+  // Force one session durable before its crash-recovery journal is cleared.
   flushSession(sessionId) {
     return this._backend.flushSession(sessionId);
   }
@@ -365,8 +357,7 @@ class ElectronSessionStore {
     return this._backend.flushAsync();
   }
 
-  // True when an on-disk schema newer than this build froze all writes —
-  // callers use this to diagnose a refused append as `future_schema`.
+  // True when a newer on-disk schema froze writes.
   hasNewerSchema() {
     return this._backend.hasNewerSchema();
   }
@@ -399,11 +390,15 @@ class ElectronSessionStore {
     }));
   }
 
-  // Bulk lifecycle surface (companion Home state, managed-sidecar active-turn
-  // reconciliation): index summaries plus `active_turn` from the backend's
-  // scan registry. Never loads message bodies and never touches the backend
-  // session LRU — the previous per-id getSession() walk reloaded and evicted
-  // the whole 30-slot cache (hot active session included) on every pass.
+  getSessionSummary(sessionId) {
+    const id = String(sessionId || '').trim();
+    const sessions = this._backend.getIndexSnapshot().sessions;
+    const summary = id && sessions && Object.hasOwn(sessions, id) ? sessions[id] : null;
+    return summary && typeof summary === 'object' && !Array.isArray(summary)
+      ? { ...structuredClone(summary), id } : null;
+  }
+
+  // Bulk lifecycle summaries plus active turns, without loading transcript bodies.
   listSessionRecords() {
     const activeTurns = this._backend.getActiveTurnSnapshots();
     return this.listSessions().map((summary) => ({
@@ -412,9 +407,8 @@ class ElectronSessionStore {
     }));
   }
 
-  // Cache-neutral full-record read for bulk scans (attachment-asset sweep).
-  // Returns the backend's canonical record: treat as READ-ONLY — unlike
-  // getSession() there is no isolating re-normalize copy.
+  // Cache-neutral canonical record for read-only bulk scans; getSession() is
+  // the mutation-isolated alternative.
   peekSession(sessionId) {
     return this._backend.peekSession(sessionId);
   }
@@ -423,21 +417,20 @@ class ElectronSessionStore {
     return this._backend.getSessionIds();
   }
 
-  // `sessionType` / `imageConfig` are the schema-v17 opt-in (contract C2):
-  // omitting them — which every existing caller does — creates a chat session
-  // exactly as before, and `imageConfig` is dropped unless the type is 'image'.
-  createSession({ title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId } = {}) {
+  // `sessionType` / `imageConfig` retain the legacy schema-v17 image adapter.
+  createSession({ title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId } = {}) {
+    if (projectId !== undefined && !normalizeProjectId(projectId)) return null;
     const sessionId = createSessionId();
     return this._createSessionRecord(sessionId, {
-      title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId,
+      title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
     });
   }
 
   createSessionWithId(sessionId, {
-    title, preferences, sessionType, pluginSession, imageConfig,
+    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
   } = {}) {
     const normalizedSessionId = String(sessionId || '').trim();
-    if (!normalizedSessionId) {
+    if (!normalizedSessionId || (projectId !== undefined && !normalizeProjectId(projectId))) {
       return null;
     }
     return this._createSessionRecord(normalizedSessionId, {
@@ -446,11 +439,14 @@ class ElectronSessionStore {
       sessionType,
       pluginSession,
       imageConfig,
+      composerDraft,
+      linkedTaskId,
+      projectId,
     });
   }
 
   _createSessionRecord(sessionId, {
-    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId,
+    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
   } = {}) {
     const createdAt = nowIso();
     const rawSessionType = String(sessionType || '').trim().toLowerCase();
@@ -462,6 +458,7 @@ class ElectronSessionStore {
     if (normalizedType === 'plugin' && !normalizedPluginSession) return null;
     const session = normalizeSession(sessionId, {
       title: clipTitle(title),
+      project_id: projectId || GENERAL_PROJECT_ID,
       session_type: normalizedType,
       plugin_session: normalizedPluginSession,
       session_start_date: normalizeSessionStartDate(
@@ -511,6 +508,10 @@ class ElectronSessionStore {
   getSessionTurnEvents(sessionId) {
     const session = this.getSession(sessionId);
     return session ? [...session.turn_events] : [];
+  }
+
+  captureFailureRetryReasoning(sessionId, userMessageId) {
+    return captureFailureRetryReasoning(this, sessionId, userMessageId);
   }
 
   getActiveTurn(sessionId) {
@@ -860,11 +861,11 @@ class ElectronSessionStore {
         patch.attachments = replaceAttachments;
       }
       if (replaceSkillInvocation !== undefined) patch.skill_invocation = replaceSkillInvocation;
+      if (typeof options.replaceMessageTurnId === 'string') patch.turn_id = options.replaceMessageTurnId;
       const normalized = normalizeMessage(patch, session.last_model_used || '');
       survivingTarget = normalized || targetMessage;
     }
-    // Both re-anchor modes live in session-turn-events, shared with the
-    // shadow-store mirror so the two stores cannot drift.
+    // Re-anchor modes live in session-turn-events and are shared with shadow storage.
     const { messages: nextMessages, turnEvents: nextTurnEvents, snapshotBasis } = resolveReanchoredHistory({
       messages: session.messages,
       targetIndex,
@@ -880,11 +881,7 @@ class ElectronSessionStore {
       last_message_preview: summarizeMessage(nextMessages[nextMessages.length - 1]) || '',
       turn_events: nextTurnEvents,
       active_turn: options.preserveActiveTurn === true ? session.active_turn : null,
-      // Edit-and-resend rewrote history: a snapshot whose summarized prefix no
-      // longer survives (including an edited boundary message) must not leak
-      // into future sends (JCA-003 invalidation).
-      // JCA-003: which list the snapshot must still cover is decided by the
-      // re-anchor mode, so the helper answers it alongside the other two.
+      // Re-anchoring invalidates any compacted prefix that no longer survives.
       compaction_snapshot: retainCompactionSnapshotForMessages(session.compaction_snapshot, snapshotBasis),
       // Truncate and edit-and-resend both shorten/rewrite the measured history,
       // so the persisted context reading would over-report on a cold reopen.
@@ -897,9 +894,7 @@ class ElectronSessionStore {
     };
   }
 
-  // CTL-010: whole-turn boundary rule lives in session-turn-events (sibling
-  // to the CTL-001 truncation helper) so the never-bisect-a-turn contract has
-  // a single owner.
+  // Whole-turn compaction rules live with the shared turn-event helpers.
   _compactTurnEvents(sessionId, turnEvents) {
     const result = compactTurnEventsToWholeTurns({
       sessionId,
@@ -918,25 +913,21 @@ class ElectronSessionStore {
     return result.turnEvents;
   }
 
-  // Appends turn events and returns the STRUCTURED durability result
-  // { ok, appended, duplicateCount, reason }. The full contract (ok:false
-  // reasons, the durable-flush-before-ok semantics, and the journal-safety
-  // rationale) lives with appendTurnEventsToSession in ./session-turn-events.
+  // Returns { ok, appended, duplicateCount, reason } after its durable flush.
   appendTurnEvents(sessionId, events, options = {}) {
     return appendTurnEventsToSession(this, sessionId, events, options);
   }
 
   updateSession(sessionId, patch = {}) {
-    return this._updateSessionRecord(sessionId, patch, {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
+    const safePatch = { ...patch };
+    delete safePatch.runtime_continuations;
+    return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,
     });
   }
 
-  // Pin/archive metadata is intentionally NOT routed through preferences:
-  // setSessionPreferences bumps updated_at, and a pin that re-sorts the
-  // session to the top of the recents list would defeat the point. The
-  // title key serves the renderer's auto-title/backfill the same way —
-  // renameSession stays the bumping path for deliberate user renames.
+  // Pin/archive and automatic title metadata must not bump recency.
   setSessionMeta(sessionId, meta = {}) {
     const patch = {};
     if (Object.prototype.hasOwnProperty.call(meta, 'pinned')) {

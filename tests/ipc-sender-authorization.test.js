@@ -12,6 +12,7 @@ const {
   unauthorizedIpcResult,
 } = require('../services/main/ipc-sender-authorization');
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('../services/ipc-contract');
+const { registerGuidanceIpcHandlers } = require('../services/main/ipc-handler-registration');
 
 const EXPECTED_DOCUMENT = path.resolve(__dirname, '..', 'index.html');
 const EXPECTED_URL = pathToFileURL(EXPECTED_DOCUMENT).href;
@@ -115,4 +116,39 @@ test('spoofed same-named document cannot reach a privileged IPC handler', async 
   });
   assert.equal(calls, 0);
   assert.equal(sentinel.deleted, false);
+});
+
+test('guidance settings accept only the trusted main frame when authorization is supplied', async () => {
+  const trusted = harness();
+  const registered = new Map();
+  const updates = [];
+  registerGuidanceIpcHandlers({
+    handle(channel, handler) { registered.set(channel, handler); },
+  }, {
+    getState: () => ({}),
+    updateSettings: (patch) => { updates.push(patch); return { updated: patch }; },
+    openScopeFolder: () => ({}),
+  }, {
+    getState: () => ({}),
+    updateSettings: () => ({}),
+  }, {
+    authorization: {
+      authorize: createTrustedSenderAuthorizer({
+        getMainWindow: () => trusted.window,
+        expectedDocumentPath: EXPECTED_DOCUMENT,
+      }),
+      unauthorizedResult: unauthorizedIpcResult,
+    },
+  });
+
+  const handler = registered.get(getBridgeChannel('skills.updateSettings', 'invoke'));
+  const foreignEvent = { sender: { id: 8 }, senderFrame: { url: EXPECTED_URL } };
+  assert.deepEqual(await handler(foreignEvent, { enabled: false }), unauthorizedIpcResult());
+  assert.deepEqual(
+    await handler({ sender: trusted.webContents, senderFrame: { url: EXPECTED_URL } }, { enabled: false }),
+    unauthorizedIpcResult()
+  );
+  assert.deepEqual(updates, []);
+  assert.deepEqual(await handler(trusted.event, { enabled: true }), { updated: { enabled: true } });
+  assert.deepEqual(updates, [{ enabled: true }]);
 });

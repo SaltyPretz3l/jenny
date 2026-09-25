@@ -361,6 +361,9 @@
     const events = Array.isArray(turnEvents) ? turnEvents.slice().sort(traceEventCompare) : [];
     const turnId = normalizeId(events[0] && events[0].turn_id);
     const toolEventIndicesByCallId = buildToolEventIndicesByCallId(events);
+    const toolUseCallIds = new Set(events
+      .filter((event) => event && event.kind === 'tool_use')
+      .map((event) => normalizeId(event.tool_call_id)).filter(Boolean));
     const pendingPlanDocumentCallIds = new Set(events
       .filter((event) => event && event.kind === 'plan_document'
         && normalizeId(event.status || event.payload && event.payload.transition) === 'pending')
@@ -484,7 +487,17 @@
         for (let bucketIndex = 0; bucketIndex < bucketIndices.length; bucketIndex += 1) {
           const inner = bucketIndices[bucketIndex];
           const next = events[inner];
-          if (!next || processedIndices.has(inner)) {
+          if (!next || (processedIndices.has(inner) && next.kind !== 'tool_result')) {
+            continue;
+          }
+          // A resumed attempt can have a projected request alongside the
+          // canonical request from its previous attempt. Keep both provenance
+          // events in one logical call row when the canonical identity agrees.
+          if (next.kind === 'tool_use' && inner !== index
+            && (event.payload?.canonical_event_type === 'tool_call_requested'
+              || next.payload?.canonical_event_type === 'tool_call_requested')) {
+            processedIndices.add(inner);
+            sourceEvents.push(next);
             continue;
           }
           if (next.kind === 'approval_requested' || next.kind === 'user_questions_requested'
@@ -571,6 +584,9 @@
       }
 
       if (TOOL_RELATED_KINDS.has(event.kind)) {
+        // Finalization can backfill a tool_use after its canonical execution.
+        // Leave matching lifecycle events for that call's bucket to consume.
+        if (toolUseCallIds.has(normalizeId(event.tool_call_id))) continue;
         processedIndices.add(index);
         rows.push(buildSystemNoticeRow(turnId, [event], `orphan_${event.kind}`));
         continue;
@@ -592,6 +608,10 @@
       stampDeterministicRowIds(rows, true);
     }
 
+    // A late call can now own earlier events. Place its row at its first owned
+    // event, retaining the canonical sequence and one-row-per-event partition.
+    const eventOrder = new Map(events.map((event, index) => [event && event.event_id, index]));
+    rows.sort((left, right) => eventOrder.get(left.source_events[0]) - eventOrder.get(right.source_events[0]));
     return assignRenderMessageIds(rows);
   }
 
@@ -656,6 +676,12 @@
     for (const row of rows) {
       if (!row || !row.payload) continue;
       const kind = row.kind;
+      if (kind === 'approval_gap') {
+        // A card follows its call's verdict: a dead turn's gap row is sealed (A4 F7).
+        const call = toolCallByCallId.get(normalizeId(row.tool_call_id || row.payload.tool_call_id));
+        if (call && call.state === 'interrupted') row.payload.state = 'interrupted';
+        continue;
+      }
       if (kind !== 'tool_step' && kind !== 'tool_call' && kind !== 'tool_result') continue;
       const callId = normalizeId(row.tool_call_id || (row.payload && row.payload.tool_call_id));
       if (!callId) continue;

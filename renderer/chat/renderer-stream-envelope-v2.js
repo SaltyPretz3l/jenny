@@ -13,6 +13,11 @@
   // coalesced; the generic branch restores payload.type ('tool_output_chunk').
   const STREAM_ENVELOPE_EVENT_KINDS = new Set(['delta', 'started', 'completed', 'reset', 'terminal', 'progress']);
   const DEFAULT_RENDERER_ENVELOPE_STREAM_CAP = 128;
+  // One id per page load: main's receipt gate outlives a reload, and this
+  // page's epoch counter restarts, so the id marks a new epoch sequence.
+  const PAGE_LOAD_ID = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   function normalizeString(value) {
     return String(value || '').trim();
@@ -403,6 +408,7 @@
       return sendRecord({
         recordType: 'subscription_started',
         rendererEpoch,
+        pageLoadId: PAGE_LOAD_ID,
         mode: normalizeString(mode) || 'legacy',
       });
     }

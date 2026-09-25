@@ -280,6 +280,33 @@ test('sealing a persisted pending plan document abandons the plan', () => {
   assert.deepEqual(planRow.payload.transitions, ['pending', 'abandoned']);
 });
 
+test('sealing a persisted unresolved approval interrupts its tool and retains its gap receipt', () => {
+  const turnId = 'turn-approval-interrupted';
+  const callId = 'call-approval-interrupted';
+  const toolUse = persistedToolUseEvent({ turnId, callId, toolName: 'write_file' });
+  toolUse.status = 'pending_approval';
+  toolUse.payload.approval_state = 'pending';
+  const projection = projectPersistedEventsWithReducer([
+    toolUse,
+    {
+      event_id: 'e:approval:requested',
+      turn_id: turnId,
+      kind: 'approval_requested',
+      status: 'pending_approval',
+      primary_message_id: `tool_use_${callId}`,
+      source_message_ids: [`tool_use_${callId}`],
+      tool_call_id: callId,
+      payload: { approval_id: 'approval-interrupted', approval_state: 'pending', prompt: 'Allow edit?' },
+    },
+  ], { turnId, deterministicRowId: true });
+
+  const toolCallRow = projection.rows.find((row) => row.kind === 'tool_call');
+  const approvalGapRow = projection.rows.find((row) => row.kind === 'approval_gap');
+  assert.equal(toolCallRow.payload.state, 'interrupted');
+  assert.ok(approvalGapRow, 'the sealed projection retains the approval gap as a receipt');
+  assert.equal(approvalGapRow.payload.state, 'interrupted');
+});
+
 test('a persisted assistant_error replays as itself and settles the turn', () => {
   // It used to be remapped onto `error`, which stamps turn.status and builds NO
   // row. Under delegation that remap deleted the terminal error card. It now

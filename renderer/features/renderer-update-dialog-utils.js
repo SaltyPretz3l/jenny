@@ -129,13 +129,17 @@
       summary = summary || jt('updates.dialog.installingSummary', 'Jenny will restart when the installer takes over.');
       actions = [{ id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' }];
     } else if (status === 'error') {
+      var restartRequired = source.errorCode === 'install-launch-failed'
+        && source.installUnavailableReason === 'restart-required';
       title = jt('updates.dialog.checkFailedTitle', 'Update check failed');
       if (source.errorStage === 'download') title = jt('updates.dialog.downloadFailedTitle', 'Update download failed');
       if (source.errorStage === 'install') title = jt('updates.dialog.installFailedTitle', 'Installer handoff failed');
       statusLabel = jt('updates.dialog.needsAttention', 'Needs attention');
       tone = 'danger';
-      summary = summary || jt('updates.dialog.failedSummary', 'The updater could not complete that request.');
-      actions = [
+      summary = restartRequired
+        ? jt('updates.dialog.restartRequiredAfterInstallFailure', 'Restart Jenny before trying to install the update again.')
+        : summary || jt('updates.dialog.failedSummary', 'The updater could not complete that request.');
+      actions = restartRequired ? [closeAction] : [
         closeAction,
         { id: source.canInstall ? 'install' : source.canDownload ? 'download' : 'check', label: jt('updates.actions.tryAgain', 'Try Again'), variant: 'primary' },
       ];

@@ -12,6 +12,7 @@
     uiLanguage: jt('settings.uiLanguage.updateFailed', 'Language Update Failed'),
     safetyMode: jt('settings.safetyMode.updateFailed', 'Safety Mode Update Failed'),
     unattendedGuardMinutes: jt('settings.unattendedGuard.updateFailed', 'Unattended Guard Update Failed'),
+    autoApproveStreakCap: jt('settings.autoApproveStreakCap.updateFailed', 'Auto-approval Streak Cap Update Failed'),
   });
   const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
     || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
@@ -33,9 +34,11 @@
     normalizeUiLanguageTag = function fallbackNormalizeUiLanguageTag() { return 'en'; },
     normalizeSafetyMode = function fallbackNormalizeSafetyMode() { return 'normal'; },
     normalizeUnattendedGuardMinutes = function fallbackNormalizeUnattendedGuardMinutes() { return 0; },
+    normalizeAutoApproveStreakCap = function fallbackNormalizeAutoApproveStreakCap() { return 50; },
     resolveUiLanguageChangeEvent = function fallbackResolveUiLanguageChangeEvent() { return null; },
     resolveSafetyModeChangeEvent = function fallbackResolveSafetyModeChangeEvent() { return null; },
     resolveUnattendedGuardChangeEvent = function fallbackResolveUnattendedGuardChangeEvent() { return null; },
+    resolveAutoApproveStreakCapChangeEvent = function fallbackResolveAutoApproveStreakCapChangeEvent() { return null; },
     resolveWebSearchFieldChangeEvent = function fallbackResolveWebSearchFieldChangeEvent() { return null; },
     resolveWebSearchKeySaveClickEvent = function fallbackResolveWebSearchKeySaveClickEvent() { return null; },
     resolveCompactionFieldChangeEvent = function fallbackResolveCompactionFieldChangeEvent() { return null; },
@@ -78,6 +81,7 @@
       contextHistoryScopeSelect,
       contextSourcesList,
       contextRuntimeList,
+      modelStartupLoadList,
       contextCompactionTuning,
       toolsConfigFieldList,
       toolsApprovalRulesList,
@@ -125,6 +129,7 @@
       handleOfflineModeChange,
       refreshFeatureState,
       setActiveView,
+      openSession,
       renderLogs,
     } = deps.callbacks;
 
@@ -258,6 +263,8 @@
       settingsCoreRenderers.bindApprovalRules?.({
         container: toolsApprovalRulesList,
         api: (typeof window !== 'undefined' && window.jennyShell?.tools) || null,
+        projectsApi: (typeof window !== 'undefined' && window.jennyShell?.projects) || null,
+        permissionReviewApi: (typeof window !== 'undefined' && window.jennyShell?.permissionReview) || null,
         registerListener,
         listenerOptions,
         onError: showSessionActionError,
@@ -317,6 +324,8 @@
           handleOfflineModeChange,
           applyFeatureSettings,
           renderLogs,
+          openSession,
+          setActiveView,
         },
       }) || null;
 
@@ -411,6 +420,18 @@
       }
       registerListener(contextSourcesList, 'inv-toggle-change', handleContextToggleChange, listenerOptions);
       registerListener(contextRuntimeList, 'inv-toggle-change', handleContextToggleChange, listenerOptions);
+      registerListener(modelStartupLoadList, 'inv-toggle-change', (event) => {
+        if (event?.detail?.id !== 'modelStartupLoadToggle') return;
+        Promise.resolve().then(() => window.jennyShell.engines.updateSettings({
+          startupModelLoad: Boolean(event.detail.checked),
+        })).then((result) => {
+          state.localEngines = result.localEngines || state.localEngines;
+          renderSettings();
+        }).catch((error) => {
+          showSessionActionError(error, jt('settings.models.startupLoad.updateFailed', 'Startup Load Update Failed'));
+          renderSettings();
+        });
+      }, listenerOptions);
 
       // Compaction tuning fields (Compaction Tunability + Manual Compact):
       // logic lives in the section module (extraction pattern shared with the
@@ -457,7 +478,12 @@
           return;
         }
         const unattended = resolveUnattendedGuardChangeEvent(event);
-        if (unattended) persistChatUiSetting({ key: 'unattendedGuardMinutes', value: unattended.value, normalize: normalizeUnattendedGuardMinutes });
+        if (unattended) {
+          persistChatUiSetting({ key: 'unattendedGuardMinutes', value: unattended.value, normalize: normalizeUnattendedGuardMinutes });
+          return;
+        }
+        const streakCap = resolveAutoApproveStreakCapChangeEvent(event);
+        if (streakCap) persistChatUiSetting({ key: 'autoApproveStreakCap', value: streakCap.value, normalize: normalizeAutoApproveStreakCap });
       }, listenerOptions);
 
       registerListener(settingsView, 'change', (event) => {

@@ -59,6 +59,10 @@ const RECOVERY_COPY = Object.freeze({
     title: 'Tool denied',
     hint: 'The requested tool did not run because approval was denied.',
   }),
+  run_mode_changed: Object.freeze({
+    title: 'Run mode changed',
+    hint: 'The run mode changed while this reply was in progress, so it stopped. Retry to run it in the new mode.',
+  }),
   sidecar_transport: Object.freeze({
     title: 'Sidecar connection issue',
     hint: 'Restart the local sidecar if it does not reconnect, then retry this turn.',
@@ -190,6 +194,17 @@ function classifyAssistantError(errorPayload, {
   if (status === 'denied' || category === 'denied') {
     return 'denied';
   }
+  // Electron's execution authority fails a request whose session run mode
+  // changed under it (session-execution-authority.js requireCurrent): the
+  // user's own action, so it reads like cancelled/denied, not a fault. The
+  // same check refuses the sidecar's next generation through inference
+  // admission, which the sidecar reports as its generic generation failure
+  // with the refusal reason in error_message.
+  if (code === 'RUN_MODE_CHANGED'
+    || (String(payload.error_type || '') === 'InferenceAdmissionRefused'
+      && String(payload.error_message || '').trim() === 'run_mode_changed')) {
+    return 'run_mode_changed';
+  }
   if (subcode === 'thinking_budget') {
     return 'thinking_budget';
   }
@@ -253,6 +268,8 @@ function recoveryActionIdsForClass(recoveryClass, errorPayload) {
       return ['retry_turn', 'open_settings', 'open_diagnostics'];
     case 'sidecar_transport':
       return ['retry_turn', 'restart_sidecar', 'open_diagnostics'];
+    case 'run_mode_changed':
+      return ['retry_turn'];
     case 'timeout':
     case 'turn_deadline':
     case 'transport':

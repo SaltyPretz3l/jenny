@@ -702,7 +702,7 @@ test('repairMessage preserves the full visible reply while the snapshot stays ca
   assert.equal(repairCalls.length, 1);
   assert.equal(repairCalls[0].message.id, visibleReply.id);
   assert.equal(repairCalls[0].message.content, visibleReply.content);
-  assert.deepEqual(repairCalls[0].terminal_snapshot.messages, [canonicalTail]);
+  assert.deepEqual(repairCalls[0].terminal_snapshot.messages, [{ ...canonicalTail, turn_id: lease.identity.streamId }]);
 
   const invalidHarness = createHarness();
   const invalidLease = reserve(invalidHarness.registry, invalidHarness.store);
@@ -925,7 +925,7 @@ test('discard persists a tombstone before exact active-turn cleanup and never re
   assert.equal(artifact.state, 'discarded');
   assert.deepEqual(operations.map((operation) => operation.kind), ['discard_pending', 'discard']);
   assert.equal(store.commitCalls.length, 1);
-  assert.deepEqual(store.commitCalls[0].request.messages, [toolResult]);
+  assert.deepEqual(store.commitCalls[0].request.messages, [{ ...toolResult, turn_id: original.identity.streamId }]);
   assert.deepEqual(store.commitCalls[0].request.turnEvents, [artifact.terminal_snapshot.turn_events[0]]);
   assert.equal(store.session.messages[0].tool_call.status, 'interrupted');
   assert.equal(store.session.messages[0].tool_call.approval_state, 'interrupted');

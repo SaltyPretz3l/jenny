@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import stat as stat_module
@@ -101,7 +102,10 @@ class GuardedRuntimeDirectory:
             if not create:
                 return None
             try:
-                candidate.mkdir()
+                # A concurrent creator may win the mkdir; the checks below still
+                # vet whatever now sits at the path.
+                with contextlib.suppress(FileExistsError):
+                    candidate.mkdir()
                 value = candidate.lstat()
             except OSError as error:
                 raise RuntimePathError("runtime child directory could not be created") from error

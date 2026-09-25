@@ -239,3 +239,12 @@ def test_cancel_handle_wait_is_used_for_delays() -> None:
     engine.load_model("replay-default")
     _drain(engine.stream_with_tools("p", [], messages=[_user("hi")], cancel_handle=handle))
     assert handle.waits > 0
+
+
+def test_replay_has_an_explicit_budget_ceiling_for_its_controlled_window():
+    from types import SimpleNamespace
+
+    from sidecar.ai.engines.inference_budget import inference_budget_ceilings
+    engine = ReplayEngine(delay_ms=0)
+    assert inference_budget_ceilings(engine, engine.get_model_max_output_tokens(),
+                                     SimpleNamespace(requires_budget=True)) == (32768, 32768)

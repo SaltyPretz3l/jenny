@@ -24,6 +24,11 @@ REQUIRED_CONSTANTS = {
     "CHAT_DONE_METHOD": "chat.done",
     "CHAT_ERROR_METHOD": "chat.error",
     "TOOL_REQUEST_APPROVAL_METHOD": "tool.request_approval",
+    "RUNTIME_OPERATION_METHOD": "runtime.operation",
+    "WORKSPACE_TEST_RUN_METHOD": "workspace_test.run",
+    "WORKSPACE_TEST_CANCEL_METHOD": "workspace_test.cancel",
+    "WORKSPACE_TEST_CLEANUP_METHOD": "workspace_test.cleanup",
+    "WORKSPACE_TEST_CLOSE_METHOD": "workspace_test.close",
 }
 
 

@@ -15,6 +15,7 @@ const { summarizeCompactionSnapshot } = require('./session-compaction-snapshot')
 function buildSessionSummary(session) {
   return {
     id: session.id,
+    project_id: session.project_id,
     title: session.title,
     session_type: session.session_type,
     plugin_session: session.plugin_session ? {

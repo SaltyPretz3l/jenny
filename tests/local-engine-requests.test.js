@@ -201,6 +201,34 @@ test('managed dispatch: normalizedPreferences.conversation_mode is "chat"', asyn
   assert.equal(calls[0].normalizedPreferences.conversation_mode, 'chat');
 });
 
+test('runtime submission reads stored context preferences from the session summary', async () => {
+  const calls = [];
+  const service = {
+    sessionStore: {
+      getSessionSummary(sessionId) {
+        assert.equal(sessionId, 's');
+        return { context_preferences: { history_scope: 'fresh', include_memory: false } };
+      },
+      getSession() {
+        throw new Error('submission must not hydrate the transcript');
+      },
+    },
+    sessionRuntime: {
+      startImmediate(request) {
+        calls.push(request);
+        return 'RUNTIME_STREAM';
+      },
+    },
+  };
+
+  const result = await startLocalEngineChatStream(service, baseParams());
+
+  assert.equal(result, 'RUNTIME_STREAM');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].normalizedPreferences.context_preferences.history_scope, 'fresh');
+  assert.equal(calls[0].normalizedPreferences.context_preferences.include_memory, false);
+});
+
 test('managed dispatch: interactive_round_count is clamped to MAX_INTERACTIVE_ROUNDS (not 9999)', async () => {
   const { service, calls } = makeManagedService();
 
@@ -324,6 +352,32 @@ test('forced local inference carries verified engine provenance into managed mod
   assert.equal(result, 'LOCAL_STREAM');
   assert.equal(calls[0].runtimePreferredModel, 'gpt-5:local');
   assert.equal(calls[0].runtimePreferredEngineType, 'ollama');
+});
+
+test('runtime admission receives verified force-local routing before any actor is allocated', async () => {
+  const calls = [];
+  const service = withActorHarness({
+    isManagedSidecarMode: true,
+    sessionStore: { getSession: () => ({}) },
+    offlineIntelligenceService: {
+      getState: async () => ({
+        mode: 'local_only', preferredLocalModel: 'qwen:local', selectedLocalEngineType: 'ollama',
+        localCatalog: { available: true }, localChatReady: true, localVisionReady: true,
+      }),
+    },
+    sessionRuntime: { startImmediate: (managed, options) => {
+      calls.push({ managed, options });
+      return 'RUNTIME_STREAM';
+    } },
+  });
+
+  const result = await startLocalEngineChatStream(service, baseParams({ attachments: [] }), {
+    cancellation: { signal: new AbortController().signal },
+  });
+  assert.equal(result, 'RUNTIME_STREAM');
+  assert.equal(calls[0].managed.runtimePreferredModel, 'qwen:local');
+  assert.equal(calls[0].managed.runtimePreferredEngineType, 'ollama');
+  assert.equal(service.sessionTurnActors, undefined);
 });
 
 test('offline local-only managed but localChatReady false: rejects with unavailableReason', async () => {

@@ -1,3 +1,4 @@
+const { activateRuntimeCanonicalStream } = require('./runtime-canonical-activation');
 const {
   normalizeRuntimeToken,
   normalizeRuntimeNumber,
@@ -90,19 +91,21 @@ function createManagedChatStreamRuntime({
   turnEventCollector = null,
   turnMetrics = null,
   canonicalBridge = false,
-  turnLease = null,
+  turnLease = null, runtimeAdmission = null, getSuspendedDecision = null,
 }) {
   turnMetrics = turnMetrics && typeof turnMetrics.recordCanonicalEvent === 'function'
     ? turnMetrics
     : new CanonicalTurnMetrics();
   const adapter = createManagedSessionLifecycleAdapter(service, resolvedSessionId, turnLease);
+  const turnId = turnLease?.identity?.turnId || streamId;
   const transcriptCollector = new TranscriptPhaseCollector({ streamId });
   let model = '';
   let eventBase = {
     streamId,
     sessionId: resolvedSessionId,
     model,
-    requestId: streamId,
+    requestId: streamId, turnId,
+    ...(runtimeAdmission ? { runtimeAdmission } : {}),
     traceId: String(traceId || '').trim() || streamId,
     trace_id: String(traceId || '').trim() || streamId,
   };
@@ -249,7 +252,7 @@ function createManagedChatStreamRuntime({
       return null;
     }
     return turnEventCollector.noteEvent({
-      turn_id: streamId,
+      turn_id: turnId,
       kind,
       ...options,
     });
@@ -316,7 +319,8 @@ function createManagedChatStreamRuntime({
       streamId,
       sessionId: resolvedSessionId,
       model,
-      requestId: streamId,
+      requestId: streamId, turnId,
+    ...(runtimeAdmission ? { runtimeAdmission } : {}),
       traceId: String(traceId || '').trim() || streamId,
       trace_id: String(traceId || '').trim() || streamId,
     };
@@ -370,7 +374,7 @@ function createManagedChatStreamRuntime({
     const claimedActiveTurn = turnLease
       ? adapter.getActiveTurn()
       : startActiveTurn(adapter, {
-          requestId: streamId,
+          requestId: turnId,
           streamId,
           traceId: eventBase.traceId,
           userMessageId,
@@ -391,6 +395,17 @@ function createManagedChatStreamRuntime({
         userMessageId,
       });
     }
+    if (turnLease?.reuseExistingUserMessage === true) {
+      const existing = (service.sessionStore.getSession(resolvedSessionId)?.messages || [])
+        .filter(row => row.id === userMessageId);
+      if (existing.length !== 1 || existing[0].role !== 'user' || existing[0].turn_id !== identity.turnId) {
+        throw logAndBuildUserMessagePersistRefusedError(service, {
+          sessionId: resolvedSessionId, streamId, userMessageId, reason: 'checkpoint_user_message_changed' });
+      }
+      rememberPersistedUserStream(service, streamId);
+      userMessagePersisted = true;
+      return false;
+    }
     const userTurnFields = {
       messageId: userMessageId,
       content: transcriptPrompt,
@@ -405,6 +420,7 @@ function createManagedChatStreamRuntime({
             replaceMessageContent: transcriptPrompt,
             replaceMessageAttachments: normalizedAttachments,
             replaceMessageSkillInvocation: skillInvocation,
+            replaceMessageTurnId: turnId,
             preserveActiveTurn: true,
             ...(failureRetry === true ? { preserveSupersededTurn: true } : {}),
       }
@@ -539,7 +555,7 @@ function createManagedChatStreamRuntime({
       visibleSegments: transcriptCollector.slice.visibleSegments,
       toolSteps: transcriptCollector.slice.toolSteps,
       model,
-      requestId: streamId,
+      requestId: turnId,
       streamId,
       normalizedPreferences,
       normalizedInteractiveResponse,
@@ -735,6 +751,7 @@ function createManagedChatStreamRuntime({
           return { status: terminal.status, coordinated: ctx.terminalCoordinatorHandled };
         }
         settleDeniedTerminal({
+          turnId,
           clearActiveTurn,
           adapter,
           streamId,
@@ -770,7 +787,7 @@ function createManagedChatStreamRuntime({
         content: buildInteractiveQuestionBatchVisibleText(questionBatch),
         questionBatch,
         model,
-        requestId: streamId,
+        requestId: turnId,
         streamId,
         normalizedPreferences,
         exchangeTitle,
@@ -824,6 +841,7 @@ function createManagedChatStreamRuntime({
   // Extracted handlers share these closure bindings through accessors, so moved and
   // factory-kept functions mutate the SAME closure bindings by reference.
   const ctx = {
+    turnId, getSuspendedDecision,
     service,
     adapter,
     streamId,
@@ -946,6 +964,7 @@ function createManagedChatStreamRuntime({
   return {
     adapter,
     setModel,
+    activateCanonicalContinuation: () => activateRuntimeCanonicalStream(ctx),
     setAutomaticCompactionContext(value) { automaticCompactionContext = value; },
     getEventBase,
     persistUserMessage,

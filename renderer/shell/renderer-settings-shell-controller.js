@@ -190,6 +190,7 @@
       getRuntimePreferenceSnapshot,
       runRuntimePreferenceActivity,
       handleWorkspaceRootChoose,
+      clearWorkspaceRoot = function noopClearWorkspaceRoot() { return Promise.resolve(null); },
       handleRunSetupAgain,
       showSetupHelp,
       showFactoryReset,
@@ -466,6 +467,8 @@
         }
       }
       if (normalizedSectionId !== 'usage') usageController?.deactivate?.();
+      // Deep links (the chat tool row's "Set up PDF reading") name the group to show.
+      if (options.focusId) globalDocument?.getElementById?.(String(options.focusId))?.scrollIntoView?.({ block: 'start' });
     }
 
     function openSettingsSection(sectionId, options) {
@@ -502,6 +505,7 @@
         settingsModelCard: dom.settingsModelCard,
         modelBadge: dom.modelBadge,
         modelStatus: dom.modelStatus,
+        modelStartupLoadList: dom.modelStartupLoadList,
         appearanceBadge: dom.appearanceBadge,
         appearanceStatus: dom.appearanceStatus,
         appearanceResetButton: dom.appearanceResetButton,
@@ -526,6 +530,7 @@
         toolsApprovalRulesList: dom.toolsApprovalRulesList,
         toolsWorkspacePath: dom.toolsWorkspacePath,
         toolsWorkspaceStatus: dom.toolsWorkspaceStatus,
+        toolsWorkspaceProject: dom.toolsWorkspaceProject,
         toolsWorkspaceChooseButton: dom.toolsWorkspaceChooseButton,
         toolsSummary: dom.toolsSummary,
         editorBadge: dom.editorBadge,
@@ -606,6 +611,7 @@
         contextHistoryScopeSelect: dom.contextHistoryScopeSelect,
         contextSourcesList: dom.contextSourcesList,
         contextRuntimeList: dom.contextRuntimeList,
+        modelStartupLoadList: dom.modelStartupLoadList,
         contextCompactionTuning: dom.contextCompactionTuning,
         toolsConfigFieldList: dom.toolsConfigFieldList,
         toolsApprovalRulesList: dom.toolsApprovalRulesList,
@@ -661,7 +667,10 @@
         handleOfflineModeChange,
         refreshFeatureState,
         setActiveView,
+        openSession,
         renderLogs,
+        handleWorkspaceRootChoose,
+        clearWorkspaceRoot,
       },
     }) || null;
 

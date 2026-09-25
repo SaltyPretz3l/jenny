@@ -8,17 +8,15 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  /* While the model generates tool-call arguments (a Write/Edit's whole file
-     content), the provider buffers the call server-side and the stream goes
-     silent — no delta, no tool event, nothing to render. This module fills
-     that dead air with an EPHEMERAL activity row at the tail of the live
-     turn, wearing the tool-row one-liner grammar so the real tool row reads
-     as the same object upgrading in place when tool.executing finally lands.
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+  /* This module fills silent stream phases with an EPHEMERAL activity row at
+     the tail of the live turn. Typed compaction/tool-input events upgrade the
+     row with known details; the generic fallback covers untyped silence.
 
      Like the W2-1 live tail, the row is a direct DOM patch: it never enters
      the reducer/projector row model, is never persisted, and any stream
-     event removes it (a full render destroying the node is equivalent —
-     events are exactly when the row should disappear). */
+     non-typed event removes it (a full render destroying the node is
+     equivalent — authoritative content has taken over). */
 
   const SILENCE_THRESHOLD_MS = 1500;
   const ELAPSED_REVEAL_MS = 10000;
@@ -26,8 +24,7 @@
   const CHECK_INTERVAL_MS = 500;
   const MAX_TRACKED_STREAMS = 8;
 
-  // Honest, action-flavored copy: never names a tool or file before
-  // tool.executing arrives (the engine genuinely does not know yet).
+  // Honest, action-flavored fallback copy for untyped silence.
   const ACTIVITY_COPY = [
     jt('chat.streamActivity.puttingChangesTogether', 'Putting changes together…'),
     jt('chat.streamActivity.workingSomethingUp', 'Working something up…'),
@@ -80,7 +77,7 @@
       pickCopyIndex = (length) => Math.floor(Math.random() * length),
     } = options;
 
-    // streamId -> { sessionId, lastEventAt, armed, node, episodeStartedAt, copyIndex }
+    // streamId -> { sessionId, lastEventAt, armed, node, episodeStartedAt, copyIndex, typed }
     const tracked = new Map();
     let intervalHandle = null;
 
@@ -167,6 +164,9 @@
         dot.className = 'status-dot status-dot--active turn-activity-dot';
         dot.setAttribute('aria-hidden', 'true');
         node.appendChild(dot);
+        const name = documentRef.createElement('span');
+        name.className = 'turn-activity-name';
+        node.appendChild(name);
         const label = documentRef.createElement('span');
         label.className = 'turn-activity-label';
         node.appendChild(label);
@@ -178,18 +178,62 @@
       if (node.parentNode !== mount || node !== mount.lastElementChild) {
         mount.appendChild(node);
       }
+      const kind = entry.typed ? entry.typed.kind : 'generic';
+      node.setAttribute('data-turn-activity-kind', kind);
+      const nameNode = node.querySelector('.turn-activity-name');
       const label = node.querySelector('.turn-activity-label');
-      const copy = currentCopy(entry, timestamp);
-      if (label && label.textContent !== copy) label.textContent = copy;
+      let name = '';
+      let copy = currentCopy(entry, timestamp);
+      if (entry.typed?.kind === 'compaction') {
+        name = entry.typed.phase === 'tool_loop'
+          ? jt('chat.streamActivity.compactingMidTask', 'Compacting context mid-task')
+          : jt('chat.streamActivity.compacting', 'Compacting context');
+        const parts = [
+          entry.typed.messageCount > 0
+            ? jtn('chat.streamActivity.summarizingOlderMessages', entry.typed.messageCount, { count: entry.typed.messageCount.toLocaleString() }, 'summarizing {count} older message', 'summarizing {count} older messages')
+            : '',
+          entry.typed.tokensBefore > 0
+            ? jt('chat.streamActivity.tokenCount', '{count} tokens', { count: entry.typed.tokensBefore.toLocaleString() })
+            : '',
+        ].filter(Boolean);
+        copy = parts.join(' · ') || jt('chat.streamActivity.summarizingOlderContext', 'summarizing older context…');
+      } else if (entry.typed?.kind === 'tool_input') {
+        name = entry.typed.toolName;
+        copy = entry.typed.path || jt('chat.streamActivity.composingArguments', 'Composing…');
+      }
+      if (nameNode) {
+        nameNode.hidden = kind === 'generic';
+        if (nameNode.textContent !== name) nameNode.textContent = name;
+      }
+      if (label) {
+        label.classList.toggle('turn-activity-label--path', entry.typed?.kind === 'tool_input' && Boolean(entry.typed.path));
+        if (label.textContent !== copy) label.textContent = copy;
+      }
       const elapsedNode = node.querySelector('.turn-activity-elapsed');
       if (elapsedNode) {
-        const sinceSilence = timestamp - entry.episodeStartedAt;
-        if (sinceSilence >= elapsedRevealMs) {
+        if (entry.typed) {
+          const elapsed = formatElapsedLabel(timestamp - entry.typed.startedAt);
+          let text = elapsed;
+          if (entry.typed.kind === 'tool_input') {
+            const size = entry.typed.bytes < 1024
+              ? jt('chat.streamActivity.bytes', '{count} B', { count: entry.typed.bytes })
+              : jt('chat.streamActivity.kilobytes', '{count} KB', { count: (entry.typed.bytes / 1024).toFixed(1) });
+            text = jt('chat.streamActivity.sizeAndElapsed', '{size} · {elapsed}', { size, elapsed });
+            // The shared clock rewrites the whole node as elapsed-only, which
+            // would erase the size between our ticks; this tick owns it.
+            elapsedNode.removeAttribute('data-turn-elapsed');
+            elapsedNode.removeAttribute('data-elapsed-started-at');
+          } else {
+            elapsedNode.setAttribute('data-turn-elapsed', 'true');
+            elapsedNode.setAttribute('data-elapsed-started-at', String(entry.typed.startedAt));
+          }
+          if (elapsedNode.textContent !== text) elapsedNode.textContent = text;
+        } else if (timestamp - entry.episodeStartedAt >= elapsedRevealMs) {
           // Standard elapsed attributes so the shared 1s clock also owns it;
           // our own tick writes the same format in between syncs.
           elapsedNode.setAttribute('data-turn-elapsed', 'true');
           elapsedNode.setAttribute('data-elapsed-started-at', String(entry.episodeStartedAt));
-          const text = formatElapsedLabel(sinceSilence);
+          const text = formatElapsedLabel(timestamp - entry.episodeStartedAt);
           if (elapsedNode.textContent !== text) elapsedNode.textContent = text;
         } else if (elapsedNode.textContent) {
           elapsedNode.textContent = '';
@@ -219,7 +263,7 @@
           continue;
         }
         let show = entry.armed
-          && timestamp - entry.lastEventAt >= silenceThresholdMs;
+          && (entry.typed || timestamp - entry.lastEventAt >= silenceThresholdMs);
         if (show) {
           try {
             show = isSessionVisible(entry.sessionId) === true
@@ -254,6 +298,7 @@
           node: null,
           episodeStartedAt: 0,
           copyIndex: -1,
+          typed: null,
         };
         tracked.set(streamId, entry);
         while (tracked.size > maxTrackedStreams) {
@@ -263,6 +308,47 @@
       const sessionId = normalizeId(payload && payload.sessionId);
       if (sessionId) entry.sessionId = sessionId;
       entry.lastEventAt = Number(now());
+      if (type === 'context_compacting') {
+        const tokensBefore = Number(payload && payload.tokensBefore);
+        const messageCount = Number(payload && payload.messageCount);
+        entry.typed = {
+          kind: 'compaction',
+          phase: normalizeId(payload && payload.compactionPhase),
+          tokensBefore: Number.isFinite(tokensBefore) ? tokensBefore : 0,
+          messageCount: Number.isFinite(messageCount) ? messageCount : 0,
+          startedAt: entry.lastEventAt,
+        };
+        entry.armed = true;
+        startInterval();
+        tick();
+        return;
+      }
+      if (type === 'tool_input_delta') {
+        const toolCallId = normalizeId(payload && payload.toolCallId);
+        if (entry.typed?.kind !== 'tool_input' || entry.typed.toolCallId !== toolCallId) {
+          entry.typed = {
+            kind: 'tool_input', toolCallId, toolName: String(payload?.toolName ?? ''),
+            args: '', bytes: 0, path: '', startedAt: entry.lastEventAt,
+          };
+        }
+        const argumentsDelta = String(payload?.argumentsDelta ?? '');
+        // Electron folds provider fragments and ships the cumulative UTF-8
+        // size; the delta alone undercounts clipped and multibyte chunks.
+        const argumentsBytes = Number(payload?.argumentsBytes);
+        entry.typed.bytes = Number.isFinite(argumentsBytes) && argumentsBytes >= 0
+          ? argumentsBytes
+          : entry.typed.bytes + argumentsDelta.length;
+        entry.typed.args = (entry.typed.args + argumentsDelta).slice(0, 4096);
+        if (!entry.typed.path) {
+          const match = entry.typed.args.match(/"(?:path|file_path|filePath|target_path|targetPath|destination|filename|file)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          if (match) entry.typed.path = match[1].replace(/\\([\\/])/g, '$1');
+        }
+        entry.armed = true;
+        startInterval();
+        tick();
+        return;
+      }
+      entry.typed = null;
       if (ARMING_TYPES.has(type)) entry.armed = true;
       // Any real event both resets the silence clock and dismisses a visible
       // row (the paired render replaces it with authoritative content).

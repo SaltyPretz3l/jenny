@@ -16,21 +16,66 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { assembleContextForChat } = require('../services/backend/chat-stream-context-assembly');
+const {
+  assembleContextForChat: assembleContextForChatWithAuthority,
+} = require('../services/backend/chat-stream-context-assembly');
+const {
+  SessionExecutionAuthority,
+} = require('../services/backend/session-execution-authority');
 const { normalizeContextPreferences } = require('../services/backend/context-preferences');
 const { buildLeanContextPreferences } = require('../services/backend/managed-sidecar-chat-helpers');
+
+function withProjectAuthority(service) {
+  const rootPath = service.configService?.get?.('tools_workspace_root') || 'G:\\projects\\general';
+  const authority = Object.freeze({
+    project_id: 'project_general',
+    root_path: rootPath,
+    root_id: 'root-project-general',
+    root_revision: 1,
+    device_id: '7',
+    inode: '11',
+  });
+  const projectAuthority = {
+    captureSession(sessionId) {
+      assert.equal(sessionId, 's1');
+      return authority;
+    },
+    requireCurrent(candidate) {
+      assert.deepEqual(candidate, authority);
+      return candidate;
+    },
+  };
+  const result = {
+    ...service,
+    projectAuthority,
+  };
+  result.sessionExecutionAuthority = new SessionExecutionAuthority({
+    projectAuthority,
+    permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: {}, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+  });
+  return result;
+}
+
+function assembleContextForChat(service, options) {
+  const executionAuthority = service.sessionExecutionAuthority.captureSession('s1', {
+    requestId: options.streamId,
+  });
+  return assembleContextForChatWithAuthority(service, { ...options, executionAuthority });
+}
 
 // Minimal service: everything other than the active-file task is disabled via
 // the context preferences below, so no personality/memory/git/codebase deps run.
 function makeService(flagOn) {
-  return {
+  return withProjectAuthority({
     featureFlags: { workspace_active_file_context: flagOn === true },
     _memoryRecallCache: {},
     _emitServiceLog() {},
-  };
+  });
 }
 
-function makeOptions(overrides) {
+function makeOptions(overrides = {}) {
   const prefs = normalizeContextPreferences({
     history_scope: 'fresh',
     include_personality: false,
@@ -38,7 +83,7 @@ function makeOptions(overrides) {
     include_git_context: false,
     include_codebase_context: false,
   });
-  return {
+  const options = {
     resolvedSessionId: 's1',
     streamId: 'stream1',
     contextPreferences: prefs,
@@ -62,6 +107,16 @@ function makeOptions(overrides) {
     mentionContents: [],
     ...overrides,
   };
+  if (options.activeFileContext && options.activeFileContext.workspace_id == null) {
+    options.activeFileContext = {
+      ...options.activeFileContext,
+      workspace_id: 'root-project-general',
+    };
+  }
+  options.mentionContents = options.mentionContents.map((entry) => (
+    entry.workspace_id == null ? { ...entry, workspace_id: 'root-project-general' } : entry
+  ));
+  return options;
 }
 
 function blockOfKind(result, kind) {
@@ -84,6 +139,7 @@ test('emits the active-file block on the typed channel when the flag is on', asy
   const service = makeService(true);
   const options = makeOptions();
   const result = await assembleContextForChat(service, options);
+  assert.equal(result.memoryPolicy.project_id, 'project_general');
 
   const activeFile = blockOfKind(result, 'active_file');
   assert.ok(activeFile, 'active-file block emitted');
@@ -178,7 +234,7 @@ function estimateAssembledTokens(preparedMessages, contextBlocks) {
 
 test('trims oversized stacked blocks to fit a small effective budget (no overflow)', async () => {
   const hugePersonality = '## IDENTITY\n' + 'persona line\n'.repeat(4000); // ~13K tokens
-  const service = {
+  const service = withProjectAuthority({
     featureFlags: { workspace_active_file_context: true },
     _memoryRecallCache: {},
     _emitServiceLog() {},
@@ -188,7 +244,7 @@ test('trims oversized stacked blocks to fit a small effective budget (no overflo
     personalityWorkspace: {
       getCompiledContext: async () => hugePersonality,
     },
-  };
+  });
   const prefs = normalizeContextPreferences({
     history_scope: 'fresh',
     include_personality: true,
@@ -231,7 +287,7 @@ test('trims oversized stacked blocks to fit a small effective budget (no overflo
 
 test('large local context budget preserves personality in a representative long session', async () => {
   const personality = '## IDENTITY\n' + 'persona line\n'.repeat(4000);
-  const service = {
+  const service = withProjectAuthority({
     featureFlags: {},
     _memoryRecallCache: {},
     _emitServiceLog() {},
@@ -239,7 +295,7 @@ test('large local context budget preserves personality in a representative long 
     personalityWorkspace: {
       getCompiledContext: async () => personality,
     },
-  };
+  });
   const prefs = normalizeContextPreferences({
     history_scope: 'full',
     include_personality: true,
@@ -264,7 +320,7 @@ test('large local context budget preserves personality in a representative long 
 
 test('ChatGPT subscription skips personality compilation but keeps non-personality context', async () => {
   let personalityCompileCalls = 0;
-  const service = {
+  const service = withProjectAuthority({
     featureFlags: { workspace_active_file_context: true },
     _memoryRecallCache: {},
     _emitServiceLog() {},
@@ -274,7 +330,7 @@ test('ChatGPT subscription skips personality compilation but keeps non-personali
         return '## IDENTITY\nCompanion personality';
       },
     },
-  };
+  });
   const prefs = normalizeContextPreferences({
     history_scope: 'fresh',
     include_personality: true,
@@ -326,7 +382,7 @@ function makeCodebaseTempDir() {
 }
 
 function makeCodebaseService(dir, { activeFileFlag = true } = {}) {
-  return {
+  return withProjectAuthority({
     featureFlags: {
       workspace_active_file_context: activeFileFlag,
       workspace_codebase_context: true,
@@ -335,7 +391,7 @@ function makeCodebaseService(dir, { activeFileFlag = true } = {}) {
     _emitServiceLog() {},
     // tools_workspace_root drives the codebase search root.
     configService: { get: (key) => (key === 'tools_workspace_root' ? dir : '') },
-  };
+  });
 }
 
 function makeDedupeOptions(dir) {

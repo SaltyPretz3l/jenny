@@ -1,4 +1,4 @@
-/* Flag-gated Settings section for the shared Model Library card grid. */
+/* The Model library renders inside Settings > Models, gated by model_management_ui. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
@@ -45,8 +45,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var CARD_SELECTOR = '.settings-card[data-settings-section="modelLibrary"]';
-  var NAV_SELECTOR = '.settings-nav [data-settings-section="modelLibrary"]';
+  var CARD_SELECTOR = '.settings-card[data-settings-section="models"]';
   var TOOLBAR_HOST_ID = 'modelLibrarySectionToolbarHost';
   var HOST_ID = 'modelLibrarySectionHost';
   var MODAL_ID = 'model-library-section-confirm-delete';
@@ -54,6 +53,8 @@
 
   if (!sourcesModule || typeof sourcesModule.createModelLibrarySource !== 'function'
     || typeof sourcesModule.createPullController !== 'function'
+    || typeof sourcesModule.projectLibraryGgufs !== 'function'
+    || typeof sourcesModule.isLibraryTag !== 'function'
     || !runtimeActionsModule
     || typeof runtimeActionsModule.createModelLibraryRuntimeActions !== 'function'
     || !mergeModule || typeof mergeModule.mergeModelLibrary !== 'function'
@@ -91,8 +92,6 @@
       ? d.openModelTuning : function noop() {};
     var refreshModelPickers = typeof d.refreshModelPickers === 'function'
       ? d.refreshModelPickers : function noop() {};
-    var openSettingsSection = typeof d.openSettingsSection === 'function'
-      ? d.openSettingsSection : function noop() {};
     var stepModal = d.stepModal || inventoryStepModal;
     var contextMenu = d.inventoryContextMenu
       || windowRef.inventoryContextMenu || inventoryContextMenu;
@@ -124,11 +123,6 @@
         ? documentRef.querySelector(CARD_SELECTOR) : null;
     }
 
-    function nav() {
-      return documentRef && documentRef.querySelector
-        ? documentRef.querySelector(NAV_SELECTOR) : null;
-    }
-
     function host() {
       return documentRef && documentRef.getElementById
         ? documentRef.getElementById(HOST_ID) : null;
@@ -141,28 +135,7 @@
 
     function enabled() {
       var flags = state && state.features && state.features.featureFlags;
-      return Boolean(flags
-        && flags.model_management_ui === true
-        && flags.model_library_section === true);
-    }
-
-    function syncVisibility(show) {
-      var item = nav();
-      var section = card();
-      if (item) {
-        item.setAttribute('data-feature-gated', 'model_library_section');
-        item.hidden = !show;
-        item.classList.toggle('hidden', !show);
-      }
-      if (section) {
-        section.hidden = !show;
-        if (!show) section.classList.remove('settings-section-active');
-      }
-      if (!show && state.ui && state.ui.activeSettingsSection === 'modelLibrary') {
-        openSettingsSection(
-          root.rendererSettingsSectionRegistry?.getDefaultSettingsSection?.() || 'models'
-        );
-      }
+      return Boolean(flags && flags.model_management_ui === true);
     }
 
     function activeModel() {
@@ -186,23 +159,51 @@
       ].join('\n');
     }
 
+    // GGUFs added to the library are cards of their own (flag on only). One
+    // keyed apart (its name would share another model's card) takes its
+    // served alias along, and is the active or default model by its exact tag
+    // only, which the canonical match would pin on the other card.
+    function libraryView(managed) {
+      var active = activeModel();
+      var preferred = preferredLocalModel();
+      if (!accelerationFlagEnabled()) return { installed: sourceData.installed, active: active, preferred: preferred };
+      var rows = sourcesModule.projectLibraryGgufs({
+        managed: managed,
+        localGgufs: sourceData.localGgufs || [],
+        ollamaTags: sourceData.ollamaTags,
+        installed: sourceData.installed,
+        recommendations: sourceData.recommendations,
+      });
+      var own = rows.filter(function (row) { return row.ownCardKey; }).map(function (row) { return row.id; });
+      rows.forEach(function (row) { if (row.ownCardKey && row.id === active) row.loaded = true; });
+      return {
+        installed: sourceData.installed.filter(function (row) {
+          return row.engine_type === 'ollama' || own.indexOf(String(row.id || '').toLowerCase()) < 0;
+        }).concat(rows),
+        active: own.indexOf(active) < 0 ? active : '',
+        preferred: own.indexOf(preferred) < 0 ? preferred : '',
+      };
+    }
+
     function buildMerged() {
       if (!sourceData) return null;
       contextSignature = mergeSignature();
+      var managed = state.localEngines?.openaiCompatible?.managed || null;
+      var library = libraryView(managed);
       return mergeModule.mergeModelLibrary({
-        installed: sourceData.installed,
+        installed: library.installed,
         ollamaTags: sourceData.ollamaTags,
         recommendations: sourceData.recommendations,
         fitEstimates: sourceData.fitEstimates,
         hardware: sourceData.hardware,
         memory: sourceData.memory,
         catalogMeta: sourceData.catalogMeta,
-        activeModel: activeModel(),
-        preferredLocalModel: preferredLocalModel(),
+        activeModel: library.active,
+        preferredLocalModel: library.preferred,
         // Kill switch: with the flag off none of the per-model engine inputs are
         // projected (no engine or Serving pills), so the library renders exactly
         // as it did before W4.
-        managed: accelerationFlagEnabled() ? (state.localEngines?.openaiCompatible?.managed || null) : null,
+        managed: accelerationFlagEnabled() ? managed : null,
         localGgufs: accelerationFlagEnabled() ? (sourceData.localGgufs || []) : [],
         llamaServer: accelerationFlagEnabled() ? (sourceData.llamaServer || null) : null,
         acceleration: {
@@ -248,24 +249,42 @@
         + (accelerationFlagEnabled() ? '<div id="modelLibraryFoldersHost"></div>' : '');
     }
 
-    function renderFolders() {
-      if (!accelerationFlagEnabled()) return;
+    function folders() {
+      if (disposed || !accelerationFlagEnabled()) return null;
       if (!foldersController) {
         var foldersModule = resolveFoldersModule();
-        if (!foldersModule || typeof foldersModule.createModelLibraryFoldersController !== 'function') return;
+        if (!foldersModule || typeof foldersModule.createModelLibraryFoldersController !== 'function') return null;
         foldersController = foldersModule.createModelLibraryFoldersController({
           windowRef: windowRef,
           documentRef: documentRef,
           getRoots: function () {
             return state.localEngines?.openaiCompatible?.managed?.libraryRoots || [];
           },
+          // Collisions are checked against the loaded lists, never the
+          // library's own projections, and against what failed to load.
+          getLibrary: function () {
+            return {
+              managed: state.localEngines?.openaiCompatible?.managed || null,
+              ollamaTags: sourceData ? sourceData.ollamaTags : [],
+              installed: sourceData ? sourceData.installed : [],
+              unavailable: sourceData ? sourceData.unavailable || {} : {},
+            };
+          },
           onSettings: syncEngineSettings,
           refresh: function () { return refresh({ force: true }); },
+          // Only "Remove from library", a card ⋯ action, reports on this line.
+          setStatus: setStatusMessage,
           hostId: 'modelLibraryFoldersHost',
         });
       }
-      foldersController.bind();
-      foldersController.render();
+      return foldersController;
+    }
+
+    function renderFolders() {
+      var controller = folders();
+      if (!controller) return;
+      controller.bind();
+      controller.render();
     }
 
     function currentPulls() {
@@ -290,7 +309,8 @@
     function updateStatusLine() {
       var target = card();
       var status = target && target.querySelector('.model-library-section-status');
-      if (status) status.textContent = view.statusMessage;
+      // A late write (a pull settling after the flag flipped) must not resurface.
+      if (status) status.textContent = enabled() ? view.statusMessage : '';
     }
 
     function setStatusMessage(message) {
@@ -331,6 +351,10 @@
         return;
       }
       var activeElement = documentRef.activeElement;
+      // The GGUF folders row is rebuilt with the toolbar: its focused control
+      // gets the focus back, like the pull input.
+      var folderAction = activeElement && target.contains(activeElement)
+        ? activeElement.getAttribute?.('data-model-library-folder-action') || '' : '';
       var preservePullFocus = activeElement
         && activeElement.getAttribute?.('data-model-library-section-input') === 'pull-tag';
       var pullFocus = preservePullFocus ? {
@@ -358,7 +382,17 @@
             );
           }
         }
+      } else if (folderAction) {
+        var nextControl = Array.from(target.querySelectorAll('[data-model-library-folder-action]')).find(function (control) {
+          return control.getAttribute('data-model-library-folder-action') === folderAction;
+        });
+        if (nextControl) focusQuietly(nextControl);
       }
+    }
+
+    function focusQuietly(element) {
+      try { element.focus({ preventScroll: true }); }
+      catch (_focusError) { element.focus(); }
     }
 
     function renderRows() {
@@ -443,10 +477,76 @@
       });
     }
 
+    // A card's own key first (a library card keyed apart answers to its bare
+    // tag), then the canonical tag.
     function findModel(keyOrTag) {
+      var exact = String(keyOrTag == null ? '' : keyOrTag).trim();
       var key = canonicalOllamaTag(keyOrTag);
       var cards = merged && Array.isArray(merged.cards) ? merged.cards : [];
-      return cards.find(function (model) { return model.key === key; }) || null;
+      return cards.find(function (model) { return model.key === exact; })
+        || cards.find(function (model) { return model.key === key; }) || null;
+    }
+
+    // The library GGUF behind a card: its saved entry, named by a
+    // library-shaped tag. Nothing else (an Ollama model's engine setting)
+    // ever offers Remove from library.
+    function libraryTagOf(model) {
+      var entry = model && model.libraryGguf === true
+        ? state.localEngines?.openaiCompatible?.managed?.perModel?.[model.managedKey] : null;
+      var tag = entry && typeof entry.tag === 'string' ? entry.tag : '';
+      return sourcesModule.isLibraryTag(tag) ? tag : '';
+    }
+
+    // ⋯ ▸ Remove from library. Once it settles, a focus the re-render dropped
+    // goes back to the card's ⋯, else to the card now in its place.
+    function removeFromLibrary(tag, control) {
+      var controller = folders();
+      if (!controller) return null;
+      var focused = documentRef.activeElement === control;
+      var row = control.closest('[data-model-key]');
+      var rows = row && host() ? Array.from(host().querySelectorAll('[data-model-key]')) : [];
+      var index = rows.indexOf(row);
+      var keys = index < 0 ? [] : [rows[index], rows[index + 1], rows[index - 1]].filter(Boolean)
+        .map(function (element) { return element.getAttribute('data-model-key'); });
+      return controller.removeLibraryModel(tag).then(function (removed) {
+        if (focused && !disposed) restoreCardFocus(keys);
+        return removed;
+      });
+    }
+
+    function restoreCardFocus(keys) {
+      var active = documentRef.activeElement;
+      var section = host();
+      if (!section || (active && active !== documentRef.body && active.isConnected !== false)) return;
+      var rowsByKey = Object.create(null);
+      Array.from(section.querySelectorAll('[data-model-key]')).forEach(function (element) {
+        var key = element.getAttribute('data-model-key');
+        if (!rowsByKey[key]) rowsByKey[key] = element;
+      });
+      for (var i = 0; i < keys.length; i += 1) {
+        var match = rowsByKey[keys[i]];
+        var target = match && (match.querySelector('[data-model-card-action="menu"]')
+          || match.querySelector('[data-model-card-action]'));
+        if (target) {
+          focusQuietly(target);
+          return;
+        }
+      }
+      // No card left in view (the last one under a filter): the pressed filter
+      // chip, else Add GGUF model…, so focus never falls to the page.
+      var toolbar = toolbarHost();
+      var fallback = toolbar && (toolbar.querySelector('.model-library-filter-chips [aria-pressed="true"]')
+        || toolbar.querySelector('[data-model-library-folder-action="add-model"]'));
+      if (fallback) focusQuietly(fallback);
+    }
+
+    // While Ollama's tag list is unreadable nobody knows whether Ollama has
+    // the model: the drawer gets no Ollama facts (it reads that as unknown),
+    // and keeps the llama-server ones.
+    function tuneEngines(model) {
+      var engines = model && model.engines ? model.engines : null;
+      return engines && sourceData && sourceData.unavailable && sourceData.unavailable.ollamaTags
+        ? Object.assign({}, engines, { ollama: null }) : engines;
     }
 
     function handlePullChange(key) {
@@ -467,7 +567,7 @@
       }
       if (pull.status === 'error') setStatusMessage(pull.message || jt('settings.modelLibrary.pullFailed', 'Pull failed.'));
       if (pull.cancelFailed === true) {
-        setStatusMessage(pull.message || jt('settings.modelLibrary.cancelPullFailed', 'Could not cancel the pull.'));
+        setStatusMessage(jt('settings.modelLibrary.cancelPullFailed', 'Could not cancel the pull.'));
       }
       if (!replaceRow(key) && pullRenderStatus[key] !== previousPullStatus) renderRows();
     }
@@ -599,13 +699,21 @@
         if (action === 'menu') {
           var model = findModel(tag);
           if (!model) return;
+          var libraryTag = libraryTagOf(model);
           contextMenu.show({
             rootEl: card(),
             anchorEl: modelAction,
             restoreFocusTo: modelAction,
             onHide: function () { menuOpen = false; },
             items: [
-              {
+              libraryTag ? {
+                // A library GGUF only leaves the library: its file stays on
+                // disk, and a model in use keeps its entry.
+                label: jt('settings.modelLibrary.removeFromLibrary', 'Remove from library'),
+                danger: true,
+                disabled: model.active === true || model.serving === true,
+                action: function () { return removeFromLibrary(libraryTag, modelAction); },
+              } : {
                 // Same gate the standalone Remove button carried: ollama only,
                 // and never the loaded model (the main process rejects that
                 // delete with model_in_use, so offering it is a dead end).
@@ -647,10 +755,13 @@
         else if (action === 'unload') runtimeActions.handleUnload(tag);
         else if (action === 'tune') {
           // The card's merged engine facts (Ollama/GGUF availability) seed the
-          // drawer so both surfaces agree on what can run this model.
+          // drawer so both surfaces agree on what can run this model. A library
+          // GGUF is in no model list until served, so its engine type rides along.
+          var tuned = findModel(tag);
           openModelTuning(tag, modelAction, {
-            displayName: findModel(tag)?.displayName || '',
-            engines: findModel(tag)?.engines || null,
+            displayName: tuned?.displayName || '',
+            engines: tuneEngines(tuned),
+            engineTypeHint: tuned?.libraryGguf ? 'openai-compatible' : '',
           });
         }
         else if (action === 'remove') {
@@ -700,11 +811,22 @@
       }
     }
 
+    // features.onChanged fires for every shell-config change, not only flag
+    // flips. Reload the sources only when a flag this section reads changed
+    // or nothing has loaded yet; otherwise fold in the state this tick carries.
+    var featureSignature = null;
     function syncFeatureState() {
       var show = enabled();
-      syncVisibility(show);
+      var nextSignature = show + ':' + accelerationFlagEnabled();
+      var flagsChanged = nextSignature !== featureSignature;
+      featureSignature = nextSignature;
       if (!show) {
         render();
+        updateStatusLine();
+        return Promise.resolve(null);
+      }
+      if (!flagsChanged && sourceData) {
+        syncFromState();
         return Promise.resolve(null);
       }
       return refresh();

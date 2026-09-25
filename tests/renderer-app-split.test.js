@@ -126,6 +126,25 @@ test('surface-effect dependency chains match in production and the renderer harn
   }
 });
 
+// Split view W0-1: the lifecycle composition reads window.rendererChatPaneSurfaceControllers
+// at factory time. A boot with the tag missing or ordered after the composition still
+// SUCCEEDS (the cluster resolves to {} and the chat surface silently dies), so nothing
+// downstream fails loudly; the order is pinned here instead, in production and the harness.
+test('the chat pane surface cluster loads before the lifecycle composition', () => {
+  const productionScripts = extractScriptSources(readRepoFile('index.html'));
+  const chain = [
+    'renderer/chat/renderer-chat-pane-surface-controllers.js',
+    'renderer/app/renderer-app-lifecycle-composition.js',
+  ];
+  for (const scripts of [productionScripts, SCRIPT_ORDER]) {
+    const positions = chain.map((modulePath) => scripts.indexOf(modulePath));
+    positions.forEach((position, index) => {
+      assert.notEqual(position, -1, `${chain[index]} should be present in the script order`);
+    });
+    assert.ok(positions[0] < positions[1], `${chain[0]} should load before ${chain[1]}`);
+  }
+});
+
 // Regression guard for the with(ctx) "missing ctx key" bug class: the controller
 // composition runs inside `with (ctx)`, so a deferred wrapper `X: (...a) => X(...a)`
 // resolves `X` from the ctx object that renderer/app.js passes to
@@ -290,4 +309,84 @@ test('every production Scratchpad action factory receives the full Home snapshot
       `${file} must validate every live Scratchpad write against the full Home snapshot`
     );
   }
+});
+
+// Split view W0-2/W0-3: two load-order edges that fail SILENTLY if broken, the
+// same way the W0-1 cluster above does. The boot seed reads
+// window.rendererPaneModel at factory time (a missing module leaves the state
+// with no pane layout at all), and the per-pane visibility predicate composes
+// window.rendererChatSurfaceLiveUtils, with the stream handler resolving
+// window.rendererPaneVisibilityUtils when it builds isVisibleChatSession. Each
+// of those reads has a fallback, so a mis-ordered tag boots green and quietly
+// runs on the pre-split-view answer; the order is pinned here instead.
+test('the pane model loads before the boot seed and the pane visibility predicate before its consumers', () => {
+  const productionScripts = extractScriptSources(readRepoFile('index.html'));
+  const chains = [
+    [
+      'renderer/shell/renderer-pane-model.js',
+      'renderer/shell/renderer-bootstrap-utils.js',
+    ],
+    [
+      'renderer/chat/renderer-chat-surface-live-utils.js',
+      'renderer/chat/renderer-pane-visibility-utils.js',
+      'renderer/chat/renderer-stream-handler.js',
+    ],
+    // The projection cache resolves window.rendererPaneModel at FACTORY time
+    // (no lazy retry, no browser require), so a pane-model tag ordered after
+    // it would silently collapse the retained set to the current session.
+    [
+      'renderer/shell/renderer-pane-model.js',
+      'renderer/chat/renderer-render-pipeline-projection-cache.js',
+    ],
+  ];
+  for (const scripts of [productionScripts, SCRIPT_ORDER]) {
+    for (const chain of chains) {
+      const positions = chain.map((modulePath) => scripts.indexOf(modulePath));
+      positions.forEach((position, index) => {
+        assert.notEqual(position, -1, `${chain[index]} should be present in the script order`);
+      });
+      for (let index = 1; index < positions.length; index += 1) {
+        assert.ok(
+          positions[index - 1] < positions[index],
+          `${chain[index - 1]} should load before ${chain[index]}`
+        );
+      }
+    }
+  }
+});
+
+// Split view W0-6: renderer/app.js mints pane 0's render runtime and the shared
+// session-cache store by calling window.rendererPaneRuntime at factory time --
+// unguarded, the way it calls its other runtime factories. A tag ordered after
+// renderer/app.js (or missing) is therefore a HARD boot failure rather than a
+// silent degrade, but the edge is pinned here anyway so the ordering is stated
+// where the other split-view edges are.
+//
+// The harness half is presence, not position: renderer/app.js is deliberately
+// EXCLUDED from SCRIPT_ORDER (renderer-shell-harness-support.js) because the
+// harness runs it separately, after every ordered script. Being in SCRIPT_ORDER
+// at all is therefore exactly the guarantee "loads before app.js" -- and the
+// exclusion itself is asserted, so if app.js is ever added back this case is
+// forced to become positional rather than silently weakening.
+test('the pane runtime loads before the app bootstrap that mints pane 0', () => {
+  const productionScripts = extractScriptSources(readRepoFile('index.html'));
+  const paneRuntimeScript = 'renderer/chat/renderer-pane-runtime.js';
+
+  const paneRuntimeIndex = productionScripts.indexOf(paneRuntimeScript);
+  const appIndex = productionScripts.indexOf('renderer/app.js');
+  assert.notEqual(paneRuntimeIndex, -1, `index.html should load ${paneRuntimeScript}`);
+  assert.notEqual(appIndex, -1, 'index.html should load renderer/app.js');
+  assert.ok(paneRuntimeIndex < appIndex, `index.html should load ${paneRuntimeScript} before renderer/app.js`);
+
+  assert.notEqual(
+    SCRIPT_ORDER.indexOf(paneRuntimeScript),
+    -1,
+    `the renderer shell harness should load ${paneRuntimeScript}, or a real boot has no window.rendererPaneRuntime`
+  );
+  assert.equal(
+    SCRIPT_ORDER.indexOf('renderer/app.js'),
+    -1,
+    'renderer/app.js is excluded from SCRIPT_ORDER and run last by the harness; '
+    + 'if that changed, pin the pane runtime BEFORE it positionally here'
+  );
 });

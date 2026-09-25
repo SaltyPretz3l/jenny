@@ -1,0 +1,863 @@
+{
+  "_note": "Gate A4 attempt 4 run p1 (1.2.0): Ask-mode write_file paused at its approval on stream_3036e3ae, resumed on stream_f4755f3a, allowed and finished. Session as persisted after the resumed reply.",
+  "session_id": "sess_1790271695546_ca08aa113e40",
+  "paused_stream_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+  "resumed_stream_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+  "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+  "turn_event_log_version": 4,
+  "messages": [
+    {
+      "id": "user_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+      "role": "user",
+      "content": "Call the write_file tool exactly once using the argument names file_path and content: file_path a4-twelve.txt, content twelve. Write nothing else before the tool call.",
+      "timestamp": "2026-09-24T17:41:37.179Z",
+      "client_message_id": "user_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+      "attachments": [],
+      "skill_invocation": null,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "event_seq": 0,
+      "kind": "",
+      "status": "",
+      "terminal_subcode": "",
+      "model_used": "",
+      "parent_stream_id": "",
+      "phases": [],
+      "visible_segments": [],
+      "tool_steps": [],
+      "reasoning": {
+        "source": "none",
+        "entries": []
+      },
+      "interactive_batch": null,
+      "tool_call": null,
+      "tool_result": null,
+      "proactive_suggestion": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "finalizedAt": null,
+      "interactive_round_recap": null
+    },
+    {
+      "id": "assistant_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_seg0",
+      "role": "assistant",
+      "content": "",
+      "timestamp": "2026-09-24T17:41:42.170Z",
+      "finalizedAt": "2026-09-24T17:41:42.170Z",
+      "client_message_id": "assistant_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_seg0",
+      "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "parent_stream_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+      "phases": [
+        {
+          "phase_id": "phase_reasoning_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1_1",
+          "phase_kind": "reasoning",
+          "iteration": 1,
+          "thinking_id": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1",
+          "tool_call_id": "",
+          "tool_name": "",
+          "render_collapsed": false,
+          "started_at": "2026-09-24T17:41:41.329Z",
+          "completed_at": "2026-09-24T17:41:42.170Z",
+          "entries": [
+            {
+              "id": "reasoning_1790271701331_0_b283e9",
+              "text": "The user wants me to call write_file exactly once with specific arguments. Let me do that.",
+              "timestamp": "2026-09-24T17:41:41.530Z",
+              "thinkingId": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1"
+            }
+          ]
+        }
+      ],
+      "visible_segments": [],
+      "tool_steps": [],
+      "reasoning": {
+        "source": "provider",
+        "entries": [
+          {
+            "id": "reasoning_1790271701331_0_b283e9",
+            "text": "The user wants me to call write_file exactly once with specific arguments. Let me do that.",
+            "timestamp": "2026-09-24T17:41:41.530Z",
+            "thinkingId": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1"
+          }
+        ]
+      },
+      "reasoning_phases": [
+        {
+          "phaseId": "phase_reasoning_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1_1",
+          "phaseKind": "reasoning",
+          "iteration": 1,
+          "thinkingId": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1",
+          "toolCallId": "",
+          "toolName": "",
+          "completed": true,
+          "renderCollapsed": false,
+          "startedAt": "2026-09-24T17:41:41.329Z",
+          "completedAt": "2026-09-24T17:41:42.170Z",
+          "summary": "Reasoning through the turn"
+        }
+      ],
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "event_seq": 1,
+      "kind": "",
+      "status": "",
+      "terminal_subcode": "",
+      "attachments": [],
+      "interactive_batch": null,
+      "tool_call": null,
+      "tool_result": null,
+      "proactive_suggestion": null,
+      "skill_invocation": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "interactive_round_recap": null
+    },
+    {
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "id": "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "role": "assistant",
+      "kind": "tool_use",
+      "content": "Write a4-twelve.txt",
+      "tool_call": {
+        "call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "tool_name": "write_file",
+        "input_json": "{\"content\":\"twelve\",\"purpose\":\"User request\",\"path\":\"a4-twelve.txt\"}",
+        "model_input_json": "{\"content\":\"twelve\",\"purpose\":\"User request\",\"path\":\"a4-twelve.txt\"}",
+        "input": {
+          "content": "twelve",
+          "purpose": "User request",
+          "path": "a4-twelve.txt"
+        },
+        "summary": "Write a4-twelve.txt",
+        "status": "pending",
+        "approval_state": "auto",
+        "duration_ms": 0,
+        "parent_stream_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22"
+      },
+      "finalizedAt": "2026-09-24T17:41:42.173Z",
+      "timestamp": "2026-09-24T17:41:42.173Z",
+      "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "event_seq": 2,
+      "status": "",
+      "terminal_subcode": "",
+      "client_message_id": "",
+      "parent_stream_id": "",
+      "phases": [],
+      "visible_segments": [],
+      "tool_steps": [],
+      "reasoning": {
+        "source": "none",
+        "entries": []
+      },
+      "attachments": [],
+      "interactive_batch": null,
+      "tool_result": null,
+      "proactive_suggestion": null,
+      "skill_invocation": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "interactive_round_recap": null
+    },
+    {
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "role": "assistant",
+      "kind": "tool_use",
+      "content": "Write a4-twelve.txt",
+      "tool_call": {
+        "call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "tool_name": "write_file",
+        "input_json": "{\"content\":\"twelve\",\"path\":\"a4-twelve.txt\",\"purpose\":\"User request\"}",
+        "model_input_json": "{\"content\":\"twelve\",\"path\":\"a4-twelve.txt\",\"purpose\":\"User request\"}",
+        "input": {
+          "content": "twelve",
+          "path": "a4-twelve.txt",
+          "purpose": "User request"
+        },
+        "summary": "Write a4-twelve.txt",
+        "status": "completed",
+        "approval_state": "auto",
+        "duration_ms": 0,
+        "parent_stream_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f"
+      },
+      "finalizedAt": "2026-09-24T17:42:00.334Z",
+      "timestamp": "2026-09-24T17:42:00.334Z",
+      "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "event_seq": 3,
+      "status": "",
+      "terminal_subcode": "",
+      "client_message_id": "",
+      "parent_stream_id": "",
+      "phases": [],
+      "visible_segments": [],
+      "tool_steps": [],
+      "reasoning": {
+        "source": "none",
+        "entries": []
+      },
+      "attachments": [],
+      "interactive_batch": null,
+      "tool_result": null,
+      "proactive_suggestion": null,
+      "skill_invocation": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "interactive_round_recap": null
+    },
+    {
+      "id": "tool_result_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "timestamp": "2026-09-24T17:42:00.868Z",
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "role": "tool",
+      "kind": "tool_result",
+      "content": "Write a4-twelve.txt",
+      "tool_result": {
+        "call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "tool_name": "write_file",
+        "output_text": "Wrote 6 bytes to a4-twelve.txt",
+        "summary": "Write a4-twelve.txt",
+        "is_error": false,
+        "error_code": "",
+        "approval_state": "",
+        "exit_code": null,
+        "duration_ms": 314.8020000080578,
+        "parent_stream_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "generated_artifacts": [],
+        "metadata": {
+          "path": "a4-twelve.txt",
+          "bytes_written": 6,
+          "checkpoint_created": false,
+          "changed": true,
+          "effects": "committed",
+          "phase_timings_json": "{\"validate\":{\"elapsed_ms\":0.1846000086516142},\"execute\":{\"elapsed_ms\":314.8020000080578}}",
+          "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f.Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "mcp_operation_id": "idem_b960d9d9c45711c8d7a68762",
+          "mcp_generation_id": "gen_845b3a2070aa4599ae8be972b92477c5",
+          "approval_plan_hash": "1144ba92cf6d54c831838ed90e7fe4b3489519ec49d998780f9811b80962b14f",
+          "approval_effective_args_fingerprint": "b921388627eb503b06df5ad04a12940c380133894edc5a346ab7fa3822313a60",
+          "approval_execution_context_fingerprint": "ca8d86f539ff2dbf6a1e6bf575d9c16544636ca53e597b3d14c0ca67f3a49cf6",
+          "approval_model_identity_fingerprint": "0f614233a0d64184af944577b02e121e7bccaf652d3f753c891517264517e9ce",
+          "approval_system_prompt_hash": "411a1be2b4bb6ee57fffdad2d115e4ef16e7c047ab738ec4156f157070e6510a",
+          "approval_sampling_params_hash": "1690c4967c94eb5734700bad85e47d8ae7e3151b049ffb93d22436a19d3d2cdb",
+          "approval_message_history_hash": "d6361f4c4a07756de699e1f4f3331b30c12a467822cddcff56fbf0c8cf08bdaf",
+          "approval_tool_contract_hash": "b740d841ba5146502dfc691791f520b4409c7ca5aec4949ceef6ffb773138a93",
+          "approval_parent_approval_plan_hash": "",
+          "approval_injected_arg_keys": [
+            "_jenny_change_set_id",
+            "_jenny_session_id",
+            "_jenny_tool_call_id",
+            "_jenny_turn_id"
+          ],
+          "workspace_id": "root_ad1d0def56d8fce918c3635d",
+          "late_events": [],
+          "diff": {
+            "diff_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or:0:path-3fdbecdd223de31e",
+            "operation_index": 0,
+            "status": "created",
+            "review_state": "full",
+            "body_kind": "inline_hunks",
+            "additions": 1,
+            "deletions": 0,
+            "truncated": false,
+            "truncation_reason": null,
+            "before_hash": null,
+            "after_hash": "sha256:d1a749ad879b6c07e1f356b260ba81f9cb5b4376072280c9994a5c125165b701",
+            "hash_kind": "diff_input_text",
+            "hunks": [
+              {
+                "oldStart": 1,
+                "oldLines": 0,
+                "newStart": 1,
+                "newLines": 1,
+                "lines": [
+                  "+twelve",
+                  "\\ No newline at end of file"
+                ]
+              }
+            ],
+            "path": "a4-twelve.txt"
+          },
+          "workspace_change_set": {
+            "schema_version": 1,
+            "change_set_id": "01a0d482-8b88-7a4c-8c1d-c50f6b27b4c5",
+            "state": "in_progress",
+            "operation_sequences": [
+              1
+            ],
+            "protected": true,
+            "partially_undoable": false,
+            "warning": "Shell mutations are not journaled. Explorer rename is not journaled until WO-27 item 2."
+          }
+        }
+      },
+      "finalizedAt": "2026-09-24T17:42:00.870Z",
+      "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "event_seq": 4,
+      "status": "",
+      "terminal_subcode": "",
+      "client_message_id": "",
+      "parent_stream_id": "",
+      "phases": [],
+      "visible_segments": [],
+      "tool_steps": [],
+      "reasoning": {
+        "source": "none",
+        "entries": []
+      },
+      "attachments": [],
+      "interactive_batch": null,
+      "tool_call": null,
+      "proactive_suggestion": null,
+      "skill_invocation": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "interactive_round_recap": null
+    },
+    {
+      "id": "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "role": "assistant",
+      "content": "Done. Wrote `twelve` (6 bytes) to `a4-twelve.txt`.",
+      "timestamp": "2026-09-24T17:42:02.403Z",
+      "finalizedAt": "2026-09-24T17:42:02.403Z",
+      "client_message_id": "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+      "parent_stream_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "phases": [
+        {
+          "phase_id": "phase_approval_wait_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "phase_kind": "approval_wait",
+          "iteration": 0,
+          "thinking_id": "",
+          "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "tool_name": "write_file",
+          "render_collapsed": false,
+          "started_at": "2026-09-24T17:42:00.335Z",
+          "completed_at": "2026-09-24T17:42:00.480Z",
+          "entries": []
+        },
+        {
+          "phase_id": "phase_reasoning_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2_1",
+          "phase_kind": "reasoning",
+          "iteration": 2,
+          "thinking_id": "think_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2",
+          "tool_call_id": "",
+          "tool_name": "",
+          "render_collapsed": false,
+          "started_at": "2026-09-24T17:42:01.463Z",
+          "completed_at": "2026-09-24T17:42:01.842Z",
+          "entries": [
+            {
+              "id": "reasoning_1790271721464_0_5336e6",
+              "text": "The tool call succeeded. The user asked me to write nothing else before the tool call, and I did exactly that. Now I should give a brief confirmation.",
+              "timestamp": "2026-09-24T17:42:01.799Z",
+              "thinkingId": "think_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2"
+            }
+          ]
+        },
+        {
+          "phase_id": "phase_text_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2_2",
+          "phase_kind": "text",
+          "iteration": 2,
+          "thinking_id": "",
+          "tool_call_id": "",
+          "tool_name": "",
+          "render_collapsed": false,
+          "started_at": "2026-09-24T17:42:01.842Z",
+          "completed_at": "2026-09-24T17:42:02.056Z",
+          "entries": []
+        }
+      ],
+      "visible_segments": [
+        {
+          "segment_id": "segment_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_1",
+          "phase_id": "phase_text_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2_2",
+          "text": "Done. Wrote `twelve` (6 bytes) to `a4-twelve.txt`."
+        }
+      ],
+      "tool_steps": [
+        {
+          "call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "tool_name": "write_file",
+          "tool_use_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "tool_result_message_id": "tool_result_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "status": "completed"
+        }
+      ],
+      "reasoning": {
+        "source": "provider",
+        "entries": [
+          {
+            "id": "reasoning_1790271721464_0_5336e6",
+            "text": "The tool call succeeded. The user asked me to write nothing else before the tool call, and I did exactly that. Now I should give a brief confirmation.",
+            "timestamp": "2026-09-24T17:42:01.799Z",
+            "thinkingId": "think_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2"
+          }
+        ]
+      },
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "event_seq": 5,
+      "kind": "",
+      "status": "",
+      "terminal_subcode": "",
+      "attachments": [],
+      "interactive_batch": null,
+      "tool_call": null,
+      "tool_result": null,
+      "proactive_suggestion": null,
+      "skill_invocation": null,
+      "plugin_operation": null,
+      "message_reactions": {},
+      "interactive_round_recap": null
+    }
+  ],
+  "turn_events": [
+    {
+      "event_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22:reasoning_phase:live:0",
+      "event_seq": 0,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "reasoning_phase",
+      "status": "open",
+      "primary_message_id": "assistant_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_seg0",
+      "source_message_ids": [
+        "assistant_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_seg0"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "phase_reasoning_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1_1",
+      "started_at": "2026-09-24T17:41:41.329Z",
+      "completed_at": "",
+      "payload": {
+        "phase_id": "phase_reasoning_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1_1",
+        "phase_kind": "reasoning",
+        "thinking_id": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1",
+        "summary": "Reasoning through the turn",
+        "render_collapsed": false,
+        "entries": [
+          {
+            "id": "reasoning_1790271701331_0_b283e9",
+            "text": "The user wants me to call write_file exactly once with specific arguments. Let me do that.",
+            "timestamp": "2026-09-24T17:41:41.530Z",
+            "thinkingId": "think_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_iter1"
+          }
+        ],
+        "chunk_count": 19
+      }
+    },
+    {
+      "event_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22:canonical:23",
+      "event_seq": 1,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "",
+      "completed_at": "",
+      "payload": {
+        "tool_name": "write_file",
+        "tool_input": {
+          "content": "twelve",
+          "purpose": "User request",
+          "path": "a4-twelve.txt"
+        },
+        "sequence": 0,
+        "trace_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22:tool_part:23",
+        "canonical_seq": 23
+      }
+    },
+    {
+      "event_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22:approval:requested:Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "event_seq": 2,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "approval_requested",
+      "status": "approval_pending",
+      "primary_message_id": "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "",
+      "completed_at": "",
+      "payload": {
+        "approval_state": "pending",
+        "tool_name": "write_file",
+        "summary": "Tool policy requires approval: built-in default for write_file",
+        "approval_plan_hash": "efb5d0de7afd36aab9e572229f6e2996f6eaabb65ac0ce05894233e76842de62",
+        "trace_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+        "canonical_event_type": "tool_approval_requested",
+        "canonical_part_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22:tool_part:26",
+        "canonical_seq": 26
+      }
+    },
+    {
+      "event_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611:tool_use:1:stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+      "event_seq": 3,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_use",
+      "status": "pending_approval",
+      "primary_message_id": "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "",
+      "completed_at": "",
+      "payload": {
+        "approval_id": "approval_sess_1790271695546_ca08aa113e40_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "policy_decision_id": "policy_b71f3678d9567a9a",
+        "reason": "Tool policy requires approval: built-in default for write_file",
+        "policy_scope": "Workspace files",
+        "policy_consequence": "May change data in this scope.",
+        "tool_name": "write_file",
+        "input": {
+          "content": "twelve",
+          "purpose": "User request",
+          "path": "a4-twelve.txt"
+        },
+        "summary": "Write a4-twelve.txt",
+        "parent_stream_id": "stream_3036e3ae-a0b7-417d-b87d-c1937a804c22"
+      }
+    },
+    {
+      "event_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611:user_prompt:0",
+      "event_seq": 4,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "user_prompt",
+      "status": "",
+      "primary_message_id": "user_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22",
+      "source_message_ids": [
+        "user_stream_3036e3ae-a0b7-417d-b87d-c1937a804c22"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:41:37.179Z",
+      "completed_at": "2026-09-24T17:41:37.179Z",
+      "payload": {
+        "content": "Call the write_file tool exactly once using the argument names file_path and content: file_path a4-twelve.txt, content twelve. Write nothing else before the tool call.",
+        "attachments": []
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:canonical:1",
+      "event_seq": 5,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_use",
+      "status": "pending",
+      "primary_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.334Z",
+      "completed_at": "2026-09-24T17:42:00.334Z",
+      "payload": {
+        "tool_name": "write_file",
+        "tool_input": {
+          "content": "twelve",
+          "path": "a4-twelve.txt",
+          "purpose": "User request"
+        },
+        "sequence": 1,
+        "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "canonical_event_type": "tool_call_requested",
+        "canonical_part_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:tool_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:approval:requested:Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "event_seq": 6,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "approval_requested",
+      "status": "approval_pending",
+      "primary_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.334Z",
+      "completed_at": "2026-09-24T17:42:00.334Z",
+      "payload": {
+        "approval_state": "pending",
+        "tool_name": "write_file",
+        "summary": "Tool policy requires approval: built-in default for write_file",
+        "approval_plan_hash": "1144ba92cf6d54c831838ed90e7fe4b3489519ec49d998780f9811b80962b14f",
+        "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "canonical_event_type": "tool_approval_requested",
+        "canonical_part_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:tool_part:3",
+        "canonical_seq": 3
+      }
+    },
+    {
+      "event_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611:tool_use:1:stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "event_seq": 7,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_use",
+      "status": "pending_approval",
+      "primary_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.334Z",
+      "completed_at": "2026-09-24T17:42:00.334Z",
+      "payload": {
+        "approval_id": "approval_sess_1790271695546_ca08aa113e40_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "policy_decision_id": "policy_b71f3678d9567a9a",
+        "reason": "Tool policy requires approval: built-in default for write_file",
+        "policy_scope": "Workspace files",
+        "policy_consequence": "May change data in this scope.",
+        "tool_name": "write_file",
+        "input": {
+          "content": "twelve",
+          "path": "a4-twelve.txt",
+          "purpose": "User request"
+        },
+        "summary": "Write a4-twelve.txt",
+        "parent_stream_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f"
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:approval:resolved:Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "event_seq": 8,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "approval_resolved",
+      "status": "completed",
+      "primary_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.334Z",
+      "completed_at": "2026-09-24T17:42:00.334Z",
+      "payload": {
+        "approval_id": "approval_sess_1790271695546_ca08aa113e40_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+        "approval_state": "approved",
+        "approved": true,
+        "policy_decision_id": "policy_b71f3678d9567a9a",
+        "tool_name": "write_file",
+        "canonical_event_type": "tool_approval_resolved",
+        "canonical_part_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:tool_part:1",
+        "canonical_seq": 1
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:canonical:6",
+      "event_seq": 9,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_executing",
+      "status": "running",
+      "primary_message_id": "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_use_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.501Z",
+      "completed_at": "2026-09-24T17:42:00.334Z",
+      "payload": {
+        "tool_name": "write_file",
+        "tool_input": {
+          "content": "twelve",
+          "path": "a4-twelve.txt",
+          "purpose": "User request",
+          "_jenny_turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+          "_jenny_tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "_jenny_change_set_id": "01a0d482-8b88-7a4c-8c1d-c50f6b27b4c5"
+        },
+        "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "canonical_event_type": "tool_execution_started",
+        "canonical_part_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:tool_part:6",
+        "canonical_seq": 6
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:canonical:7",
+      "event_seq": 10,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "tool_result",
+      "status": "completed",
+      "primary_message_id": "tool_result_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "source_message_ids": [
+        "tool_result_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:00.868Z",
+      "completed_at": "2026-09-24T17:42:00.863Z",
+      "payload": {
+        "tool_name": "write_file",
+        "success": true,
+        "tool_output_summary": "Wrote 6 bytes to a4-twelve.txt",
+        "content_type": "text",
+        "tool_input": {
+          "content": "twelve",
+          "path": "a4-twelve.txt",
+          "purpose": "User request"
+        },
+        "metadata": {
+          "path": "a4-twelve.txt",
+          "bytes_written": 6,
+          "checkpoint_created": false,
+          "changed": true,
+          "workspace_change_set": {
+            "schema_version": 1,
+            "change_set_id": "01a0d482-8b88-7a4c-8c1d-c50f6b27b4c5",
+            "state": "in_progress",
+            "operation_sequences": [
+              1
+            ],
+            "protected": true,
+            "partially_undoable": false,
+            "warning": "Shell mutations are not journaled. Explorer rename is not journaled until WO-27 item 2."
+          },
+          "diff": {
+            "diff_id": "",
+            "operation_index": 0,
+            "status": "created",
+            "review_state": "full",
+            "body_kind": "inline_hunks",
+            "additions": 1,
+            "deletions": 0,
+            "truncated": false,
+            "truncation_reason": null,
+            "before_hash": null,
+            "after_hash": "sha256:d1a749ad879b6c07e1f356b260ba81f9cb5b4376072280c9994a5c125165b701",
+            "hash_kind": "diff_input_text",
+            "hunks": [
+              {
+                "oldStart": 1,
+                "oldLines": 0,
+                "newStart": 1,
+                "newLines": 1,
+                "lines": [
+                  "+twelve",
+                  "\\ No newline at end of file"
+                ]
+              }
+            ]
+          },
+          "effects": "committed",
+          "phase_timings_json": "{\"validate\":{\"elapsed_ms\":0.1846000086516142},\"execute\":{\"elapsed_ms\":314.8020000080578}}",
+          "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f.Zhw6w8VNX1D0WsSjuVANLKI3W6TRF2or",
+          "mcp_operation_id": "idem_b960d9d9c45711c8d7a68762",
+          "mcp_generation_id": "gen_845b3a2070aa4599ae8be972b92477c5",
+          "approval_plan_hash": "1144ba92cf6d54c831838ed90e7fe4b3489519ec49d998780f9811b80962b14f",
+          "approval_effective_args_fingerprint": "b921388627eb503b06df5ad04a12940c380133894edc5a346ab7fa3822313a60",
+          "approval_execution_context_fingerprint": "ca8d86f539ff2dbf6a1e6bf575d9c16544636ca53e597b3d14c0ca67f3a49cf6",
+          "approval_model_identity_fingerprint": "0f614233a0d64184af944577b02e121e7bccaf652d3f753c891517264517e9ce",
+          "approval_system_prompt_hash": "411a1be2b4bb6ee57fffdad2d115e4ef16e7c047ab738ec4156f157070e6510a",
+          "approval_sampling_params_hash": "1690c4967c94eb5734700bad85e47d8ae7e3151b049ffb93d22436a19d3d2cdb",
+          "approval_message_history_hash": "d6361f4c4a07756de699e1f4f3331b30c12a467822cddcff56fbf0c8cf08bdaf",
+          "approval_tool_contract_hash": "b740d841ba5146502dfc691791f520b4409c7ca5aec4949ceef6ffb773138a93",
+          "approval_parent_approval_plan_hash": "",
+          "approval_injected_arg_keys": [
+            "_jenny_change_set_id",
+            "_jenny_session_id",
+            "_jenny_tool_call_id",
+            "_jenny_turn_id"
+          ],
+          "workspace_id": "root_ad1d0def56d8fce918c3635d"
+        },
+        "duration_ms": 314.8020000080578,
+        "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "canonical_event_type": "tool_execution_completed",
+        "canonical_part_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:tool_part:7",
+        "canonical_seq": 7
+      }
+    },
+    {
+      "event_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f:reasoning_phase:live:0",
+      "event_seq": 11,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "reasoning_phase",
+      "status": "completed",
+      "primary_message_id": "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "source_message_ids": [
+        "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "phase_reasoning_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2_1",
+      "started_at": "2026-09-24T17:42:01.463Z",
+      "completed_at": "2026-09-24T17:42:01.842Z",
+      "payload": {
+        "phase_id": "phase_reasoning_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2_1",
+        "phase_kind": "reasoning",
+        "thinking_id": "think_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2",
+        "summary": "Reasoning through the turn",
+        "render_collapsed": false,
+        "entries": [
+          {
+            "id": "reasoning_1790271721464_0_5336e6",
+            "text": "The tool call succeeded. The user asked me to write nothing else before the tool call, and I did exactly that. Now I should give a brief confirmation.",
+            "timestamp": "2026-09-24T17:42:01.799Z",
+            "thinkingId": "think_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_iter2"
+          }
+        ],
+        "chunk_count": 32,
+        "completed": true
+      }
+    },
+    {
+      "event_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611:canonical:66",
+      "event_seq": 12,
+      "turn_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611",
+      "kind": "assistant_text_segment",
+      "status": "",
+      "primary_message_id": "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+      "source_message_ids": [
+        "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f"
+      ],
+      "target_message_id": "",
+      "tool_call_id": "",
+      "segment_group_index": 0,
+      "phase_id": "",
+      "started_at": "2026-09-24T17:42:02.403Z",
+      "completed_at": "2026-09-24T17:42:02.398Z",
+      "payload": {
+        "text": "Done. Wrote `twelve` (6 bytes) to `a4-twelve.txt`.",
+        "assistant_phase": "final_answer",
+        "segment_id": "assistant_stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f_seg_0",
+        "segment_group_index": 0,
+        "completion_source": "model",
+        "trace_id": "stream_f4755f3a-3d2a-435c-985f-8f1d40b9700f",
+        "canonical_event_type": "text_part_completed",
+        "canonical_part_id": "turn_a6f8f452-1912-497e-ab23-4960aaf16611:text_part:66",
+        "canonical_seq": 66
+      }
+    }
+  ]
+}

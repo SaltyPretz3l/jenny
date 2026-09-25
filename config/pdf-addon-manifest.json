@@ -1,0 +1,31 @@
+{
+  "package": "PyMuPDF",
+  "version": "1.27.2.2",
+  "license": "AGPL-3.0",
+  "licenseUrl": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "projectUrl": "https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright",
+  "pythonAbi": "cp310-abi3",
+  "minimumPythonVersion": "3.10",
+  "installedSizeBytes": 53300000,
+  "platforms": {
+    "win32-x64": {
+      "filename": "pymupdf-1.27.2.2-cp310-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/a8/b6/2a9a8556000199bbf80a5915dcd15d550d1e5288894316445c54726aaf53/pymupdf-1.27.2.2-cp310-abi3-win_amd64.whl",
+      "sizeBytes": 19238032,
+      "sha256": "09bb53f9486ccb5297030cbc2dbdae845ba1c3c5126e96eb2d16c4f118de0b5b"
+    },
+    "linux-x64": {
+      "filename": "pymupdf-1.27.2.2-cp310-abi3-manylinux_2_28_x86_64.whl",
+      "url": "https://files.pythonhosted.org/packages/22/8e/85e9d9f11dbf34036eb1df283805ef6b885f2005a56d6533bb58ab0b8a11/pymupdf-1.27.2.2-cp310-abi3-manylinux_2_28_x86_64.whl",
+      "sizeBytes": 24948135,
+      "sha256": "892698c9768457eb0991c102c96a856c0a7062539371df5e6bee0816f3ef498e"
+    },
+    "darwin-arm64": {
+      "filename": "pymupdf-1.27.2.2-cp310-abi3-macosx_11_0_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/6d/0e/9f526bc1d49d8082eff0d1547a69d541a0c5a052e71da625559efaba46a6/pymupdf-1.27.2.2-cp310-abi3-macosx_11_0_arm64.whl",
+      "sizeBytes": 23263089,
+      "sha256": "8e2e4299ef1ac0c9dff9be096cbd22783699673abecfa7c3f73173ae06421d73"
+    }
+  },
+  "_comment": "PROVENANCE MANIFEST. PyMuPDF is licensed AGPL-3.0 and is never bundled: the main process downloads the wheel for this platform only after the user accepts the licence disclosure in Settings > Tools, verifies sizeBytes and sha256 before extraction, and installs it under userData/addons/pdf/<version>. Digests and sizes come from the PyPI JSON API for PyMuPDF 1.27.2.2 (2026-09-22) and must appear in requirements-pdf-addon-lock.txt (tests/sidecar/test_pdf_addon_manifest.py). To update: bump requirements-pdf-addon.in, regenerate the lock, and copy filename/url/size/sha256 per platform from https://pypi.org/pypi/PyMuPDF/<version>/json."
+}

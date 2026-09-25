@@ -13,6 +13,7 @@ import re
 from typing import Any, Dict, List
 
 from sidecar.ai.container import BrainContainer
+from sidecar.ai.engines.admitted import InferenceAdmissionError
 from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.feature_flags import FEATURE_PROMPT_CACHE, is_feature_flag_enabled
 from sidecar.ai.routing.retry import (
@@ -109,13 +110,17 @@ def generate_suggestions(
     brain_container: BrainContainer,
     context: Dict[str, Any],
     logger: logging.Logger,
+    *,
+    request_id: str | None = None,
+    inference_admission: Any | None = None,
 ) -> List[str]:
     """Generate contextual prompt suggestions using the configured engine.
 
-    Returns a list of 2-4 short prompt strings, or an empty list on failure.
-    Never raises — all errors are caught and logged.
+    Returns a list of 2-4 short prompt strings, or an empty list on provider
+    failure. Typed application admission failures propagate to the RPC boundary.
     """
-    if brain_container.stack is None:
+    stack = brain_container.stack
+    if stack is None:
         log_event(
             logger,
             logging.WARNING,
@@ -127,13 +132,13 @@ def generate_suggestions(
 
     user_message = _build_user_message(context)
     prompt_cache_enabled = is_feature_flag_enabled(
-        brain_container.stack.config.feature_flags or {},
+        stack.config.feature_flags or {},
         FEATURE_PROMPT_CACHE,
     )
 
     try:
         raw = execute_with_provider_retry(
-            operation=lambda context: brain_container.stack.engine.generate(
+            operation=lambda context: stack.engine.generate(
                 prompt=user_message,
                 max_tokens=context.max_tokens,
                 temperature=_TEMPERATURE,
@@ -152,11 +157,15 @@ def generate_suggestions(
             component="runtime.suggestions",
             event_prefix="runtime.suggestions.retry",
             request_source=QUERY_SOURCE_BACKGROUND_CLASSIFIER,
-            provider=brain_container.stack.config.engine_type,
-            model=brain_container.stack.config.model,
+            provider=stack.config.engine_type,
+            model=stack.config.model,
             initial_max_tokens=_MAX_TOKENS,
-            feature_flags=brain_container.stack.config.feature_flags,
+            feature_flags=stack.config.feature_flags,
+            request_id=request_id,
+            inference_admission=inference_admission,
         )
+    except InferenceAdmissionError:
+        raise
     except Exception:
         log_event(
             logger,

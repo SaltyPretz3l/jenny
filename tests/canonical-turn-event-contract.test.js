@@ -77,6 +77,26 @@ test('buildCanonicalTurnEvent assigns stable ids and part ids', () => {
   assert.equal(event.payload.text, 'Hello');
 });
 
+test('canonical tool references use the owning attempt while retaining the logical turn', () => {
+  for (const attemptId of ['stream-first', 'stream-resumed']) {
+    const collector = new CanonicalTurnEventCollector({ turnId: 'turn-logical', attemptId });
+    let seq = 0;
+    for (const [type, prefix] of [
+      ['tool_execution_started', 'tool_use'], ['tool_execution_completed', 'tool_result'],
+      ['tool_approval_requested', 'tool_use'],
+    ]) {
+      const event = buildCanonicalTurnEvent({
+        type, turn_id: 'turn-logical', tool_call_id: 'call-one', seq: ++seq,
+        payload: { tool_name: 'read_file', success: true },
+      });
+      const captured = collector.noteEvent(event);
+      assert.equal(captured.turn_id, 'turn-logical');
+      assert.equal(captured.primary_message_id, `${prefix}_${attemptId}_call-one`);
+      assert.deepEqual(captured.source_message_ids, [captured.primary_message_id]);
+    }
+  }
+});
+
 test('validateTurnEvent matches shared fixture cases', () => {
   for (const item of fixtureCases()) {
     const result = validateTurnEvent(item.input);

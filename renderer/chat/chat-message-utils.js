@@ -343,6 +343,7 @@
     const toolSteps = Array.isArray(source.tool_steps)
       ? source.tool_steps.map((toolStep) => normalizeToolStep(toolStep)).filter(Boolean)
       : [];
+    const turnId = String(source.turn_id || '').trim() || String(source.turnId || '').trim();
     const content = buildVisibleSegmentContent(visibleSegments, source.content);
     let finalizedAt = source.finalizedAt || null;
 
@@ -364,6 +365,7 @@
       timestamp,
       status,
       finalizedAt,
+      ...(turnId ? { turn_id: turnId } : {}),
       parent_stream_id: String(source.parent_stream_id || source.parentStreamId || ''),
       phases,
       visible_segments: visibleSegments,
@@ -420,7 +422,9 @@
       ['complete', 'error', 'assistant_error'].includes(item.kind)
       || ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(item.type || item.payload?.canonical_event_type));
     const eventType = event?.type || event?.payload?.canonical_event_type;
-    const status = event?.terminal_status || event?.payload?.terminal_status
+    const runtimeStatus = latest.runtime_status;
+    const status = ({ completed: 'complete', failed: 'error' }[runtimeStatus] || runtimeStatus)
+      || event?.terminal_status || event?.payload?.terminal_status
       || ({ turn_cancelled: 'cancelled', turn_completed: 'complete', turn_failed: 'error' }[eventType] || '')
       || event?.status || (event?.kind === 'complete' ? 'complete' : event ? 'error' : '')
       || outcome.terminal_status || turn.status || outcome.status;
@@ -431,6 +435,7 @@
     ].find(isValidTimestamp);
     return {
       ...outcome, role: 'assistant', kind: '',
+      runtime_status: runtimeStatus,
       status: normalizeStatus(status), terminal_status: status,
       finalizedAt: event
         ? (eventFinalizedAt || (isValidTimestamp(outcome.finalizedAt) ? outcome.finalizedAt : ''))
@@ -454,10 +459,14 @@
     // User stops retain coarse error status but display "Stopped"; include per-turn model provenance because a conversation may span model switches.
     const terminalStatus = String(message.terminal_status || message.recovery_class || '').trim().toLowerCase();
     const cancelled = terminalStatus === 'cancelled' || terminalStatus === 'canceled';
-    const prefix = cancelled ? jt('chat.footer.stopped', 'Stopped')
+    const runtimeLabel = message.runtime_status === 'paused' ? jt('runtime.ui.paused', 'Paused')
+      : message.runtime_status === 'pending' ? jt('setup.common.pending', 'Pending')
+        : message.runtime_status === 'running' ? jt('setup.hub.running', 'Running')
+          : message.runtime_status === 'needs_attention' ? jt('setup.common.needsAttention', 'Needs attention') : '';
+    const prefix = runtimeLabel || (cancelled ? jt('chat.footer.stopped', 'Stopped')
       : message.status === ERROR_STATUS ? jt('chat.footer.failed', 'Failed')
         : message.status === 'unknown' ? jt('chat.footer.statusUnknown', 'Status unknown')
-          : jt('chat.footer.completed', 'Completed');
+          : jt('chat.footer.completed', 'Completed'));
     const terminalTime = isValidTimestamp(message.finalizedAt) ? message.finalizedAt : '';
     const fallbackTime = isValidTimestamp(message.timestamp) ? message.timestamp : '';
     const time = terminalTime || fallbackTime;

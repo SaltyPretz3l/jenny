@@ -706,6 +706,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       : null,
     tools_confirm_side_effects: true,
     safety_mode: chatUiState?.safetyMode || 'normal',
+    auto_approve_streak_cap: chatUiState?.autoApproveStreakCap ?? 50,
     ui_language: chatUiState?.uiLanguage || 'en',
     use_24_hour_time: chatUiState?.use24HourTime === true,
     tool_policy_snapshot: getConfiguredToolPolicySnapshot(service),
@@ -775,7 +776,21 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       ...(config.feature_flags || {}),
       ...service.featureFlags,
     };
-    forcePhaseEventsForStreamEnvelopeV2(config);
+    if (
+      service.featureFlags?.canonical_text_primary === true
+      && service.featureFlags?.canonical_bridge === true
+      && service.featureFlags?.canonical_turn_events === true
+    ) {
+      config.feature_flags.canonical_text_primary = true;
+    } else {
+      delete config.feature_flags.canonical_text_primary;
+    }
+    // Runtime checkpoints require additive canonical events even when legacy UI
+  // rollout flags are off. This does not change the application's flag settings.
+  if (service.featureFlags?.session_runtime === true) {
+    config.feature_flags = { ...config.feature_flags, canonical_turn_events: true };
+  }
+  forcePhaseEventsForStreamEnvelopeV2(config);
   }
   if (service.skillsService && typeof service.skillsService.getSidecarConfig === 'function') {
     Object.assign(config, service.skillsService.getSidecarConfig());
@@ -805,12 +820,26 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       ...(config.feature_flags || {}),
       ...integrationPatch.feature_flags,
     };
+    if (
+      service.featureFlags?.canonical_text_primary === true
+      && service.featureFlags?.canonical_bridge === true
+      && service.featureFlags?.canonical_turn_events === true
+    ) {
+      config.feature_flags.canonical_text_primary = true;
+    } else {
+      delete config.feature_flags.canonical_text_primary;
+    }
   }
   for (const [key, value] of Object.entries(integrationPatch)) {
     if (key === 'feature_flags') {
       continue;
     }
     config[key] = value;
+  }
+  // Runtime checkpoints require additive canonical events even when legacy UI
+  // rollout flags are off. This does not change the application's flag settings.
+  if (service.featureFlags?.session_runtime === true) {
+    config.feature_flags = { ...config.feature_flags, canonical_turn_events: true };
   }
   forcePhaseEventsForStreamEnvelopeV2(config);
   if (engineType === 'vllm') {
@@ -963,4 +992,5 @@ module.exports = {
   buildManagedSidecarSecrets,
   resolveManagedConfiguredModel,
   resolveMcpServerAuthSecrets,
+  resolveOpenAICompatibleApiUrl,
 };

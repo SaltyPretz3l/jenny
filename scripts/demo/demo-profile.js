@@ -8,9 +8,9 @@
 // materializes the ledger-cli fixture, commits it, applies WORKING_TREE_EDIT so
 // the IDE gutter has a modified hunk, and seeds the history the clips are
 // framed by (demo-sessions.js): past chats in the sidebar, written through the
-// app's own session store; a week of calendar events; and an always-allow
-// policy for the Home tool so the calendar clip's writes run without an
-// approval stop. The scene's replay script is copied in with its relative
+// app's own session store; a week of calendar events; and a project-scoped
+// Home grant so the calendar clip's writes run without an approval stop. The
+// scene's replay script is copied in with its relative
 // date tokens resolved against `now`. Everything lives under a temp dir that
 // cleanupDemoProfile() removes.
 
@@ -21,6 +21,9 @@ const path = require('node:path');
 
 const { ElectronSessionStore } = require('../../services/backend/electron-session-store');
 const { ToolPermissionStore } = require('../../services/tools/tool-permission-store');
+const { ProjectStore } = require('../../services/projects/project-store');
+const { ProjectService } = require('../../services/projects/project-service');
+const { ProjectWorkspacePool } = require('../../services/projects/project-workspace-pool');
 const { RECORDING, replayScriptPath: resolveReplayScriptPath } = require('./demo-scenes');
 const { WORKING_TREE_EDIT, materialize } = require('./demo-fixture');
 const { DEMO_MODEL, buildSeededSessions, buildSeededCalendarEvents } = require('./demo-sessions');
@@ -68,13 +71,15 @@ function writeJson(filePath, value) {
 // current split layout; the timestamps it stamps are "now", so the seeded
 // ages are patched into the flushed files afterwards (the sidebar groups by
 // updated_at, the session by created_at).
-function seedDemoSessions(profile, now = Date.now()) {
+function seedDemoSessions(profile, now = Date.now(), projectId) {
+  const targetProjectId = String(projectId || '').trim();
+  if (!targetProjectId) throw new TypeError('Seeded demo sessions require a project id.');
   const storePath = path.join(profile, 'sessions.json');
   const store = new ElectronSessionStore(storePath, { writeDebounceMs: 0 });
   const seeded = [];
   try {
     for (const entry of buildSeededSessions(now)) {
-      const summary = store.createSession({ title: entry.title });
+      const summary = store.createSession({ title: entry.title, projectId: targetProjectId });
       if (!summary || !summary.id) {
         throw new Error(`demo profile: could not create seeded session "${entry.title}"`);
       }
@@ -121,9 +126,23 @@ function seedDemoCalendar(profile, now = Date.now()) {
   });
 }
 
-function seedDemoToolPolicy(profile) {
+function seedDemoToolPolicy(profile, workspace) {
+  if (!workspace) throw new TypeError('Demo tool policy requires its explicit workspace.');
+  const projectService = new ProjectService({
+    store: new ProjectStore(path.join(profile, 'projects.json')),
+  });
+  const created = projectService.create({ name: 'Ledger CLI' });
+  if (!created.ok) throw new Error(`Demo project creation failed: ${created.reason}`);
+  const bound = projectService.bindRoot(created.project.id, workspace, {
+    expectedRevision: created.project.root_revision,
+  });
+  if (!bound.ok) throw new Error(`Demo project binding failed: ${bound.reason}`);
+  const capture = new ProjectWorkspacePool({ projectService }).capture(created.project.id);
+  if (!capture.ok) throw new Error(`Demo project authority failed: ${capture.reason}`);
   const store = new ToolPermissionStore(path.join(profile, 'tool-permissions.json'));
-  store.setPolicy('home', 'auto');
+  store.setPolicy('home', 'ask');
+  store.grantAlwaysAllow('home', {}, capture.authority);
+  return capture.authority;
 }
 
 // The scene's replay script with its {{date+N}} / {{weekday+N}} tokens
@@ -168,9 +187,9 @@ function populateDemoProfile(scene, { base, profile, workspace, recording, now }
   shellConfig.toolsWorkspaceRoot = workspace;
   writeJson(shellConfigPath, shellConfig);
 
-  seedDemoSessions(profile, now);
+  const projectAuthority = seedDemoToolPolicy(profile, workspace);
+  seedDemoSessions(profile, now, projectAuthority.project_id);
   seedDemoCalendar(profile, now);
-  seedDemoToolPolicy(profile);
 
   materialize(workspace);
   runGit(workspace, ['-c', 'core.autocrlf=false', 'init', '-q']);
@@ -205,6 +224,7 @@ function populateDemoProfile(scene, { base, profile, workspace, recording, now }
     base,
     profile,
     workspace,
+    projectId: projectAuthority.project_id,
     now,
     replayScriptPath: materializeReplayScript(scene, base, now),
   };

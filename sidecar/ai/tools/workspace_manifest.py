@@ -14,11 +14,14 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, cast
 
+from sidecar.ai.tools.builtins import owned_process_observation as _owned_process_observation
+from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessError,
     get_owned_process_service,
@@ -63,6 +66,12 @@ MANIFEST_GIT_BUDGET_SECONDS = 4.0
 # reason reports the neutral cause rather than guessing.
 GIT_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 GIT_REASON_COMMAND_FAILED = "command_failed"
+_REFRESH_COMPLETE = _owned_process_settlement.OwnedProcessCleanupVerdict(
+    cleanup="confirmed",
+    process_tree_terminated=True,
+    output_readers_terminated=True,
+    reason="workspace_manifest_refresh_complete",
+)
 
 
 @dataclass(frozen=True)
@@ -153,21 +162,30 @@ class WorkspaceManifestCache:
         if key in self._refreshing:
             return
         self._refreshing.add(key)
+        refresh_cleanup = _owned_process_observation.create_process_cleanup_observer()
+        refresh_context = copy_context()
         thread = threading.Thread(
-            target=self._refresh_worker,
-            args=(root, key),
+            target=refresh_context.run,
+            args=(self._refresh_worker, root, key, refresh_cleanup),
             name="workspace-manifest-refresh",
             daemon=True,
         )
         thread.start()
 
-    def _refresh_worker(self, root: Path, key: str) -> None:
+    def _refresh_worker(
+        self,
+        root: Path,
+        key: str,
+        refresh_cleanup: _owned_process_settlement.CleanupObserver | None,
+    ) -> None:
         try:
             payload = _safe_generate(self._generator, root)
             self._store(key, payload)
         finally:
             with self._lock:
                 self._refreshing.discard(key)
+            if refresh_cleanup is not None:
+                refresh_cleanup(_REFRESH_COMPLETE)
 
     def _store(self, key: str, payload: dict[str, object]) -> None:
         with self._lock:
@@ -255,7 +273,8 @@ def _git_prompt_line(git: dict[str, object]) -> str:
     branch = _string_value(git.get("branch"), "unknown")
     dirty_count = _optional_int(git.get("dirty_count"))
     if dirty_count is None:
-        return f"{MANIFEST_GIT_LINE_PREFIX}{branch}, changed files unknown (git status did not complete)"
+        return (f"{MANIFEST_GIT_LINE_PREFIX}{branch}, changed files unknown "
+                "(git status did not complete)")
     return f"{MANIFEST_GIT_LINE_PREFIX}{branch}, {dirty_count} changed files"
 
 

@@ -52,7 +52,6 @@
      Used by measureComposerSafeOffset() so the last visible message never
      sits flush against the composer chrome. */
   const SAFE_OFFSET_MINIMUM_PX = viewportLayoutUtils.SAFE_OFFSET_MINIMUM_PX || 28;
-  const LIVE_FOLLOW_USER_OVERRIDE_PX = viewportLiveFollowUtils.LIVE_FOLLOW_USER_OVERRIDE_PX || 24;
   const READER_AWAY_PAUSE_REASON = 'reader_away';
 
   const COLLECTION_BRAND_PROBE = Object.freeze({});
@@ -146,7 +145,10 @@
     const {
       liveFollowRuntime,
       noteUserScrollIntent,
-      clampProgrammaticScrollTop,
+      isReaderAwayFromFollow,
+      isReaderReleaseHeld,
+      clearReaderRelease,
+      releaseFollowForUserScrollAway,
       cancelLiveStreamingFollow,
       startLiveStreamingFollow,
       snapThreadToBottom,
@@ -313,30 +315,34 @@
       const metrics = getScrollMetrics(snapshot);
       const userInitiated = snapshot ? snapshot.userInitiated === true : true;
       if (userInitiated) noteScrollInputIntent();
-      if (liveFollowRuntime.active) {
-        const actualScrollTop = Number(metrics.scrollTop) || 0;
-        const maximumScrollTop = Math.max(0,
-          (Number(metrics.scrollHeight) || 0) - (Number(metrics.clientHeight) || 0));
-        clampProgrammaticScrollTop?.(maximumScrollTop);
-        const followedScrollTop = liveFollowRuntime.lastProgrammaticScrollTop || 0;
-        if (
-          !userInitiated
-          || actualScrollTop >= followedScrollTop - LIVE_FOLLOW_USER_OVERRIDE_PX
-        ) {
-          /* The live-follow animator deliberately trails the growing bottom; that
-             lag must not be re-derived as a user scroll-away, which would disable
-             follow and strand streaming content below the fold (the streaming-
-             not-visible regression). Keep following until the user scrolls up past
-             where the animator last placed the viewport. */
-          thinkingController.resumeAutoScroll(READER_AWAY_PAUSE_REASON);
-          setFollowLatest(true);
-          return true;
-        }
-        cancelLiveStreamingFollow();
+      const maximumScrollTop = Math.max(0,
+        (Number(metrics.scrollHeight) || 0) - (Number(metrics.clientHeight) || 0));
+      if (isReaderAwayFromFollow(Number(metrics.scrollTop) || 0, maximumScrollTop)) {
+        /* Reader input since the animator's last write, and the viewport is
+           above where the animator placed (or left) it: a scroll-away, even on
+           this snapshot-less post-render sync and even after long frames. */
+        releaseFollowForUserScrollAway();
+        return Boolean(thinkingController.handleScroll(metrics));
+      } else if (liveFollowRuntime.active) {
+        /* The live-follow animator deliberately trails the growing bottom; that
+           lag must not be re-derived as a user scroll-away, which would disable
+           follow and strand streaming content below the fold (the streaming-
+           not-visible regression). Keep following until the viewport moves up
+           past where the animator last placed it. */
+        thinkingController.resumeAutoScroll(READER_AWAY_PAUSE_REASON);
+        setFollowLatest(true);
+        return true;
       }
       const nearBottom = Boolean(deriveFollowLatestFromScroll(metrics));
+      const direction = snapshot && typeof snapshot.direction === 'string' ? snapshot.direction : 'none';
+      if (isReaderReleaseHeld()) {
+        // Only the reader's own move back to the bottom re-latches follow.
+        if (!userInitiated || !nearBottom || direction === 'up') {
+          return Boolean(thinkingController.handleScroll(metrics));
+        }
+        clearReaderRelease();
+      }
       if (!userInitiated && !nearBottom && state.ui.followLatest !== false) {
-        const direction = snapshot && typeof snapshot.direction === 'string' ? snapshot.direction : 'none';
         const attributed = Boolean(snapshot && snapshot.programmaticReason);
         if (direction !== 'up' || attributed) {
           /* Attribution preserves follow across programmatic movement; an
@@ -517,6 +523,8 @@
       isInteractiveRoundRecapExpanded,
       pruneInteractiveRoundRecapExpansionState,
       toggleInteractiveRoundRecap,
+      isContextCompactionExpanded,
+      toggleContextCompactionDetails,
     } = viewportRecapUtils.createViewportRecapUtils({
       state,
       chatTimeline,
@@ -555,6 +563,8 @@
       isInteractiveRoundRecapExpanded,
       pruneInteractiveRoundRecapExpansionState,
       toggleInteractiveRoundRecap,
+      isContextCompactionExpanded,
+      toggleContextCompactionDetails,
       clearCopyFeedback,
       showCopyFeedback,
       syncRenderedThinkingPanels,

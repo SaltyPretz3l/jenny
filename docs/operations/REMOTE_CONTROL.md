@@ -49,3 +49,15 @@ logs or screenshots.
 Real-phone pairing, simultaneous decisions, disabling during active work,
 restart behavior and private-network operation require qualification before
 this feature is described as ready to use.
+
+## Maintainer source checkout
+
+For maintainers with the private relay/portal sources, install the locked relay
+tooling with `npm --prefix remote/relay ci`, then authenticate the pinned CLI with
+`npm --prefix remote/relay exec wrangler login`. Follow the relay package's
+deployment configuration for the intended account; these commands do not deploy
+a relay or make a public distribution available.
+
+The `hs1` and `hs2` envelopes expose pairing or device IDs to the relay.
+Handshake proof, credentials, and application frames are encrypted; connection
+metadata is still visible. The portal remains a trusted endpoint.

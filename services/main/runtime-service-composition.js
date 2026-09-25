@@ -30,6 +30,7 @@ const { WorkspacePresentationService } = require('../workspace-presentation-serv
 const { WindowStateService } = require('../window-state-service');
 const { WorktreeService } = require('../worktree-service');
 const { WorktreeRegistryService, defaultRegistryPath } = require('../worktree-registry-service');
+const { createReminderNotifier } = require('./reminder-notifier');
 const { createUnattendedGuard } = require('./unattended-guard');
 
 function createRuntimeServicesWithDeps({
@@ -224,6 +225,7 @@ function createRuntimeServicesWithDeps({
   });
   const artifactService = new ArtifactWorkspaceService({
     configService: shellConfigService,
+    projectAuthorityProvider: () => getBackendService()?.projectAuthority,
     sessionMessageReader: async (sessionId) => {
       const backendService = getBackendService();
       if (!backendService || typeof backendService.getSessionMessages !== 'function') {
@@ -249,6 +251,8 @@ function createRuntimeServicesWithDeps({
   });
   const workspacePresentationService = new WorkspacePresentationService({
     sendBridgeEvent,
+    getUiWorkspaceRoot: () => shellConfigService.getToolsWorkspaceRoot(),
+    projectAuthorityProvider: () => getBackendService()?.projectAuthority,
     isRendererAvailable: () => {
       const win = getMainWindow?.();
       return !!win && !win.isDestroyed();
@@ -286,6 +290,17 @@ function createRuntimeServicesWithDeps({
   // main.js accessor; runtime-stop reads it back from there.
   unattendedGuard.start();
   systemStats.unattendedGuard = unattendedGuard;
+  const reminderNotifier = createReminderNotifier({
+    getShellConfigService: () => shellConfigService,
+    getMainWindow,
+    notificationFactory: (options) => new (require('electron').Notification)(options),
+    isSupported: () => require('electron').Notification.isSupported(),
+    sendBridgeEvent,
+    log,
+  });
+  reminderNotifier.start();
+  systemStats.reminderNotifier = reminderNotifier;
+  shellConfigService.reminderNotifier = reminderNotifier;
 
   systemStats.on('stats', (stats) => {
     sendBridgeEvent('system.onStats', getCurrentSystemStatsPayload(stats));
@@ -415,6 +430,7 @@ function createRuntimeServicesWithDeps({
     shellConfigService,
     skillsService,
     systemStats,
+    reminderNotifier,
     unattendedGuard,
     toolExecutor,
     toolPermissionStore,

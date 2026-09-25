@@ -42,6 +42,7 @@ function createHarness({
   messages = [],
   preflight = false,
   cancelFrames = true,
+  reasoningStatusV2 = false,
 } = {}) {
   const scheduler = createFrameScheduler();
   const dom = new JSDOM(`<!doctype html><html><body>
@@ -101,6 +102,7 @@ function createHarness({
     activeStreamSessionId: '',
     activeStreamId: '',
     streamThinkingStatusByStream: new Map(),
+    features: { featureFlags: { reasoning_status_v2: reasoningStatusV2 } },
     ui: { activeView: 'chat', chatMode: 'thread' },
   };
   const spriteRuntime = {};
@@ -246,6 +248,7 @@ function setLiveThinkingState(harness, {
 test('live reasoning status selects the later streaming row within the active message', () => {
   const harness = createHarness({
     messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
+    reasoningStatusV2: true,
   });
   const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
   const earlier = appendReasoningRow(article, { status: 'complete', label: 'Earlier complete' });
@@ -259,7 +262,41 @@ test('live reasoning status selects the later streaming row within the active me
   assert.equal(earlier.main.classList.contains('shimmer-active'), false);
   assert.equal(later.main.textContent, 'Updated live status');
   assert.equal(later.main.classList.contains('shimmer-active'), true);
+  assert.equal(later.main.classList.contains('reasoning-row-main--live-status'), true);
+  assert.equal(earlier.main.classList.contains('reasoning-row-main--live-status'), false);
   harness.pipeline.dispose();
+});
+
+test('reasoning status V2 flag off preserves the existing live-label markup', () => {
+  const harness = createHarness({
+    messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
+    reasoningStatusV2: false,
+  });
+  const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
+  const active = appendReasoningRow(article);
+  setLiveThinkingState(harness);
+
+  harness.pipeline.renderLiveThinkingChip(null, 'a1');
+
+  assert.equal(active.main.textContent, 'Updated live status');
+  assert.equal(active.main.className, 'reasoning-row-main shimmer-active');
+  harness.pipeline.dispose();
+});
+
+test('reasoning status V2 does not mutate labels after disposal', () => {
+  const harness = createHarness({
+    messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
+    reasoningStatusV2: true,
+  });
+  const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
+  const active = appendReasoningRow(article);
+  setLiveThinkingState(harness);
+  harness.pipeline.dispose();
+
+  harness.pipeline.renderLiveThinkingChip(null, 'a1');
+
+  assert.equal(active.main.textContent, 'Original label');
+  assert.equal(active.main.className, 'reasoning-row-main');
 });
 
 test('live reasoning status is scoped to the active message article', () => {
@@ -268,6 +305,7 @@ test('live reasoning status is scoped to the active message article', () => {
       { id: 'a1', role: 'assistant', status: 'complete', content: 'Earlier response' },
       { id: 'a2', role: 'assistant', status: 'streaming', content: 'Current response' },
     ],
+    reasoningStatusV2: true,
   });
   const articles = harness.dom.window.document.querySelectorAll('.chat-entry');
   const earlier = appendReasoningRow(articles[0], { label: 'Earlier article' });
@@ -281,6 +319,8 @@ test('live reasoning status is scoped to the active message article', () => {
   assert.equal(earlier.main.classList.contains('shimmer-active'), false);
   assert.equal(active.main.textContent, 'Updated live status');
   assert.equal(active.main.classList.contains('shimmer-active'), true);
+  assert.equal(active.main.classList.contains('reasoning-row-main--live-status'), true);
+  assert.equal(earlier.main.classList.contains('reasoning-row-main--live-status'), false);
   harness.pipeline.dispose();
 });
 

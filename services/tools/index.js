@@ -49,6 +49,7 @@ function withManifestSchema(toolDefinition) {
 function createDefaultRegistry(options = {}) {
   const registry = new ToolRegistry();
   registry.registerTool(withManifestSchema(jennyStatusTool));
+  for (const tool of require('./builtin/session-runtime-tools')) registry.registerTool(withManifestSchema(tool));
   registry.registerTool(withManifestSchema(exitPlanModeTool));
   registry.registerTool(withManifestSchema(askUserTool));
   if (options.toolsWorktreeEnabled === true) {

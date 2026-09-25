@@ -1,4 +1,8 @@
 const { normalizeReasoningEffort } = require('../../reasoning-effort-profiles');
+const {
+  GENERAL_PROJECT_ID,
+  normalizeProjectId,
+} = require('../projects/project-schema');
 
 const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
@@ -16,6 +20,14 @@ function normalizeToolCategoryOverrides(value) {
 
 function normalizePreferredModel(value) {
   return String(value || '').trim();
+}
+
+function normalizeSessionProjectId(value, { legacyFallback = false } = {}) {
+  const normalized = normalizeProjectId(value);
+  if (normalized) return normalized;
+  if (value === undefined || legacyFallback) return GENERAL_PROJECT_ID;
+  const evidence = typeof value === 'string' ? value.trim().slice(0, 256) : '';
+  return evidence || 'invalid_project_scope';
 }
 
 function normalizeActiveTurnStatus(value) {
@@ -169,6 +181,7 @@ module.exports = {
   normalizeActiveTurnStatus,
   normalizePreferredModel,
   normalizeReasoningEffort,
+  normalizeSessionProjectId,
   normalizeSessionStartDate,
   normalizeToolCategoryOverrides,
 };

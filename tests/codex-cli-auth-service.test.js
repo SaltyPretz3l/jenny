@@ -26,6 +26,9 @@ test('codex CLI auth service reports ready only for ChatGPT auth', async () => {
   assert.equal(state.provider, 'codex-cli');
   assert.equal(state.authType, 'chatgpt');
   assert.equal(state.commandPath, 'C:/codex/codex.exe');
+  assert.equal(service.getCredentialEpoch(), 1);
+  await service.getState();
+  assert.equal(service.getCredentialEpoch(), 2);
 });
 
 test('codex CLI auth service fails closed for API key auth', async () => {

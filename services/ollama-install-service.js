@@ -36,6 +36,7 @@ const { killProcessTree } = require('./backend/process-utils');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { SETUP_ERROR_CODES } = require('./backend/error-codes');
 const { extractTarZst } = require('./ollama-linux-archive');
+const { downloadPinnedFile } = require('./pinned-download');
 const { ollamaInstallDirs, ollamaUserInstallRoot } = require('./ollama-runtime-paths');
 const { createRequestId, normalizeRequestId } = require('./setup-service-helpers');
 
@@ -311,112 +312,28 @@ class OllamaInstallService extends EventEmitter {
 
   async _download(url, destPath, entry, expectedBytes) {
     entry.abortController = typeof AbortController === 'function' ? new AbortController() : null;
-    let responseTimer = null;
-    const responseTimeout = new Promise((_, reject) => {
-      responseTimer = setTimeout(() => {
-        entry.abortController?.abort();
-        reject(installError('response_timeout', 'The installer server did not respond in time.'));
-      }, this.responseStartTimeoutMs);
-      responseTimer.unref?.();
-    });
-    let response;
     try {
-      response = await Promise.race([
-        this.fetchImpl(url, {
-          method: 'GET',
-          ...(entry.abortController ? { signal: entry.abortController.signal } : {}),
-        }),
-        responseTimeout,
-      ]);
-    } finally {
-      if (responseTimer) clearTimeout(responseTimer);
-    }
-    if (!response || response.ok !== true) {
-      throw installError('download_failed', `Download failed (HTTP ${response?.status || 0}).`);
-    }
-    const headerTotal = Number(response.headers?.get?.('content-length') || 0);
-    if (headerTotal > expectedBytes) {
-      entry.abortController?.abort();
-      throw installError('byte_overflow', 'Installer response exceeds the pinned artifact size.');
-    }
-    const hash = this.cryptoImpl.createHash('sha256');
-    const out = this.fsImpl.createWriteStream(destPath, { flags: 'wx' });
-    let downloaded = 0;
-    let outputError = null;
-    let inactivityTimer = null;
-    let inactivityTriggered = false;
-    const resetInactivity = () => {
-      if (inactivityTimer) clearTimeout(inactivityTimer);
-      inactivityTimer = setTimeout(() => {
-        inactivityTriggered = true;
-        entry.abortController?.abort();
-      }, this.downloadInactivityMs);
-      inactivityTimer.unref?.();
-    };
-    out?.on?.('error', (error) => { outputError = error; });
-    const consumeChunk = async (chunk) => {
-      if (outputError) throw outputError;
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      downloaded += buffer.length;
-      if (downloaded > expectedBytes) {
-        entry.abortController?.abort();
-        throw installError('byte_overflow', 'Installer download exceeded the pinned artifact size.');
-      }
-      resetInactivity();
-      hash.update(buffer);
-      if (out.write(buffer) === false) {
-        await new Promise((resolve, reject) => {
-          out.once?.('drain', resolve);
-          out.once?.('error', reject);
-        });
-      }
-      entry.downloadedBytes = downloaded;
-      entry.totalBytes = expectedBytes;
-      entry.percent = Math.min(Math.round((downloaded / expectedBytes) * 100), 100);
-      this._emit(entry, 'downloading');
-    };
-    let completed = false;
-    try {
-      resetInactivity();
-      if (response.body && typeof response.body[Symbol.asyncIterator] === 'function') {
-        for await (const chunk of response.body) {
-          if (entry.abortController?.signal?.aborted) {
-            throw installError(entry.cancelled ? 'cancelled' : 'download_inactivity', 'Installer download stopped.');
-          }
-          await consumeChunk(chunk);
-        }
-      } else if (typeof response.arrayBuffer === 'function') {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        if (entry.abortController?.signal?.aborted) {
-          throw installError(entry.cancelled ? 'cancelled' : 'download_inactivity', 'Installer download stopped.');
-        }
-        await consumeChunk(buffer);
-      } else {
-        throw installError('download_failed', 'Download response had no readable body.');
-      }
-      if (entry.abortController?.signal?.aborted) {
-        throw installError(entry.cancelled ? 'cancelled' : 'download_inactivity', 'Installer download stopped.');
-      }
-      if (downloaded !== expectedBytes) {
-        throw installError('size_mismatch', 'Installer size did not match the pinned artifact.');
-      }
-      if (outputError) throw outputError;
-      await new Promise((resolve, reject) => {
-        out.on?.('error', reject);
-        out.end(resolve);
+      return await downloadPinnedFile({
+        url,
+        destPath,
+        expectedBytes,
+        fetchImpl: this.fetchImpl,
+        fsImpl: this.fsImpl,
+        cryptoImpl: this.cryptoImpl,
+        abortController: entry.abortController,
+        responseStartTimeoutMs: this.responseStartTimeoutMs,
+        inactivityMs: this.downloadInactivityMs,
+        isCancelled: () => entry.cancelled === true,
+        onProgress: ({ downloadedBytes }) => {
+          entry.downloadedBytes = downloadedBytes;
+          entry.totalBytes = expectedBytes;
+          entry.percent = Math.min(Math.round((downloadedBytes / expectedBytes) * 100), 100);
+          this._emit(entry, 'downloading');
+        },
       });
-      completed = true;
-    } catch (error) {
-      if (inactivityTriggered && !entry.cancelled) {
-        throw installError('download_inactivity', 'Installer download stalled.');
-      }
-      throw error;
     } finally {
-      if (inactivityTimer) clearTimeout(inactivityTimer);
       entry.abortController = null;
-      if (!completed) out.destroy?.();
     }
-    return hash.digest('hex');
   }
 
   async _terminateEntry(entry) {

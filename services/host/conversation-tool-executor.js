@@ -9,7 +9,7 @@ const exitPlanMode = require('../tools/builtin/exit-plan-mode-tool');
 // Reuse the canonical owner handlers with a deliberately closed registry.
 // No workspace executor, plugin provider, Git, browser, or native service is
 // composed here. Sidecar blocking decisions still precede preapproved calls.
-function createConversationToolExecutor({ configService, logger }) {
+function createConversationToolExecutor({ configService, logger, permissionStore = null }) {
   const registry = new ToolRegistry();
   for (const definition of [askUser, exitPlanMode]) {
     const entry = manifest.tools.find((tool) => tool.name === definition.name && tool.owner === 'electron');
@@ -20,7 +20,7 @@ function createConversationToolExecutor({ configService, logger }) {
       workspaceRequired: entry.availability?.workspace_required !== false,
       planModeOnly: entry.availability?.plan_mode_only === true });
   }
-  return new ToolExecutor({ registry, configService, logger, permissionStore: null, pathPolicy: null });
+  return new ToolExecutor({ registry, configService, logger, permissionStore, pathPolicy: null });
 }
 
 module.exports = { createConversationToolExecutor };

@@ -118,6 +118,7 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_TOOL_PYTHON_NOT_AVAILABLE: "unavailable",
     error_codes.CMP_TOOL_RICH_FILES_UNSUPPORTED: "unavailable",
     error_codes.CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING: "unavailable",
+    error_codes.CMP_TOOL_PDF_ADDON_MISSING: "unavailable",
     error_codes.CMP_MCP_SSE_DISABLED: "unavailable",
     error_codes.CMP_CFG_WORKSPACE_MISSING: "unavailable",
     error_codes.CMP_ROUTE_TOOL_DISABLED: "unavailable",

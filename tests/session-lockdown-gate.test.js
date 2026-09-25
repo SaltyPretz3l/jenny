@@ -25,9 +25,12 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 51);
+  assert.equal(manifestNames.length, 54);
   assert.deepEqual(classifiedNames, manifestNames);
   assert.equal(TOOL_NETWORK_CLASSIFICATION.task_board, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.session_spawn, 'possible');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.session_wait, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.session_result, 'none');
   assert.equal(Object.values(TOOL_NETWORK_CLASSIFICATION).every(
     (classification) => classification === 'none' || classification === 'possible'
   ), true);

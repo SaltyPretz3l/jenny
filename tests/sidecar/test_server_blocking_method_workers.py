@@ -13,6 +13,7 @@ from sidecar.protocol import (
     COMMIT_GENERATE_MESSAGE_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
+    INLINE_COMPLETE_METHOD,
     MCP_INSPECT_METHOD,
     MEMORY_LIST_METHOD,
     MODELS_LIST_METHOD,
@@ -45,12 +46,14 @@ def test_blocking_and_existing_methods_are_auxiliary_worker_methods() -> None:
         HARDWARE_VRAM_USAGE_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
+        INLINE_COMPLETE_METHOD,
         HARDWARE_PROFILE_METHOD,
         CHAT_COMPACT_METHOD,
         MCP_INSPECT_METHOD,
     }
 
     assert expected <= server_auxiliary_workers.AUXILIARY_WORKER_METHODS
+    assert server_auxiliary_workers.AUXILIARY_FAMILY_BY_METHOD[INLINE_COMPLETE_METHOD] == "inference"
 
 
 def test_blocked_models_list_does_not_block_hardware_profile() -> None:

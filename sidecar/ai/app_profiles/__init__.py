@@ -15,6 +15,7 @@ import re
 from dataclasses import asdict, dataclass, fields
 from typing import TYPE_CHECKING
 
+from sidecar.ai.engines.model_name import canonicalize_model_name
 from sidecar.runtime.diagnostics import log_event
 
 if TYPE_CHECKING:
@@ -101,20 +102,9 @@ class AppProfile:
 # Model-name canonicalization
 # ---------------------------------------------------------------------------
 
+# ``canonicalize_model_name`` (imported above and re-exported) lives with the
+# engine detectors, so a profile alias and an engine family check agree.
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-
-
-def canonicalize_model_name(model_name: str) -> str:
-    """Normalize a model ID for matching.
-
-    Handles HF repo IDs (``google/gemma-4-26B-A4B-it``),
-    Ollama tags (``gemma4:26b-a4b-it-q4_K_M``), vLLM-style strings,
-    and custom local names.
-    """
-    key = str(model_name).strip().lower()
-    base = key.rsplit("/", 1)[-1]
-    base = base.split(":", 1)[0]
-    return _NON_ALNUM_RE.sub("-", base).strip("-")
 
 
 def _canonicalize_model_variant_key(model_name: str) -> str:
@@ -354,6 +344,7 @@ def apply_behavior(
 # Registry bootstrap — explicit imports, no side-effect magic
 # ---------------------------------------------------------------------------
 
+from sidecar.ai.app_profiles.bonsai2 import BONSAI2_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.gemma4 import GEMMA4_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.ornith15 import ORNITH15_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.qwen36 import QWEN36_PROFILE  # noqa: E402
@@ -363,3 +354,4 @@ register_profile(GEMMA4_PROFILE)
 register_profile(ORNITH15_PROFILE)
 register_profile(QWEN36_PROFILE)
 register_profile(QWEN38_PROFILE)
+register_profile(BONSAI2_PROFILE)

@@ -29,8 +29,8 @@ test('renderer keeps a deleted session tombstoned without leaking dismissed memo
         async listApproved() {
           return { memories: [] };
         },
-        async dismiss(fingerprint) {
-          memoryCalls.dismiss.push(fingerprint);
+        async dismiss(sessionId, fingerprint) {
+          memoryCalls.dismiss.push([sessionId, fingerprint]);
         },
       },
     },
@@ -124,7 +124,7 @@ test('renderer keeps a deleted session tombstoned without leaking dismissed memo
     assert.equal(memoryCalls.suggest.length, 2);
     const reappearedDismissButton = toastViewport.querySelector('[data-toast-action-id="dismiss"]');
     assert.ok(reappearedDismissButton);
-    assert.deepEqual(memoryCalls.dismiss, [candidate.content_fingerprint]);
+    assert.deepEqual(memoryCalls.dismiss, [['session-memory-delete', candidate.content_fingerprint]]);
   } finally {
     await app.dispose();
   }

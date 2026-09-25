@@ -114,6 +114,7 @@ class SidecarManager extends EventEmitter {
     packagedLaunchDetail,
     packagedSidecarLaunch = null,
     resolvePackagedLaunch = null,
+    resolveExtraEnv = null,
     killProcessTreeImpl,
     getProcessCommandLineImpl,
     startupSoftTimeoutMs = DEFAULT_SOFT_TIMEOUT_MS,
@@ -154,6 +155,7 @@ class SidecarManager extends EventEmitter {
     this._resolvePackagedLaunch = typeof resolvePackagedLaunch === 'function'
       ? resolvePackagedLaunch
       : null;
+    this._resolveExtraEnv = typeof resolveExtraEnv === 'function' ? resolveExtraEnv : null;
     this.killProcessTreeImpl = killProcessTreeImpl || killProcessTree;
     this.getProcessCommandLineImpl = getProcessCommandLineImpl || getProcessCommandLine;
     // startupSoftTimeoutMs is the managed startup watchdog used for exit grace and the ready deadline.
@@ -251,6 +253,12 @@ class SidecarManager extends EventEmitter {
       // dies, guarding against orphaned sidecars when Electron is SIGKILLed.
       JENNY_PARENT_PID: String(process.pid),
     };
+    // Main-owned env read at every spawn (the PDF reading add-on directory);
+    // an empty value drops an inherited key.
+    for (const [key, value] of Object.entries(this._resolveExtraEnv?.() || {})) {
+      if (value) env[key] = String(value);
+      else delete env[key];
+    }
 
     // Packaged release builds defer launch resolution (full-binary SHA-256 +
     // `--version` probe) to here so it runs inside the awaited start() phase --

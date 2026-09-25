@@ -120,3 +120,28 @@ test('receipt gate rejects coerced and fractional proof integers', () => {
     assert.equal(gate.isProven(), false);
   }
 });
+
+test('a reloaded page starts a new epoch sequence instead of being refused as stale', () => {
+  // The renderer's epoch counter restarts on reload (first subscription is
+  // always 2) while this gate lives as long as main.
+  const gate = createStreamEnvelopeReceiptGate();
+  assert.equal(gate.record({ recordType: 'subscription_started', rendererEpoch: 2, pageLoadId: 'load-a', mode: 'legacy' }).ok, true);
+  assert.equal(gate.record({ recordType: 'subscription_started', rendererEpoch: 3, pageLoadId: 'load-a', mode: 'envelope' }).ok, true);
+  assert.equal(gate.record({
+    recordType: 'subscription_started', rendererEpoch: 2, pageLoadId: 'load-a', mode: 'legacy',
+  }).reason, 'stale_subscription_epoch', 'the same page still cannot go backwards');
+
+  const reloaded = gate.record({ recordType: 'subscription_started', rendererEpoch: 2, pageLoadId: 'load-b', mode: 'envelope' });
+  assert.equal(reloaded.ok, true);
+  assert.equal(reloaded.renderer_epoch, 2);
+  gate.noteSent({ streamId: 'after-reload', channel: 'control', eventKind: 'started' });
+  assert.equal(gate.record({
+    recordType: 'stream_fault', rendererEpoch: 2, streamId: 'after-reload', reason: 'sequence_gap',
+  }).record_accepted, true, "the reloaded page's epoch is the active one");
+
+  for (const rendererEpoch of [2, 9]) {
+    assert.equal(gate.record({
+      recordType: 'subscription_started', rendererEpoch, pageLoadId: 'load-a', mode: 'envelope',
+    }).reason, 'stale_subscription_epoch', 'a superseded page load never reopens a sequence');
+  }
+});

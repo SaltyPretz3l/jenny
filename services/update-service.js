@@ -1,11 +1,22 @@
 'use strict';
 
 const { EventEmitter } = require('events');
+const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const semver = require('semver');
+const { Transform } = require('stream');
 const { t } = require('./i18n-main');
 const { UPDATER_ERROR_CODES } = require('./backend/error-codes');
-const { createGitHubReleaseClient, RELEASES_URL, stableVersion, MAX_NOTES_LENGTH } = require('./github-release-client');
+const {
+  createGitHubReleaseClient,
+  GITHUB_UPDATE_HOSTS,
+  MAX_BODY_BYTES,
+  MAX_NOTES_LENGTH,
+  RELEASES_URL,
+  stableVersion,
+  UPDATE_CHECK_TIMEOUT_MS,
+} = require('./github-release-client');
 
 const { FileJsonStore } = require('./backend/file-json-store');
 const { resolveLinuxPackageKind } = require('./linux-package-kind');
@@ -24,6 +35,70 @@ function loadAutoUpdater() {
   } catch (_error) {
     return null;
   }
+}
+
+function updateError(code, details = {}) {
+  return Object.assign(new Error(code), { code, ...details });
+}
+
+function createBoundedMetadataResponse(response) {
+  let receivedBytes = 0;
+  const bounded = new Transform({
+    transform(chunk, encoding, callback) {
+      receivedBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk, encoding);
+      if (receivedBytes > MAX_BODY_BYTES) {
+        callback(updateError('update-metadata-too-large'));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+  bounded.statusCode = response.statusCode;
+  bounded.statusMessage = response.statusMessage;
+  bounded.headers = response.headers;
+  response.on('error', (error) => bounded.destroy(error));
+  return bounded;
+}
+
+function createGuardedElectronHttpExecutor(delegate) {
+  const { ElectronHttpExecutor } = require('electron-updater/out/electronHttpExecutor');
+  return new class GuardedElectronHttpExecutor extends ElectronHttpExecutor {
+    constructor() {
+      super();
+      this._delegate = delegate && typeof delegate.createRequest === 'function' ? delegate : null;
+      this._metadataRequests = new WeakSet();
+      if (Number.isSafeInteger(delegate?.maxRedirects)) this.maxRedirects = delegate.maxRedirects;
+    }
+
+    doApiRequest(options, cancellationToken, requestProcessor, redirectCount = 0) {
+      this._metadataRequests.add(options);
+      return super.doApiRequest(options, cancellationToken, requestProcessor, redirectCount);
+    }
+
+    createRequest(options, callback) {
+      const protocol = String(options?.protocol || '').toLowerCase();
+      const hosts = [options?.headers?.Host, options?.host, options?.hostname]
+        .filter(Boolean).map((value) => String(value).toLowerCase());
+      const host = hosts.find((value) => !GITHUB_UPDATE_HOSTS.includes(value)) || hosts[0] || '';
+      if (protocol !== 'https:' || !hosts.length || hosts.some((value) => !GITHUB_UPDATE_HOSTS.includes(value))) {
+        throw updateError('update-destination-refused', { host, protocol });
+      }
+      let request;
+      const responseCallback = this._metadataRequests.has(options) ? (response) => {
+        const bounded = createBoundedMetadataResponse(response);
+        callback(bounded);
+        bounded.once('error', () => {
+          response.destroy?.();
+          request?.abort?.();
+        });
+        response.pipe(bounded);
+      } : callback;
+      request = this._delegate
+        ? this._delegate.createRequest(options, responseCallback)
+        : super.createRequest(options, responseCallback);
+      return request;
+    }
+  }();
 }
 
 function cloneState(state) {
@@ -111,6 +186,8 @@ class UpdateService extends EventEmitter {
     this.disabledReason = this._disabledReason({ checkUpdater: Boolean(autoUpdater) });
     this._availableInfo = null;
     this._downloadedVersion = '';
+    this._downloadedArtifact = null;
+    this._installLatched = false;
     this._operation = null;
     this._installOperation = null;
     this._disposed = false;
@@ -132,9 +209,10 @@ class UpdateService extends EventEmitter {
       canCheck: !this._disposed && !busy && !this._downloadedVersion,
       canDownload: !this._disposed && !busy && !this.disabledReason && Boolean(this._availableInfo)
         && (this.state.status === 'available' || (this.state.status === 'error' && this.state.errorStage === 'download')),
-      canInstall: !this._disposed && !busy && !this.disabledReason && Boolean(this._downloadedVersion)
+      canInstall: !this._disposed && !busy && !this.disabledReason && !this._installLatched
+        && Boolean(this._downloadedVersion)
         && (this.state.status === 'downloaded' || (this.state.status === 'error' && this.state.errorStage === 'install')),
-      installUnavailableReason: this.disabledReason,
+      installUnavailableReason: this._installLatched ? 'restart-required' : this.disabledReason,
     });
   }
 
@@ -152,17 +230,41 @@ class UpdateService extends EventEmitter {
   }
 
   install() {
-    if (this._disposed || this.disabledReason || this.state.status === 'installing') {
+    if (this._disposed || this.disabledReason || this._installLatched || this.state.status === 'installing') {
       return Promise.resolve(this.getState());
     }
-    return this._run('install', () => {
-      if (!this._downloadedVersion || this._downloadedVersion !== this.state.latestVersion) {
+    return this._run('install', async () => {
+      if (this._installLatched) return;
+      if (!this._downloadedVersion || this._downloadedVersion !== this.state.latestVersion
+        || !this._downloadedArtifact || this._downloadedArtifact.version !== this._downloadedVersion) {
         throw Object.assign(new Error('install-not-ready'), { code: 'install-not-ready' });
       }
+      await this._verifyDownloadedArtifact();
       this._installOperation = this._operation;
       this._setState({ status: 'installing' });
-      this.autoUpdater.quitAndInstall();
+      await this.autoUpdater.quitAndInstall();
     });
+  }
+
+  async _verifyDownloadedArtifact() {
+    const artifact = this._downloadedArtifact;
+    try {
+      const stat = await fs.promises.stat(artifact.path);
+      if (!stat.isFile() || stat.size !== artifact.size) throw new Error('size-mismatch');
+      const digest = await new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha512');
+        const stream = fs.createReadStream(artifact.path);
+        stream.on('error', reject);
+        hash.on('error', reject);
+        hash.on('finish', () => resolve(hash.digest('base64')));
+        stream.pipe(hash);
+      });
+      if (digest !== artifact.sha512) throw new Error('hash-mismatch');
+    } catch (_error) {
+      this._downloadedVersion = '';
+      this._downloadedArtifact = null;
+      throw Object.assign(new Error('install-integrity'), { code: 'install-integrity' });
+    }
   }
 
   _run(stage, action) {
@@ -189,7 +291,7 @@ class UpdateService extends EventEmitter {
       await this._checkManualRelease();
     } else {
       try {
-        const result = await this.autoUpdater.checkForUpdates();
+        const result = await this._checkWithDeadline();
         if (this._disposed) return;
         if (this._operation.eventError) throw this._operation.eventError;
         // The completed check owns the selected version; stale events cannot replace it.
@@ -203,6 +305,22 @@ class UpdateService extends EventEmitter {
     this.persisted.lastCheckedAt = this.now().toISOString();
     this._persist();
     this._setState({ lastCheckedAt: this.persisted.lastCheckedAt });
+  }
+
+  _checkWithDeadline() {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(updateError('update-check-timeout', { errorStage: 'check' })),
+        UPDATE_CHECK_TIMEOUT_MS);
+    });
+    let check;
+    try {
+      check = Promise.resolve(this.autoUpdater.checkForUpdates());
+    } catch (error) {
+      clearTimeout(timer);
+      return Promise.reject(error);
+    }
+    return Promise.race([check, deadline]).finally(() => clearTimeout(timer));
   }
 
   async _checkManualRelease() {
@@ -241,11 +359,15 @@ class UpdateService extends EventEmitter {
   async _downloadUpdate() {
     if (!this._availableInfo) throw Object.assign(new Error('download-not-ready'), { code: 'download-not-ready' });
     const version = normalizeVersion(this._availableInfo.version);
+    this._downloadedArtifact = null;
     this._setState({ status: 'downloading', downloadProgress: normalizeProgress() });
     const files = await this.autoUpdater.downloadUpdate();
     if (this._disposed || this._operation.failed) return;
     if (this._operation.eventError) throw this._operation.eventError;
     if (!Array.isArray(files) || !files.length) throw new Error('download-incomplete');
+    if (!this._downloadedArtifact || this._downloadedArtifact.version !== version) {
+      throw new Error('download-incomplete');
+    }
     this._downloadedVersion = version;
     this._setState({ status: 'downloaded', latestVersion: version,
       downloadProgress: { ...this.state.downloadProgress, percent: 100 } });
@@ -317,6 +439,7 @@ class UpdateService extends EventEmitter {
         this.autoUpdater.allowPrerelease = false;
         this.autoUpdater.allowDowngrade = false;
         this.autoUpdater.requestHeaders = { 'x-user-staging-id': 'manual' };
+        this.autoUpdater.httpExecutor = createGuardedElectronHttpExecutor(this.autoUpdater.httpExecutor);
         // Never pipe provider response bodies, paths or identifiers into diagnostics.
         this.autoUpdater.logger = { info() {}, warn() {}, error() {}, debug() {} };
         if (this.autoUpdater.autoDownload !== false || this.autoUpdater.autoInstallOnAppQuit !== false) {
@@ -339,6 +462,23 @@ class UpdateService extends EventEmitter {
         this._setState({ status: 'downloading', downloadProgress: normalizeProgress(progress) });
       }],
       ['update-available', () => {}],
+      ['update-downloaded', (event = {}) => {
+        if (this._operation?.stage !== 'download' || this._operation.failed) return;
+        const version = normalizeVersion(event.version);
+        if (!version || version !== normalizeVersion(this._availableInfo?.version)) return;
+        const downloadedFile = String(event.downloadedFile || '').trim();
+        const downloadedName = path.basename(downloadedFile).toLowerCase();
+        const files = Array.isArray(this._availableInfo?.files) ? this._availableInfo.files : [];
+        const file = files.find((entry) => {
+          let urlPath = String(entry?.url || '').split(/[?#]/, 1)[0].replaceAll('\\', '/');
+          try { urlPath = decodeURIComponent(urlPath); } catch (_error) { /* compare the encoded name */ }
+          return urlPath.slice(urlPath.lastIndexOf('/') + 1).toLowerCase() === downloadedName;
+        });
+        const sha512 = String(file?.sha512 || '').trim();
+        const size = Number(file?.size);
+        if (!downloadedFile || !sha512 || !Number.isSafeInteger(size) || size < 0) return;
+        this._downloadedArtifact = { path: downloadedFile, sha512, size, version };
+      }],
       ['error', (error) => {
         const operation = this._operation || this._installOperation;
         if (operation?.stage === 'install') this._recordError(error, operation);
@@ -356,10 +496,19 @@ class UpdateService extends EventEmitter {
     if (stage === 'download') message = t('updates.service.downloadFailed', 'Could not download and verify the update. Try the download again.');
     if (stage === 'install') message = t('updates.service.installFailed', 'Could not hand off the installer. Try again or open the releases page.');
     if (error?.code === 'rate-limited') message = t('updates.service.rateLimited', 'GitHub is limiting requests. Try again later.');
-    if (error?.code === 'timeout') message = t('updates.service.timeout', 'GitHub did not respond in time. Try again.');
+    if (error?.code === 'timeout' || error?.code === 'update-check-timeout') {
+      message = t('updates.service.timeout', 'GitHub did not respond in time. Try again.');
+    }
     if (error?.code === 'invalid-version') message = t('updates.service.invalidVersion', 'The release version is invalid. Open the releases page.');
     if (error?.code === 'missing-sha512') message = t('updates.service.missingHash', 'Release metadata is missing SHA512 verification data. Open the releases page.');
-    const errorCode = UPDATER_ERROR_CODES[stage];
+    const launchFailed = stage === 'install'
+      && (error?.code === 'install-launch-failed' || this.state.status === 'installing');
+    if (launchFailed) this._installLatched = true;
+    const errorCode = error?.code === 'install-integrity'
+      ? 'install-integrity'
+      : error?.code === 'update-check-timeout'
+        ? 'update-check-timeout'
+        : launchFailed ? 'install-launch-failed' : UPDATER_ERROR_CODES[stage];
     this.persisted = { ...this.persisted, failureCount: Math.min(this.persisted.failureCount + 1, 1000000),
       lastError: message, lastFailedAt: this.now().toISOString() };
     this._persist();

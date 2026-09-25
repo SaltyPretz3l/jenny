@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from sidecar.ai.config_models import ToolPolicySnapshot
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
@@ -33,12 +34,13 @@ from sidecar.runtime.chat_helpers import thinking_notification
 from sidecar.runtime.chat_streaming import build_live_streaming_chat_response
 from sidecar.runtime.diagnostics import ContextQueueHandler
 from sidecar.runtime.diagnostics_queue import BoundedDiagnosticsQueue
+from sidecar.runtime.execution_context import ExecutionContext
+from sidecar.runtime.local_engine.messages import demote_non_leading_system_messages
 from sidecar.runtime.local_engine.request_context import (
     clear_request_context,
     current_request_context,
     install_request_context,
 )
-from sidecar.runtime.local_engine.messages import demote_non_leading_system_messages
 
 # ---------------------------------------------------------------------------
 # Shared stub helpers
@@ -309,6 +311,103 @@ def test_emit_canonical_populates_turn_events_when_flag_enabled() -> None:
     # A text_delta event must be present for the content chunk
     types = [e["params"]["type"] for e in turn_events]
     assert "text_delta" in types
+
+
+def test_canonical_text_primary_omits_legacy_and_preserves_exact_visible_bytes() -> None:
+    chunks = ["A\r\n", "🙂", "e\u0301"]
+    engine = _make_engine(
+        [*(SimpleNamespace(kind="content", text=chunk) for chunk in chunks),
+         SimpleNamespace(kind="done", text="")]
+    )
+    brain = _make_brain_container(
+        engine,
+        feature_flags={
+            FEATURE_CANONICAL_TURN_EVENTS: True,
+            "canonical_text_primary": True,
+        },
+    )
+
+    response = build_live_streaming_chat_response(
+        request_id="req-canonical-text-primary",
+        trace_id="trace-canonical-text-primary",
+        session_id="session-canonical-text-primary",
+        latest_user_content="x",
+        messages=[],
+        brain_container=brain,
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=256,
+    )
+
+    assert _notifications_by_method(response, CHAT_TOKEN_METHOD) == []
+    deltas = [
+        event["params"]["payload"]["delta"]
+        for event in _notifications_by_method(response, TURN_EVENT_METHOD)
+        if event["params"]["type"] == "text_delta"
+    ]
+    assert deltas == chunks
+    assert "".join(deltas).encode("utf-8") == b"A\r\n\xf0\x9f\x99\x82e\xcc\x81"
+
+
+def test_canonical_text_primary_false_keeps_legacy_visible_text() -> None:
+    chunks = ["A\r\n", "🙂", "e\u0301"]
+    engine = _make_engine(
+        [*(SimpleNamespace(kind="content", text=chunk) for chunk in chunks),
+         SimpleNamespace(kind="done", text="")]
+    )
+    brain = _make_brain_container(
+        engine,
+        feature_flags={
+            FEATURE_CANONICAL_TURN_EVENTS: True,
+            "canonical_text_primary": False,
+        },
+    )
+
+    response = build_live_streaming_chat_response(
+        request_id="req-canonical-text-additive",
+        trace_id="trace-canonical-text-additive",
+        session_id="session-canonical-text-additive",
+        latest_user_content="x",
+        messages=[],
+        brain_container=brain,
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=256,
+    )
+
+    assert [
+        event["params"]["delta"]
+        for event in _notifications_by_method(response, CHAT_TOKEN_METHOD)
+    ] == chunks
+
+
+def test_canonical_turn_events_without_text_primary_keeps_legacy_visible_text() -> None:
+    chunks = ["A\r\n", "🙂", "e\u0301"]
+    engine = _make_engine(
+        [*(SimpleNamespace(kind="content", text=chunk) for chunk in chunks),
+         SimpleNamespace(kind="done", text="")]
+    )
+    brain = _make_brain_container(
+        engine,
+        feature_flags={FEATURE_CANONICAL_TURN_EVENTS: True},
+    )
+
+    response = build_live_streaming_chat_response(
+        request_id="req-canonical-text-capability-absent",
+        trace_id="trace-canonical-text-capability-absent",
+        session_id="session-canonical-text-capability-absent",
+        latest_user_content="x",
+        messages=[],
+        brain_container=brain,
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=256,
+    )
+
+    assert [
+        event["params"]["delta"]
+        for event in _notifications_by_method(response, CHAT_TOKEN_METHOD)
+    ] == chunks
 
 
 def test_emit_canonical_injects_trace_id_into_payload() -> None:
@@ -699,6 +798,129 @@ def test_synthesized_status_emits_canonical_event_when_flag_enabled() -> None:
         and e["params"].get("payload", {}).get("kind") == CHAT_THINKING_KIND_STATUS
     ]
     assert len(status_events) >= 1
+
+
+def test_reasoning_status_v2_logs_one_redacted_event_per_emitted_status(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    long_reasoning = (
+        "Working through the next independent phase without another organic marker. " * 2
+    )
+    engine = _make_engine(
+        [
+            SimpleNamespace(kind="thinking", text="\u27e8STATUS: Inspecting current constraints\u27e9\n"),
+            SimpleNamespace(kind="thinking", text=long_reasoning),
+            SimpleNamespace(kind="done", text=""),
+        ]
+    )
+    brain = _make_brain_container(
+        engine,
+        feature_flags={"reasoning_status_v2": True},
+        engine_type="ollama",
+    )
+
+    with caplog.at_level(logging.INFO, logger="sidecar.runtime.chat_streaming"):
+        response = build_live_streaming_chat_response(
+            request_id="req-status-telemetry",
+            trace_id=None,
+            session_id="session-status-telemetry",
+            latest_user_content="x",
+            messages=[],
+            brain_container=brain,
+            reasoning_effort=None,
+            learned_lessons=None,
+            max_tokens=4096,
+        )
+
+    status_notes = [
+        note
+        for note in _notifications_by_method(response, "chat.thinking")
+        if note["params"].get("kind") == CHAT_THINKING_KIND_STATUS
+    ]
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", "") == "runtime.chat_streaming.reasoning_status_emitted"
+    ]
+    assert len(status_notes) == len(records) == 2
+    assert [record.source for record in records] == ["organic", "synthesized"]
+    assert all(record.model == "stub-model-example" for record in records)
+    assert all(record.phase_index == 1 for record in records)
+    assert records[0].status_word_count == 3
+    assert 2 <= records[1].status_word_count <= 6
+    assert records[1].reasoning_chars_since_previous_status == len(long_reasoning)
+    forbidden = ("Inspecting current constraints", long_reasoning.strip())
+    assert all(not any(value in record.getMessage() for value in forbidden) for record in records)
+    assert all("status_text" not in record.__dict__ and "reasoning_text" not in record.__dict__ for record in records)
+
+
+def test_reasoning_status_v2_flag_off_emits_no_telemetry(caplog: pytest.LogCaptureFixture) -> None:
+    engine = _make_engine(
+        [
+            SimpleNamespace(kind="thinking", text="\u27e8STATUS: Inspecting current constraints\u27e9"),
+            SimpleNamespace(kind="done", text=""),
+        ]
+    )
+
+    with caplog.at_level(logging.INFO, logger="sidecar.runtime.chat_streaming"):
+        build_live_streaming_chat_response(
+            request_id="req-status-telemetry-off",
+            trace_id=None,
+            session_id=None,
+            latest_user_content="x",
+            messages=[],
+            brain_container=_make_brain_container(
+                engine, feature_flags={"reasoning_status_v2": False}
+            ),
+            reasoning_effort=None,
+            learned_lessons=None,
+            max_tokens=4096,
+        )
+
+    assert not any(
+        getattr(record, "event", "") == "runtime.chat_streaming.reasoning_status_emitted"
+        for record in caplog.records
+    )
+
+
+def test_reasoning_status_v2_flag_off_preserves_legacy_status_sequence() -> None:
+    threshold_split = ("Analyzing paths " * 7) + "\u27e8STATUS:"
+    completed_marker = " Reviewing current constraints\u27e9"
+    duplicate_marker = "\u27e8STATUS: Reviewing current constraints\u27e9"
+    assert len(threshold_split) == 120
+    engine = _make_engine(
+        [
+            SimpleNamespace(kind="thinking", text=threshold_split),
+            SimpleNamespace(kind="thinking", text=completed_marker),
+            SimpleNamespace(kind="thinking", text=duplicate_marker),
+            SimpleNamespace(kind="content", text="Done."),
+            SimpleNamespace(kind="done", text=""),
+        ]
+    )
+
+    response = build_live_streaming_chat_response(
+        request_id="req-status-v2-off-parity",
+        trace_id=None,
+        session_id=None,
+        latest_user_content="x",
+        messages=[],
+        brain_container=_make_brain_container(
+            engine, feature_flags={"reasoning_status_v2": False}
+        ),
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=4096,
+    )
+
+    statuses = [
+        note["params"]["delta"]
+        for note in _notifications_by_method(response, "chat.thinking")
+        if note["params"].get("kind") == CHAT_THINKING_KIND_STATUS
+    ]
+    assert statuses == [
+        "Analyzing paths Analyzing paths Analyzing paths",
+        "Reviewing current constraints",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1863,3 +2085,70 @@ def test_live_stream_attaches_images_to_last_user_and_counts_surcharge(
     assert demoted_messages.index(overlay_rows[0]) < demoted_messages.index(vision_user_rows[1])
     assert all("images" not in row for row in text_messages)
     assert vision_tokens - text_tokens == vision_token_surcharge((image,))
+
+
+@pytest.mark.parametrize("root_path", [None, "C:/bound/project"])
+def test_live_stream_prompt_forwards_request_authority_root(root_path: str | None) -> None:
+    """The no-tools live path must honour the request root exactly like the tool loop."""
+    engine = _make_engine(
+        [SimpleNamespace(kind="content", text="Hello."), SimpleNamespace(kind="done", text="")]
+    )
+    brain = _make_brain_container(engine)
+    captured: list[dict[str, object]] = []
+    original = brain.stack.context_builder.build_system_prompt
+
+    def _recording(system_prompt: str, **kwargs: object) -> str:
+        captured.append(dict(kwargs))
+        return original(system_prompt, **kwargs)
+
+    brain.stack.context_builder.build_system_prompt = _recording  # type: ignore[method-assign]
+    context = ExecutionContext(
+        schema_version=1, authority_revision="revision", project_id="project_stream",
+        root_path=root_path, root_id="root" if root_path else None,
+        root_revision=1 if root_path else 0, device_id=None, inode=None,
+        tool_policy_snapshot=ToolPolicySnapshot(), knowledge_roots=(),
+    )
+
+    build_live_streaming_chat_response(
+        request_id="req-root-forward",
+        trace_id=None,
+        session_id=None,
+        latest_user_content="x",
+        messages=[],
+        brain_container=brain,
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=4096,
+        execution_context=context,
+    )
+
+    assert captured and captured[0]["request_workspace_root"] == root_path
+
+
+def test_live_stream_prompt_without_execution_context_keeps_builder_root() -> None:
+    engine = _make_engine(
+        [SimpleNamespace(kind="content", text="Hello."), SimpleNamespace(kind="done", text="")]
+    )
+    brain = _make_brain_container(engine)
+    captured: list[dict[str, object]] = []
+    original = brain.stack.context_builder.build_system_prompt
+
+    def _recording(system_prompt: str, **kwargs: object) -> str:
+        captured.append(dict(kwargs))
+        return original(system_prompt, **kwargs)
+
+    brain.stack.context_builder.build_system_prompt = _recording  # type: ignore[method-assign]
+
+    build_live_streaming_chat_response(
+        request_id="req-root-default",
+        trace_id=None,
+        session_id=None,
+        latest_user_content="x",
+        messages=[],
+        brain_container=brain,
+        reasoning_effort=None,
+        learned_lessons=None,
+        max_tokens=4096,
+    )
+
+    assert captured and "request_workspace_root" not in captured[0]

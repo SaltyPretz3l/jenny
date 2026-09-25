@@ -6,6 +6,7 @@
  * single source of truth for that fetch, driven from both setActiveView('home')
  * and bootstrap() (when Home is the restored boot view — a direct activeView
  * restore otherwise skips it, leaving Home stuck "loading" forever).
+ * Home arrival also pulls the "While you were away" page.
  *
  * notifyBootViewReady() fires on success AND failure so the startup overlay can
  * hold until Home's first real render lands (then fade to it) without a failed
@@ -53,6 +54,10 @@
             appendClientLog('WARN', 'home.refresh_offline_failed', { message: String(err?.message || err || '') });
             fwd.reportError({ message: jt('shell.home.offlineRefreshFailed', 'Offline readiness could not be refreshed.'), dedupeKey: 'offline-refresh:offline' }, { origin: 'offline-refresh' });
           });
+      }
+      if (typeof fwd.refreshAwayDigest === 'function') {
+        fwd.refreshAwayDigest().then(() => fwd.renderDashboard())
+          .catch((err) => appendClientLog('WARN', 'home.refresh_away_digest_failed', { message: String(err?.message || err || '') }));
       }
     }
 

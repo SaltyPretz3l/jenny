@@ -3,7 +3,6 @@
     const checkboxModule = require('../inventory/checkbox');
     module.exports = factory({
       actionButton: require('../inventory/action-button'),
-      badge: require('../inventory/badge'),
       checkbox: checkboxModule.checkbox,
       segmentedControl: require('../inventory/segmented-control'),
       textField: require('../inventory/text-field'),
@@ -12,7 +11,6 @@
   }
   root.rendererTaskRailRender = factory({
     actionButton: root.inventoryActionButton,
-    badge: root.inventoryBadge,
     checkbox: root.inventoryCheckbox?.checkbox || root.inventory?.checkbox,
     segmentedControl: root.inventorySegmentedControl,
     textField: root.inventoryTextField,
@@ -21,6 +19,7 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function fallbackEscapeHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -33,6 +32,55 @@
       if (Number.isFinite(parsed)) return parsed;
     }
     return 0;
+  }
+
+  function buildSessionChecklistValue(messages) {
+    const source = Array.isArray(messages) ? messages : [];
+    // todo_write answers `{cleared: true}` once every item is completed and
+    // drops the list; the finished snapshot before it is what the rail shows.
+    let clearedAt = null;
+    for (let index = source.length - 1; index >= 0; index -= 1) {
+      const message = source[index];
+      if (message?.kind !== 'tool_result') continue;
+      const result = message?.tool_result && typeof message.tool_result === 'object'
+        ? message.tool_result : {};
+      const toolName = String(result.tool_name || message?.tool_name || message?.toolName || '')
+        .trim().toLowerCase();
+      if (toolName !== 'todo_write') continue;
+      const isError = result.is_error === true || message?.is_error === true;
+      const errorCode = String(result.error_code || message?.error_code || '').trim();
+      if (isError || errorCode) continue;
+      try {
+        const outputText = String(result.output_text || result.content || '');
+        const parsed = JSON.parse(outputText);
+        const timestamp = String(message?.timestamp || '').trim();
+        const updatedAt = timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : '';
+        if (parsed?.cleared === true && clearedAt === null) {
+          clearedAt = updatedAt;
+          continue;
+        }
+        const todos = Array.isArray(parsed?.todos) ? parsed.todos.slice(0, 50) : [];
+        const items = todos.map((todo) => {
+          const content = String(todo?.content ?? '').trim().slice(0, 300);
+          const rawStatus = String(todo?.status || '').trim().toLowerCase();
+          const status = clearedAt !== null ? 'completed'
+            : ['pending', 'in_progress', 'completed'].includes(rawStatus) ? rawStatus : 'pending';
+          return content ? { content, status } : null;
+        }).filter(Boolean);
+        return { items, updatedAt: clearedAt !== null ? clearedAt : updatedAt };
+      } catch (_error) {
+        return { items: [], updatedAt: '' };
+      }
+    }
+    return { items: [], updatedAt: '' };
+  }
+
+  function buildSessionChecklist(messages) {
+    try {
+      return buildSessionChecklistValue(messages);
+    } catch (_error) {
+      return { items: [], updatedAt: '' };
+    }
   }
 
   function buildTaskRows(state) {
@@ -90,12 +138,6 @@
     return typeof inventory.actionButton === 'function' ? inventory.actionButton(options) : '';
   }
 
-  function badge(text, tone, className) {
-    return typeof inventory.badge === 'function'
-      ? inventory.badge({ text, tone: tone || 'muted', size: 'sm', className: className || '' })
-      : '';
-  }
-
   function field(options) {
     return typeof inventory.textField === 'function' ? inventory.textField(options) : '';
   }
@@ -125,25 +167,19 @@
     const busy = String(uiState.busyTaskId || '') === row.followUpId;
     if (String(uiState.editTaskId || '') === row.followUpId) return renderEditor(row, escapeHtml);
     const resolved = row.status === 'resolved' || row.status === 'archived';
-    const sessionLine = row.sessionTitle
-      ? '<div class="task-rail-origin-session">from ' + escapeHtml(row.sessionTitle) + '</div>'
-      : '';
-    const timing = row.timingLabel
-      ? '<span class="task-rail-timing' + (row.isDue ? ' is-due' : '') + '">' + escapeHtml(row.timingLabel) + '</span>'
-      : '';
-    const sessionAction = row.linkedSessionId
-      ? action({ id: 'task-rail-open-session', label: jt('tasks.rail.openSession', 'Open session'), size: 'sm', variant: 'ghost', disabled: busy, dataset: { 'task-id': row.followUpId } })
-      : action({ id: 'task-rail-start', label: jt('tasks.rail.startSession', 'Start a session'), size: 'sm', variant: 'ghost', disabled: busy, dataset: { 'task-id': row.followUpId } });
+    const meta = [
+      row.originBadge,
+      row.timingLabel,
+      row.sessionTitle ? jt('tasks.rail.fromSession', 'from {sessionTitle}', { sessionTitle: row.sessionTitle }) : '',
+      row.isCurrentSessionTask ? jt('tasks.rail.thisSession', 'This session') : '',
+    ].filter(Boolean).map(escapeHtml).join(' &middot; ');
     return '<article class="task-rail-row' + (resolved ? ' task-rail-row--resolved' : '') + '" data-task-id="'
       + escapeHtml(row.followUpId) + '"><div class="task-rail-row-main">'
       + checkbox(row, busy) + '<div class="task-rail-copy"><div class="task-rail-title">'
       + escapeHtml(row.title) + '</div>'
       + (row.body ? '<div class="task-rail-notes">' + escapeHtml(row.body) + '</div>' : '')
-      + '<div class="task-rail-meta">' + badge(row.originBadge, 'muted', 'task-rail-origin-badge')
-      + timing + '</div>' + sessionLine + '</div>'
+      + (meta ? '<div class="task-rail-meta">' + meta + '</div>' : '') + '</div>'
       + action({ id: 'task-rail-overflow', plain: true, className: 'task-rail-overflow', ariaLabel: jt('tasks.rail.moreActionsFor', 'More actions for {title}', { title: row.title }), ariaHaspopup: 'menu', disabled: busy, trustedHtml: '<span aria-hidden="true">&#8942;</span>', dataset: { 'task-id': row.followUpId } })
-      + '</div><div class="task-rail-row-actions">' + sessionAction
-      + (row.isCurrentSessionTask ? badge(jt('tasks.rail.thisSession', 'This session'), 'success', 'task-rail-current-badge') : '')
       + '</div></article>';
   }
 
@@ -160,8 +196,16 @@
     const addBusy = String(state.busyTaskId || '') === '__add__';
     const filter = ['open', 'done', 'all'].includes(state.filter) ? state.filter : 'open';
     const visibleRows = rowsForFilter(source, filter);
+    const checklist = helpers?.checklist && typeof helpers.checklist === 'object'
+      ? helpers.checklist : { items: [], updatedAt: '' };
+    const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
+    const visibleChecklistItems = checklistItems.filter((item) => {
+      if (filter === 'done') return item?.status === 'completed';
+      if (filter === 'all') return true;
+      return item?.status !== 'completed';
+    });
     const openCount = source.filter((row) => row.section === 'active' || row.section === 'deferred').length;
-    const doneCount = source.filter((row) => row.section === 'recentResolved' || row.section === 'archived').length;
+    const checklistDone = checklistItems.filter((item) => item?.status === 'completed').length;
     const filters = typeof inventory.segmentedControl === 'function' ? inventory.segmentedControl({
       id: 'task-rail-filter', ariaLabel: jt('tasks.rail.filterLabel', 'Task filter'), value: filter, className: 'task-rail-filters',
       dataset: { action: 'task-rail-filter' },
@@ -171,13 +215,33 @@
       ? jt('tasks.rail.noCompleted', 'No completed tasks yet.')
       : filter === 'all' ? jt('tasks.rail.noTasks', 'No tasks yet. Ask Jenny to file one, or add one above.')
         : jt('tasks.rail.noOpenTasks', 'No open tasks. Ask Jenny to file one, or add one above.');
-    const list = visibleRows.length
-      ? visibleRows.map((row) => renderRow(row, state, escapeHtml)).join('')
+    const summary = [
+      checklistItems.length
+        ? jt('tasks.rail.checklistProgress', '{done} of {total} done', { done: checklistDone, total: checklistItems.length })
+        : '',
+      jtn('tasks.rail.followUpsOpen', openCount, { count: openCount }, '{count} follow-up open', '{count} follow-ups open'),
+    ].filter(Boolean).map(escapeHtml).join(' &middot; ');
+    const checklistMarkup = visibleChecklistItems.length
+      ? '<div class="task-rail-group"><b>' + escapeHtml(jt('tasks.rail.thisConversation', 'This conversation'))
+        + '</b><span>' + escapeHtml(jt('tasks.rail.checklistHint', "Jenny's checklist")) + '</span></div>'
+        + visibleChecklistItems.map((item) => '<div class="task-rail-check" data-check-status="'
+          + escapeHtml(item.status) + '"><span class="status-dot task-rail-check-dot" aria-hidden="true"></span>'
+          + '<span class="task-rail-check-text">' + escapeHtml(item.content) + '</span>'
+          + (item.status === 'in_progress' ? '<span class="task-rail-check-meta">'
+            + escapeHtml(jt('tasks.rail.inProgress', 'in progress')) + '</span>' : '')
+          + '</div>').join('')
+      : '';
+    const followUpMarkup = visibleRows.length
+      ? '<div class="task-rail-group"><b>' + escapeHtml(jt('tasks.rail.followUps', 'Follow-ups'))
+        + '</b></div>' + visibleRows.map((row) => renderRow(row, state, escapeHtml)).join('')
+      : '';
+    const list = checklistMarkup || followUpMarkup
+      ? checklistMarkup + followUpMarkup
       : '<div class="task-rail-empty">' + escapeHtml(emptyCopy) + '</div>';
     return '<section class="task-rail-surface" aria-label="Tasks"><header class="task-rail-header">'
-      + '<div><h2>Tasks</h2><p>Tasks &middot; ' + openCount + ' open &middot; ' + doneCount + ' done</p></div>'
-      + filters + '</header><div class="task-rail-add">'
-      + field({ id: 'taskRailDraftTitle', value: String(state.draftTitle || ''), placeholder: jt('tasks.rail.addPlaceholder', 'Add a task'), ariaLabel: jt('tasks.rail.taskTitle', 'Task title'), multiline: true, rows: 1, maxLength: 200, disabled: addBusy, dataset: { 'task-draft-title': '' } })
+      + '<b class="task-rail-title-text">Tasks</b><span class="task-rail-summary">' + summary + '</span></header>'
+      + filters + '<div class="task-rail-add">'
+      + field({ id: 'taskRailDraftTitle', value: String(state.draftTitle || ''), placeholder: jt('tasks.rail.addFollowUpPlaceholder', 'Add a follow-up'), ariaLabel: jt('tasks.rail.taskTitle', 'Task title'), multiline: true, rows: 1, maxLength: 200, disabled: addBusy, dataset: { 'task-draft-title': '' } })
       + action({ id: 'task-rail-add', label: jt('tasks.rail.add', 'Add'), variant: 'primary', size: 'sm', disabled: addBusy }) + '</div>'
       + (state.lastError ? '<div class="task-rail-error" role="alert">' + escapeHtml(state.lastError) + '</div>' : '')
       + '<div class="task-rail-list">' + list + '</div><footer class="task-rail-footer"><span>'
@@ -186,5 +250,5 @@
       + '</footer></section>';
   }
 
-  return { buildTaskRows, renderTaskRailSurface };
+  return { buildSessionChecklist, buildTaskRows, renderTaskRailSurface };
 });

@@ -146,6 +146,53 @@
     return cloned.textContent || '';
   }
 
+  function ownTableRows(tableEl) {
+    return tableEl.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr, :scope > tr');
+  }
+
+  function ownRowCells(rowEl) {
+    return rowEl.querySelectorAll(':scope > th, :scope > td');
+  }
+
+  function tableCellText(cellEl) {
+    var parts = [];
+    function walk(node) {
+      if (node.nodeType === 3) {
+        parts.push(node.nodeValue || '');
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tagName = node.tagName;
+      if (node.classList.contains('markdown-table-header')
+        || (tagName === 'BUTTON' && node.classList.contains('inv-table-copy'))) return;
+      if (tagName === 'BR') {
+        parts.push(' ');
+        return;
+      }
+      var isBlock = /^(P|DIV|UL|OL|LI|PRE|BLOCKQUOTE|TABLE|TR|H[1-6])$/.test(tagName);
+      if (isBlock) parts.push(' ');
+      if (tagName === 'TABLE') {
+        Array.prototype.forEach.call(ownTableRows(node), function (row) {
+          Array.prototype.forEach.call(ownRowCells(row), function (cell) {
+            parts.push(tableCellText(cell), ' ');
+          });
+        });
+      } else {
+        Array.prototype.forEach.call(node.childNodes, walk);
+      }
+      if (isBlock) parts.push(' ');
+    }
+    Array.prototype.forEach.call(cellEl.childNodes, walk);
+    return parts.join('').replace(/\s+/g, ' ').trim();
+  }
+
+  function tableToTsv(tableEl) {
+    if (!tableEl || typeof tableEl.querySelectorAll !== 'function') return '';
+    return Array.prototype.map.call(ownTableRows(tableEl), function (row) {
+      return Array.prototype.map.call(ownRowCells(row), tableCellText).join('\t');
+    }).join('\n');
+  }
+
   function registerCopyTextResolver(resolver) {
     copyTextResolver = typeof resolver === 'function' ? resolver : null;
   }
@@ -172,14 +219,17 @@
     root.__invCodeblockCopyHandlersInstalled = true;
 
     root.addEventListener('click', function (event) {
-      var btn = event.target.closest('.inv-codeblock-copy');
+      var btn = event.target.closest('.inv-codeblock-copy, .inv-table-copy');
       if (btn) {
+        var isTableCopy = btn.classList.contains('inv-table-copy');
+        var tableWrap = isTableCopy ? btn.closest('.markdown-table-wrapper') : null;
+        var tableEl = tableWrap ? tableWrap.querySelector('table') : null;
         var wrap = btn.closest('.inv-codeblock-wrap');
         var codeEl = wrap ? (wrap.querySelector('code') || wrap.querySelector('.tool-kv-grid')) : null;
         var copyTarget = String(btn.getAttribute('data-inv-copy-target') || '').trim();
-        var resolvedText = resolveRegisteredCopyText(copyTarget);
-        if (resolvedText == null && !codeEl) return;
-        var text = resolvedText == null ? getCopyText(codeEl) : resolvedText;
+        var resolvedText = isTableCopy ? null : resolveRegisteredCopyText(copyTarget);
+        if (isTableCopy ? !tableEl : resolvedText == null && !codeEl) return;
+        var text = isTableCopy ? tableToTsv(tableEl) : (resolvedText == null ? getCopyText(codeEl) : resolvedText);
         // Icon-mode buttons carry their visual feedback in CSS (idle/done glyphs
         // keyed on data-copy-status); rewriting textContent would wipe the SVG,
         // so only the text variant swaps its label. The icon has no visible text
@@ -301,6 +351,7 @@
   return {
     codeblock: codeblock,
     codeblockTruncated: codeblockTruncated,
+    tableToTsv: tableToTsv,
     initCopyHandlers: initCopyHandlers,
     registerCopyTextResolver: registerCopyTextResolver,
     escapeHtml: escapeHtml,

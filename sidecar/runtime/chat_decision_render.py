@@ -44,11 +44,11 @@ from sidecar.runtime.chat_helpers import (
     thinking_notification,
     tokenize_with_whitespace,
 )
-from sidecar.runtime.plan_usage_snapshot import attach_plan_usage
 from sidecar.runtime.chat_models import ChatRequestContext, ChatResponse
 from sidecar.runtime.chat_response_builders import _terminal_chat_response
 from sidecar.runtime.diagnostics import sanitize_diagnostic_text
 from sidecar.runtime.ipc_payloads import IpcPayloadExternalizer
+from sidecar.runtime.plan_usage_snapshot import attach_plan_usage
 from sidecar.runtime.reasoning_status import sanitize_visible_text
 from sidecar.runtime.rpc import notification
 from sidecar.runtime.turn_state import (
@@ -142,7 +142,9 @@ def _chat_response_from_decision(
             source_payload["trace_id"] = trace_id
         event = build_canonical_turn_event(
             event_type=event_type,
-            turn_id=request_id,
+            # A resumed continuation runs under a fresh request id but joins
+            # the logical turn it continues (tool_loop_calls does the same).
+            turn_id=request_context.logical_turn_id or request_id,
             stream_id=request_id,
             session_id=session_id or "",
             seq=canonical_seq,
@@ -463,7 +465,6 @@ def _chat_response_from_decision(
         context_tokens = estimate_messages_tokens(budget_messages or [], _backend)
     if context_tokens is not None:
         usage_payload["context_tokens_estimate"] = context_tokens
-    attach_context_used_tokens(usage_payload, context_tokens_estimate=context_tokens)
     attach_context_window(usage_payload, stack.engine)
     attach_plan_usage(
         usage_payload,
@@ -473,16 +474,25 @@ def _chat_response_from_decision(
     # Only forward the compaction trigger when compaction can actually fire
     # (both flags on); otherwise the meter would advertise an auto-compact
     # point that the disabled runtime will never act on.
+    meter_tool_overhead = 0
     if is_feature_flag_enabled(
         feature_flags, FEATURE_TOKEN_BUDGET
     ) and is_feature_flag_enabled(feature_flags, FEATURE_CONTEXT_COMPACTION):
-        attach_compact_threshold(
+        meter_tool_overhead = attach_compact_threshold(
             usage_payload,
             stack.engine,
             stack.config,
             num_tools=int(decision.tool_schema_count or 0),
             threshold_tokens=getattr(decision, "compact_threshold_tokens", None),
+            tool_overhead_tokens=getattr(decision, "context_tool_overhead_tokens", None),
         )
+    # After the threshold: the used figure counts the same tool reserve the
+    # published threshold includes, so the meter compares like with like.
+    attach_context_used_tokens(
+        usage_payload,
+        context_tokens_estimate=context_tokens,
+        tool_overhead_tokens=meter_tool_overhead,
+    )
     if visible_response_text:
         append_canonical(
             "text_part_completed",

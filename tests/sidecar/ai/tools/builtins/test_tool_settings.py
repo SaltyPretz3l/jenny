@@ -53,6 +53,7 @@ def test_git_handler_reads_settings_container_after_configure(
         cwd: Path,
         timeout_seconds: float,
         env: dict[str, str],
+        **_trust: object,
     ) -> object:
         del arguments, cwd, env
         observed_timeouts.append(timeout_seconds)

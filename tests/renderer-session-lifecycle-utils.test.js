@@ -84,6 +84,44 @@ test('active-turn transport failure preserves an existing approval and emits a b
   assert.doesNotMatch(JSON.stringify(logs), /Users\\alice|state\.json|IPC failed/);
 });
 
+test('a rehydrated approval carries the persisted one-off flag and policy fields, so it renders like a live one', async () => {
+  const state = {
+    currentSessionId: 'session-old',
+    sessionMessageAccessOrder: new Map(),
+    pendingToolApprovals: new Map(),
+    messagesBySession: new Map([['session-new', [{
+      id: 'm-1', kind: 'tool_use', role: 'assistant',
+      tool_call: {
+        call_id: 'call-1', tool_name: 'write_file', status: 'pending_approval', input: { path: 'notes.md' },
+        one_off_only: true, policy_scope: 'Workspace files', policy_consequence: 'May change data in this scope.',
+        reason: 'Writes outside the workspace root.',
+      },
+    }]]]),
+  };
+  const controller = createSessionLifecycleController({
+    state,
+    sessionCacheController: { async evictColdSessionCaches() {} },
+    thinkingController: { resumeAutoScroll() {} },
+    jennyShell: {
+      sessions: { async getMessages() { return { data: [], turn_events: [] }; } },
+      chat: { async getActiveTurnState() {
+        return { stream_id: 'stream-1', pending_approval: { call_id: 'call-1', approval_id: 'approval-1', tool_name: 'write_file' } };
+      } },
+    },
+    callbacks: { appendClientLog() {} },
+  });
+
+  await controller.openSession('session-new', { silent: true });
+
+  const entry = state.pendingToolApprovals.get('approval-1');
+  assert.ok(entry, 'the persisted approval is rehydrated under its approval id');
+  assert.equal(entry.callId, 'call-1');
+  assert.equal(entry.oneOffOnly, true, 'a one-off approval stays one-off after a restart, so "Always allow" is withheld everywhere');
+  assert.equal(entry.policyScope, 'Workspace files');
+  assert.equal(entry.policyConsequence, 'May change data in this scope.');
+  assert.equal(entry.reason, 'Writes outside the workspace root.');
+});
+
 test('openSession honors an explicit outgoing session after workspace state publishes', async (t) => {
   const previousController = globalThis.rendererComposerSessionStateController;
   const composerCalls = { capture: [], restore: [] };
@@ -421,4 +459,66 @@ test('an EXPIRED tombstone no longer filters the listed session', async () => {
 
   assert.equal(result.validSessionIds.has('session-old-delete'), true, 'expired tombstones self-heal');
   assert.equal(state.recentlyDeletedSessionIds.has('session-old-delete'), false, 'the expired entry is pruned');
+});
+
+
+function createListRaceHarness({ evictColdSessionCaches = async () => {} } = {}) {
+  const lists = [];
+  const state = {
+    auth: { authenticated: true },
+    sessions: [{ id: 'chat-1', title: 'Old title' }],
+    currentSessionId: 'chat-1',
+    messagesBySession: new Map([['chat-1', []]]),
+    turnEventsBySession: new Map(),
+    interactiveDraftsBySession: new Map(),
+    sessionMessageAccessOrder: new Map(),
+    pendingToolApprovals: new Map(),
+    ui: {},
+  };
+  const controller = createSessionLifecycleController({
+    state,
+    sessionCacheController: { async clearSessionStreamState() {}, evictColdSessionCaches },
+    jennyShell: { sessions: { list: () => new Promise((resolve, reject) => lists.push({ resolve, reject })) } },
+    callbacks: {
+      removeSessionState() {}, clearDismissedMemorySession() {}, pruneSessionArtifacts() {},
+      evictPretextArticlePredictions() {}, syncRuntimeDraftFromActiveSession() {},
+    },
+  });
+  return { state, controller, lists };
+}
+
+test('an older list still applies when the newer refresh fails (F37)', async () => {
+  const { state, controller, lists } = createListRaceHarness();
+  const older = controller.refreshSessionSummaries('chat-2');
+  const newer = controller.refreshSessionSummaries('');
+  lists[1].reject(new Error('list failed'));
+  await assert.rejects(newer);
+  lists[0].resolve({ data: [{ id: 'chat-1', title: 'Old title' }, { id: 'chat-2', title: 'New chat' }] });
+  const result = await older;
+
+  assert.equal(result.validSessionIds.has('chat-2'), true);
+  assert.equal(state.currentSessionId, 'chat-2');
+});
+
+test('an older list that a newer one overtakes during cache cleanup does not reselect (F37)', async () => {
+  let releaseCleanup;
+  let cleanups = 0;
+  const { state, controller, lists } = createListRaceHarness({
+    evictColdSessionCaches: () => {
+      cleanups += 1;
+      return cleanups === 1 ? new Promise((resolve) => { releaseCleanup = resolve; }) : Promise.resolve();
+    },
+  });
+  const both = [{ id: 'chat-1', title: 'Old title' }, { id: 'chat-2', title: 'New chat' }];
+  const older = controller.refreshSessionSummaries('chat-1');
+  lists[0].resolve({ data: both });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof releaseCleanup, 'function', 'precondition: the older refresh waits in cleanup');
+  const newer = controller.refreshSessionSummaries('chat-2');
+  lists[1].resolve({ data: both });
+  await newer;
+  releaseCleanup();
+  await older;
+
+  assert.equal(state.currentSessionId, 'chat-2');
 });

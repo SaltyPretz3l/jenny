@@ -11,8 +11,12 @@
 
 
   const RECEIPT_OPERATIONS = new Set([
+    'sessionRuntime.start', 'sessionRuntime.pause', 'sessionRuntime.resume', 'sessionRuntime.cancel',
+    'sessionRuntime.updatePending', 'sessionRuntime.updateLimits',
     'sessions.create', 'sessions.rename', 'sessions.delete', 'sessions.preferences',
     'chat.send', 'chat.cancel', 'approval.resolve', 'questions.answer', 'questions.decline',
+    'projects.create', 'projects.rename', 'projects.bindRoot', 'projects.assignSession',
+    'permissionReview.resolve',
   ]);
 
   function text(value) { return typeof value === 'string' ? value : ''; }
@@ -156,6 +160,18 @@
         } else this._showUnresolved(jt("browserMutationRecovery.theHostedChangeIsStillUnresolvedCheckAgainAfter", "The hosted change is still unresolved. Check again after the connection recovers."));
         return { resolved: false, result: null };
       }
+    }
+
+    applyAcceptedSend(pending, result) {
+        const currentIds = (this.app.state.attachments || []).map((item) => text(item?.attachment?.id));
+        const unchanged = this.app.state.draft === pending.ui?.draft
+          && JSON.stringify(currentIds) === JSON.stringify(pending.ui?.attachmentIds || []);
+        if (unchanged) {
+          this.app.state.draft = '';
+          this.app.state.attachments = [];
+        }
+        if (text(result.stream_id)) this.app.state.activeStreamId = result.stream_id;
+        this.app.state.statusMessage = result.durable ? jt('titlebar.runtimeHealth.pending', 'Pending') : jt("app.jennyIsWorking", "Jenny is working…");
     }
 
     async _settled(pending, result, refresh) {

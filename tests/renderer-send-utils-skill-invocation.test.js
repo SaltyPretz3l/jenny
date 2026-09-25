@@ -10,6 +10,9 @@ const composerState = require('../renderer/chat/renderer-composer-v2-state');
 const INVOCATION = Object.freeze({
   id: 'bundled/humanizer', name: 'Humanizer', scope: 'bundled', command: 'humanize',
 });
+const SECOND_INVOCATION = Object.freeze({
+  id: 'bundled/verifier', name: 'Verifier', scope: 'bundled', command: 'verify',
+});
 
 test('send carries skillInvocation id and the optimistic user row carries enriched metadata', async (t) => {
   const harness = createControllerHarness([]);
@@ -35,6 +38,40 @@ test('queued replay retains skill invocation metadata', async (t) => {
 
   assert.deepEqual(harness.calls.startStream[0].skillInvocation, { id: INVOCATION.id });
   assert.deepEqual(harness.calls.optimisticAppend[0].extra.skill_invocation, INVOCATION);
+});
+
+test('queued replay uses the selected entry skill instead of a parked head skill', async (t) => {
+  const harness = createControllerHarness([]);
+  t.after(() => harness.restore());
+  harness.controller.stashQueuedSendForSession('session-1', {
+    prompt: 'Parked A', status: 'needs_review', meta: { skillInvocation: INVOCATION },
+  });
+  harness.controller.stashQueuedSendForSession('session-1', {
+    prompt: 'Dispatch B', status: 'ready', meta: { skillInvocation: SECOND_INVOCATION },
+  });
+
+  await harness.controller.dispatchQueuedSendForSession('session-1');
+
+  assert.equal(harness.calls.startStream[0].prompt, 'Dispatch B');
+  assert.deepEqual(harness.calls.startStream[0].skillInvocation, { id: SECOND_INVOCATION.id });
+  assert.deepEqual(harness.calls.optimisticAppend[0].extra.skill_invocation, SECOND_INVOCATION);
+});
+
+test('queued replay with no selected-entry skill does not inherit a parked head skill', async (t) => {
+  const harness = createControllerHarness([]);
+  t.after(() => harness.restore());
+  harness.controller.stashQueuedSendForSession('session-1', {
+    prompt: 'Parked A', status: 'needs_review', meta: { skillInvocation: INVOCATION },
+  });
+  harness.controller.stashQueuedSendForSession('session-1', {
+    prompt: 'Dispatch without skill', status: 'ready', meta: {},
+  });
+
+  await harness.controller.dispatchQueuedSendForSession('session-1');
+
+  assert.equal(harness.calls.startStream[0].prompt, 'Dispatch without skill');
+  assert.equal(Object.hasOwn(harness.calls.startStream[0], 'skillInvocation'), false);
+  assert.equal(harness.calls.optimisticAppend[0].extra.skill_invocation, undefined);
 });
 
 test('failed-payload retry retains skill invocation metadata', async (t) => {
@@ -74,6 +111,33 @@ test('attach remainder sends immediately, carries skillInvocation, and clears th
 
   assert.deepEqual(harness.calls.startStream[0].skillInvocation, { id: INVOCATION.id });
   assert.deepEqual(harness.calls.optimisticAppend[0].extra.skill_invocation, INVOCATION);
+  assert.equal(composerState.getPendingSkillInvocation(harness.state), null);
+});
+
+test('a durable Send shows the skill pill from Send and clears the accepted chip', async (t) => {
+  // Gate A9 2026-09-24: on the durable path the pill appeared only when the
+  // turn ended, and the chip stayed, so the next Send ran the skill again.
+  const submitted = [];
+  const harness = createControllerHarness([], { durableRuntime: true, shell: { sessionRuntime: {
+    submit: async (payload) => {
+      submitted.push(payload);
+      return { ok: true, work_id: 'work_1', turn_id: 'turn_1', session_id: payload.session_id, revision: 1, status: 'pending' };
+    },
+  } } });
+  t.after(() => harness.restore());
+  t.after(() => harness.controller.dispose());
+  const registry = createSlashCommandRegistry({ state: harness.state });
+  registry.register('/verify', 'Check work', null, { action: 'attach', skill: SECOND_INVOCATION });
+  harness.chatInput.value = '/verify check README.md';
+  const slash = createSendSlashDispatch({ state: harness.state, registry, chatInput: harness.chatInput });
+  t.after(() => slash.dispose());
+
+  const dispatch = await slash.dispatch('/verify check README.md', {});
+  const result = await harness.controller.startPromptSend(dispatch.prompt, dispatch.settings);
+
+  assert.equal(result.durable, true);
+  assert.deepEqual(submitted[0].skill_invocation, { id: SECOND_INVOCATION.id });
+  assert.deepEqual(harness.calls.optimisticAppend[0].extra.skill_invocation, SECOND_INVOCATION);
   assert.equal(composerState.getPendingSkillInvocation(harness.state), null);
 });
 

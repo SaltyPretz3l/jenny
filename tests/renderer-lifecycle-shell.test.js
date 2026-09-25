@@ -37,10 +37,12 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-// Six features.onChanged subscriptions are owned by the loaded modules
-// (renderer-app-lifecycle-composition, renderer-app-shell-bindings x2,
-// renderer-stream-handler-lifecycle, renderer-plugins-settings, the skills
-// settings rows) and the skills rows also own the one skills.onChanged.
+// Five features.onChanged subscriptions are owned by the loaded modules
+// (renderer-app-lifecycle-composition, renderer-app-shell-bindings,
+// renderer-stream-handler-lifecycle, renderer-plugins-settings and
+// renderer-settings-model-library-section); the skills settings rows own the
+// one skills.onChanged. The legacy Model library's own subscription left
+// with that module in b04edf511.
 test('renderer dispose unsubscribes shell listeners and re-init does not duplicate them', async (t) => {
   const app = await loadRendererTestApp(t);
   const { window, shell } = app;
@@ -50,7 +52,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 6,
+    features: 5,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -73,7 +75,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 6,
+    features: 5,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -105,7 +107,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 6,
+    features: 5,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -128,7 +130,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 6,
+    features: 5,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -190,6 +192,104 @@ test('renderer loadSessions prunes stale per-session caches and resets the activ
   assert.equal(rendererState.messagesBySession.has('session-keep'), true);
   assert.equal(rendererState.turnEventsBySession.has('session-keep'), true);
   assert.deepEqual(evictCalls, ['article:']);
+});
+
+test('overlapping New chat creates keep the second session current and list both rows', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const rendererState = window.__rendererState;
+  const canonicalSessions = [];
+  let createCount = 0;
+  let listCount = 0;
+  let resolveFirstList;
+  let markFirstListStarted;
+  const firstListResponse = new Promise((resolve) => { resolveFirstList = resolve; });
+  const firstListStarted = new Promise((resolve) => { markFirstListStarted = resolve; });
+
+  shell.sessions.create = async () => {
+    const session = buildSession(`session-overlap-${++createCount}`, { title: 'New Chat' });
+    canonicalSessions.push(session);
+    shell.__state.sessions = canonicalSessions.slice();
+    shell.__state.messagesBySession.set(session.id, []);
+    return { data: session };
+  };
+  shell.sessions.list = async () => {
+    listCount += 1;
+    const snapshot = canonicalSessions.map((session) => ({ ...session }));
+    if (listCount === 1) {
+      markFirstListStarted();
+      return firstListResponse;
+    }
+    return { data: snapshot };
+  };
+
+  const newChatButton = window.document.getElementById('newChatButton');
+  newChatButton.click();
+  await firstListStarted;
+  newChatButton.click();
+
+  for (let attempt = 0; attempt < 20 && rendererState.currentSessionId !== 'session-overlap-2'; attempt += 1) {
+    await waitForUi(window, 5);
+  }
+  assert.equal(rendererState.currentSessionId, 'session-overlap-2', 'the second create settles first');
+
+  resolveFirstList({ data: [{ ...canonicalSessions[0] }] });
+  await waitForUi(window, 30);
+
+  assert.equal(rendererState.currentSessionId, 'session-overlap-2');
+  assert.deepEqual(
+    Array.from(rendererState.sessions, (session) => session.id).sort(),
+    ['session-overlap-1', 'session-overlap-2']
+  );
+  assert.deepEqual(
+    [...window.document.querySelectorAll('.conversation-item')]
+      .map((row) => row.dataset.sessionId)
+      .sort(),
+    ['session-overlap-1', 'session-overlap-2']
+  );
+});
+
+test('a New chat clicked while the previous one opens its tab ends on the newer chat', async (t) => {
+  // The gate smoke's timing: the first chat is current and listed, but its tab
+  // activation (workspace persist) has not finished when the second click lands.
+  let releaseFirstPersist;
+  let markFirstPersistStarted;
+  const firstPersist = new Promise((resolve) => { releaseFirstPersist = resolve; });
+  const firstPersistStarted = new Promise((resolve) => { markFirstPersistStarted = resolve; });
+  let persistCount = 0;
+  const { window, shell } = await loadRendererTestApp(t, { shell: { workspace: {
+    async updateState(patch) {
+      if (patch?.activeSessionId !== 'session-tab-1') return null;
+      persistCount += 1;
+      if (persistCount === 1) {
+        markFirstPersistStarted();
+        await firstPersist;
+      }
+      return null;
+    },
+  } } });
+  const rendererState = window.__rendererState;
+  const canonicalSessions = [];
+  let createCount = 0;
+  shell.sessions.create = async () => {
+    const session = buildSession(`session-tab-${++createCount}`, { title: 'New Chat' });
+    canonicalSessions.push(session);
+    shell.__state.sessions = canonicalSessions.slice();
+    shell.__state.messagesBySession.set(session.id, []);
+    return { data: session };
+  };
+  shell.sessions.list = async () => ({ data: canonicalSessions.map((session) => ({ ...session })) });
+
+  const newChatButton = window.document.getElementById('newChatButton');
+  newChatButton.click();
+  await firstPersistStarted;
+  assert.equal(rendererState.currentSessionId, 'session-tab-1');
+  newChatButton.click();
+  for (let attempt = 0; attempt < 20 && createCount < 2; attempt += 1) await waitForUi(window, 5);
+  releaseFirstPersist();
+  await waitForUi(window, 40);
+
+  assert.equal(rendererState.currentSessionId, 'session-tab-2');
+  assert.equal(rendererState.workspace.activeSessionId, 'session-tab-2');
 });
 
 test('renderer logout clears multi-stream controller state and legacy busy snapshots', async (t) => {

@@ -114,13 +114,26 @@ def prepare(tag: str, run=gh) -> None:
 
 
 def upload(tag: str, files: list[Path], run=gh) -> None:
+    uploaded: list[Path] = []
+
+    def recheck_draft() -> None:
+        try:
+            require_draft(tag, run)
+        except (RuntimeError, json.JSONDecodeError) as error:
+            names = ", ".join(file.name for file in uploaded) or "none"
+            raise RuntimeError(
+                f"Release {tag} is not verified as a draft; files already uploaded: {names}. "
+                "Published release contents may have changed; inspect the published "
+                "release by hand."
+            ) from error
+
     for file in files:
-        # A human must never publish while upload jobs are running. Recheck
-        # before EVERY asset; a workflow rerun cannot modify a published tag.
-        require_draft(tag, run)
+        recheck_draft()
         result = run("release", "upload", tag, str(file), "--repo", REPOSITORY, "--clobber")
         if result.returncode:
             raise RuntimeError(f"Draft upload failed: {file.name}")
+        uploaded.append(file)
+    recheck_draft()
 
 
 def main() -> int:

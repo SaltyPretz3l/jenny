@@ -397,6 +397,37 @@ test('remote IPC drives real pairing, chat, decisions, control loss, and plugin 
   ));
   assert.equal(control.ok, true);
   phone.controlLease = control.data.lease.lease_id;
+
+  const startChatStream = backend.startChatStream;
+  let releasePreflight;
+  let preflightCancellation;
+  let admittedAfterPreflight = false;
+  backend.startChatStream = async (payload, { cancellation } = {}) => {
+    preflightCancellation = cancellation;
+    await new Promise((resolve) => { releasePreflight = resolve; });
+    if (cancellation?.signal?.aborted) throw new Error('remote start cancelled');
+    admittedAfterPreflight = true;
+    return startChatStream(payload, { cancellation });
+  };
+  const pendingSend = sendCommand(relay, phone, command(
+    phone, 'request_chat_withdrawn', 'chat.send', { prompt: 'cancel me' }, sessionId
+  ));
+  await waitFor(() => releasePreflight, 'remote chat preflight');
+  let resolveWithdrawalRead;
+  readPluginState = () => new Promise((resolve) => { resolveWithdrawalRead = resolve; });
+  registration.wrapBridgeEvents(() => {})('plugins.onChanged', {});
+  const cancelledWhileUncertain = preflightCancellation.signal.aborted;
+  resolveWithdrawalRead(pluginState);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  readPluginState = () => pluginState;
+  releasePreflight();
+  const withdrawn = await pendingSend;
+  assert.equal(cancelledWhileUncertain, true);
+  assert.equal(admittedAfterPreflight, false);
+  assert.equal(withdrawn.error.reason, 'unauthorized');
+  assert.equal(backend.started.length, 0);
+  backend.startChatStream = startChatStream;
+
   const sent = await sendCommand(relay, phone, command(
     phone, 'request_chat_1', 'chat.send', { prompt: 'hello' }, sessionId
   ));

@@ -12,10 +12,18 @@ const { t } = require('../i18n-main');
 const MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES = 2 * 1024 * 1024;
 const ADMITTED_KINDS = new Set(['image', 'pdf_page', 'chart']);
 const ADMITTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-// Bounded id -> stored-asset index so reads are ID-based without scanning
-// disk; oldest entries fall out first (they remain readable via session
-// message refs which persist the assetPath).
+// Bounded session+id -> stored-asset index so reads never cross session
+// ownership. Oldest entries fall out first; canonical session refs retain the
+// restart/eviction fallback without a profile-wide scan.
 const MAX_INDEX_ENTRIES = 512;
+
+function boundedReadToken(value, maxChars) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  // eslint-disable-next-line no-control-regex -- session/attachment identifiers reject controls.
+  return token && token.length <= maxChars && !/[\u0000-\u001f\u007f]/u.test(token)
+    ? token
+    : '';
+}
 
 function normalizeWireToolResultAttachment(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -76,9 +84,41 @@ function attachmentIndexFor(service) {
   return service._toolResultAttachmentIndex;
 }
 
+function attachmentIndexKey(sessionId, attachmentId) {
+  return `${sessionId}\0${attachmentId}`;
+}
+
+function captureSessionIdentity(service, sessionId) {
+  const store = service?.sessionStore;
+  let record;
+  try {
+    record = typeof store?.getSessionSummary === 'function'
+      ? store.getSessionSummary(sessionId)
+      : typeof store?.peekSession === 'function'
+        ? store.peekSession(sessionId)
+        : typeof store?.getSession === 'function'
+          ? store.getSession(sessionId)
+          : null;
+  } catch (_error) {
+    return null;
+  }
+  const id = boundedReadToken(record?.id, 128);
+  const projectId = boundedReadToken(record?.project_id, 128);
+  const incarnation = boundedReadToken(record?.created_at, 128)
+    || boundedReadToken(record?.session_incarnation, 128);
+  return id === sessionId && projectId && incarnation
+    ? Object.freeze({ id, projectId, incarnation })
+    : null;
+}
+
+function sameSessionIdentity(left, right) {
+  return Boolean(left && right && left.id === right.id
+    && left.projectId === right.projectId && left.incarnation === right.incarnation);
+}
+
 function rememberStoredAttachment(service, record) {
   const index = attachmentIndexFor(service);
-  index.set(record.id, record);
+  index.set(attachmentIndexKey(record.sessionId, record.id), record);
   while (index.size > MAX_INDEX_ENTRIES) {
     const oldestKey = index.keys().next().value;
     index.delete(oldestKey);
@@ -93,7 +133,10 @@ function rememberStoredAttachment(service, record) {
 function ingestToolResultAttachments(service, wireAttachments, context = {}) {
   const store = service ? service.attachmentAssetStore : null;
   const entries = Array.isArray(wireAttachments) ? wireAttachments : [];
-  if (!store || typeof store.saveImageBufferSync !== 'function' || !entries.length) {
+  const sessionId = String(context.sessionId || '').trim();
+  const sessionIdentity = captureSessionIdentity(service, sessionId);
+  if (!sessionId || !store || typeof store.saveImageBufferSync !== 'function'
+    || !entries.length || (service?.projectAuthority && !sessionIdentity)) {
     return [];
   }
   const refs = [];
@@ -135,6 +178,8 @@ function ingestToolResultAttachments(service, wireAttachments, context = {}) {
       streamId: String(context.streamId || ''),
       toolCallId: String(context.callId || ''),
       toolName: String(context.toolName || ''),
+      sessionId,
+      sessionIdentity,
     };
     rememberStoredAttachment(service, record);
     refs.push(record);
@@ -158,14 +203,67 @@ function toPersistedToolResultAttachmentRefs(refs) {
 }
 
 /**
- * Bounded ID-based read of one ingested attachment. Resolves through the
+ * Bounded session-owned read of one ingested attachment. Resolves through the
  * asset store's managed-path check and refuses anything oversized, missing,
- * or outside the store.
+ * or outside the requested canonical session.
  */
-function readToolResultAttachment(service, attachmentId) {
-  const id = String(attachmentId || '').trim();
+function readContext(attachmentIdOrPayload, options) {
+  const payload = attachmentIdOrPayload && typeof attachmentIdOrPayload === 'object'
+    && !Array.isArray(attachmentIdOrPayload) ? attachmentIdOrPayload : null;
+  return {
+    id: boundedReadToken(String(payload
+      ? payload.attachment_id || payload.attachmentId || ''
+      : attachmentIdOrPayload || ''), 256),
+    sessionId: boundedReadToken(String(payload?.session_id || payload?.sessionId
+      || options?.sessionId || options?.session_id || ''), 128),
+  };
+}
+
+function persistedRecordForSession(service, sessionId, attachmentId) {
+  const store = service?.sessionStore;
+  let messages;
+  try {
+    messages = typeof store?.peekSessionMessages === 'function'
+      ? store.peekSessionMessages(sessionId)
+      : typeof store?.getSessionMessages === 'function'
+        ? store.getSessionMessages(sessionId)
+        : [];
+  } catch (_error) {
+    return null;
+  }
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const refs = message?.kind === 'tool_result'
+      && Array.isArray(message?.tool_result?.trusted_attachment_refs)
+      ? message.tool_result.trusted_attachment_refs
+      : [];
+    const ref = refs.find((entry) => String(entry?.id || '').trim() === attachmentId);
+    if (!ref) continue;
+    return {
+      id: attachmentId,
+      kind: String(ref.kind || '').trim(),
+      mimeType: String(ref.mime_type || ref.mimeType || '').trim(),
+      byteLength: Number(ref.byte_length ?? ref.byteLength) || 0,
+      width: Number(ref.width) || 0,
+      height: Number(ref.height) || 0,
+      pageNumber: Number(ref.page_number ?? ref.pageNumber) || null,
+      assetPath: String(ref.asset_path || ref.assetPath || '').trim(),
+      sessionId,
+    };
+  }
+  return null;
+}
+
+function readToolResultAttachment(service, attachmentIdOrPayload, options = {}) {
+  const { id, sessionId } = readContext(attachmentIdOrPayload, options);
   const index = attachmentIndexFor(service || {});
-  const record = id ? index.get(id) : null;
+  let record = id && sessionId ? index.get(attachmentIndexKey(sessionId, id)) : null;
+  if (record && service?.projectAuthority
+    && !sameSessionIdentity(record.sessionIdentity, captureSessionIdentity(service, sessionId))) {
+    record = null;
+  }
+  if (!record && id && sessionId) {
+    record = persistedRecordForSession(service, sessionId, id);
+  }
   if (!record) {
     return { ok: false, reason: t('main.attachments.unknownId', 'unknown attachment id') };
   }

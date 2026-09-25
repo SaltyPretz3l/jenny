@@ -11,6 +11,7 @@ const {
   sanitizeApprovalReason,
   sanitizeApprovalPolicyText,
   sanitizeToolInputValue,
+  buildModelReplayToolInputJson,
 } = require('../services/backend/tool-loop-input-sanitization');
 const {
   sanitizeApprovalPolicyPresentation,
@@ -67,6 +68,88 @@ test('tool input sanitization preserves __proto__ and constructor as own JSON fi
   assert.equal(
     JSON.stringify(sanitized),
     '{"safe":1,"__proto__":{"injected":"yes"},"constructor":{"name":"attacker"}}'
+  );
+});
+
+test('model replay input rewrites workspace paths before applying persisted sanitization', () => {
+  const workspaceRoot = 'C:\\Users\\me\\ws';
+
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ path: workspaceRoot }, workspaceRoot)),
+    { path: '.' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson(
+      { path: `${workspaceRoot}\\` },
+      `${workspaceRoot}\\`
+    )),
+    { path: '.' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson(
+      { path: 'C:/Users/me/ws/src/a.js' },
+      workspaceRoot
+    )),
+    { path: './src/a.js' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson(
+      { path: 'c:\\users\\ME\\WS\\src\\a.js' },
+      workspaceRoot
+    )),
+    { path: '.\\src\\a.js' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson(
+      {
+        path: 'C:\\Users\\me\\ws2',
+        outside: 'D:\\private\\notes.txt',
+        api_key: 'secret-value',
+      },
+      workspaceRoot
+    )),
+    {
+      path: `${REDACTED_PATH_TOKEN}\\ws2`,
+      outside: `${REDACTED_PATH_TOKEN}\\notes.txt`,
+      api_key: '[redacted]',
+    }
+  );
+});
+
+test('model replay input handles Windows shell punctuation and UNC roots', () => {
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ command: 'cd C:\\ws; dir C:\\ws\\src' }, 'C:\\ws')),
+    { command: 'cd .; dir .\\src' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ path: '\\\\Server\\Share\\WS\\a.txt' }, '\\\\server\\share\\ws')),
+    { path: '.\\a.txt' }
+  );
+});
+
+test('model replay input rewrites POSIX workspace paths in command strings', () => {
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson(
+      { command: 'cd /home/me/ws && ls' },
+      '/home/me/ws/'
+    )),
+    { command: 'cd . && ls' }
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ path: '/x/home/me/ws/a' }, '/home/me/ws')),
+    { path: `${REDACTED_PATH_TOKEN}/a` },
+    'the root only matches as a whole path prefix'
+  );
+  assert.equal(buildModelReplayToolInputJson({ path: '/home/me/ws' }, ''), '');
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ command: 'cd /home/me/ws; ls /home/me/ws/src' }, '/home/me/ws')),
+    { command: 'cd .; ls ./src' },
+    'shell punctuation ends the root'
+  );
+  assert.deepEqual(
+    JSON.parse(buildModelReplayToolInputJson({ path: '/home/me/ws.bak/a' }, '/home/me/ws')),
+    { path: `${REDACTED_PATH_TOKEN}/a` },
+    'a sibling that extends the last segment is not the root'
   );
 });
 

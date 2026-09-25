@@ -27,6 +27,24 @@ function getEmptyDiagnosticsMetadata() {
   return { sources: {}, integrity: { complete: true, partial_reasons: [] } };
 }
 
+function createPermissionStoreDouble(getSnapshot) {
+  return {
+    getSnapshot,
+    getReviewState() {
+      return {
+        read_only: false,
+        read_only_reason: null,
+        pending_count: 0,
+        pending: [],
+        history: [],
+      };
+    },
+    resolvePendingReview() {
+      return { resolved: false, reason: 'not_found' };
+    },
+  };
+}
+
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
@@ -43,28 +61,26 @@ test('backend service composes Jenny status from existing observability facets',
     isSafeStorageReady: () => true,
     usageHistory,
     shellLogStore: logStore,
-    toolPermissionStore: {
-      getSnapshot() {
-        return {
-          version: 4,
-          legacy_policies: {
-            read_file: 'auto',
-            write_file: 'ask',
-          },
-          rules: [
-            {
-              id: 'deny-secret-path',
-              decision: 'deny',
-              reason: `block ${userDataPath}`,
-              match: {
-                tool_id: 'write_file',
-                path_prefix: path.join(userDataPath, 'secrets'),
-              },
+    toolPermissionStore: createPermissionStoreDouble(() => {
+      return {
+        version: 4,
+        legacy_policies: {
+          read_file: 'auto',
+          write_file: 'ask',
+        },
+        rules: [
+          {
+            id: 'deny-secret-path',
+            decision: 'deny',
+            reason: `block ${userDataPath}`,
+            match: {
+              tool_id: 'write_file',
+              path_prefix: path.join(userDataPath, 'secrets'),
             },
-          ],
-        };
-      },
-    },
+          },
+        ],
+      };
+    }),
     automationService: {
       async getStatusSummary() {
         return {
@@ -447,11 +463,9 @@ test('backend service Jenny status redacts display-facing facet errors', async (
       },
       getCurrentDiagnosticsMetadata: getEmptyDiagnosticsMetadata,
     },
-    toolPermissionStore: {
-      getSnapshot() {
-        throw new Error(sensitiveMessage);
-      },
-    },
+    toolPermissionStore: createPermissionStoreDouble(() => {
+      throw new Error(sensitiveMessage);
+    }),
     automationService: {
       async getStatusSummary() {
         throw new Error(sensitiveMessage);

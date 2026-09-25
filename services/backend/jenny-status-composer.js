@@ -1,11 +1,12 @@
 'use strict';
 
-const { redactLogValue } = require('../log-entry-normalizer');
+const { collapseRedactedPathTails, redactLogValue } = require('../log-entry-normalizer');
 const { LOG_RETENTION } = require('../../renderer/shared/log-contract-utils');
 const { buildResourceBudgetFacet } = require('./resource-budget-facade');
 const { buildTurnDiagnosticIndex } = require('./turn-diagnostic-index');
 const { buildToolPolicyStatusFacet } = require('../tools/tool-policy-status');
 const { normalizeText: normalizeString } = require('../shared/normalize');
+const { getTrustedExecutionBinding } = require('./session-execution-authority');
 
 const JENNY_STATUS_SCHEMA_VERSION = 4;
 const DEFAULT_RECENT_LOG_LIMIT = 10;
@@ -367,7 +368,7 @@ function buildRuntimeLifecycleFacet(service, backendStatus = {}, runtimeStatus =
   };
 }
 
-function buildRuntimeFacet(service, backendStatus = {}, redactor = null) {
+function buildRuntimeFacet(service, backendStatus = {}, redactor = null, executionAuthority = null) {
   const currentStatus = service?.currentStatus && typeof service.currentStatus === 'object'
     ? service.currentStatus
     : null;
@@ -376,6 +377,8 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null) {
       ? service._buildManagedStatusSnapshot()
       : {}
   );
+  const trusted = getTrustedExecutionBinding(executionAuthority);
+  if (executionAuthority && !trusted) throw new Error('Session execution authority is unavailable.');
   return {
     available: true,
     engine: normalizeString(source.engine),
@@ -386,9 +389,13 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null) {
     chromium_sandbox: cloneJsonSafe(service?.options?.chromiumSandbox, null),
     llama_server: buildLlamaServerFacet(service, redactor),
     tools_status: cloneJsonSafe(source.tools_status, {}),
+    tools_status_scope: 'runtime',
+    ...(trusted ? trusted.describeToolAvailability(cloneJsonSafe(source.tools_status, {})) : {}),
     lifecycle: buildRuntimeLifecycleFacet(service, backendStatus, source, redactor),
   };
 }
+
+const RUNTIME_LABEL_PATTERN = /^[A-Za-z0-9 ._-]{0,32}$/;
 
 function buildLlamaServerFacet(service, redactor) {
   const manager = service?.options?.getLlamaServerManager?.();
@@ -412,6 +419,10 @@ function buildLlamaServerFacet(service, redactor) {
       acceleration_reason: normalizeString(status.accelerationReason),
       reused: normalizeBoolean(status.reused),
       last_error: text(status.lastError),
+      // A bounded build token ('bundled', 'env', 'build 10683', 'custom'); never a path.
+      runtime_label: typeof status.runtimeLabel === 'string' && RUNTIME_LABEL_PATTERN.test(status.runtimeLabel)
+        ? status.runtimeLabel
+        : '',
       changed_at: integer(status.changedAt),
     };
   } catch (_error) {
@@ -625,8 +636,7 @@ function normalizeAutomationStatusCount(value, fallback = 0, max = MAX_AUTOMATIO
 }
 
 function sanitizeAutomationFacetText(value, redactor, maxLength = MAX_AUTOMATION_FAILURE_TEXT_LENGTH) {
-  return normalizeString(redactor.value(value, ''))
-    .replace(/\[redacted:path\](?:[\\/][^\s"'`<>|]+)*/g, '[redacted]')
+  return collapseRedactedPathTails(normalizeString(redactor.value(value, '')), '[redacted]')
     .slice(0, maxLength);
 }
 
@@ -810,7 +820,7 @@ async function getJennyStatus(service, options = {}) {
   }
   let runtimeFacet;
   try {
-    runtimeFacet = buildRuntimeFacet(service, backendStatus, redactor);
+    runtimeFacet = buildRuntimeFacet(service, backendStatus, redactor, options.executionAuthority);
   } catch (error) {
     runtimeFacet = buildRuntimeUnavailableFacet(error, redactor);
   }

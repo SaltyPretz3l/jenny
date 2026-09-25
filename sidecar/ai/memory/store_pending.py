@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from sidecar.ai.error_codes import CMP_MEMORY_FAILED
 from sidecar.ai.memory.contracts import (
+    GENERAL_PROJECT_ID,
     MAX_CATEGORY_CHARS,
     MAX_FAMILY_KEY_CHARS,
     MAX_LESSON_TEXT_CHARS,
@@ -26,6 +27,7 @@ from sidecar.ai.memory.store_shared import (
     MAX_RECALL_LIMIT,
     PendingMemoryCandidate,
     _locked,
+    _project_scope,
 )
 from sidecar.exceptions import MemoryStoreError
 
@@ -45,7 +47,10 @@ class _PendingCandidatesMixin:
         self,
         session_id: str,
         limit: int = MAX_RECALL_LIMIT,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> list[PendingMemoryCandidate]:
+        scope = _project_scope(project_id)
         normalized_session_id = str(session_id or "").strip()
         if not normalized_session_id:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "session_id is required")
@@ -55,11 +60,11 @@ class _PendingCandidatesMixin:
             rows = self._connection.execute(
                 f"""
                 {_PENDING_MEMORY_SELECT}
-                WHERE session_id = ?
+                WHERE project_id = ? AND session_id = ?
                 ORDER BY confidence DESC, updated_at DESC, id DESC
                 LIMIT ?
                 """,
-                (normalized_session_id, safe_limit),
+                (scope, normalized_session_id, safe_limit),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(
@@ -72,16 +77,20 @@ class _PendingCandidatesMixin:
     def get_pending_candidates_for_harness(
         self,
         limit: int = 80,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> list[PendingMemoryCandidate]:
+        scope = _project_scope(project_id)
         safe_limit = max(1, min(int(limit), MAX_HARNESS_PENDING_LIMIT))
         try:
             rows = self._connection.execute(
                 f"""
                 {_PENDING_MEMORY_SELECT}
+                WHERE project_id = ?
                 ORDER BY updated_at DESC, id DESC
                 LIMIT ?
                 """,
-                (safe_limit,),
+                (scope, safe_limit),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(
@@ -98,7 +107,12 @@ class _PendingCandidatesMixin:
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
         legacy_offset: int | None = None,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
     ) -> tuple[list[PendingMemoryCandidate], tuple[int, int] | int | None]:
+        scope = None if all_projects else _project_scope(project_id)
+        project_predicate = "" if all_projects else "WHERE project_id = ?"
+        project_params = () if all_projects else (scope,)
         safe_limit = max(1, min(int(limit), 250))
         try:
             if legacy_offset is not None:
@@ -106,10 +120,11 @@ class _PendingCandidatesMixin:
                 rows = self._connection.execute(
                     f"""
                     {_PENDING_MEMORY_SELECT}
+                    {project_predicate}
                     ORDER BY updated_at DESC, id DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (safe_limit + 1, safe_offset),
+                    (*project_params, safe_limit + 1, safe_offset),
                 ).fetchall()
                 has_more = len(rows) > safe_limit
                 page = rows[:safe_limit]
@@ -120,7 +135,8 @@ class _PendingCandidatesMixin:
 
             if snapshot_max_id is None:
                 anchor_row = self._connection.execute(
-                    "SELECT COALESCE(MAX(id), 0) FROM pending_memory_candidates"
+                    f"SELECT COALESCE(MAX(id), 0) FROM pending_memory_candidates {project_predicate}",
+                    project_params,
                 ).fetchone()
                 snapshot_max_id = int(anchor_row[0] if anchor_row else 0)
             safe_snapshot = max(0, int(snapshot_max_id))
@@ -128,11 +144,11 @@ class _PendingCandidatesMixin:
             rows = self._connection.execute(
                 f"""
                 {_PENDING_MEMORY_SELECT}
-                WHERE id <= ? AND id < ?
+                WHERE {'' if all_projects else 'project_id = ? AND '}id <= ? AND id < ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (safe_snapshot, safe_after, safe_limit + 1),
+                (*project_params, safe_snapshot, safe_after, safe_limit + 1),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(
@@ -155,7 +171,9 @@ class _PendingCandidatesMixin:
         *,
         session_id: str,
         content_fingerprint: str,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> bool:
+        scope = _project_scope(project_id)
         normalized_session_id = str(session_id or "").strip()
         normalized_fingerprint = str(content_fingerprint or "").strip().lower()
         if not normalized_session_id or not normalized_fingerprint:
@@ -167,28 +185,29 @@ class _PendingCandidatesMixin:
                 existing = self._connection.execute(
                     """
                     SELECT 1 FROM pending_memory_candidates
-                    WHERE session_id = ? AND content_fingerprint = ? LIMIT 1
+                    WHERE project_id = ? AND session_id = ? AND content_fingerprint = ? LIMIT 1
                     """,
-                    (normalized_session_id, normalized_fingerprint),
+                    (scope, normalized_session_id, normalized_fingerprint),
                 ).fetchone()
                 cursor = self._connection.execute(
                     """
                     DELETE FROM pending_memory_candidates
-                    WHERE session_id = ? AND content_fingerprint = ?
+                    WHERE project_id = ? AND session_id = ? AND content_fingerprint = ?
                     """,
-                    (normalized_session_id, normalized_fingerprint),
+                    (scope, normalized_session_id, normalized_fingerprint),
                 )
                 if existing:
                     self._connection.execute(
                         """
                         INSERT INTO memory_suppressions (
-                            content_fingerprint, reason, created_at
-                        ) VALUES (?, 'dismissed', ?)
-                        ON CONFLICT(content_fingerprint) DO UPDATE SET
+                            project_id, content_fingerprint, reason, created_at
+                        ) VALUES (?, ?, 'dismissed', ?)
+                        ON CONFLICT(project_id, content_fingerprint) DO UPDATE SET
                             reason = excluded.reason,
                             created_at = excluded.created_at
                         """,
                         (
+                            scope,
                             normalized_fingerprint,
                             datetime.now(timezone.utc).isoformat(),
                         ),
@@ -259,6 +278,7 @@ class _PendingCandidatesMixin:
                 ),
                 created_at=str(row[11]),
                 updated_at=str(row[12]),
+                project_id=_project_scope(row[13]),
             )
         except (IndexError, TypeError, ValueError, OverflowError):
             self._quarantine_malformed_row(

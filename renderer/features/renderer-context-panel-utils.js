@@ -92,12 +92,12 @@
         if (orbitCardFn) {
           html += orbitCardFn({
             id: a.id,
-            title: a.title || 'Untitled',
+            title: a.title || jt('context.artifacts.untitled', 'Untitled'),
             meta: (a.artifactType || 'file').toUpperCase(),
             icon: ARTIFACT_ICON,
           });
         } else {
-          var title = callbacks.escapeHtml(String(a.title || 'Untitled'));
+          var title = callbacks.escapeHtml(String(a.title || jt('context.artifacts.untitled', 'Untitled')));
           var type = callbacks.escapeHtml(String(a.artifactType || 'file').toUpperCase());
           html += '<div class="context-artifact-row" role="listitem" data-artifact-id="' + callbacks.escapeHtml(String(a.id || '')) + '">'
             + '<div class="context-artifact-icon">' + ARTIFACT_ICON + '</div>'
@@ -122,7 +122,7 @@
             contextLimit: state.status?.effective_context_length,
           })
         : null;
-      var modelName = callbacks.escapeHtml(displayState?.model || 'Unknown');
+      var modelName = callbacks.escapeHtml(displayState?.model || jt('context.pulse.unknownModel', 'Unknown'));
       var tokenText = '0';
       var tokenPct = 0;
       if (typeof callbacks.estimateTokens === 'function' && typeof callbacks.formatTokenUsageDisplay === 'function') {

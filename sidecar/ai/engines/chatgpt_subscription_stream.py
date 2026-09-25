@@ -24,6 +24,7 @@ from sidecar.ai.engines.provider_http import (
 from sidecar.ai.error_codes import CMP_CLOUD_HTTP_ERROR, CMP_CLOUD_RATE_LIMITED
 from sidecar.ai.exceptions import GenerationError
 from sidecar.ai.tools.models import (
+    STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS,
     GenerationResult,
     GenerationUsage,
     StreamChunk,
@@ -296,7 +297,9 @@ def register_close_cancel_callback(cancel_handle: Any, target: Any) -> Any:
 def iter_cancel_aware_sse_lines(response: Any, cancel_handle: Any) -> Iterable[str]:
     iter_raw = getattr(response, "iter_raw", None)
     if callable(iter_raw):
-        chunks = iter_raw(chunk_size=_STREAM_READ_CHUNK_BYTES)
+        # No chunk_size: httpx would hold bytes until a whole block filled,
+        # releasing a stream of small deltas in bursts.
+        chunks = iter_raw(chunk_size=None)
     else:
         chunks = (f"{line}\n".encode() for line in response.iter_lines())
     try:
@@ -447,41 +450,31 @@ def _raise_stream_failure(event: dict[str, Any]) -> NoReturn:
     error = response.get("error")
     error = error if isinstance(error, dict) else {}
     safe_code = _safe_error_code(error.get("code") or error.get("type"))
+    safe_body: dict[str, Any] = {"code": safe_code}
+    code = CMP_CLOUD_HTTP_ERROR
+    retryable = True
     if safe_code in _RATE_LIMIT_CODES:
-        safe_body: dict[str, Any] = {"code": safe_code}
         reset_value = _safe_reset_value(error.get("resets_at"))
         if reset_value is not None:
             safe_body["resets_at"] = reset_value
-        raise ProviderHttpError(
-            provider="chatgpt",
-            status_code=None,
-            code=CMP_CLOUD_RATE_LIMITED,
-            message=f"ChatGPT request failed: {safe_code}",
-            retryable=safe_code == "rate_limit_exceeded",
-            classification="rate_limit",
-            body=safe_body,
-        )
-    if safe_code in _TRANSIENT_SERVER_CODES:
-        raise ProviderHttpError(
-            provider="chatgpt",
-            status_code=None,
-            code=CMP_CLOUD_HTTP_ERROR,
-            message=f"ChatGPT request failed: {safe_code}",
-            retryable=True,
-            classification="server_error",
-            body={"code": safe_code},
-        )
-    if safe_code == _CONTEXT_OVERFLOW_CODE:
-        raise ProviderHttpError(
-            provider="chatgpt",
-            status_code=None,
-            code=CMP_CLOUD_HTTP_ERROR,
-            message=f"ChatGPT request failed: {safe_code}",
-            retryable=True,
-            classification="context_overflow",
-            body={"code": safe_code},
-        )
-    raise GenerationError(f"ChatGPT generation failed: {safe_code}")
+        code = CMP_CLOUD_RATE_LIMITED
+        retryable = safe_code == "rate_limit_exceeded"
+        classification = "rate_limit"
+    elif safe_code in _TRANSIENT_SERVER_CODES:
+        classification = "server_error"
+    elif safe_code == _CONTEXT_OVERFLOW_CODE:
+        classification = "context_overflow"
+    else:
+        raise GenerationError(f"ChatGPT generation failed: {safe_code}")
+    raise ProviderHttpError(
+        provider="chatgpt",
+        status_code=None,
+        code=code,
+        message=f"ChatGPT request failed: {safe_code}",
+        retryable=retryable,
+        classification=classification,
+        body=safe_body,
+    )
 
 
 def _decode_call_arguments(raw: Any) -> tuple[dict[str, Any], bool]:
@@ -683,6 +676,20 @@ def _iter_decoded_events(
         yield event
 
 
+def _unhandled_event_chunks(
+    event_type: Any, completion_shape: _CompletionShape
+) -> tuple[StreamChunk, ...]:
+    if event_type == "response.function_call_arguments.delta":
+        # The call itself arrives whole on output_item.done; this only keeps the
+        # router's inactivity watchdog fed while a large call's arguments stream.
+        return (StreamingEvent(kind=STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS),)
+    # An unrecognized event type is dropped for behavior but counted for
+    # diagnostics, so a provider-side schema change is visible instead of
+    # silently degrading the turn. Type string and counts only.
+    completion_shape.record_ignored_event(event_type)
+    return ()
+
+
 def stream_response_events(
     response: Any,
     *,
@@ -737,31 +744,17 @@ def stream_response_events(
             continue
         if event_type == "response.reasoning_summary_text.delta":
             delta = event.get("delta")
-            if isinstance(delta, str) and delta:
-                if delta.strip():
-                    separator = (
-                        _REASONING_SUMMARY_PART_SEPARATOR if pending_summary_break else ""
-                    )
-                    pending_summary_break = False
-                    emitted_summary_text = True
-                    yield from _reasoning_delta_events(
-                        event,
-                        thinking_parts,
-                        separator=separator,
-                    )
-                else:
-                    # Whitespace-only delta: emit without consuming the pending
-                    # part break — the router drops whitespace-only thinking
-                    # deltas, so a separator prefixed here would vanish from the
-                    # wire while surviving in the aggregate.
-                    yield from _reasoning_delta_events(event, thinking_parts)
+            separator = ""
+            if isinstance(delta, str) and delta.strip():
+                separator = _REASONING_SUMMARY_PART_SEPARATOR if pending_summary_break else ""
+                pending_summary_break = False
+                emitted_summary_text = True
+            # Whitespace-only deltas keep the pending break: the router drops
+            # them, so attaching the separator here would lose it on the wire.
+            yield from _reasoning_delta_events(event, thinking_parts, separator=separator)
             continue
         if event_type == "response.reasoning_text.delta":
             yield from _reasoning_delta_events(event, thinking_parts)
-            continue
-        if event_type == "response.reasoning_summary_part.done":
-            # The done marker carries nothing the adapter needs.
-            completion_shape.record_ignored_event(event_type)
             continue
         if event_type == "response.output_item.done":
             # Reasoning items are held until the next function call so
@@ -777,16 +770,13 @@ def stream_response_events(
             continue
         if event_type == "response.failed":
             _raise_stream_failure(event)
-        if event_type == "response.incomplete":
+        if event_type in ("response.incomplete", "response.completed"):
             citation_normalizer.finish()
-            return _finish(_incomplete_finish_reason(event), event)
-        if event_type == "response.completed":
-            citation_normalizer.finish()
-            return _finish("stop", event)
-        # Default branch: an unrecognized event type is dropped for behavior but
-        # counted for diagnostics, so a provider-side schema change is visible
-        # instead of silently degrading the turn. Type string and counts only.
-        completion_shape.record_ignored_event(event_type)
+            finish_reason = (
+                _incomplete_finish_reason(event) if event_type == "response.incomplete" else "stop"
+            )
+            return _finish(finish_reason, event)
+        yield from _unhandled_event_chunks(event_type, completion_shape)
     raise GenerationError("ChatGPT stream ended before completion")
 
 

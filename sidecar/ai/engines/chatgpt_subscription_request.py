@@ -26,6 +26,9 @@ def normalize_reasoning_effort(value: str | None) -> str | None:
     # semantics that Jenny does not implement.
     if normalized == "ultra":
         normalized = "max"
+    # The wire has no "none"; omitting the effort would use the higher default.
+    if normalized == "none":
+        normalized = "low"
     return normalized if normalized in _ALLOWED_REASONING_EFFORTS else None
 
 

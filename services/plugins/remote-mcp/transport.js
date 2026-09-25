@@ -11,6 +11,12 @@ const RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const CLIENT_INFO = Object.freeze({ name: 'Jenny', version: '0.9.1' });
 const RESPONSE_STRUCTURE_LIMITS = Object.freeze({ max_bytes: RESPONSE_MAX_BYTES,
   max_depth: 32, max_nodes: 65536, max_keys: 1024, max_array_items: 10000 });
+const NO_DISPATCH_FAILURES = new Set([
+  'broker_request_invalid',
+  'session_required',
+  'session_offline_lockdown',
+  'circuit_breaker_open',
+]);
 
 function decodeUtf8(body) {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(body || [])); }
@@ -19,6 +25,21 @@ function decodeUtf8(body) {
 
 function failure(reason, retryable = false, code = PLUGIN_ERROR_CODES.REMOTE_TRANSPORT_FAILED) {
   return { ok: false, code, reason, retryable };
+}
+
+function transportSettlement(result, parsed = null, { notification = false } = {}) {
+  if (NO_DISPATCH_FAILURES.has(result?.reason)) {
+    return { cleanup: 'confirmed', producer_started: false };
+  }
+  if (!result?.ok) return { cleanup: 'uncertain' };
+  if (notification && result.status_code === 202) {
+    return { cleanup: 'confirmed', producer_started: true };
+  }
+  if (result.status_code >= 200 && result.status_code < 300
+    && parsed?.ok && parsed.response) {
+    return { cleanup: 'confirmed', producer_started: true };
+  }
+  return { cleanup: 'uncertain' };
 }
 
 function boundedId(prefix, value) {
@@ -136,14 +157,20 @@ class RemoteMcpTransport {
       signal: this._context.signal || null, same_origin_redirects_only: true,
     });
     if (result.ok && result.endpoint_origin_digest !== this._binding.endpoint_origin_digest) {
-      return failure('endpoint_origin_changed');
+      return { ...failure('endpoint_origin_changed'),
+        execution_settlement: { cleanup: 'uncertain' } };
     }
     if (notification) {
+      const executionSettlement = transportSettlement(result, null, { notification: true });
       return result.ok && result.status_code === 202
-        ? { ok: true } : failure('mcp_notification_rejected', result?.retryable === true);
+        ? { ok: true, execution_settlement: executionSettlement }
+        : { ...failure('mcp_notification_rejected', result?.retryable === true),
+          execution_settlement: executionSettlement };
     }
-    return { ...parseTransportResponse(result, id),
-      session_id_header: headerValue(result?.headers, 'mcp-session-id') };
+    const parsed = parseTransportResponse(result, id);
+    return { ...parsed,
+      session_id_header: headerValue(result?.headers, 'mcp-session-id'),
+      execution_settlement: transportSettlement(result, parsed) };
   }
 
   async _initializeLegacy() {
@@ -206,12 +233,15 @@ class RemoteMcpTransport {
 
   async call(method, params = {}, { purpose = 'remote_mcp_call', extraHeaders = {} } = {}) {
     const negotiated = await this.negotiate();
-    if (!negotiated.ok) return negotiated;
+    if (!negotiated.ok) return { ...negotiated,
+      execution_settlement: { cleanup: 'confirmed', producer_started: false } };
     const result = await this._post({ method, params, protocol: this._protocol, purpose, extraHeaders });
     if (!result.ok) return result;
     if (result.response?.error) return { ok: false, code: PLUGIN_ERROR_CODES.REMOTE_TRANSPORT_FAILED,
-      reason: 'remote_mcp_error', retryable: false, remote_error_code: result.response.error.code };
-    return { ok: true, result: result.response?.result, notifications: result.notifications || [] };
+      reason: 'remote_mcp_error', retryable: false, remote_error_code: result.response.error.code,
+      execution_settlement: result.execution_settlement };
+    return { ok: true, result: result.response?.result, notifications: result.notifications || [],
+      execution_settlement: result.execution_settlement };
   }
 }
 

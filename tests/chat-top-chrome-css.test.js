@@ -69,7 +69,7 @@ test('the chats overflow trigger rests hidden but stays focusable', () => {
 test('the chats overflow trigger reveals on hover, focus, and while its menu is open', () => {
   const css = readRepoFile('styles/chats-panel.css');
   const rule = css.match(
-    /\.sidebar:hover \.chats-tool-button,\s*\.chats-tool-button:focus-visible,\s*\.chats-tool-button\[data-menu-open\]\s*\{([^}]*)\}/
+    /\.view-panel:hover \.chats-tool-button,\s*\.chats-tool-button:focus-visible,\s*\.chats-tool-button\[data-menu-open\]\s*\{([^}]*)\}/
   );
 
   assert.ok(rule, 'a combined reveal rule should exist');

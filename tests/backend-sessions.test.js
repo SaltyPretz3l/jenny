@@ -19,6 +19,15 @@ const {
   sweepEmptySessions,
 } = require('../services/backend/backend-sessions');
 
+function generalProjectAuthority() {
+  return {
+    captureProject(projectId) {
+      assert.equal(projectId, 'project_general');
+      return Object.freeze({ project_id: projectId });
+    },
+  };
+}
+
 test('managed createSession keeps no-prompt shape and persists one bounded draft without messages', async (t) => {
   const scratchRoot = path.join(process.cwd(), '.tmp', 'wo10c');
   fs.mkdirSync(scratchRoot, { recursive: true });
@@ -27,7 +36,7 @@ test('managed createSession keeps no-prompt shape and persists one bounded draft
   const storePath = path.join(storeRoot, 'sessions.json');
   const store = new ElectronSessionStore(storePath, { logger() {} });
   const service = {
-    _normalizeManagedSessionPreferencePatch: (preferences) => preferences || {},
+    projectAuthority: generalProjectAuthority(),
     sessionStore: store,
   };
 
@@ -38,14 +47,15 @@ test('managed createSession keeps no-prompt shape and persists one bounded draft
     'diagnostic_run_id', 'id', 'interactive_round_count', 'interactive_sequence_state',
     'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count',
     'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session',
-    'pre_plan_run_mode', 'preferred_model', 'reasoning_effort', 'run_mode', 'session_start_date',
+    'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_start_date',
     'session_type', 'title', 'tool_category_overrides', 'updated_at',
   ]);
   const plainRecord = store.getSession(plain.id);
-  assert.deepEqual(Object.keys(plainRecord).sort(), [
-    'active_turn', 'archived_at', 'branch_origin', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_start_date', 'session_type', 'title', 'tool_category_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at',
+  assert.deepEqual(Object.keys(plainRecord).filter(key => key !== 'runtime_continuations').sort(), [
+    'active_turn', 'archived_at', 'branch_origin', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'failure_retry_reasoning_snapshots', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_start_date', 'session_type', 'title', 'tool_category_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at',
   ]);
   assert.deepEqual(plainRecord.messages, []);
+  assert.deepEqual(plainRecord.runtime_continuations, { schema_version: 1, entries: [] });
 
   const oversized = 'x'.repeat(MAX_INITIAL_PROMPT_CHARS + 50);
   const drafted = (await createSession(service, { initialPrompt: oversized })).data;
@@ -78,7 +88,7 @@ test('BackendService.createSession passes initialPrompt through to composer_draf
   const store = new ElectronSessionStore(path.join(storeRoot, 'sessions.json'), { logger() {} });
   const service = Object.create(BackendService.prototype);
   service.sessionStore = store;
-  service._normalizeManagedSessionPreferencePatch = (preferences) => preferences || {};
+  service.projectAuthority = generalProjectAuthority();
 
   const created = await service.createSession({ initialPrompt: 'Keep this as an unsent draft.' });
 
@@ -120,7 +130,6 @@ function livePreferenceService({ active = true } = {}) {
       _emitServiceLog(level, event, details) {
         logs.push({ level, event, details });
       },
-      _normalizeManagedSessionPreferencePatch: (preferences) => preferences,
       activeStreams: new Map(active ? [[streamId, new AbortController()]] : []),
       sidecarClient: {
         notifySessionRunModeUpdated(params) {
@@ -149,7 +158,19 @@ test('managed preference write pushes run mode to an active session stream', asy
     approvalMode: 'auto_run',
     readOnly: false,
   }]);
-  assert.deepEqual(logs, []);
+  // The push is the only trace of WHY a running turn then fails with
+  // run_mode_changed (2026-09-15 GUI gate: Plan toggled during the model load).
+  assert.deepEqual(logs, [{
+    level: 'INFO',
+    event: 'session.run_mode_pushed',
+    details: {
+      sessionId: 'session-live-mode',
+      streamId: 'stream-live-mode',
+      changedKeys: ['run_mode'],
+      approvalMode: 'auto_run',
+      readOnly: false,
+    },
+  }]);
 });
 
 test('managed plan mode write logs a skipped push for an inactive session', async () => {
@@ -241,6 +262,7 @@ test('pauseSessionAutoRun pushes prompt mode without persisting', () => {
     sessionId: 'session-auto',
     approvalMode: 'prompt',
     readOnly: false,
+    reason: 'unattended_idle',
   }]);
   assert.deepEqual(harness.preferenceWrites, []);
   assert.equal(harness.service.activeStreams.get('stream-auto').unattendedPauseRequested, true);
@@ -280,7 +302,7 @@ test('pauseSessionAutoRun reports an unavailable transport', () => {
 
 test('managed createSession rejects when the session store refuses the write', async () => {
   const service = {
-    _normalizeManagedSessionPreferencePatch: (preferences) => preferences || {},
+    projectAuthority: generalProjectAuthority(),
     sessionStore: {
       createSession() {
         return null;
@@ -299,7 +321,7 @@ test('managed createSession resolves and persists a plugin provider binding', as
   const pluginSession = { schema_version: 1, publisher_id: 'jenny-official',
     plugin_id: 'local-image-generation' };
   const service = {
-    _normalizeManagedSessionPreferencePatch: (preferences) => preferences || {},
+    projectAuthority: generalProjectAuthority(),
     _pluginSessionProviderBroker: {
       resolveCreationBinding: async () => ({ ok: true, pluginSession }),
     },

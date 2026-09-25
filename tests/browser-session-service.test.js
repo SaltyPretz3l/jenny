@@ -7,6 +7,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { BrowserSessionService } = require('../services/browser-session-service');
+const { createProjectBrowserService } = require('../services/projects/project-browser-service');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -547,7 +548,7 @@ describe('BrowserSessionService / Electron-direct sessions', () => {
     assert.equal(factory.windows[1].destroyed, true);
   });
 
-  test('close reports failure but releases the slot when window teardown fails', async () => {
+  test('close retains capacity until fallback window destruction is confirmed', async () => {
     const factory = createFakeBrowserWindowFactory();
     const events = [];
     let fallbackCloseCalls = 0;
@@ -568,12 +569,17 @@ describe('BrowserSessionService / Electron-direct sessions', () => {
 
     assert.equal(result.closed, false);
     assert.equal(result.reason, 'cleanup_failed');
-    assert.equal(result.slot_released, true);
+    assert.equal(result.slot_released, false);
     assert.equal(fallbackCloseCalls, 1);
-    assert.equal(service.describeStatus().active_sessions, 0);
+    assert.equal(service.describeStatus().active_sessions, 1);
+    assert.equal(service.describeStatus().cleanup_pending_sessions, 1);
     const warning = events.find((entry) => entry.event === 'browser.session_close_cleanup_failed');
     assert.equal(warning.level, 'WARN');
-    assert.equal(warning.details.slot_released, true);
+    assert.equal(warning.details.slot_released, false);
+    await assert.rejects(service.open({ sessionId: 'blocked', url: 'http://localhost:3000/' }), /Maximum active/);
+    assert.equal(service.releaseSlot('browser_close_error'), false);
+    factory.windows[0].destroyed = true;
+    assert.equal((await service.close('browser_close_error')).closed, true);
 
     const opened = await service.open({
       sessionId: 'browser_after_failed_close',
@@ -583,7 +589,7 @@ describe('BrowserSessionService / Electron-direct sessions', () => {
     assert.equal(opened.status, 'open');
   });
 
-  test('close releases the slot when primary and fallback window teardown fail', async () => {
+  test('close retains the slot when primary and fallback window teardown fail', async () => {
     const factory = createFakeBrowserWindowFactory();
     const events = [];
     const service = new BrowserSessionService({
@@ -602,12 +608,36 @@ describe('BrowserSessionService / Electron-direct sessions', () => {
 
     assert.equal(result.closed, false);
     assert.equal(result.reason, 'cleanup_failed');
-    assert.equal(result.slot_released, true);
-    assert.equal(service.describeStatus().active_sessions, 0);
+    assert.equal(result.slot_released, false);
+    assert.equal(service.describeStatus().active_sessions, 1);
     const warning = events.find((entry) => entry.event === 'browser.session_close_cleanup_failed');
     assert.equal(warning.level, 'WARN');
-    assert.equal(warning.details.slot_released, true);
+    assert.equal(warning.details.slot_released, false);
     assert.equal(warning.details.fallback_close_failed, true);
+  });
+
+  test('a fresh project facade cannot replace an unconfirmed native preview producer', async () => {
+    const root = createTrackedTempDir('preview-cleanup-capacity-');
+    const file = path.join(root, 'index.html');
+    fs.writeFileSync(file, '<p>Preview</p>');
+    const factory = createFakeBrowserWindowFactory();
+    const service = new BrowserSessionService({ browserWindowFactory: factory, maxActiveSessions: 1 });
+    const execution = { authority: { root_path: root }, assertCurrent() {} };
+    const first = createProjectBrowserService(service, execution);
+    await first.open({ sessionId: 'preview_first', url: pathToFileURL(file).href });
+    const window = factory.windows[0];
+    window.destroy = () => { throw new Error('destroy failed'); };
+    window.close = () => { throw new Error('close failed'); };
+    assert.equal((await first.close('preview_first')).slot_released, false);
+    assert.equal(typeof window.browserSession.webRequest.beforeRequestListener, 'function');
+    const second = createProjectBrowserService(service, execution);
+    await assert.rejects(second.open({ sessionId: 'preview_second', url: pathToFileURL(file).href }), /capacity/);
+    assert.equal(service.describeStatus().cleanup_pending_sessions, 1);
+    assert.equal((await service.closeAll()).closed, 0);
+    window.destroyed = true;
+    assert.equal((await first.close('preview_first')).closed, true);
+    await second.open({ sessionId: 'preview_second', url: pathToFileURL(file).href });
+    await second.close('preview_second');
   });
 
   test('close rejects malformed session ids instead of reporting an idempotent miss', async () => {

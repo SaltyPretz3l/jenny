@@ -282,13 +282,17 @@
 
   /* ── placeholder restore (post-sanitize HTML string) ────────────────── */
 
+  // One reused JSDOM document in Node; a JSDOM window per call is never collected.
+  let isolatedDocument = null;
   function getIsolatedDocument() {
     if (typeof document !== 'undefined' && document && typeof document.createElement === 'function') {
       return document;
     }
+    if (isolatedDocument) return isolatedDocument;
     try {
       const { JSDOM } = require('jsdom');
-      return new JSDOM('').window.document;
+      isolatedDocument = new JSDOM('').window.document;
+      return isolatedDocument;
     } catch (_err) {
       return null;
     }

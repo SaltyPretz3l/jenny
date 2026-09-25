@@ -14,6 +14,7 @@ const {
   createManagedServiceWithConfig,
 } = require('../helpers/managed-sidecar-runtime-helpers');
 const { buildManagedSidecarConfig } = require('../../services/backend/managed-sidecar-lifecycle');
+const { ensureSessionAttachmentAuthority } = require('../../services/projects/session-attachment-authority');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -417,6 +418,9 @@ test('managed sidecar runtime routes image attachments through the vision chat p
     title: 'Plan preference retained for image chat',
     preferences: { plan_mode: true },
   });
+  const attachmentAuthority = ensureSessionAttachmentAuthority(service);
+  attachmentAuthority.registerImportedImages(attachmentAuthority.captureImportScope(created.data.id),
+    [{ id: 'image_1', kind: 'image', assetPath: imagePath }]);
   const stream = await service.startChatStream({
     sessionId: created.data.id,
     prompt: 'Describe the attached screenshot.',
@@ -490,6 +494,9 @@ test('managed vLLM vision turns forward image attachments instead of failing at 
     (event) => event.type === 'complete'
   );
 
+  const attachmentAuthority = ensureSessionAttachmentAuthority(service);
+  attachmentAuthority.registerImportedImages(attachmentAuthority.captureImportScope(),
+    [{ id: 'image_1', kind: 'image', assetPath: imagePath }]);
   const stream = await service.startChatStream({
     prompt: 'Describe the attached screenshot.',
     preferredModel: 'Qwen/Qwen3.5-9B', // HF-style id -> engineType 'vllm'

@@ -214,9 +214,10 @@
       const generationDuration = finiteNumber(row.generation_duration_ms);
       const speed = generationDuration > 0 ? finiteNumber(row.generation_tokens) * 1000 / generationDuration : null;
       const outcome = outcomeLabel(row);
+      const modelLabel = row.model || jt('diagnostics.usage.unknownModelCell', 'Unknown');
       return '<tr>'
         + `<td>${escapeHtml(formatTimestamp(row.recorded_at))}</td>`
-        + `<td><span class="usage-model-cell"><span class="usage-model" title="${escapeHtml(row.model || 'Unknown')}">${escapeHtml(row.model || 'Unknown')}</span>${outcome ? `<span class="usage-outcome" data-outcome="${escapeHtml(row.outcome)}"${detail ? ` title="${escapeHtml(detail)}"` : ''}>${escapeHtml(outcome)}</span>` : ''}</span></td>`
+        + `<td><span class="usage-model-cell"><span class="usage-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>${outcome ? `<span class="usage-outcome" data-outcome="${escapeHtml(row.outcome)}"${detail ? ` title="${escapeHtml(detail)}"` : ''}>${escapeHtml(outcome)}</span>` : ''}</span></td>`
         + `<td class="usage-cell-num${row.estimated ? ' usage-cell-muted' : ''}">${formatInteger(row.input_tokens)} / ${formatInteger(row.output_tokens)}${estimated}</td>`
         + `<td class="usage-cell-num">${escapeHtml(formatRate(speed))}</td>`
         + `<td class="usage-cell-num usage-col-ttft">${escapeHtml(generationDuration > 0 ? formatTtft(row.ttft_ms) : '—')}</td>`

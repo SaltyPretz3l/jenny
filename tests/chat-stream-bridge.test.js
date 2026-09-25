@@ -722,3 +722,110 @@ test('coalescing: stats counters tick per underlying event regardless of coalesc
   assert.equal(summary.details.deltaCount, 3);
   assert.equal(summary.details.reasoningChunkCount, 3);
 });
+
+/* ── Early flush (two deltas pull the flush forward to one frame) ── */
+
+function makeTimedCoalescingBridge() {
+  const sent = [];
+  const timers = [];
+  let nowMs = 10_000;
+  const bridge = createChatStreamBridge({
+    sendBridgeEvent: (channel, payload) => sent.push({ channel, payload: { ...payload } }),
+    log: () => {},
+    now: () => nowMs,
+    setCoalesceTimer: (fn, ms) => {
+      const timer = { fn, ms, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearCoalesceTimer: (timer) => { if (timer) timer.cleared = true; },
+  });
+  const live = () => timers.filter((timer) => !timer.cleared);
+  return {
+    bridge,
+    sent,
+    timers,
+    live,
+    advance: (ms) => { nowMs += ms; },
+    fireLive: () => {
+      const [timer] = live();
+      assert.ok(timer, 'a live coalesce timer exists');
+      timer.cleared = true;
+      timer.fn();
+    },
+  };
+}
+
+test('early flush: a lone delta waits for the full 50 ms window', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'a' });
+  assert.equal(harness.sent.length, 0);
+  assert.deepEqual(harness.live().map((timer) => timer.ms), [50]);
+});
+
+test('early flush: a second delta inside the first frame reschedules to the frame boundary', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'a' });
+  harness.advance(6);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'b' });
+  assert.equal(harness.sent.length, 0);
+  assert.deepEqual(harness.live().map((timer) => timer.ms), [10]);
+  harness.advance(4);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'c' });
+  assert.equal(harness.live().length, 1, 'a third delta does not reschedule again');
+  harness.fireLive();
+  assert.equal(harness.sent.length, 1);
+  assert.equal(harness.sent[0].payload.content, 'abc');
+  assert.equal(harness.live().length, 0);
+});
+
+test('early flush: a second delta after one frame flushes both at once', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'a' });
+  harness.advance(20);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'b' });
+  assert.equal(harness.sent.length, 1);
+  assert.equal(harness.sent[0].payload.content, 'ab');
+  assert.equal(harness.live().length, 0, 'the window timer is cleared');
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'c' });
+  assert.deepEqual(harness.live().map((timer) => timer.ms), [50], 'the next window starts fresh');
+});
+
+test('early flush: a non-delta event resets the count so the next window starts at one', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'a' });
+  harness.bridge.handleEvent({ type: 'tool_use', streamId: 's', toolName: 'read_file' });
+  assert.deepEqual(harness.sent.map((event) => event.payload.type), ['delta', 'tool_use']);
+  harness.advance(30);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 's', content: 'b' });
+  assert.equal(harness.sent.length, 2, 'one delta after the reset still waits');
+  assert.deepEqual(harness.live().map((timer) => timer.ms), [50]);
+});
+
+test('early flush: deltas are counted per stream, not across streams', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'a', content: 'a1' });
+  harness.advance(20);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'b', content: 'b1' });
+  assert.equal(harness.sent.length, 0, 'one delta from each of two streams does not flush early');
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'a', content: 'a2' });
+  assert.deepEqual(
+    harness.sent.map((event) => event.payload.content).sort(),
+    ['a1a2', 'b1'],
+    'the stream that reached two deltas pulls the shared flush forward',
+  );
+});
+
+test('early flush: a stream flushed by its own non-delta event starts counting again', () => {
+  const harness = makeTimedCoalescingBridge();
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'b', content: 'b1' });
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'a', content: 'a1' });
+  harness.bridge.handleEvent({ type: 'tool_use', streamId: 'a', toolName: 'read_file' });
+  harness.advance(20);
+  harness.bridge.handleEvent({ type: 'delta', streamId: 'a', content: 'a2' });
+  assert.deepEqual(
+    harness.sent.map((event) => event.payload.content || event.payload.type),
+    ['a1', 'tool_use'],
+    "a's first delta after its flush does not flush early",
+  );
+});

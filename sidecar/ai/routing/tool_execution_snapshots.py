@@ -26,7 +26,16 @@ from sidecar.runtime.tool_execution_support import (
 )
 
 
-def normalize_snapshot_lookup_path(kernel: Any, raw_path: object) -> str | None:
+def _workspace_root(kernel: Any, execution_context: Any | None = None) -> str:
+    scoped = getattr(execution_context, "root_path", None)
+    if execution_context is not None:
+        return str(scoped or "").strip()
+    return str(getattr(kernel._config, "tools_workspace_root", "") or "").strip()
+
+
+def normalize_snapshot_lookup_path(
+    kernel: Any, raw_path: object, *, execution_context: Any | None = None
+) -> str | None:
     if not isinstance(raw_path, str) or not raw_path.strip():
         return None
     candidate_text = raw_path.strip()
@@ -36,7 +45,7 @@ def normalize_snapshot_lookup_path(kernel: Any, raw_path: object) -> str | None:
             normalized_candidate = candidate_path.resolve(strict=False)
         except OSError:
             normalized_candidate = candidate_path
-        root_text = str(kernel._config.tools_workspace_root or "").strip()
+        root_text = _workspace_root(kernel, execution_context)
         if root_text:
             try:
                 root_path = Path(root_text).resolve(strict=False)
@@ -53,24 +62,29 @@ def normalize_snapshot_lookup_path(kernel: Any, raw_path: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def update_read_snapshot_cache(
+def update_read_snapshot_cache(  # noqa: PLR0913
     kernel: Any,
     cache: dict[str, dict[str, object]],
     *,
     tool_name: str,
     success: bool,
     metadata: dict[str, object],
+    execution_context: Any | None = None,
 ) -> None:
     if not metadata:
         return
     if tool_name == "read_file":
         if success:
-            _update_read_file_snapshot(kernel, cache, metadata)
+            _update_read_file_snapshot(
+                kernel, cache, metadata, execution_context=execution_context
+            )
         return
     if tool_name not in {"write_file", "edit_file", "delete_file", "move_file"}:
         return
     for raw_path in _successful_mutation_paths(tool_name, success, metadata):
-        normalized_path = normalize_snapshot_lookup_path(kernel, raw_path)
+        normalized_path = normalize_snapshot_lookup_path(
+            kernel, raw_path, execution_context=execution_context
+        )
         if normalized_path is not None:
             cache.pop(normalized_path, None)
 
@@ -101,11 +115,14 @@ def _update_read_file_snapshot(
     kernel: Any,
     cache: dict[str, dict[str, object]],
     metadata: dict[str, object],
+    execution_context: Any | None = None,
 ) -> None:
     snapshot = read_snapshot_from_metadata(metadata.get("read_snapshot"))
     if snapshot is None:
         return
-    normalized_path = normalize_snapshot_lookup_path(kernel, snapshot.path)
+    normalized_path = normalize_snapshot_lookup_path(
+        kernel, snapshot.path, execution_context=execution_context
+    )
     if normalized_path is None:
         return
     if snapshot.scope == READ_SNAPSHOT_SCOPE_FULL:
@@ -127,6 +144,8 @@ def _update_read_file_snapshot(
 def rebuild_read_snapshot_cache(
     kernel: Any,
     canonical_session_messages: list[dict[str, object]] | None,
+    *,
+    execution_context: Any | None = None,
 ) -> dict[str, dict[str, object]]:
     cache: dict[str, dict[str, object]] = {}
     for message in canonical_session_messages or []:
@@ -145,6 +164,7 @@ def rebuild_read_snapshot_cache(
             tool_name=tool_name,
             success=tool_result.get("is_error") is not True,
             metadata=metadata,
+            execution_context=execution_context,
         )
     return cache
 
@@ -181,13 +201,16 @@ def inject_expected_read_snapshot(
     tool_name: str,
     tool_arguments: dict[str, Any],
     read_snapshot_cache: dict[str, dict[str, object]],
+    execution_context: Any | None = None,
 ) -> dict[str, Any]:
     if tool_name not in _MUTATION_PATH_ARG_KEYS:
         return tool_arguments
     if "expected_read_snapshot" in tool_arguments:
         return tool_arguments
     raw_path = effective_mutation_path_arg(tool_name, tool_arguments)
-    normalized_path = normalize_snapshot_lookup_path(kernel, raw_path)
+    normalized_path = normalize_snapshot_lookup_path(
+        kernel, raw_path, execution_context=execution_context
+    )
     if normalized_path is None:
         return tool_arguments
     snapshot = read_snapshot_cache.get(normalized_path)
@@ -199,19 +222,11 @@ def inject_expected_read_snapshot(
     }
 
 
-def freeze_effective_execution_inputs(  # noqa: C901, PLR0913 - authoritative turn context seam
-    kernel: Any,
+def split_visible_execution_arguments(
     call: ToolCallRequest,
-    *,
-    session_id: str | None,
-    read_snapshot_cache: dict[str, dict[str, object]],
-    tool_contract: Any | None = None,
-    plan_mode: bool = False,
-    read_only: bool = False,
-    approved_plan: dict[str, object] | None = None,
-    trusted_plan_artifact_write: bool | None = None,
-    turn_id: str | None = None,
-) -> FrozenExecutionInputs:
+) -> tuple[dict[str, Any], dict[str, object]]:
+    """Return canonical model-visible arguments and separated private attribution."""
+
     canonical_arguments, _aliases = canonicalize_tool_arguments(
         tool_name=call.tool_id,
         arguments=call.arguments,
@@ -231,11 +246,31 @@ def freeze_effective_execution_inputs(  # noqa: C901, PLR0913 - authoritative tu
         if str(key).startswith("_jenny_"):
             canonical_arguments.pop(key)
     visible_tool_arguments = {str(key): value for key, value in canonical_arguments.items()}
+    return visible_tool_arguments, attribution_arguments
+
+
+def freeze_effective_execution_inputs(  # noqa: C901, PLR0912, PLR0913, PLR0915
+    kernel: Any,
+    call: ToolCallRequest,
+    *,
+    session_id: str | None,
+    read_snapshot_cache: dict[str, dict[str, object]],
+    tool_contract: Any | None = None,
+    plan_mode: bool = False,
+    read_only: bool = False,
+    approved_plan: dict[str, object] | None = None,
+    trusted_plan_artifact_write: bool | None = None,
+    turn_id: str | None = None,
+    execution_context: Any | None = None,
+) -> FrozenExecutionInputs:
+    visible_tool_arguments, attribution_arguments = split_visible_execution_arguments(call)
+    canonical_arguments = dict(visible_tool_arguments)
     effective_tool_arguments = inject_expected_read_snapshot(
         kernel,
         tool_name=call.tool_id,
         tool_arguments=dict(canonical_arguments),
         read_snapshot_cache=read_snapshot_cache,
+        execution_context=execution_context,
     )
     injected_arg_keys: list[str] = []
     contract_entry_lookup = getattr(tool_contract, "entry", None)
@@ -312,7 +347,19 @@ def freeze_effective_execution_inputs(  # noqa: C901, PLR0913 - authoritative tu
     )
     execution_context_payload: dict[str, Any] = {
         "session_id": normalized_session_id,
+        "logical_turn_id": str(turn_id or "").strip(),
     }
+    if execution_context is not None:
+        execution_context_payload["authority_revision"] = str(
+            getattr(execution_context, "authority_revision", "") or ""
+        )
+        execution_context_payload["project_id"] = str(
+            getattr(execution_context, "project_id", "") or ""
+        )
+        execution_context_payload["root_id"] = getattr(execution_context, "root_id", None)
+        execution_context_payload["root_revision"] = getattr(
+            execution_context, "root_revision", None
+        )
     execution_context_payload.update(attribution)
     if call.tool_id == "mermaid_generate":
         execution_context_payload["read_only"] = bool(read_only)

@@ -11,6 +11,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
+from sidecar.ai.engines.admitted import (
+    InferenceAttemptContext,
+    execute_admitted_provider_attempt,
+)
 from sidecar.ai.engines.provider_http import ProviderHttpError
 from sidecar.ai.feature_flags import FEATURE_API_RETRY, is_feature_flag_enabled
 from sidecar.runtime.diagnostics import log_event
@@ -62,12 +66,38 @@ def execute_with_provider_retry(
     feature_flags: dict[str, bool] | None,
     cancel_handle: TurnCancellationHandle | None = None,
     runtime: Any | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    inference_admission: Callable[[InferenceAttemptContext], Any] | None = None,
+    inference_token_ceilings: tuple[int, int] | None = None,
     before_retry: Callable[[RetryExecutionContext, ProviderHttpError], None] | None = None,
 ) -> T:
     max_tokens = max(1, int(initial_max_tokens))
     _raise_if_interrupted(runtime=runtime, cancel_handle=cancel_handle)
+    runtime_admission = getattr(runtime, "inference_admission", None)
+    admission = inference_admission if inference_admission is not None else runtime_admission
+
+    def execute_attempt(context: RetryExecutionContext) -> T:
+        runtime_request_id = str(getattr(runtime, "request_id", "") or request_id or "")
+        runtime_session_id = str(getattr(runtime, "session_id", "") or session_id or "")
+        return execute_admitted_provider_attempt(
+            admission=admission,
+            context=InferenceAttemptContext(
+                request_id=runtime_request_id,
+                session_id=runtime_session_id,
+                provider=str(provider or ""),
+                model=str(model or ""),
+                request_source=str(request_source or ""),
+                attempt=context.attempt,
+                streaming=bool(getattr(runtime, "streaming", False)),
+                input_token_ceiling=inference_token_ceilings[0] if inference_token_ceilings else None,
+                output_token_ceiling=inference_token_ceilings[1] if inference_token_ceilings else None,
+            ),
+            operation=lambda: operation(context),
+        )
+
     if not is_feature_flag_enabled(feature_flags or {}, FEATURE_API_RETRY):
-        return operation(RetryExecutionContext(attempt=1, max_tokens=max_tokens))
+        return execute_attempt(RetryExecutionContext(attempt=1, max_tokens=max_tokens))
 
     consecutive_overload_errors = 0
     attempt = 1
@@ -75,7 +105,7 @@ def execute_with_provider_retry(
         _raise_if_interrupted(runtime=runtime, cancel_handle=cancel_handle)
         context = RetryExecutionContext(attempt=attempt, max_tokens=max_tokens)
         try:
-            return operation(context)
+            return execute_attempt(context)
         except ProviderHttpError as error:
             if error.classification == "server_overload":
                 consecutive_overload_errors += 1

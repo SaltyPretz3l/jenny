@@ -62,20 +62,23 @@ def _context_window(engine: Any) -> int:
         return 0
 
 
-def _compact_threshold(budget_tracker: Any) -> int:
-    """Exact compaction trigger for the tracker's current tool count.
+def _compact_threshold(budget_tracker: Any) -> tuple[int, int]:
+    """Compaction trigger in whole-prompt tokens, and the tool reserve inside it.
 
-    Recomputed per emission rather than cached: ``tool_search`` can promote
-    deferred schemas between iterations, which moves the denominator.
+    Same quantities the terminal lane publishes (``meter_compact_threshold`` /
+    ``tool_overhead``). Recomputed per emission rather than cached:
+    ``tool_search`` can promote deferred schemas between iterations, which
+    moves the denominator.
     """
     budget = getattr(budget_tracker, "budget", None)
     if budget is None:
-        return 0
+        return 0, 0
     try:
         num_tools = _positive_int(getattr(budget_tracker, "num_tools", 0))
-        return _positive_int(budget.auto_compact_threshold(num_tools))
+        threshold = _positive_int(budget.meter_compact_threshold(num_tools))
+        return threshold, (_positive_int(budget.tool_overhead(num_tools)) if threshold else 0)
     except Exception:  # noqa: BLE001 — a meter hint must never break a turn
-        return 0
+        return 0, 0
 
 
 def emit_context_usage(  # noqa: PLR0913 — one flat snapshot, no wrapper DTO
@@ -98,18 +101,20 @@ def emit_context_usage(  # noqa: PLR0913 — one flat snapshot, no wrapper DTO
 
     estimate = _positive_int(context_tokens_estimate)
     provider_tokens = _positive_int(last_request_input_tokens)
-    used = max(provider_tokens, estimate)
-    if used <= 0:
-        return None
-
     # Mirror the terminal lanes' gate (attach_compact_threshold call sites):
     # never advertise an auto-compact point that a disabled runtime will not
     # act on. token_budget is implied by the live budget_tracker.
-    threshold = (
+    threshold, tool_overhead = (
         _compact_threshold(budget_tracker)
         if is_feature_flag_enabled(feature_flags, FEATURE_CONTEXT_COMPACTION)
-        else 0
+        else (0, 0)
     )
+    # Same rule as attach_context_used_tokens: the message-only estimate gains
+    # the tool reserve the threshold includes, so both are whole-prompt figures.
+    whole_prompt_estimate = estimate + tool_overhead if estimate > 0 else 0
+    used = max(provider_tokens, whole_prompt_estimate)
+    if used <= 0:
+        return None
     window = _context_window(engine)
     signature = (used, threshold, window)
     if getattr(runtime, "context_usage_memo", None) == signature:
@@ -120,7 +125,7 @@ def emit_context_usage(  # noqa: PLR0913 — one flat snapshot, no wrapper DTO
         phase=str(phase or PHASE_ITERATION),
         iteration=max(0, int(iteration or 0)),
         context_used_tokens=used,
-        context_used_source="provider" if provider_tokens >= estimate else "estimate",
+        context_used_source="provider" if provider_tokens >= whole_prompt_estimate else "estimate",
         context_tokens_estimate=estimate,
         last_request_input_tokens=provider_tokens,
         context_window=window,

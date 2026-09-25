@@ -84,7 +84,11 @@ async function runWorkspaceGit(cwd, args, {
   });
   // Mask any token-shaped substring a remote URL / auth error might echo
   // before the message reaches the renderer.
-  return { ...result, message: maskTokensInText(result.message) };
+  // The direct Node runner owns only Git's root process/process group. Hooks and
+  // filters can detach descendants, so callback/close or a root-tree kill is
+  // not a containment receipt. Resource-admitted production callers use the
+  // contained Git runner instead.
+  return { ...result, message: maskTokensInText(result.message), cleanupConfirmed: false };
 }
 
 module.exports = {

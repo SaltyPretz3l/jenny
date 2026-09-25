@@ -211,3 +211,35 @@ test('wide-042: shell config publishes checking to ready without a renderer poll
   await settled;
   assert.equal(service.getWorkspaceRootStatus().state, 'ready');
 });
+
+test('a revalidation that lands on the same verdict does not publish a change', async () => {
+  const published = [];
+  let clock = 0;
+  const controller = createWorkspaceRootStatusController({
+    stat: async () => ({ isDirectory: () => true }),
+    setTimeoutImpl: () => ({ unref() {} }),
+    clearTimeoutImpl: () => {},
+    now: () => clock,
+    ttlMs: 10,
+    onChange: (status) => published.push(status.state),
+  });
+  assert.equal((await controller.refresh('G:/steady-root')).state, 'ready');
+  assert.deepEqual(published, ['ready'], 'checking to ready is a real change');
+
+  clock = 100;
+  assert.equal((await controller.refresh('G:/steady-root')).state, 'ready');
+  clock = 200;
+  assert.equal((await controller.refresh('G:/steady-root')).state, 'ready');
+  assert.deepEqual(published, ['ready'], 'ready to ready again is not a change');
+
+  const flaky = createWorkspaceRootStatusController({
+    stat: async () => { throw new Error('gone'); },
+    setTimeoutImpl: () => ({ unref() {} }),
+    clearTimeoutImpl: () => {},
+    now: () => clock,
+    ttlMs: 10,
+    onChange: (status) => published.push(status.state),
+  });
+  assert.equal((await flaky.refresh('G:/steady-root')).state, 'invalid');
+  assert.deepEqual(published, ['ready', 'invalid'], 'a different verdict still publishes');
+});

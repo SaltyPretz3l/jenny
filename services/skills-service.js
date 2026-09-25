@@ -10,6 +10,7 @@ const {
   normalizeSkillSettings,
 } = require('./shell-config-service');
 const { isWorkspaceRootChangeReason } = require('./workspace-root-change-reasons');
+const { normalizeProjectId } = require('./projects/project-schema');
 
 const SKILL_FILENAME = 'SKILL.md';
 const SCOPE_BUNDLED = 'bundled';
@@ -933,15 +934,22 @@ class SkillsService extends EventEmitter {
     return this.refreshState();
   }
 
-  getSidecarConfig() {
+  getSidecarConfig({ authority } = {}) {
+    if (authority !== undefined && (!normalizeProjectId(authority?.project_id)
+      || (authority.root_path !== null && (typeof authority.root_path !== 'string'
+        || !path.isAbsolute(authority.root_path))))) {
+      throw new TypeError('Invalid project authority for skills.');
+    }
+    const projectRoot = authority === undefined ? this.getProjectRoot()
+      : authority.root_path ? path.join(authority.root_path, '.jenny', 'skills') : '';
     const settings = this._getSettings();
     return {
       skills_bundled_root: this.getBundledRoot() || null,
       skills_user_root: this.getUserRoot() || null,
-      skills_project_root: this.getProjectRoot() || null,
+      skills_project_root: projectRoot || null,
       skills_bundled_enabled: settings.bundledEnabled === true,
       skills_user_enabled: settings.userEnabled === true,
-      skills_project_enabled: settings.projectEnabled === true,
+      skills_project_enabled: settings.projectEnabled === true && (authority === undefined || !!projectRoot),
       skills_disabled_ids: [...settings.disabledSkillIds],
       skills_auto_index: settings.autoIndex,
     };

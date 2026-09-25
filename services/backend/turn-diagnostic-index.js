@@ -12,6 +12,9 @@ const DIAGNOSTIC_DATE_SEGMENT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PROVIDER_TIMING_FIELDS = [
   'time_to_provider_request_start_ms',
   'time_to_first_chunk_ms',
+  // How many provider calls the turn made (answer, internal summary,
+  // continuation); the per-call ledger itself stays in the dump file.
+  'provider_call_count',
   'time_to_first_visible_token_ms',
   'visible_tokens_per_second_estimate',
   'context_tokens_estimate',

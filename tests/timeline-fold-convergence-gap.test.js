@@ -270,6 +270,8 @@ test('an unanswered approval outranks a tool_executing notice', () => {
 // `tool_call payload.state` is different: the sealed fold carries the verdict
 // `interrupted` where the bare projector says `awaiting_approval`, because
 // foldCanonicalTurn knows the log is complete and projectTurnRows is never told.
+// `approval_gap payload.state` is the same verdict on that call's card (A4 F7):
+// the sealed fold says `interrupted`, so the card folds to "no longer active".
 //
 // The three that WERE losses are closed: chunk_count (the projector's
 // "Thinking... (N chunks)" placeholder), input_summary (read by the search index
@@ -286,6 +288,7 @@ test('an unanswered approval outranks a tool_executing notice', () => {
 // fold records it on both and needs no flag. One producer must eventually pick.
 const PAYLOAD_GAP_LEDGER = [
   'approval_gap payload.prompt',
+  'approval_gap payload.state',
   'assistant_text payload.truncated',
   'reasoning payload.phase',
   'reasoning payload.phase_kind',

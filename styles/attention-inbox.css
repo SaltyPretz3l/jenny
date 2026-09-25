@@ -1,0 +1,296 @@
+/* The pinned "Needs you" section at the top of the Chats panel, and its
+   titlebar mark.
+
+   Written in the panel's own language, and deliberately NOT a card surface:
+   no bordered rows, no count pill, no chips, no filled badge, and no fact
+   painted louder than its neighbour (the transcript's approval card keeps them
+   uniform on purpose -- see the comment above .tool-approval-facts in
+   styles/chat-tools.css). The heading is the panel's own .group-label kicker
+   (styles/chats-panel.css), reused class and all, with only the button chrome
+   reset here; a row is a plain hoverable list item like .session-row, not a
+   container; and the decisions are text buttons, not controls with a surface.
+
+   The panel's only scroll container is .conversation-groups
+   (.sidebar-history-content is overflow: hidden), and this section and the A4
+   digest under it are its two pinned neighbours. Each grows to its rows and
+   then yields BY ITS LIST: the host is flex: 0 1 auto with min-block-size: 0,
+   the kicker is rigid, and the bounded list is the shrinkable child, so a short
+   window shortens the list and never clips the heading, while
+   .conversation-groups keeps its own three-row floor. Logical properties only. */
+.attention-inbox {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding-block-end: var(--space-2);
+  color: var(--text-primary);
+}
+.attention-inbox[hidden],
+.attention-inbox__list[hidden] {
+  display: none;
+}
+
+/* Inside the chat list a kicker sits behind the list's own inline padding;
+   this host has none, so the heading carries it and NEEDS YOU lines up with
+   TODAY, hairline and all. */
+.attention-inbox__heading {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding-inline: var(--space-4);
+}
+
+/* Kicker chrome only: .group-label owns the type, the colour and the hairline. */
+.attention-inbox .attention-inbox__toggle {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  inline-size: 100%;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+.attention-inbox .attention-inbox__toggle:hover,
+.attention-inbox .attention-inbox__toggle:hover .attention-inbox__chevron {
+  color: var(--text-secondary);
+}
+
+/* Plain text inside the kicker, never a count pill: the session rows already
+   carry their own state dot, and the titlebar already carries a mark. */
+.attention-inbox__count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+/* Sits after the kicker's hairline, so the rule runs the width of the line.
+   The glyph itself changes with aria-expanded; nothing here animates. */
+.attention-inbox__chevron {
+  order: 1;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+
+.attention-inbox__list {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  /* Bounded on purpose: many waits scroll here instead of pushing the chat
+     list out of the panel. */
+  max-block-size: min(40vh, 320px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  /* The chat list's own inline padding (.conversation-groups), so the rows
+     line up with the sessions below them. */
+  padding-inline: var(--space-4);
+}
+
+/* Rows are separated by whitespace, never by a border or a surface. */
+.attention-inbox__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+  padding: 6px 8px 8px;
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+}
+.attention-inbox__row:hover,
+.attention-inbox__row:focus-within {
+  background: var(--rail-hover-bg);
+}
+
+/* Line 1: the conversation, and the row's way back to the context it is
+   being answered out of. */
+.attention-inbox .attention-inbox__open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: start;
+  cursor: pointer;
+}
+.attention-inbox__dot {
+  flex: 0 0 auto;
+  inline-size: var(--session-row-dot-size);
+  block-size: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-state-approval-color);
+}
+.attention-inbox__session {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attention-inbox .attention-inbox__open:hover .attention-inbox__session {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* A chat that never earned a name still says so, and says it quietly. */
+.attention-inbox__session--untitled {
+  color: var(--text-muted);
+}
+
+/* Lines 2 to 4 hang under the title, past the dot and its gap. */
+.attention-inbox__detail,
+.attention-inbox__policy,
+.attention-inbox__note,
+.attention-inbox__actions {
+  padding-inline-start: 14px;
+}
+
+/* Line 2 of an approval: the tool and what it was called with, one line. */
+.attention-inbox__detail {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attention-inbox__tool {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.attention-inbox__preview {
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* Line 3: scope, consequence and the writes-or-not facts in ONE muted
+   register. Nothing here is coloured by kind. */
+.attention-inbox__policy,
+.attention-inbox__note {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Line 4: the decisions, as text. */
+.attention-inbox__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-7);
+  margin-block-start: var(--space-2);
+}
+.attention-inbox .attention-inbox__action {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* The one coloured thing in a row, and it marks the action that resumes the
+   work: the same token the session rows' approval dot uses. */
+.attention-inbox .attention-inbox__action--allow,
+.attention-inbox .attention-inbox__action--open,
+.attention-inbox .attention-inbox__action--answer {
+  color: var(--sidebar-state-approval-color);
+}
+.attention-inbox .attention-inbox__action:hover:not([disabled]) {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.attention-inbox .attention-inbox__action--allow:hover:not([disabled]),
+.attention-inbox .attention-inbox__action--open:hover:not([disabled]),
+.attention-inbox .attention-inbox__action--answer:hover:not([disabled]) {
+  color: var(--sidebar-state-approval-color);
+}
+/* Refusing is never the loud option until the pointer is on it. */
+.attention-inbox .attention-inbox__action--deny:hover:not([disabled]),
+.attention-inbox .attention-inbox__action--deny:focus-visible {
+  color: var(--text-danger-emphasis);
+}
+.attention-inbox .attention-inbox__action[disabled] {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The transcript's toast carries this message too; here it is a quiet line,
+   not an alarm, and it leaves on the next pass. */
+.attention-inbox__stale {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.attention-inbox button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* The titlebar mark: the health pill's shape, not its class -- a dot and a
+   number, quiet until the pointer is on it. The pill rewrites its own slot's
+   innerHTML on every status change, so this is a SIBLING of that slot. The
+   titlebar is the window's drag region, so the mark opts out like every other
+   control in it, or the click would move the window instead. */
+.attention-inbox-badge {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 26px;
+  margin-inline-start: var(--space-2);
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+}
+.attention-inbox-badge:hover {
+  background: var(--toprail-item-hover-bg);
+  color: var(--text-primary);
+}
+.attention-inbox-badge[hidden] {
+  display: none;
+}
+.attention-inbox-badge__dot {
+  flex: 0 0 auto;
+  inline-size: var(--session-row-dot-size);
+  block-size: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-state-approval-color);
+}
+.attention-inbox-badge:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}

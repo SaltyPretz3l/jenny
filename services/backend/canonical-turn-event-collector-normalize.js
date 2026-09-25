@@ -244,8 +244,8 @@ function statusForCanonicalEvent(event) {
   }
 }
 
-function primaryMessageIdForCanonicalEvent(event, kind) {
-  const turnId = normalizeId(event?.turn_id);
+function primaryMessageIdForCanonicalEvent(event, kind, attemptId) {
+  const turnId = normalizeId(attemptId || event?.turn_id);
   const toolCallId = normalizeId(event?.tool_call_id);
   if (!turnId) {
     return '';
@@ -287,7 +287,7 @@ function logCanonicalDrop(logger, result, source) {
   }
 }
 
-function normalizeCanonicalTurnEventForCapture(source, logger, prevalidatedResult) {
+function normalizeCanonicalTurnEventForCapture(source, logger, prevalidatedResult, attemptId = '') {
   // Reuse a supplied validateTurnEvent result to avoid duplicate validation and
   // payload capping; otherwise validate locally.
   const result = (prevalidatedResult
@@ -321,7 +321,7 @@ function normalizeCanonicalTurnEventForCapture(source, logger, prevalidatedResul
   payload.canonical_event_type = event.type;
   payload.canonical_part_id = event.part_id;
   payload.canonical_seq = event.seq;
-  const primaryMessageId = primaryMessageIdForCanonicalEvent(event, kind);
+  const primaryMessageId = primaryMessageIdForCanonicalEvent(event, kind, attemptId);
   return {
     event_id: event.event_id,
     turn_id: event.turn_id,

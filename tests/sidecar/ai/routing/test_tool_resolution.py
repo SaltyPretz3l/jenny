@@ -448,6 +448,41 @@ def test_assemble_tool_contract_with_request_context_disables_via_preference(tmp
     assert entry.reason == "request preference disabled"
 
 
+def test_scoped_knowledge_contract_uses_request_config_when_kernel_is_disabled(
+    tmp_path,
+) -> None:
+    descriptor = _fake_descriptor(
+        "knowledge_search",
+        tool_family="knowledge",
+        server_name=tr.BUILTIN_MCP_SERVER_NAME,
+    )
+    kernel = _kernel(
+        RuntimeConfig(mode="assist", tools_knowledge_enabled=False),
+        available_tools=[descriptor],
+    )
+    execution_context = SimpleNamespace(
+        root_path=str(tmp_path),
+        tool_policy_snapshot=kernel._config.tool_policy_snapshot,
+        knowledge_roots=(str(tmp_path / "knowledge"),),
+        skills_config=None,
+    )
+    request_context = ChatRequestContext(
+        request_id="r-scoped",
+        trace_id=None,
+        session_id="s-scoped",
+        mode="assist",
+        approvals_pre_granted=True,
+        execution_context=execution_context,
+        workspace_root_present=True,
+    )
+
+    contract = tr.assemble_tool_contract(kernel, request_context=request_context)
+
+    entry = contract.entry("knowledge_search")
+    assert entry is not None
+    assert entry.available is True
+
+
 def test_assemble_tool_contract_without_request_context_uses_defaults(tmp_path) -> None:
     kernel = _kernel(
         RuntimeConfig(

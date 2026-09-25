@@ -92,14 +92,15 @@
   // The backend session summary's `active_turn` is the authoritative "a turn is
   // genuinely in flight" signal for gating live-state rehydration: setActiveTurn
   // and clearActiveTurn always persist, so a settled turn has active_turn === null
-  // while an interrupted (orphaned) turn still carries it. turn_id === stream_id
-  // (services/backend/managed-sidecar-chat.js: `turnId: streamId`). Returns the
+  // while an interrupted (orphaned) turn still carries it. New records carry
+  // logical turn_id separately; legacy records fall back to stream/request. Returns the
   // in-flight turn_id, or '' when nothing is in flight.
   function resolveInFlightTurnId(activeTurn) {
     if (!activeTurn || typeof activeTurn !== 'object' || Array.isArray(activeTurn)) {
       return '';
     }
-    return normalizeId(activeTurn.stream_id || activeTurn.streamId)
+    return normalizeId(activeTurn.turn_id) || normalizeId(activeTurn.turnId)
+      || normalizeId(activeTurn.stream_id || activeTurn.streamId)
       || normalizeId(activeTurn.request_id || activeTurn.requestId);
   }
 
@@ -271,6 +272,12 @@
         sessionId: normalizedSessionId,
         appendClientLog,
       });
+      const inFlightTurnId = resolveInFlightTurnId(options.activeTurn);
+      const inFlightStreamId = normalizeId(options.activeTurn?.stream_id || options.activeTurn?.streamId)
+        || normalizeId(options.activeTurn?.request_id || options.activeTurn?.requestId);
+      if (inFlightTurnId && inFlightStreamId && reducerState.turns_by_id?.[inFlightTurnId]) {
+        reducerState.turns_by_id[inFlightTurnId].stream_id = inFlightStreamId;
+      }
     } catch (error) {
       try {
         appendClientLog('WARN', 'stream.rehydrate_failed', {

@@ -26,12 +26,13 @@ def test_process_outcome_is_named_tuple() -> None:
         response=None,
         notifications=[{"method": "chat.done"}],
     )
-    init, shutdown, resp, notifs, post_settlement_callback = outcome
+    init, shutdown, resp, notifs, post_settlement_callback, cleanup_delivery = outcome
     assert init is False
     assert shutdown is True
     assert resp is None
     assert len(notifs) == 1
     assert post_settlement_callback is None
+    assert cleanup_delivery is False
 
 
 def test_chat_error_outcome_produces_error_response() -> None:
@@ -103,3 +104,34 @@ def test_chat_error_outcome_preserves_initialized_state() -> None:
         chat_error_notification=_chat_error_notification,
     )
     assert outcome_true.initialized is True
+
+
+def test_chat_error_outcome_reports_retryable_on_the_rpc_response() -> None:
+    def _error_response(
+        message_id: object, *, code: int, message: str, data: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        return {"id": message_id, "error": {"code": code, "message": message, "data": data or {}}}
+
+    def _chat_error_notification(err: ChatRequestError) -> dict[str, object]:
+        return {"method": "chat.error", "params": {"code": err.code}}
+
+    for retryable in (True, False):
+        error = ChatRequestError(
+            request_id="req_1",
+            trace_id=None,
+            session_id=None,
+            code="CMP-CHAT-0001",
+            message="something failed",
+            rpc_code=-32000,
+            retryable=retryable,
+        )
+        outcome = chat_error_outcome(
+            initialized=True,
+            message_id=7,
+            error=error,
+            error_response=_error_response,
+            chat_error_notification=_chat_error_notification,
+        )
+        # Electron reads error.data.retryable from the chat.send response and
+        # treats an absent field as retryable, so it must be explicit both ways.
+        assert outcome.response["error"]["data"] == {"code": "CMP-CHAT-0001", "retryable": retryable}

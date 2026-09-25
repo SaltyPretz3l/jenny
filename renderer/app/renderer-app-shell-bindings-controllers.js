@@ -269,6 +269,10 @@
     // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture.
     const globalShortcutsController = (root.rendererGlobalShortcuts || {}).createGlobalShortcutsController?.({
       windowRef,
+      isOverlayOpen: () => (controllers.overlayManager?.getDepth?.() || 0) > 0,
+      overlayManager: controllers.overlayManager || null,
+      // The palette is a launcher, not a modal: the capture chord dismisses it.
+      captureYieldingOverlayIds: [(root.rendererCommandPaletteUtils || {}).COMMAND_PALETTE_OVERLAY_ID],
       callbacks: {
         setActiveView: (...a) => setActiveView(...a),
         newChat: () => { try { dom.newChatButton?.click?.(); } catch (_err) { /* noop */ } },

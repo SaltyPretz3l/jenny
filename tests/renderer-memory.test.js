@@ -110,6 +110,7 @@ test('Settings Memory category owns the memory admin surface', async () => {
     assert.ok(window.document.getElementById('pendingMemoryStatus'));
     assert.ok(window.document.getElementById('memoryManagerSearchInput'));
     assert.ok(window.document.getElementById('memoryManagerKindFilter'));
+    assert.ok(window.document.getElementById('memoryManagerProjectFilter'));
     assert.equal(window.document.getElementById('memoryTopRailTab'), null);
     assert.equal(window.document.getElementById('memoryPageHeading').tabIndex, -1);
     assert.equal(window.document.getElementById('approvedMemoryStatus').getAttribute('role'), 'status');
@@ -130,6 +131,7 @@ test('Memory page supports bounded expansion, review actions, and source removal
   const approved = Array.from({ length: 201 }, (_entry, index) => ({
     id: index + 1,
     session_id: 'session-approved',
+    project_id: index === 0 ? 'project_garden' : 'project_general',
     title: index === 0 ? 'Preference: tea' : `Memory ${index + 1}`,
     lesson_text: index === 0 ? 'The user prefers tea.' : `The user prefers item ${index + 1}.`,
     lesson_kind: index === 0 ? 'preference' : 'project_context',
@@ -144,6 +146,7 @@ test('Memory page supports bounded expansion, review actions, and source removal
     {
       id: 501,
       session_id: 'session-approve',
+      project_id: 'project_garden',
       title: 'Goal: ship Jenny',
       lesson_text: 'The user wants to ship Jenny.',
       lesson_kind: 'goal',
@@ -169,6 +172,11 @@ test('Memory page supports bounded expansion, review actions, and source removal
   const calls = { status: 0, updates: [], saves: [], deletes: [], dismisses: [] };
   const app = await loadRendererApp({
     shell: {
+      projects: {
+        async list() {
+          return { ok: true, projects: [{ id: 'project_general', name: 'General' }, { id: 'project_garden', name: 'Garden' }] };
+        },
+      },
       memory: {
         async status() {
           calls.status += 1;
@@ -181,24 +189,24 @@ test('Memory page supports bounded expansion, review actions, and source removal
         },
         async listApproved() { return { memories: approved }; },
         async listPending() { return { candidates: pending }; },
-        async update(memoryId, patch) {
-          calls.updates.push({ memoryId, patch });
+        async update(memoryId, patch, projectId) {
+          calls.updates.push({ memoryId, patch, projectId });
           return { updated: true, memory: { ...approved[0], ...patch, source_excerpt: '' } };
         },
         async save(sessionId, candidate) {
           calls.saves.push({ sessionId, candidate });
           return { created: true, memory: candidate };
         },
-        async delete(memoryId) {
-          calls.deletes.push(memoryId);
+        async delete(memoryId, projectId) {
+          calls.deletes.push({ memoryId, projectId });
           return { deleted: true, memory_id: memoryId };
         },
         async deletePending(sessionId, fingerprint) {
           calls.deletes.push({ sessionId, fingerprint });
           return { deleted: true };
         },
-        async dismiss(fingerprint) {
-          calls.dismisses.push(fingerprint);
+        async dismiss(sessionId, fingerprint) {
+          calls.dismisses.push({ sessionId, fingerprint });
           return { dismissed: true };
         },
       },
@@ -221,11 +229,34 @@ test('Memory page supports bounded expansion, review actions, and source removal
     await waitForUi(window, 30);
     assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 201);
     assert.equal(doc.querySelector('[data-inv-toggle="memoryCaptureSuggestions"]')?.getAttribute('aria-checked'), 'true');
+    assert.equal(doc.querySelector('[data-memory-id="1"] .memory-record-project')?.textContent.trim(), 'Garden');
+    assert.equal(doc.querySelector('[data-memory-id="2"] .memory-record-project'), null, 'General memories carry no project badge');
+    const pendingRow = (sessionId) => doc.querySelector(`[data-pending-memory-action="approve"][data-session-id="${sessionId}"]`).closest('article');
+    assert.equal(pendingRow('session-approve').querySelector('.memory-record-project')?.textContent.trim(), 'Garden', 'pending rows carry their project badge');
+    assert.equal(pendingRow('session-dismiss').querySelector('.memory-record-project'), null, 'General pending rows carry no project badge');
+    const projectFilter = doc.getElementById('memoryManagerProjectFilter');
+    assert.deepEqual(
+      Array.from(projectFilter.options).map((option) => [option.value, option.textContent.trim()]),
+      [['all', 'All'], ['project_general', 'General'], ['project_garden', 'Garden']]
+    );
+    projectFilter.value = 'project_garden';
+    projectFilter.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await waitForUi(window, 30);
+    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 1);
+    assert.equal(doc.getElementById('memoryManagerProjectFilter').value, 'project_garden');
+    doc.getElementById('memoryManagerProjectFilter').value = 'all';
+    doc.getElementById('memoryManagerProjectFilter').dispatchEvent(new window.Event('change', { bubbles: true }));
+    await waitForUi(window, 30);
+    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 200);
+    doc.querySelector('[data-memory-page-action="show-more-approved"]').click();
+    await waitForUi(window, 30);
+    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 201);
 
     doc.querySelector('[data-memory-action="remove-provenance"][data-memory-id="1"]').click();
     await waitForUi(window, 80);
     assert.deepEqual(JSON.parse(JSON.stringify(calls.updates[0])), {
       memoryId: 1,
+      projectId: 'project_garden',
       patch: {
         title: 'Preference: tea',
         lesson_text: 'The user prefers tea.',
@@ -247,6 +278,7 @@ test('Memory page supports bounded expansion, review actions, and source removal
     await waitForUi(window, 80);
     assert.deepEqual(JSON.parse(JSON.stringify(calls.updates[1])), {
       memoryId: 2,
+      projectId: 'project_general',
       patch: { title: 'Edited memory title', lesson_text: 'The user prefers item 2.' },
     });
     assert.equal(doc.activeElement, doc.querySelector('[data-memory-action="edit"][data-memory-id="2"]'));
@@ -260,7 +292,7 @@ test('Memory page supports bounded expansion, review actions, and source removal
     doc.querySelector('[data-memory-action="delete"][data-memory-id="3"]').click();
     doc.querySelector('[data-toast-action-id="confirm-delete"]').click();
     await waitForUi(window, 80);
-    assert.deepEqual(calls.deletes, [3]);
+    assert.deepEqual(calls.deletes, [{ memoryId: 3, projectId: 'project_general' }]);
     assert.equal(calls.status, 2);
     doc.querySelector('[data-toast-action-id="undo-delete"]').click();
     await waitForUi(window, 80);
@@ -279,7 +311,10 @@ test('Memory page supports bounded expansion, review actions, and source removal
       sessionId: 'session-dismiss',
       fingerprint: 'sha256:' + 'b'.repeat(64),
     });
-    assert.deepEqual(calls.dismisses, ['sha256:' + 'b'.repeat(64)]);
+    assert.deepEqual(calls.dismisses, [{
+      sessionId: 'session-dismiss',
+      fingerprint: 'sha256:' + 'b'.repeat(64),
+    }]);
     assert.equal(calls.status, 5);
   } finally {
     await app.dispose();
@@ -796,4 +831,58 @@ test('Memory status queues one forced refresh and ignores a late response after 
   await waitForUi(window, 30);
   assert.notEqual(window.__rendererState.memoryManager.statusSnapshot?.counts?.approved, 99);
   await app.dispose();
+});
+
+// The toast store dismisses by the id showToastMessage returns, never by
+// dedupeKey, and an action click does not close its toast on its own.
+async function openDeleteConfirm(t) {
+  const memory = {
+    id: 1,
+    session_id: 'session-approved',
+    title: 'Preference: tea',
+    lesson_text: 'The user prefers tea.',
+    lesson_kind: 'preference',
+    confidence: 0.9,
+    source_excerpt: 'I prefer tea.',
+    content_fingerprint: 'sha256:' + 'f'.repeat(64),
+  };
+  const app = await loadRendererApp({
+    shell: {
+      memory: {
+        async listApproved() { return { memories: [memory] }; },
+        async listPending() { return { candidates: [] }; },
+        async delete() { return { deleted: true, memory_id: memory.id }; },
+        async save() { return { created: true, memory }; },
+      },
+    },
+  });
+  t.after(async () => { await app.dispose(); });
+  const { window } = app;
+  const doc = window.document;
+  await openMemorySettings(window);
+  doc.querySelector('[data-memory-action="delete"]').click();
+  await waitForUi(window, 20);
+  const toastText = () => doc.getElementById('toastViewport').textContent;
+  assert.match(toastText(), /Confirm Delete/i, 'precondition: the confirm toast is shown');
+  return { window, doc, toastText };
+}
+
+test('Memory delete Cancel closes the sticky confirm toast', async (t) => {
+  const { window, doc, toastText } = await openDeleteConfirm(t);
+  doc.querySelector('[data-toast-action-id="cancel-delete"]').click();
+  await waitForUi(window, 20);
+  assert.doesNotMatch(toastText(), /Confirm Delete/i);
+});
+
+test('Memory delete confirm and Undo each close the toast they were clicked on', async (t) => {
+  const { window, doc, toastText } = await openDeleteConfirm(t);
+  doc.querySelector('[data-toast-action-id="confirm-delete"]').click();
+  await waitForUi(window, 50);
+  assert.doesNotMatch(toastText(), /Confirm Delete/i, 'Delete closes the confirm toast');
+  assert.match(toastText(), /Memory Deleted/i, 'precondition: the undo toast is shown');
+
+  doc.querySelector('[data-toast-action-id="undo-delete"]').click();
+  await waitForUi(window, 50);
+  assert.match(toastText(), /Undo Successful/i, 'precondition: the restore succeeded');
+  assert.doesNotMatch(toastText(), /Memory Deleted/i, 'Undo closes the undo toast');
 });

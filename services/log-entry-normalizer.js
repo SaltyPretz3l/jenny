@@ -4,6 +4,7 @@ const {
 } = require('./log-level-utils');
 const { normalizeString } = require('../renderer/shared/string-utils');
 const {
+  collapseRedactedPathTails,
   redactLogReportValue,
   redactLogText,
 } = require('../renderer/shared/log-contract-utils');
@@ -200,6 +201,7 @@ function normalizeRendererDiagnosticsDetails(payload) {
 }
 
 module.exports = {
+  collapseRedactedPathTails,
   normalizeLogEntry,
   normalizeRendererDiagnosticsDetails,
   redactLogValue,

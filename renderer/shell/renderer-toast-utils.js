@@ -364,6 +364,7 @@
         title: String(options.title || '').trim(),
         tone: String(options.tone || 'info').trim() || 'info',
         source: String(options.source || '').trim(),
+        sessionId: String(options.sessionId || '').trim(),
         dedupeKey: String(options.dedupeKey || '').trim(),
         dismissible: !Object.prototype.hasOwnProperty.call(options, 'dismissible') || Boolean(options.dismissible),
         actions: actions.map((action) => ({

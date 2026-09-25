@@ -71,8 +71,8 @@ test('v52 defaults and migration preserve valid forward values', () => {
   assert.equal(defaults.unattendedGuardMinutes, 0);
 
   const migrated = normalizeState({ version: 51 });
-  assert.equal(migrated.version, 53);
-  assert.equal(CONFIG_VERSION, 53);
+  assert.equal(migrated.version, 55);
+  assert.equal(CONFIG_VERSION, 55);
   assert.equal(migrated.uiLanguage, 'en');
   assert.equal(migrated.safetyMode, 'normal');
   assert.equal(migrated.unattendedGuardMinutes, 0);
@@ -124,6 +124,7 @@ test('ShellConfigService persists and exposes v52 chat UI settings idempotently'
     defaultRunMode: 'ask',
     uiLanguage: 'pt-BR',
     safetyMode: 'strict',
+    autoApproveStreakCap: 50,
     unattendedGuardMinutes: 30,
   });
   assert.deepEqual(reasons, [

@@ -295,6 +295,7 @@
       buildToolMarkerBannerMarkup,
       renderApprovalBlock,
       getFeatureFlags,
+      getApprovalCardState: settings.getApprovalCardState,
     });
 
     const {

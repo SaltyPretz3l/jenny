@@ -116,6 +116,20 @@ function createBackendServiceWithDeps({
       platform: chromiumSandbox.platform,
     });
   }
+  // The optional PDF reading add-on (PyMuPDF, AGPL-3.0; never bundled). Built
+  // before the backend so the first sidecar spawn already carries its directory.
+  const { PdfAddonService } = require('../pdf-addon-service');
+  const pdfAddon = new PdfAddonService({
+    userDataPath: app.getPath('userData'),
+    isPackaged: app.isPackaged === true,
+    platform: processRef.platform,
+    getBackend: () => backendService,
+    showOpenDialog: (options) => {
+      const owner = getMainWindow();
+      return owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options);
+    },
+    logger: log,
+  });
   const backendService = new BackendService({
     appVersion: app.getVersion(),
     // Source setup forwards this process-only choice through start.js.
@@ -161,7 +175,11 @@ function createBackendServiceWithDeps({
     featureFlags: initialFeatureFlags,
     bundledSkillsRoot: skillsService ? skillsService.getBundledRoot() : '',
     resolvePackagedLaunch,
+    resolveSidecarExtraEnv: () => pdfAddon.sidecarEnv(),
   });
+  backendService.pdfAddon = pdfAddon;
+  pdfAddon.on('changed', (state) => sendBridgeEvent('pdfAddon.onChanged', state));
+  void pdfAddon.start().catch(() => {});
   const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
   backendService.commandSandbox = new DesktopSandboxService({
     userDataPath: app.getPath('userData'),
@@ -354,6 +372,11 @@ function createBackendServiceWithDeps({
     const packagedSmokeController = getPackagedSmokeController();
     if (packagedSmokeController && status && status.phase === 'failed') {
       packagedSmokeController.markBackendFailed(status, status.detail || '');
+    }
+    // start() can return while the startup model load still holds the phase
+    // at sidecar_spawned; the ready status that follows completes the smoke.
+    if (packagedSmokeController && status && status.phase === 'ready') {
+      packagedSmokeController.markBackendReady?.(status);
     }
     if (status && status.phase === 'ready') {
       void refreshGpuMemorySample({ force: true }).catch(() => null);

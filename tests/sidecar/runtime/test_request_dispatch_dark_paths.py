@@ -57,6 +57,8 @@ from sidecar.runtime.turn_state import (
     TURN_STATE_CANCELLED,
     TURN_STATE_PREEMPTED,
     TURN_STATE_RUNTIME_ERROR,
+    LiveRunModeState,
+    bind_live_run_mode_state,
 )
 
 LOGGER = logging.getLogger("test.request_dispatch_dark_paths")
@@ -80,6 +82,127 @@ def test_approval_wait_timeout_preserves_legacy_plan_timeout() -> None:
         SimpleNamespace(wall_clock_deadline=None),
         configured_timeout_seconds=600.0,
     ) == 600.0
+
+
+def test_approval_wait_timeout_extends_unattended_pause() -> None:
+    state = LiveRunModeState(approval_mode="prompt", paused_unattended=True)
+
+    with bind_live_run_mode_state(state):
+        assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+            SimpleNamespace(wall_clock_deadline=None),
+            configured_timeout_seconds=600.0,
+        ) == 4 * 60 * 60.0
+
+
+def test_approval_wait_timeout_preserves_prompt_timeout() -> None:
+    state = LiveRunModeState(approval_mode="prompt")
+
+    with bind_live_run_mode_state(state):
+        assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+            SimpleNamespace(wall_clock_deadline=None),
+            configured_timeout_seconds=600.0,
+        ) == 600.0
+
+
+def test_approval_wait_extends_when_unattended_pause_arrives_after_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @dataclass(frozen=True)
+    class _LateApprovalPlan:
+        request_id: str = "rq-late-idle"
+        session_id: str = "session-late-idle"
+        call_id: str = "call-late-idle"
+        wall_clock_deadline: float | None = None
+
+    plan = _LateApprovalPlan()
+    cache_put_ttls: list[float] = []
+
+    class _ApprovalPlanCache:
+        def put(self, cached_plan: Any, *, ttl_seconds: float) -> Any:
+            cache_put_ttls.append(ttl_seconds)
+            return cached_plan
+
+        def consume(self, _request_id: str, _call_id: str) -> Any:
+            return plan
+
+        def evict(self, _request_id: str, _call_id: str) -> None:
+            pass
+
+    def _fake_build_chat_response(
+        *, approval_plan: Any | None = None, **_kwargs: Any
+    ) -> Any:
+        if approval_plan is not None:
+            return SimpleNamespace(
+                result={"status": "completed", "request_id": "rq-late-idle"},
+                notifications=[],
+                approval_request=None,
+                approval_plan=None,
+                request_id="rq-late-idle",
+                post_settlement_callback=None,
+            )
+        return SimpleNamespace(
+            result={"status": "awaiting_approval", "request_id": "rq-late-idle"},
+            notifications=[],
+            approval_request={
+                "tool_call_id": "call-late-idle",
+                "tool_name": "shell",
+                "reason": "needs approval",
+            },
+            approval_plan=plan,
+            request_id="rq-late-idle",
+            post_settlement_callback=None,
+        )
+
+    state = LiveRunModeState(approval_mode="prompt")
+    approval_waits: list[float] = []
+    extra_approval_waits: list[float] = []
+    approval_messages: list[dict[str, Any]] = []
+
+    def _fake_request_tool_approval(*_args: Any, **kwargs: Any) -> ApprovalResolution:
+        approval_waits.append(kwargs["timeout_seconds"])
+        kwargs["write_message"]({"method": "tool.request_approval"})
+        state.update(
+            approval_mode="prompt",
+            read_only=False,
+            paused_unattended=True,
+        )
+        extra_approval_waits.append(kwargs["extra_wait_seconds"]())
+        return ApprovalResolution(approved=True, status="approved")
+
+    config = SimpleNamespace(
+        tools_workspace_root="/ws",
+        agent_workspace_root=None,
+        tools_enabled=True,
+        feature_flags={},
+    )
+    brain = _make_brain_with_request_boundary(config=config)
+    monkeypatch.setattr(rd, "_APPROVAL_PLAN_CACHE", _ApprovalPlanCache())
+    monkeypatch.setattr(rd, "_build_chat_response", _fake_build_chat_response)
+    monkeypatch.setattr(rd, "request_tool_approval", _fake_request_tool_approval)
+
+    with bind_live_run_mode_state(state):
+        outcome = rd.process_chat_send_request(
+            message_id=102,
+            params={"accept_version": API_VERSION, "request_id": "rq-late-idle"},
+            initialized=True,
+            interactive_approval=True,
+            brain_container=brain,  # type: ignore[arg-type]
+            logger=LOGGER,
+            write_message=approval_messages.append,
+            read_message=_null_reader,
+            approval_timeout_seconds=30.0,
+        )
+
+    assert approval_waits == [30.0]
+    assert extra_approval_waits == [(4 * 60 * 60.0) - 30.0]
+    assert [
+        message
+        for message in approval_messages
+        if message.get("method") == "tool.request_approval"
+    ] == [{"method": "tool.request_approval"}]
+    assert cache_put_ttls[-1] == 4 * 60 * 60.0
+    assert outcome.response is not None
+    assert outcome.response["result"]["status"] == "completed"
 
 
 def test_each_approval_round_credits_only_its_own_wait_time() -> None:

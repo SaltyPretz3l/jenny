@@ -27,26 +27,30 @@ class _BuilderRenderMixin:
     # the concrete type when this mixin is checked in isolation. No runtime effect.
     _workspace_root: Path | None
 
-    def _render_workspace_manifest_block(self, *, enabled: bool) -> str:
-        if enabled is not True or self._workspace_root is None:
+    # Both renderers take the request-effective root from the hub instead of
+    # reading ``_workspace_root``: an unbound request must render neither block.
+    @staticmethod
+    def _render_workspace_manifest_block(*, enabled: bool, workspace_root: Path | None) -> str:
+        if enabled is not True or workspace_root is None:
             return ""
         from sidecar.ai.tools.workspace_manifest import render_workspace_manifest_block
 
-        return render_workspace_manifest_block(self._workspace_root)
+        return render_workspace_manifest_block(workspace_root)
 
+    @staticmethod
     def _render_task_capsule_block(
-        self,
         *,
         enabled: bool,
+        workspace_root: Path | None,
         latest_user_content: str,
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None,
     ) -> str:
-        if enabled is not True or self._workspace_root is None:
+        if enabled is not True or workspace_root is None:
             return ""
         from sidecar.ai.context.task_capsule import build_coding_task_capsule
 
         return build_coding_task_capsule(
-            self._workspace_root,
+            workspace_root,
             latest_user_content=latest_user_content,
             enabled=enabled,
             tool_statuses=tool_statuses,
@@ -175,6 +179,10 @@ class _BuilderRenderMixin:
             "- After tools have started, do not acknowledge the request again. "
             "Add another update only for a material finding, changed approach, "
             "or meaningful milestone; otherwise call the next tool directly.\n"
+            "- The user already sees what you wrote before your tool calls, in "
+            "the same reply. Your final answer continues it: do not greet, "
+            "introduce yourself, or restate the request again; start with what "
+            "the tools showed.\n"
             '- If a tool returns an error or "not found", do not immediately '
             "retry with a near-identical argument. Try a different path, a "
             "different tool, or stop and summarize.\n"
@@ -396,6 +404,7 @@ class _BuilderRenderMixin:
         *,
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None,
         latest_user_content: str,
+        workspace_root: Path | None = None,
     ) -> str:
         if tool_statuses is None or not looks_like_source_architecture_request(latest_user_content):
             return ""
@@ -407,9 +416,17 @@ class _BuilderRenderMixin:
             status for status in filesystem_statuses if status.available is True
         ]
         if available_filesystem:
+            # Name the bound folder (never assume it is the Jenny repository);
+            # the full path already appears in the session-environment block.
+            folder = workspace_root.name if workspace_root is not None else ""
+            workspace_line = (
+                f"The workspace bound to this request is the `{folder}` folder. "
+                if folder
+                else "A workspace folder is bound to this request. "
+            )
             return (
                 "## Workspace Source Access\n"
-                "The configured workspace is the Jenny source repository. "
+                f"{workspace_line}"
                 "For repo, source-code, architecture, file, reducer, or pipeline questions, "
                 "inspect the workspace with `read_file`, `grep_search`, `glob_files`, and `list_dir` "
                 "when those tools are available; do not claim you lack access to source files. "

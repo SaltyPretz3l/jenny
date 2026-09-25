@@ -17,6 +17,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_RICH_FILES_TOO_LARGE,
     CMP_TOOL_RICH_FILES_UNSUPPORTED,
 )
+from sidecar.ai.tools.builtins.file_state import open_regular_file
 from sidecar.ai.tools.builtins.filesystem import workspace_relative_path
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.sanitization import sanitize_tool_output
@@ -171,7 +172,12 @@ class RichSourceValidator:
                 retryable=False,
             )
 
-        sha256 = _sha256_file(absolute, max_bytes=self._max_bytes, display_path=display_path)
+        sha256 = _sha256_file(
+            absolute,
+            max_bytes=self._max_bytes,
+            display_path=display_path,
+            authorized_root=workspace_root,
+        )
 
         return RichFileSource(
             workspace_path=display_path,
@@ -461,10 +467,11 @@ def _sha256_file(
     chunk_size: int = 65_536,
     max_bytes: int | None = None,
     display_path: str | None = None,
+    authorized_root: Path | None = None,
 ) -> str:
     digest = hashlib.sha256()
     total = 0
-    with path.open("rb") as handle:
+    with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
         while True:
             chunk = handle.read(chunk_size)
             if not chunk:
@@ -488,10 +495,11 @@ def read_bounded_file_bytes(
     *,
     max_bytes: int,
     message: str = "preview source changed beyond rich-file size limit",
+    authorized_root: Path | None = None,
 ) -> bytes:
     content = bytearray()
     total = 0
-    with path.open("rb") as handle:
+    with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
         while True:
             chunk = handle.read(65_536)
             if not chunk:

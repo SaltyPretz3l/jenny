@@ -19,6 +19,8 @@ from typing import Any
 _MAX_URL_LENGTH = 8192
 _MAX_FETCH_BYTES_HARD = 1024 * 1024
 _MAX_REDIRECTS = 5
+_READ_CHUNK_BYTES = 64 * 1024
+_TIMEOUT_MESSAGE = "Web request timed out."
 # Use a browser-like user agent because sites block bot-identifying clients.
 # User-agent selection does not alter pinned-IP/no-redirect SSRF enforcement.
 _BROWSER_USER_AGENT = (
@@ -160,8 +162,11 @@ def validate_public_url(
     raw_url: str,
     *,
     allow_private: bool = False,
+    deadline: float | None = None,
 ) -> ValidatedUrl:
     """Validate a URL for safe fetching with SSRF protection."""
+    if deadline is not None:
+        _remaining_seconds(deadline)
     url_str = str(raw_url or "").strip()
     if not url_str:
         raise ValueError("URL must not be empty.")
@@ -196,7 +201,7 @@ def validate_public_url(
 
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = _getaddrinfo(host, port, deadline=deadline)
     except socket.gaierror as exc:
         raise ValueError(f"Hostname resolution failed: {host}") from exc
 
@@ -219,6 +224,39 @@ def validate_public_url(
     if not pinned_ip:
         raise ValueError(f"Hostname resolution returned no usable addresses: {host}")
     return ValidatedUrl(url=parsed.geturl(), pinned_ip=pinned_ip)
+
+
+def _remaining_seconds(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError(_TIMEOUT_MESSAGE)
+    return remaining
+
+
+def _getaddrinfo(host: str, port: int, *, deadline: float | None) -> list[Any]:
+    if deadline is None:
+        return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+
+    remaining = _remaining_seconds(deadline)
+    finished = threading.Event()
+    results: list[list[Any]] = []
+    errors: list[Exception] = []
+
+    def resolve() -> None:
+        try:
+            results.append(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    threading.Thread(target=resolve, daemon=True).start()
+    if not finished.wait(timeout=remaining):
+        raise TimeoutError(_TIMEOUT_MESSAGE)
+    _remaining_seconds(deadline)
+    if errors:
+        raise errors[0]
+    return results[0]
 
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
@@ -307,7 +345,9 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+    def redirect_request(  # type: ignore[override]  # noqa: PLR0917
+        self, req, fp, code, msg, headers, newurl
+    ):
         _ = (code, msg, headers, newurl)
         response_headers = getattr(fp, "headers", None)
         if not isinstance(response_headers, Message):
@@ -334,7 +374,32 @@ def _build_opener(pinned_ip: str) -> Any:
     return urllib.request.build_opener(*handlers)
 
 
-def _read_response_payload(response: Any, *, limit: int) -> tuple[bytes, bool, str]:
+def _set_response_timeout(response: Any, timeout_s: float) -> None:
+    fp = getattr(response, "fp", None)
+    raw = getattr(fp, "raw", None)
+    nested_fp = getattr(fp, "fp", None)
+    nested_raw = getattr(nested_fp, "raw", None)
+    candidates = (
+        response,
+        getattr(raw, "_sock", None),
+        getattr(nested_raw, "_sock", None),
+        getattr(fp, "_sock", None),
+        getattr(nested_fp, "_sock", None),
+        getattr(response, "_sock", None),
+    )
+    for candidate in candidates:
+        setter = getattr(candidate, "settimeout", None)
+        if callable(setter):
+            setter(timeout_s)
+            return
+
+
+def _read_response_payload(
+    response: Any,
+    *,
+    limit: int,
+    deadline: float,
+) -> tuple[bytes, bool, str]:
     content_type = str(response.headers.get("Content-Type", "") or "").strip()
     raw_cl = response.headers.get("Content-Length")
     if raw_cl is not None:
@@ -344,10 +409,18 @@ def _read_response_payload(response: Any, *, limit: int) -> tuple[bytes, bool, s
                 return b"", True, content_type
         except (TypeError, ValueError):
             pass
-    try:
-        payload = response.read(limit + 1)
-    except TypeError:
-        payload = response.read()
+    chunks: list[bytes] = []
+    total = 0
+    while total <= limit:
+        remaining = _remaining_seconds(deadline)
+        _set_response_timeout(response, remaining)
+        chunk = response.read(min(_READ_CHUNK_BYTES, limit + 1 - total))
+        _remaining_seconds(deadline)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    payload = b"".join(chunks)
     truncated = len(payload) > limit
     if truncated:
         payload = payload[:limit]
@@ -357,18 +430,37 @@ def _read_response_payload(response: Any, *, limit: int) -> tuple[bytes, bool, s
 def _open_url_once(
     validated: ValidatedUrl,
     *,
-    timeout_s: int,
+    timeout_s: float,
     max_bytes: int,
+    deadline: float,
+    method: str = "GET",
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
 ) -> _SingleFetchResult:
-    request = urllib.request.Request(validated.url, method="GET")
+    request = urllib.request.Request(validated.url, data=data, method=method)
     request.add_header("User-Agent", _BROWSER_USER_AGENT)
     request.add_header("Accept", _BROWSER_ACCEPT)
     request.add_header("Accept-Language", _BROWSER_ACCEPT_LANGUAGE)
+    for header, value in (headers or {}).items():
+        request.add_header(header, value)
     opener = _build_opener(validated.pinned_ip)
     try:
-        with opener.open(request, timeout=timeout_s) as response:
-            payload, truncated, content_type = _read_response_payload(response, limit=max_bytes)
+        open_timeout = min(timeout_s, _remaining_seconds(deadline))
+        with opener.open(request, timeout=open_timeout) as response:
             status_code = int(getattr(response, "status", getattr(response, "code", 200)) or 200)
+            if status_code in _REDIRECT_STATUS_CODES:
+                return _SingleFetchResult(
+                    payload=b"",
+                    was_truncated=False,
+                    content_type=str(response.headers.get("Content-Type", "") or "").strip(),
+                    status_code=status_code,
+                    location=str(response.headers.get("Location", "") or "").strip(),
+                )
+            payload, truncated, content_type = _read_response_payload(
+                response,
+                limit=max_bytes,
+                deadline=deadline,
+            )
             return _SingleFetchResult(
                 payload=payload,
                 was_truncated=truncated,
@@ -378,25 +470,32 @@ def _open_url_once(
     except urllib.error.HTTPError as exc:
         if exc.code in _REDIRECT_STATUS_CODES:
             location = str(exc.headers.get("Location", "") or "").strip()
-            return _SingleFetchResult(
-                payload=b"",
-                was_truncated=False,
-                content_type=str(exc.headers.get("Content-Type", "") or "").strip(),
-                status_code=exc.code,
-                location=location,
-            )
+            try:
+                return _SingleFetchResult(
+                    payload=b"",
+                    was_truncated=False,
+                    content_type=str(exc.headers.get("Content-Type", "") or "").strip(),
+                    status_code=exc.code,
+                    location=location,
+                )
+            finally:
+                exc.close()
         raise
 
 
 def read_url_response(
     validated: ValidatedUrl,
     *,
-    timeout_s: int = 10,
+    timeout_s: float = 10,
     max_bytes: int = _MAX_FETCH_BYTES_HARD,
     allow_private: bool = False,
     max_redirects: int = _MAX_REDIRECTS,
+    method: str = "GET",
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
 ) -> UrlReadResult:
     """Fetch URL bytes with DNS pinning, redirect validation, and size limits."""
+    deadline = time.monotonic() + float(timeout_s)
     limit = min(_MAX_FETCH_BYTES_HARD, max(1024, int(max_bytes)))
     requested_url = validated.url
     current = validated
@@ -404,7 +503,17 @@ def read_url_response(
     seen_urls = {requested_url}
 
     for _ in range(max_redirects + 1):
-        single = _open_url_once(current, timeout_s=timeout_s, max_bytes=limit)
+        remaining = _remaining_seconds(deadline)
+        single = _open_url_once(
+            current,
+            timeout_s=remaining,
+            max_bytes=limit,
+            deadline=deadline,
+            method=method,
+            data=data,
+            headers=headers,
+        )
+        _remaining_seconds(deadline)
         if single.status_code not in _REDIRECT_STATUS_CODES:
             return UrlReadResult(
                 payload=single.payload,
@@ -424,7 +533,11 @@ def read_url_response(
         # stay host-free on purpose: unlike the first hop, this target comes from
         # an attacker-controlled Location header and must never echo into output.
         try:
-            next_validated = validate_public_url(target_url, allow_private=allow_private)
+            next_validated = validate_public_url(
+                target_url,
+                allow_private=allow_private,
+                deadline=deadline,
+            )
         except PermissionError as exc:
             raise RedirectPolicyBlockedError(
                 "Redirect destination was rejected by the URL safety policy."

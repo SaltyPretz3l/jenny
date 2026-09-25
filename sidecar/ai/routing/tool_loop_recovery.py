@@ -541,15 +541,22 @@ _MAX_ITERATIONS_FALLBACK_RESPONSE = (
     "pick up where I left off."
 )
 
+# Wind-down nudges are system notes appended after the conversation. Thinking
+# models narrate whatever they take for the user's latest ask, so each note
+# says who it is from and what to do, never what "the user wants" (owner gate
+# 2026-09-20: the visible reasoning read "The user wants me to stop calling
+# tools" when no user message said that).
 _EMPTY_FINAL_WIND_DOWN = (
-    "Do not call any more tools. Based on the tool results already provided, "
-    "state the answer or progress for the user, including any failure and what "
-    "remains to be done."
+    "System note, not a message from the user: the tool phase of this turn is "
+    "over. Do not call any more tools. Reply to the user now, in your own voice, "
+    "with the answer or the progress so far based on the tool results above, "
+    "including any failure and what remains to be done. Do not mention this note."
 )
 
 _BUDGET_EXHAUSTED_WIND_DOWN = (
-    "Do not call any more tools. Summarize what you completed and what is blocking "
-    "further progress."
+    "System note, not a message from the user: this turn's tool budget is spent. "
+    "Do not call any more tools. Reply to the user now with what you completed "
+    "and what is blocking further progress. Do not mention this note."
 )
 
 
@@ -564,17 +571,21 @@ def _max_iterations_fallback_response(outcomes: list[Any]) -> str:
 
 
 @dataclass(frozen=True)
-class _WindDownSpec:
+class WindDownSpec:
     system_message: str
     event: str
     message: str
     fallback_response: Callable[[], str]
     log_data: dict[str, Any] | None = None
+    # Overrides the loop's effort for this one generation. Used by the
+    # thinking-budget wind-down, where leaving thinking on would spend the same
+    # output budget that just ran out and produce another empty turn.
+    reasoning_effort: str | None = None
 
 
 def wind_down_response(
     loop: Any,
-    spec: _WindDownSpec,
+    spec: WindDownSpec,
 ) -> tuple[str, str]:
     """Run one tools-stripped generation and return a non-empty response."""
     import sidecar.ai.routing.tool_loop as _tl_hub
@@ -604,7 +615,7 @@ def wind_down_response(
         result, streamed_generation_types = loop.kernel._generate_step(
             latest_user_content=loop.latest_user_content,
             working_messages=_tl_hub.build_generation_messages(loop.working_messages),
-            reasoning_effort=loop.reasoning_effort,
+            reasoning_effort=spec.reasoning_effort or loop.reasoning_effort,
             prompt_cache_enabled=loop.prompt_cache_enabled,
             source_key=loop.cache_source_key,
             system_prompt=loop.system_prompt,
@@ -646,7 +657,7 @@ def empty_final_wind_down(loop: Any) -> Any:
 
     response_text, completion_source = wind_down_response(
         loop,
-        _WindDownSpec(
+        WindDownSpec(
             system_message=_EMPTY_FINAL_WIND_DOWN,
             event="ai.router.empty_final_winddown",
             message="Post-tool completion was empty; winding down with a summary.",
@@ -704,12 +715,13 @@ def _budget_stop_details(loop: Any, reason: str) -> tuple[str, str, dict[str, in
             },
         )
     if reason == "context_budget":
+        tracker = getattr(loop, "budget_tracker", None)
         footer = "Stopped: this turn's context budget is used up. Reply 'resume' to continue."
         return (
             footer,
             "ai.router.context_budget_stop",
             {
-                "context_tokens": int(loop.budget_tracker.current_context_tokens),
+                "context_tokens": int(getattr(tracker, "current_context_tokens", 0) or 0),
                 "tool_calls_used": tool_calls_used,
             },
         )
@@ -753,7 +765,7 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
     elif reason != "tool_cap" or not response_text or _is_tool_call_markup(raw_content, loop):
         response_text, completion_source = wind_down_response(
             loop,
-            _WindDownSpec(
+            WindDownSpec(
                 system_message=_BUDGET_EXHAUSTED_WIND_DOWN,
                 event="ai.router.budget_exhausted_winddown",
                 message="Tool-loop budget was exhausted; winding down with a summary.",
@@ -826,7 +838,7 @@ def max_iterations_summary(loop: Any) -> Any:
     loop._settle_unfinished_tool_results("max_iterations")
     response_text, completion_source = wind_down_response(
         loop,
-        _WindDownSpec(
+        WindDownSpec(
             system_message=_MAX_ITERATIONS_WIND_DOWN,
             event="ai.router.max_iterations_summary",
             message=(

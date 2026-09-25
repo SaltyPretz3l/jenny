@@ -456,7 +456,11 @@ def _run_git_raw(arguments: list[str], *, cwd: Path,
 
 def _run_git_blob(ref: str, path: str, *, cwd: Path,
                   workspace: WorkspaceGuard | None = None) -> str:
-    stdout = _run_git_raw(["show", f"{ref}:{path}"], cwd=cwd, workspace=workspace)
+    stdout = _run_git_raw(
+        ["show", "--no-show-signature", f"{ref}:{path}"],
+        cwd=cwd,
+        workspace=workspace,
+    )
     validate_git_blob_text(stdout)
     return _truncate(stdout)
 
@@ -536,7 +540,11 @@ def git_log_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str
         )
     max_count = max(1, min(max_count, 100))
 
-    output = _run_git(["log", f"--max-count={max_count}", "--oneline"], cwd=cwd, workspace=workspace)
+    output = _run_git(
+        ["log", "--no-show-signature", f"--max-count={max_count}", "--oneline"],
+        cwd=cwd,
+        workspace=workspace,
+    )
     return output or "(no commits found)"
 
 
@@ -594,6 +602,7 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
     shortstat_output = _run_git(
         [
             "show",
+            "--no-show-signature",
             "--no-ext-diff",
             "--no-textconv",
             "--format=",
@@ -605,7 +614,7 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
     stats = _parse_shortstat(shortstat_output)
     if stats is not None and _diff_is_oversized(stats):
         metadata_output = _run_git(
-            ["show", "--format=medium", "--no-patch", ref],
+            ["show", "--no-show-signature", "--format=medium", "--no-patch", ref],
             cwd=cwd, workspace=workspace,
         )
         summary_output = "\n".join(
@@ -614,7 +623,15 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
         return _format_oversized_diff_response(summary_output, subject="commit")
 
     output = _run_git(
-        ["show", "--no-ext-diff", "--no-textconv", "--stat", "--patch", ref],
+        [
+            "show",
+            "--no-show-signature",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--stat",
+            "--patch",
+            ref,
+        ],
         cwd=cwd, workspace=workspace,
     )
     return output or "(no commit details found)"

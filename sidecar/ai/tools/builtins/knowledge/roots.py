@@ -9,9 +9,12 @@ not the security boundary.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from types import MappingProxyType
+from typing import Any, Callable, Iterator, Mapping
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_DISABLED,
@@ -41,13 +44,38 @@ class KnowledgeRoot:
     guard: WorkspaceGuard
 
 
-@dataclass
+@dataclass(frozen=True)
 class _KnowledgeRegistryState:
     roots: tuple[KnowledgeRoot, ...] = ()
-    rich_adapters: dict[str, RichAdapterHandler] | None = None
+    rich_adapters: Mapping[str, RichAdapterHandler] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 _registry_state = _KnowledgeRegistryState()
+_operation_registry: ContextVar[_KnowledgeRegistryState | None] = ContextVar(
+    "knowledge_operation_registry", default=None
+)
+
+
+def _build_registry(
+    raw_roots: object, *, rich_adapters: Mapping[str, RichAdapterHandler] | None = None
+) -> _KnowledgeRegistryState:
+    roots: list[KnowledgeRoot] = []
+    if isinstance(raw_roots, (list, tuple)):
+        for raw in raw_roots:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            token = raw.strip()
+            guard = WorkspaceGuard(token)
+            roots.append(KnowledgeRoot(
+                label=_unique_label(token, roots), path=guard.root,
+                raw_path=token, guard=guard,
+            ))
+    return _KnowledgeRegistryState(
+        roots=tuple(roots),
+        rich_adapters=MappingProxyType(dict(rich_adapters or {})),
+    )
 
 
 def configure_knowledge_tools(
@@ -56,23 +84,24 @@ def configure_knowledge_tools(
     rich_adapters: dict[str, RichAdapterHandler] | None = None,
 ) -> None:
     raw_roots = config_value(config, "knowledge_roots")
-    roots: list[KnowledgeRoot] = []
-    if isinstance(raw_roots, (list, tuple)):
-        for raw in raw_roots:
-            if not isinstance(raw, str) or not raw.strip():
-                continue
-            token = raw.strip()
-            guard = WorkspaceGuard(token)
-            roots.append(
-                KnowledgeRoot(
-                    label=_unique_label(token, roots),
-                    path=guard.root,
-                    raw_path=token,
-                    guard=guard,
-                )
-            )
-    _registry_state.roots = tuple(roots)
-    _registry_state.rich_adapters = dict(rich_adapters or {})
+    global _registry_state  # noqa: PLW0603 - legacy startup configuration.
+    _registry_state = _build_registry(raw_roots, rich_adapters=rich_adapters)
+
+
+@contextmanager
+def scoped_knowledge_tools(paths: tuple[str, ...]) -> Iterator[None]:
+    """Bind an immutable registry to one trusted builtin operation."""
+
+    registry = _build_registry(paths, rich_adapters=_registry_state.rich_adapters)
+    token = _operation_registry.set(registry)
+    try:
+        yield
+    finally:
+        _operation_registry.reset(token)
+
+
+def _current_registry() -> _KnowledgeRegistryState:
+    return _operation_registry.get() or _registry_state
 
 
 def _unique_label(raw_path: str, existing: list[KnowledgeRoot]) -> str:
@@ -87,15 +116,15 @@ def _unique_label(raw_path: str, existing: list[KnowledgeRoot]) -> str:
 
 
 def rich_adapters() -> dict[str, RichAdapterHandler]:
-    return dict(_registry_state.rich_adapters or {})
+    return dict(_current_registry().rich_adapters)
 
 
 def available_roots() -> tuple[KnowledgeRoot, ...]:
-    return tuple(root for root in _registry_state.roots if root.path is not None)
+    return tuple(root for root in _current_registry().roots if root.path is not None)
 
 
 def skipped_root_labels() -> tuple[str, ...]:
-    return tuple(root.label for root in _registry_state.roots if root.path is None)
+    return tuple(root.label for root in _current_registry().roots if root.path is None)
 
 
 def require_roots() -> tuple[KnowledgeRoot, ...]:

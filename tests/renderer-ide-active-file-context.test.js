@@ -80,6 +80,14 @@ test('computeActiveSlice bounds the slice around the cursor and skips non-file d
   assert.equal(computeActiveSlice(reader, 10), null);
 });
 
+test('active slices preserve unsaved text and its document workspace identity', () => {
+ const reader = makeReader({ value: 'unsaved editor text' });
+ reader.getWorkspaceId = () => 'root-original-document';
+ const context = computeActiveSlice(reader, 10);
+ assert.equal(context.workspace_id, 'root-original-document');
+ assert.equal(context.slice, 'unsaved editor text');
+});
+
 test('computeActiveSlice keeps a wide-line cursor inside the character budget and reports the included lines', () => {
   const lines = Array.from({ length: 1100 }, (_, index) => `LINE-${index + 1}-${'x'.repeat(190)}`);
   const info = computeActiveSlice(makeReader({

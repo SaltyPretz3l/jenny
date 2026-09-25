@@ -23,22 +23,35 @@ const params = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'
 const { ShellConfigService } = require(path.join(repoRoot, 'services', 'shell-config-service'));
 const { createDefaultRegistry, ToolExecutor } = require(path.join(repoRoot, 'services', 'tools'));
 const { executeElectronToolRequest } = require(path.join(repoRoot, 'services', 'backend', 'electron-tool-bridge'));
+const { SessionExecutionAuthority } = require(path.join(repoRoot, 'services', 'backend', 'session-execution-authority'));
 const configService = new ShellConfigService({ userDataPath, logger() {} });
+const permissionStore = {
+  getSnapshot() {
+    return { version: 1, legacy_policies: { task_board: 'auto' }, rules: [] };
+  },
+};
 const toolExecutor = new ToolExecutor({
   registry: createDefaultRegistry({ toolsTaskBoardEnabled: true }),
-  permissionStore: {
-    getSnapshot() {
-      return { version: 1, legacy_policies: { task_board: 'auto' }, rules: [] };
-    },
-  },
+  permissionStore,
   pathPolicy: {},
   logger() {},
   configService,
 });
+// Bridge calls execute only under a current session execution authority; mint the
+// same General-project binding the desktop runtime would capture for this request.
+const root = Object.freeze({ project_id: 'project_general', root_path: null, root_id: null,
+  root_revision: 1, device_id: null, inode: null });
+const executionAuthority = new SessionExecutionAuthority({
+  projectAuthority: { captureSession: () => root, requireCurrent: () => root },
+  permissionStore,
+  knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+  resolveProjectWorkspaceServices: () => ({ configService }),
+}).captureSession(params.session_id, { requestId: params.request_id });
 executeElectronToolRequest({ toolExecutor, configService }, {
   params,
   sessionId: params.session_id,
   streamId: params.request_id,
+  executionAuthority,
 }).then(
   (result) => process.stdout.write(JSON.stringify(result)),
   (error) => {

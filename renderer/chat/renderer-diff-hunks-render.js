@@ -13,21 +13,27 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/string-utils'));
+    module.exports = factory(require('../shared/string-utils'), require('./renderer-code-highlight'));
     return;
   }
-  root.rendererDiffHunksRender = factory(root.stringUtils || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
+  root.rendererDiffHunksRender = factory(root.stringUtils || {}, root.rendererCodeHighlight || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, codeHighlight) {
   const defaultEscape = typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : function fallbackEscape(value) { return String(value == null ? '' : value); };
 
-  function renderDiffHunks(hunks, escapeHtml) {
+  function renderDiffHunks(hunks, escapeHtml, options) {
     if (!Array.isArray(hunks) || hunks.length === 0) {
       return '';
     }
     const escape = typeof escapeHtml === 'function' ? escapeHtml : defaultEscape;
+    const settings = options || {};
     return hunks.map(function renderHunk(hunk, hunkIdx) {
+      const hunkPath = String(hunk?.path || hunk?.file_path || settings.path || '');
+      const languageId = String(settings.languageId || codeHighlight?.getLanguageId?.(hunkPath) || '');
+      // Only tag lines when a language is known; an empty hint would make the
+      // highlight pass re-wrap every line as plain text for nothing.
+      const highlightAttrs = languageId ? ` data-code-highlight-line data-language-id="${escape(languageId)}"` : '';
       const oldStart = Number(hunk?.oldStart) || 0;
       const oldLines = Number(hunk?.oldLines) || 0;
       const newStart = Number(hunk?.newStart) || 0;
@@ -60,9 +66,9 @@
           gutterNew = String(newLine++);
           markerChar = ' ';
         } else {
-          return `<div class="diff-line diff-line-meta"><span class="diff-gutter diff-gutter-old"></span><span class="diff-gutter diff-gutter-new"></span><span class="diff-marker"></span><span class="diff-content">${escape(text)}</span></div>`;
+          return `<div class="diff-line diff-line-meta"><span class="diff-gutter diff-gutter-old"></span><span class="diff-gutter diff-gutter-new"></span><span class="diff-marker"></span><span class="diff-content"${highlightAttrs}>${escape(text)}</span></div>`;
         }
-        return `<div class="diff-line ${lineClass}"><span class="diff-gutter diff-gutter-old">${escape(gutterOld)}</span><span class="diff-gutter diff-gutter-new">${escape(gutterNew)}</span><span class="diff-marker">${markerChar}</span><span class="diff-content">${escape(content)}</span></div>`;
+        return `<div class="diff-line ${lineClass}"><span class="diff-gutter diff-gutter-old">${escape(gutterOld)}</span><span class="diff-gutter diff-gutter-new">${escape(gutterNew)}</span><span class="diff-marker">${markerChar}</span><span class="diff-content"${highlightAttrs}>${escape(content)}</span></div>`;
       }).join('');
       const separator = hunkIdx > 0 ? '<div class="diff-hunk-separator">...</div>' : '';
       return `${separator}<div class="diff-hunk"><div class="diff-hunk-header">${escape(hunkHeader)}</div>${linesHtml}</div>`;

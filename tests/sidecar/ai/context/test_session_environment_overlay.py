@@ -10,12 +10,15 @@ between turns of the same session.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from sidecar.ai.config_models import ToolPolicySnapshot
 from sidecar.ai.context.builder import ContextBuilder
 from sidecar.ai.context.request_fingerprint import tool_schema_capability_hash
 from sidecar.ai.context.runtime_message_markers import (
@@ -27,6 +30,7 @@ from sidecar.ai.context.runtime_overlays import (
     append_session_environment_runtime_system_message,
 )
 from sidecar.ai.tools.builtins.shell import _shell_name
+from sidecar.runtime.execution_context import ExecutionContext
 
 _SCHEMAS = [{"name": "read_file", "parameters": {"type": "object"}}]
 _OTHER_SCHEMAS = [{"name": "write_file", "parameters": {"type": "object"}}]
@@ -95,8 +99,6 @@ def test_block_states_the_root_and_the_sourced_facts(tmp_path: Path) -> None:
 
 def test_windows_path_facts() -> None:
     # This suite runs on Windows in this repo; pin the platform-derived trio.
-    import os
-
     messages = _render(workspace_root=Path.cwd())
     block = messages[0]
     if os.name == "nt":
@@ -215,3 +217,62 @@ def test_24_hour_preference_survives_disabled_environment_overlay() -> None:
 def test_disabled_time_preference_does_not_add_clock_context() -> None:
     messages = _render(workspace_root=None, config=_config(use_24_hour_time=False))
     assert "Time display preference" not in messages[0]
+
+
+def _authority(root: Path | None) -> ExecutionContext:
+    return ExecutionContext(
+        schema_version=1, authority_revision="revision", project_id="project_audit",
+        root_path=str(root) if root else None, root_id="root" if root else None,
+        root_revision=1 if root else 0, device_id=None, inode=None,
+        tool_policy_snapshot=ToolPolicySnapshot(), knowledge_roots=(),
+    )
+
+
+def test_request_authority_replaces_history_without_mutating_shared_builder(tmp_path: Path) -> None:
+    startup = tmp_path / "startup"
+    bound = tmp_path / "bound"
+    startup.mkdir()
+    bound.mkdir()
+    (bound / ".git").mkdir()
+    builder = ContextBuilder(startup)
+
+    def render(root: Path | None) -> str:
+        messages: list[str] = []
+        append_session_environment_runtime_system_message(
+            messages, config=_config(), context_builder=builder, tool_schemas=_SCHEMAS,
+            session_id=str(root), log_context=_log_context(), execution_context=_authority(root),
+        )
+        return messages[0]
+
+    # Shared stack, interleaved bound/unbound requests and a changed root.
+    roots = [bound, None, startup, bound] * 4
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        blocks = list(executor.map(render, roots))
+    for root, block in zip(roots, blocks, strict=True):
+        if root is None:
+            assert "workspace_root: <not set" in block
+            assert "git_repo:" not in block
+        elif root == bound:
+            assert f"{os.sep}bound\n" in block
+            assert "git_repo: yes" in block
+            assert f"{os.sep}startup" not in block
+        else:
+            assert f"{os.sep}startup\n" in block
+            assert "git_repo: no" in block
+    assert builder.workspace_status().root == str(startup)
+    history = [{"role": "system", "content": blocks[2]}, {"role": "user", "content": "Send"}]
+    replaced = builder.insert_runtime_system_messages(history, [blocks[0]])
+    assert len(replaced) == 2
+    assert replaced[0]["content"] == blocks[0]
+    assert history[0]["content"] == blocks[2]
+
+
+def test_hosted_overlay_does_not_disclose_captured_root(tmp_path: Path) -> None:
+    messages: list[str] = []
+    append_session_environment_runtime_system_message(
+        messages, config=_config(host_mode="server", host_execution_policy_version=2),
+        context_builder=ContextBuilder(tmp_path), tool_schemas=_SCHEMAS,
+        session_id="hosted", log_context=_log_context(), execution_context=_authority(tmp_path),
+    )
+    assert tmp_path.name not in messages[0]
+    assert "git_repo:" not in messages[0]

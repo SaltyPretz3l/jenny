@@ -42,12 +42,18 @@ def remaining_tool_timeout(
     fallback: float | None,
     *,
     cancel_handle: Any = None,
+    spent_error: MCPError | None = None,
 ) -> float | None:
     raise_if_cancelled(cancel_handle)
     if deadline is None:
         return fallback
     remaining = deadline - time.monotonic()
     if remaining <= 0:
+        # A spent budget re-raises the failed call's own classified error
+        # (spent_error), not a generic timeout that says nothing about
+        # whether its server survived.
+        if spent_error is not None:
+            raise spent_error
         raise MCPError(
             code=CMP_MCP_SERVER_FAILED,
             message="MCP tool call timed out",

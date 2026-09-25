@@ -138,12 +138,16 @@
       <header class="browser-topbar">
         <div class="browser-brand"><span class="browser-brand-mark" aria-hidden="true">J</span><span>Jenny</span><span class="browser-host-badge">${escapeHtml(jt("models.library.hosted", "Hosted"))}</span></div>
           <div class="browser-top-actions">
-           <span class="browser-connection" data-browser-connection aria-live="polite">${escapeHtml(connectionLabel(state))}</span>
-           ${button({ id: 'manage-auth-sessions', label: jt("browserView.manageAccess", "Manage access"), variant: 'ghost', size: 'sm', ariaExpanded: state.authSessionsOpen === true })}
+            <span class="browser-connection" data-browser-connection aria-live="polite">${escapeHtml(connectionLabel(state))}</span>
+            ${button({ id: 'runtime-toggle', label: jt('settings.sections.runtime.title', 'Runtime & orchestration'), variant: 'ghost', size: 'sm', ariaExpanded: state.runtimeOpen === true })}
+            ${button({ id: 'projects-toggle', label: jt('browserProjects.manage', 'Projects'), variant: 'ghost', size: 'sm', ariaExpanded: state.projectsOpen === true })}
+            ${button({ id: 'manage-auth-sessions', label: jt("browserView.manageAccess", "Manage access"), variant: 'ghost', size: 'sm', ariaExpanded: state.authSessionsOpen === true })}
            ${button({ id: 'logout', label: jt("browserView.logOut", "Log out"), variant: 'ghost', size: 'sm' })}
-           <div class="browser-auth-sessions" data-auth-sessions${state.authSessionsOpen === true ? '' : ' hidden'}></div>
+            <div class="browser-auth-sessions" data-auth-sessions${state.authSessionsOpen === true ? '' : ' hidden'}></div>
+            <aside class="browser-projects" data-browser-projects${state.projectsOpen === true ? '' : ' hidden'}></aside>
          </div>
       </header>
+      <section class="browser-runtime" data-browser-runtime hidden></section>
       <div class="browser-layout">
         <aside class="browser-sessions" aria-label="${escapeHtml(jt("browserView.conversations", "Conversations"))}">
           <div class="browser-rail-heading"><span>${escapeHtml(jt("browserView.conversations", "Conversations"))}</span>${button({ id: 'new-session', label: jt("browserView.new", "New"), variant: 'secondary', size: 'sm', disabled: mutationBlocked })}</div>
@@ -405,8 +409,7 @@
     const selected = Boolean(text(state.selectedSessionId));
     const canControl = state.control?.owned === true;
     const active = Boolean(state.activeStreamId || state.snapshot?.active_turn?.stream_id);
-    const disabled = !selected || !canControl || state.mutationPending === true || (!active && (state.snapshotPending || state.snapshotUnavailable))
-      || (active && state.composerMode !== 'cancel');
+    const disabled = !selected || !canControl || state.mutationPending === true || state.snapshotPending || state.snapshotUnavailable;
     const hint = !selected ? jt('browserView.selectConversation', 'Select a conversation.') : !canControl ? jt("browserView.takeControlToSendAMessage", "Take control to send a message.") : active ? jt("browserView.jennyIsWorkingYouCanCancelTheAdmittedTurn", "Jenny is working. You can cancel the admitted turn.") : state.executionEnabled ? jt("browserView.offlineSandboxHint", "Approved commands run offline; command file changes are discarded. File tools save changes.") : jt("browserView.hostedMvpSupportsChatAndApprovedTypedWorkspaceOperations", "Chat and approved file tools are available. Command sandbox is disabled.");
     const queue = Array.isArray(state.attachments) ? state.attachments : [];
     const queuedMarkup = queue.length
@@ -416,13 +419,13 @@
          const image = text(item?.mimeType || item?.file?.type).toLowerCase() !== 'text/plain';
          const statusLabel = status === 'uploaded' ? image ? jt("browserView.imageStagedCheckedWhenSent", "Image staged; checked when sent") : jt('healthPill.ready', 'Ready') : status === 'error' ? text(item?.error, jt("browserView.uploadFailed", "Upload failed")) : jt('browserView.uploading', 'Uploading…');
         const itemId = text(item?.clientId);
-        return `<div class="browser-queued-attachment" data-attachment-queue-id="${escapeHtml(itemId)}"><span class="browser-queued-attachment-name">${escapeHtml(name)}</span><span class="browser-queued-attachment-status browser-queued-attachment-status--${escapeHtml(idToken(status, 'pending'))}">${escapeHtml(statusLabel)}</span>${status === 'error' ? button({ id: 'retry-attachment', label: jt("common.retry", "Retry"), variant: 'ghost', size: 'sm', disabled: !canControl, dataset: { 'queue-id': itemId } }) : ''}${button({ id: 'remove-attachment', label: jt("common.remove", "Remove"), variant: 'ghost', size: 'sm', disabled: active, dataset: { 'queue-id': itemId } })}</div>`;
+        return `<div class="browser-queued-attachment" data-attachment-queue-id="${escapeHtml(itemId)}"><span class="browser-queued-attachment-name">${escapeHtml(name)}</span><span class="browser-queued-attachment-status browser-queued-attachment-status--${escapeHtml(idToken(status, 'pending'))}">${escapeHtml(statusLabel)}</span>${status === 'error' ? button({ id: 'retry-attachment', label: jt("common.retry", "Retry"), variant: 'ghost', size: 'sm', disabled: !canControl, dataset: { 'queue-id': itemId } }) : ''}${button({ id: 'remove-attachment', label: jt("common.remove", "Remove"), variant: 'ghost', size: 'sm', disabled: state.mutationPending === true, dataset: { 'queue-id': itemId } })}</div>`;
       }).join('')}</div>`
       : '';
-    const canAttach = selected && canControl && !active && state.mutationPending !== true;
-    const controls = active
-      ? button({ id: 'cancel-chat', label: jt("browserView.cancelTurn", "Cancel turn"), variant: 'danger', size: 'md', disabled: !canControl || state.mutationPending === true })
-      : button({ id: 'send-chat', label: jt("common.send", "Send"), variant: 'primary', size: 'md', disabled });
+    const canAttach = selected && canControl && !disabled;
+    const controls = (active
+      ? button({ id: 'cancel-chat', label: jt("browserView.cancelTurn", "Cancel turn"), variant: 'danger', size: 'md', disabled: !canControl || state.mutationPending === true }) : '')
+      + button({ id: 'send-chat', label: jt("common.send", "Send"), variant: 'primary', size: 'md', disabled });
     wrap.innerHTML = `<div class="browser-composer"><div class="browser-composer-field">${field({ id: 'composer-prompt', multiline: true, rows: 1, value: text(state.draft), placeholder: canControl ? jt("dashboard.widgets.ask.placeholder", "Ask Jenny…") : jt("browserView.takeControlToWrite", "Take control to write"), ariaLabel: jt("composer.input.label", "Message Jenny"), disabled, maxLength: 100000, spellcheck: true, className: 'browser-prompt-field' })}</div>${queuedMarkup}<div class="browser-composer-footer"><span class="browser-composer-hint">${escapeHtml(hint)}</span><span data-attachment-picker></span>${button({ id: 'choose-attachment', label: jt("commandPalette.hints.attach", "Attach"), variant: 'ghost', size: 'md', disabled: !canAttach, title: jt("browserView.attachAnImageOrTextFile", "Attach an image or text file") })}${controls}</div></div>`;
   }
 

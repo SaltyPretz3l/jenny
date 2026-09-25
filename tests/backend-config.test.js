@@ -90,6 +90,23 @@ test('llama-server managed config supplies config-only launch settings', () => {
   assert.equal(withTag.modelTagOverride, 'gemma4:12b', 'the display tag aliases the boot launch');
 });
 
+test('llama-server startup model loading gates config autostart but not the environment override', () => {
+  const managed = {
+    enabled: true,
+    profileId: '',
+    lastUsedTag: 'gemma4-12b',
+    perModel: { 'gemma4-12b': { modelPath: 'C:\\models\\gemma4.gguf' } },
+  };
+
+  assert.equal(resolveLlamaServerSettings({ env: {}, managed, startupModelLoad: false }).autostart, false);
+  assert.equal(resolveLlamaServerSettings({
+    env: { JENNY_LLAMA_SERVER_AUTOSTART: '1' },
+    managed,
+    startupModelLoad: false,
+  }).autostart, true);
+  assert.equal(resolveLlamaServerSettings({ env: {}, managed }).autostart, true);
+});
+
 test('llama-server env profile never inherits the persisted model path of another model', () => {
   const settings = resolveLlamaServerSettings({
     env: { JENNY_LLAMA_SERVER_PROFILE: 'qwen-profile' },

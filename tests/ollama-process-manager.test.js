@@ -61,6 +61,7 @@ test('ollama manager persists app-owned process state and clears it after stop',
   let alive = true;
 
   const manager = new OllamaProcessManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     detectTrayConflictImpl: () => null,
     userDataPath,
     spawnImpl: () => child,
@@ -142,6 +143,7 @@ test('ollama manager stops an app-owned process when startup readiness times out
   let alive = true;
 
   const manager = new OllamaProcessManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     detectTrayConflictImpl: () => null,
     userDataPath,
     logger: (level, event, details) => logs.push({ level, event, details }),
@@ -482,6 +484,7 @@ test('ollama manager escalates to forced process-tree shutdown for owned persist
   let alive = true;
 
   const manager = new OllamaProcessManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     detectTrayConflictImpl: () => null,
     userDataPath,
     killProcessTreeImpl: async (pid, options = {}) => {
@@ -628,6 +631,7 @@ test('ollama manager any_local stop gracefully stops owned pid before aggressive
   let alive = true;
 
   const manager = new OllamaProcessManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     detectTrayConflictImpl: () => null,
     userDataPath,
     killProcessTreeImpl: async (pid, options = {}) => {

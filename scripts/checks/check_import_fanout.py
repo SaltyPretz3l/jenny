@@ -81,6 +81,12 @@ EXEMPT = {
     # requires in place of an inline literal (recovery program, 2026-09-05).
     # Same deferred-cycle-breaker shape as loop_event_emit.py above.
     (ROOT / "sidecar" / "ai" / "tools" / "workspace_retention.py").resolve(),
+    # Crossed the budget (6 -> 7) by exactly the one import that keeps the
+    # context-builder hub under the 600-line production ratchet: the
+    # BOOTSTRAP/agentj.md loaders moved to builder_workspace_files.py (request-
+    # root prompt fix, 2026-09-18; 592 -> 514 lines). Same extraction-not-hub
+    # shape as ollama_runtime.py above.
+    (ROOT / "sidecar" / "ai" / "context" / "builder.py").resolve(),
 }
 
 
@@ -99,6 +105,10 @@ WIRING_CAPS = {
     (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 8,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 8,
     (ROOT / "sidecar/ai/tools/builtins/edit_file.py").resolve(): 7,
+    # The tool-loop runner settles its workspace change set on every exit and
+    # must recognise the approval-pause suspension type to do so (6 -> 7,
+    # session-runtime review 2026-09-13). Reviewed; keep the dependency visible.
+    (ROOT / "sidecar/ai/routing/tool_loop_run.py").resolve(): 7,
 }
 
 def count_internal_imports(path: Path) -> int:

@@ -106,6 +106,7 @@ function migrateFromMonolithic(self) {
 
   self._indexStore = new FileJsonStore(self._indexPath, {
     writeDebounceMs: self._writeDebounceMs,
+    onWriteSettled: () => self._notifyCacheAvailability(),
     logger: self._logger,
   });
   self._cachedIndex = indexPayload;
@@ -224,14 +225,16 @@ function queueSplitLayoutMigration(self, indexRaw, observedVersion) {
     indexRaw && indexRaw.sessions && typeof indexRaw.sessions === 'object' && !Array.isArray(indexRaw.sessions)
       ? { ...indexRaw.sessions }
       : {};
+  const migratedSummaries = Object.fromEntries(Object.entries(indexSessions)
+    .map(([id, summary]) => [id, self._migrateSummary(summary, observedVersion)]));
   self._cachedIndex = {
     schema_version: self._schemaVersion,
-    sessions: indexSessions,
+    sessions: migratedSummaries,
   };
   self._pendingSplitMigration = {
     indexRaw: {
       schema_version: observedVersion,
-      sessions: indexSessions,
+      sessions: migratedSummaries,
     },
     observedVersion,
   };

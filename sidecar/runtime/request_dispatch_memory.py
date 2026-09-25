@@ -11,6 +11,7 @@ from typing import Any
 
 from sidecar.ai.container import BrainContainer
 from sidecar.ai.error_codes import CMP_MEMORY_FAILED, CMP_PROTO_VERSION_MISMATCH
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, require_project_id
 from sidecar.ai.memory.service import MemoryService
 from sidecar.ai.memory.unavailable import UnavailableMemoryStore
 from sidecar.exceptions import MemoryStoreError
@@ -82,7 +83,28 @@ def _require_memory_service(stack: Any) -> Any:
     return service if isinstance(service, MemoryService) else store
 
 
-def process_memory_method(
+def _request_project_id(params: Any) -> str:
+    if not isinstance(params, dict) or "project_id" not in params:
+        return GENERAL_PROJECT_ID
+    return require_project_id(params["project_id"])
+
+
+def _request_list_scope(params: Any) -> tuple[str, bool]:
+    scope = params.get("scope", "project") if isinstance(params, dict) else "project"
+    if scope not in {"project", "all"}:
+        raise ValueError("scope must be 'project' or 'all'")
+    all_projects = scope == "all"
+    return (GENERAL_PROJECT_ID if all_projects else _request_project_id(params), all_projects)
+
+
+def _request_include_general(params: Any) -> bool:
+    value = params.get("include_general", False) if isinstance(params, dict) else False
+    if not isinstance(value, bool):
+        raise ValueError("include_general must be a boolean")
+    return value
+
+
+def process_memory_method(  # noqa: PLR0917 - mirrors the dispatcher boundary.
     method: str,
     message_id: Any,
     params: Any,
@@ -115,7 +137,22 @@ def process_memory_method(
                 notifications=[],
             )
         try:
-            status = brain_container.stack.memory_service.status()
+            status_project_id, status_all_projects = _request_list_scope(params)
+            status = brain_container.stack.memory_service.status(
+                project_id=status_project_id, all_projects=status_all_projects
+            )
+        except ValueError as error:
+            return ProcessOutcome(
+                initialized=initialized,
+                shutdown_requested=False,
+                response=error_response(
+                    message_id,
+                    code=INVALID_PARAMS_CODE,
+                    message="memory.status invalid params",
+                    data=memory_error_payload(str(error)),
+                ),
+                notifications=[],
+            )
         except Exception as error:  # noqa: BLE001 - status must be fail-soft.
             code = error.code if isinstance(error, MemoryStoreError) else CMP_MEMORY_FAILED
             emit_log_event(
@@ -174,6 +211,7 @@ def process_memory_method(
                 session_id=session_id,
                 messages=messages,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -238,6 +276,7 @@ def process_memory_method(
                 session_id=session_id,
                 candidate=candidate,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -314,10 +353,13 @@ def process_memory_method(
                 notifications=[],
             )
         try:
+            project_id, all_projects = _request_list_scope(params)
             page = list_memories_page(
                 cursor=params.get("cursor"),
                 limit=params.get("limit"),
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=project_id,
+                all_projects=all_projects,
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -375,10 +417,13 @@ def process_memory_method(
                 notifications=[],
             )
         try:
+            project_id, all_projects = _request_list_scope(params)
             page = list_pending_memories_page(
                 cursor=params.get("cursor"),
                 limit=params.get("limit"),
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=project_id,
+                all_projects=all_projects,
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -442,6 +487,7 @@ def process_memory_method(
                 memory_id=memory_id,
                 patch=patch,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -507,6 +553,7 @@ def process_memory_method(
             deleted = delete_memory(
                 memory_id=memory_id,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -579,6 +626,7 @@ def process_memory_method(
                 session_id=session_id,
                 content_fingerprint=content_fingerprint,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -643,6 +691,8 @@ def process_memory_method(
                 query=query,
                 limit=limit,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
+                include_general=_request_include_general(params),
             )
         except ValueError as error:
             return ProcessOutcome(
@@ -707,6 +757,8 @@ def process_memory_method(
                 lesson_kind=lesson_kind,
                 limit=limit,
                 memory_store=_require_memory_service(brain_container.stack),
+                project_id=_request_project_id(params),
+                include_general=_request_include_general(params),
             )
         except ValueError as error:
             return ProcessOutcome(

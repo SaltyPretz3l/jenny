@@ -129,6 +129,18 @@ test('getLatestAssistantMessageId treats interactive question batches as the lat
   assert.equal(getLatestAssistantMessageId(messages), 'assistant_batch_1');
 });
 
+test('runtime work status overrides completed segment timestamps in a turn footer', () => {
+  for (const [runtime_status, prefix] of [['paused', 'Paused'], ['pending', 'Pending'],
+    ['running', 'Running'], ['needs_attention', 'Needs attention'], ['cancelled', 'Stopped'], ['completed', 'Completed']]) {
+    const message = normalizeChatMessage({ id: 'segment', role: 'assistant', content: '',
+      timestamp: '2026-09-14T22:25:55.536Z', finalizedAt: '2026-09-14T22:25:55.536Z', runtime_status });
+    const before = JSON.stringify(message);
+    const label = buildAssistantMetaLabel(message, value => value, [message], { events: [] });
+    assert.ok(label.startsWith(prefix), label);
+    assert.equal(JSON.stringify(message), before);
+  }
+});
+
 test('buildAssistantMetaLabel formats terminal states and hides streaming metadata', () => {
   const formatTime = (value) => `@ ${value}`;
   const completeMessage = normalizeChatMessage({
@@ -548,4 +560,3 @@ test('normalizeInteractiveRoundRecap preserves collapsed state and filters inval
     ],
   });
 });
-

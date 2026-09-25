@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +17,11 @@ from sidecar.ai.engines.model_name import (
     advertised_capability_source,
     canonical_model_token,
     extract_family_tokens,
+    is_bonsai2_model,
     is_qwen38_model,
     model_token_matches,
     supports_ollama_reasoning_levels,
+    uses_qwen38_chat_contract,
 )
 from sidecar.ai.engines.ollama_catalog_cache import (
     load_ollama_catalog_cache,
@@ -79,6 +81,9 @@ class ModelCatalogResult:
     stale: bool = False
     last_error: str | None = None
     daemon_version: str | None = None
+    # llama-server's `meta.n_ctx_train` per served id; only model inspection
+    # reads it (the engine's native window stays the served n_ctx).
+    trained_context_lengths: dict[str, int] = field(default_factory=dict)
 
 
 def _provider_failure_reason(prefix: str, base_url: str, error: ProviderHttpError) -> str:
@@ -708,7 +713,43 @@ def discover_openai_compatible_models(
         status="success",
         data={"base_url": base_url, "model_count": len(models)},
     )
-    return ModelCatalogResult(models=models, available=True)
+    return ModelCatalogResult(
+        models=models,
+        available=True,
+        trained_context_lengths=_trained_context_lengths(payload),
+    )
+
+
+def _trained_context_lengths(payload: Any) -> dict[str, int]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    lengths: dict[str, int] = {}
+    for entry in data if isinstance(data, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        model_id = str(entry.get("id") or "").strip()
+        meta = entry.get("meta")
+        value = meta.get("n_ctx_train") if isinstance(meta, dict) else None
+        if model_id and isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            lengths[model_id] = value
+    return lengths
+
+
+def served_model_inspection(
+    model_id: str,
+    existing: dict[str, Any] | None,
+    discovery: ModelCatalogResult,
+) -> dict[str, Any] | None:
+    """Tune's native-window inspection of a model an OpenAI-compatible server holds."""
+    if not model_id or existing is not None:
+        return existing
+    trained = discovery.trained_context_lengths.get(model_id)
+    reason = "server_unavailable" if not discovery.available else "model_not_found"
+    return {
+        "model_id": model_id,
+        "available": trained is not None,
+        "native_context_length": trained,
+        "reason": "" if trained is not None else reason,
+    }
 
 
 def _invalid_models_payload_result(*, provider: str, base_url: str) -> ModelCatalogResult:
@@ -734,8 +775,11 @@ def _parse_vllm_models_payload(
 
     Unmanaged OpenAI-compatible servers may be llama-server. Qwen3.8 GGUF chat
     templates accept the native ``low``, ``medium``, and ``xhigh`` effort
-    values; other recognized thinking models retain the conservative boolean
-    control. Leave vLLM's existing catalog contract unchanged.
+    values; Bonsai 2 shares that template but not ``low``; other recognized
+    thinking models retain the conservative boolean control. Only these
+    OpenAI-compatible controls add the Qwen3.8 contract's separator variants
+    (``Ternary_Bonsai_2_27B``) to prefix-based thinking detection, matching
+    that engine. Leave vLLM's existing catalog contract unchanged.
     """
     if not isinstance(payload, dict):
         return None
@@ -751,7 +795,9 @@ def _parse_vllm_models_payload(
             capabilities: dict[str, Any] = {}
             if is_vllm_vision_model(model_id):
                 capabilities["vision"] = True
-            if _is_likely_thinking_model(model_id):
+            if _is_likely_thinking_model(model_id) or (
+                openai_compatible_controls and uses_qwen38_chat_contract(model_id)
+            ):
                 capabilities["thinking"] = True
                 if openai_compatible_controls:
                     capabilities.update(_openai_compatible_thinking_capabilities(model_id))
@@ -763,6 +809,13 @@ def _parse_vllm_models_payload(
 
 
 def _openai_compatible_thinking_capabilities(model_name: str) -> dict[str, Any]:
+    if is_bonsai2_model(model_name):
+        # Bonsai 2's card: `low` is unsupported (it behaves close to `xhigh`).
+        return {
+            "reasoning_effort": True,
+            "reasoning_efforts": ["none", "medium", "xhigh"],
+            "default_reasoning_effort": "medium",
+        }
     if is_qwen38_model(model_name):
         return {
             "reasoning_effort": True,

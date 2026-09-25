@@ -34,7 +34,7 @@ test('compiles an eligible scalar tool node with a canonical descriptor attestat
   const descriptor = toolManifest.tools.find((entry) => entry.name === 'read_file');
 
   assert.equal(result.ok, true);
-  assert.equal(descriptorDigest(descriptor), '95620d16a1374d672d20dd3a36f7e7a1deba070af1d624ebacbb120a9f0229df');
+  assert.equal(descriptorDigest(descriptor), 'f44e4a5edc1a027ab084b0f034003b145ad44b2177ae828081e7582fe3d341a9');
   assert.equal(result.plan.terminal_node_id, 'read');
   assert.deepEqual(result.plan.nodes.map((node) => node.node_id), ['read']);
   assert.deepEqual(result.tool_bindings, [{

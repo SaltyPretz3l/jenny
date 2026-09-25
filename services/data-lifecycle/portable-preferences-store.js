@@ -2,8 +2,12 @@
 
 const path = require('path');
 const { FileJsonStore } = require('../backend/file-json-store');
+const {
+  normalizeSessionRuntime,
+} = require('../shell-config-session-runtime');
 
 const PORTABLE_PREFERENCES_VERSION = 1;
+const PORTABLE_SHELL_CONFIG_VERSION = 54;
 const PORTABLE_PREFERENCES_RELATIVE_PATH = path.join('data-lifecycle', 'portable-preferences.json');
 const APPEARANCE_KEYS = Object.freeze([
   'paletteId',
@@ -77,6 +81,8 @@ function projectPortableShellConfig(value) {
     ? source.preferredEngineType
     : 'ollama';
   const result = {
+    version: PORTABLE_SHELL_CONFIG_VERSION,
+    session_runtime: normalizeSessionRuntime(source.sessionRuntime || source.session_runtime),
     preferredEngineType,
     chatUi: {
       zoomPercent: Math.max(85, Math.min(135, Math.round(Number(source.chatUi?.zoomPercent) / 5) * 5 || 100)),
@@ -116,7 +122,14 @@ class PortablePreferencesStore {
     const patch = preferences && typeof preferences === 'object' && !Array.isArray(preferences)
       ? preferences
       : {};
-    const current = this.read() || {};
+    const state = this.store.readWithStatus(null);
+    if (!state.missing && !state.corrupted
+      && Number(state.value?.schema_version) > PORTABLE_PREFERENCES_VERSION) {
+      throw new Error('portable_preferences_version_unsupported');
+    }
+    const current = state.missing || state.corrupted || !state.value
+      ? {}
+      : normalizePortablePreferences(state.value);
     const next = normalizePortablePreferences({
       ...current,
       ...patch,
@@ -131,6 +144,8 @@ class PortablePreferencesStore {
 }
 
 module.exports = {
+  PORTABLE_PREFERENCES_VERSION,
+  PORTABLE_SHELL_CONFIG_VERSION,
   PortablePreferencesStore,
   normalizePortablePreferences,
   projectPortableShellConfig,

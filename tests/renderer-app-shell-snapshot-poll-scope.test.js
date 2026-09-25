@@ -76,12 +76,12 @@ test('the 15s shell poller opts out of model discovery', () => {
 });
 
 test('the model-library picker refresh still requests models', () => {
-  // The fix must not starve the three deliberate model-inclusive refreshes.
+  // The fix must not starve the deliberate model-inclusive refreshes.
   // This one is a plain refreshSnapshots?.() with NO options, so it keeps them.
   assert.match(
     BINDINGS_SOURCE,
-    /refreshModelPickers:\s*\(\)\s*=>\s*\{\s*callbacks\.refreshSnapshots\?\.\(\)/,
-    'the model-library controller must keep its model-inclusive refresh'
+    /refreshModelPickers:\s*\(\)\s*=>\s*Promise\.resolve\(callbacks\.refreshSnapshots\?\.\(\)\)/,
+    'the model-library section controller must keep its model-inclusive refresh'
   );
   assert.match(
     BINDINGS_SOURCE,
@@ -101,7 +101,7 @@ function buildAppShellPollerHarness() {
     rawIntervals: 0,
     refreshSnapshots: 0,
   };
-  const modelLibraryController = {
+  const modelLibrarySectionController = {
     bind() {},
     render() {},
     syncFromState() { calls.modelSync += 1; },
@@ -136,8 +136,8 @@ function buildAppShellPollerHarness() {
         };
       },
     },
-    rendererModelLibrary: {
-      createModelLibraryController() { return modelLibraryController; },
+    rendererSettingsModelLibrarySection: {
+      createModelLibrarySectionController() { return modelLibrarySectionController; },
     },
     rendererWorkspaceRootNudge: {
       createWorkspaceRootNudgeController() { return workspaceRootNudgeController; },

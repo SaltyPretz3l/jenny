@@ -271,9 +271,14 @@
       };
       planStates.set(host, state);
       const removeEditing = installPlanEditing(host, state);
-      actions.innerHTML = button({ label: jt('chat.planDocument.keepPlanning', 'Keep planning'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'feedback' } })
+      // Review actions left, build actions right; the primary Build it sits at the edge.
+      actions.innerHTML = '<span class="plan-document__actions-group">'
+        + button({ label: jt('chat.planDocument.keepPlanning', 'Keep planning'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'feedback' } })
+        + button({ label: jt('chat.planDocument.looksGoodNotYet', 'Looks good, not yet'), variant: 'ghost', size: 'sm', dataset: { 'plan-decision': 'accepted' } })
+        + '</span><span class="plan-document__actions-group">'
+        + button({ label: jt('chat.planDocument.buildWithoutAsking', 'Build it, auto mode'), variant: 'secondary', size: 'sm', dataset: { 'plan-decision': 'approved_auto' } })
         + button({ label: jt('chat.planDocument.buildIt', 'Build it'), variant: 'primary', size: 'sm', dataset: { 'plan-decision': 'approved' } })
-        + button({ label: jt('chat.planDocument.buildWithoutAsking', 'Build it, auto mode'), variant: 'secondary', size: 'sm', dataset: { 'plan-decision': 'approved_auto' } });
+        + '</span>';
       const onClick = (event) => {
         const target = event.target.closest('[data-plan-decision]');
         if (!target || !actions.contains(target) || host.dataset.planSubmitting === 'true') return;
@@ -287,7 +292,8 @@
           return;
         }
         const feedback = actions.querySelector('[data-plan-feedback]')?.value || '';
-        void settle(host, decision, feedback.trim() || '<no feedback given>');
+        // Only a revision request carries the placeholder; approvals carry no feedback.
+        void settle(host, decision, feedback.trim() || (decision === 'rejected' ? '<no feedback given>' : ''));
       };
       actions.addEventListener('click', onClick);
       cleanups.set(host, () => {
@@ -305,14 +311,35 @@
       }
     }
 
+    // Only the latest plan in the timeline offers "Build it" on its accepted
+    // receipt; the chat shell's timeline click handler owns the send.
+    function syncBuildAcceptedSlots() {
+      const documents = timeline ? [...timeline.querySelectorAll('[data-plan-document]')] : [];
+      const latest = documents[documents.length - 1] || null;
+      documents.forEach((host) => {
+        const slot = host.querySelector('[data-plan-build-accepted]');
+        if (!slot || typeof button !== 'function') return;
+        const live = host === latest && host.dataset.planState === 'accepted';
+        if (!live) { slot.innerHTML = ''; return; }
+        if (slot.querySelector('[data-action="plan-build-accepted"]')) return;
+        slot.innerHTML = button({ id: 'plan-build-accepted', label: jt('artifacts.plan.buildAccepted', 'Build it'),
+          variant: 'ghost', size: 'sm', className: 'plan-document-receipt__build',
+          dataset: { 'plan-id': slot.dataset.planId || '' } });
+      });
+    }
+
+    // Returns whether the subtree held any plan document, so the observer only
+    // re-syncs receipt actions when plans actually entered or left the timeline.
     function scan(rootNode) {
-      if (disposed || !rootNode) return;
-      if (rootNode.matches?.('[data-plan-document]')) mount(rootNode);
-      rootNode.querySelectorAll?.('[data-plan-document]').forEach(mount);
+      if (disposed || !rootNode) return false;
+      const hosts = [...(rootNode.matches?.('[data-plan-document]') ? [rootNode] : []),
+        ...(rootNode.querySelectorAll?.('[data-plan-document]') || [])];
+      hosts.forEach(mount);
+      return hosts.length > 0;
     }
 
     function unmountTree(rootNode) {
-      if (!rootNode) return;
+      if (!rootNode) return false;
       const hosts = [];
       if (rootNode.matches?.('[data-plan-document]')) hosts.push(rootNode);
       rootNode.querySelectorAll?.('[data-plan-document]').forEach((host) => hosts.push(host));
@@ -320,17 +347,23 @@
         cleanups.get(host)?.();
         cleanups.delete(host);
       });
+      return hosts.length > 0;
     }
 
     const timeline = doc?.getElementById('chatTimeline');
     const observer = timeline && typeof win?.MutationObserver === 'function'
-      ? new win.MutationObserver((records) => records.forEach((record) => {
-          record.removedNodes.forEach(unmountTree);
-          record.addedNodes.forEach(scan);
-        }))
+      ? new win.MutationObserver((records) => {
+          let touched = false;
+          records.forEach((record) => {
+            record.removedNodes.forEach((node) => { touched = unmountTree(node) || touched; });
+            record.addedNodes.forEach((node) => { touched = scan(node) || touched; });
+          });
+          if (touched && !disposed) syncBuildAcceptedSlots();
+        })
       : null;
     observer?.observe(timeline, { childList: true, subtree: true });
     scan(timeline);
+    syncBuildAcceptedSlots();
 
     return {
       dispose() {

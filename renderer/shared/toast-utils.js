@@ -74,6 +74,7 @@
           message: toast.message,
           tone: toast.tone,
           source: toast.source,
+          sessionId: toast.sessionId,
           createdAt: toast.createdAt,
           dismissible: toast.dismissible,
           durationMs: toast.durationMs,
@@ -225,6 +226,8 @@
         message: normalizeString(source.message),
         tone: tone,
         source: normalizeString(source.source),
+        // The chat a toast belongs to, if any; '' for app-wide toasts.
+        sessionId: normalizeString(source.sessionId),
         createdAt: nowFn(),
         dismissible: Object.prototype.hasOwnProperty.call(source, 'dismissible')
           ? Boolean(source.dismissible)
@@ -291,14 +294,21 @@
       return nextToast.id;
     }
 
-    function dismissBySource(source) {
+    // With options.sessionId, only that session's and app-wide toasts of the
+    // source leave; another session's still-valid toasts stay.
+    function dismissBySource(source, options) {
       var token = normalizeString(source);
       if (!token) {
         return;
       }
+      var scoped = Boolean(options) && typeof options === 'object';
+      var sessionId = scoped ? normalizeString(options.sessionId) : '';
       var removed = false;
       toasts = toasts.filter(function keepToast(entry) {
         if (entry.source !== token) {
+          return true;
+        }
+        if (scoped && entry.sessionId && entry.sessionId !== sessionId) {
           return true;
         }
         removed = true;

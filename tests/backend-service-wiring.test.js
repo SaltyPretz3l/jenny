@@ -263,8 +263,10 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
   const showSidecarCrashDialog = async (opts) => { crashDialogCalls.push(opts); return null; };
 
   const smokeControllerCalls = [];
+  const smokeReadyCalls = [];
   const smokeController = {
     markBackendFailed: (...args) => smokeControllerCalls.push(args),
+    markBackendReady: (...args) => smokeReadyCalls.push(args),
   };
   const getPackagedSmokeController = () => smokeController;
 
@@ -349,6 +351,7 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
     diagnosticDrops,
     crashDialogCalls,
     smokeControllerCalls,
+    smokeReadyCalls,
     smokeController,
     gpuRefreshCalls,
     toolRegistryRefreshCalls,
@@ -482,6 +485,22 @@ test('backend-status handler: does NOT call markBackendFailed when phase is read
     created.backendService.emit('backend-status', { phase: 'ready' });
     await Promise.resolve();
     assert.equal(smokeControllerCalls.length, 0, 'markBackendFailed must NOT be called on ready');
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+// With "Load model at startup" on, start() returns while the default model is
+// still loading (phase sidecar_spawned). The packaged smoke must learn about the
+// ready status that follows, or it waits out its timeout (run_ci wave 3).
+test('backend-status handler: a later ready status reaches the packaged smoke', async () => {
+  const { created, smokeReadyCalls } = createRecordingFixture();
+  try {
+    const status = { phase: 'ready', launchSource: 'packaged-binary' };
+    created.backendService.emit('backend-status', status);
+    await Promise.resolve();
+    assert.equal(smokeReadyCalls.length, 1, 'markBackendReady must be called on ready');
+    assert.equal(smokeReadyCalls[0][0], status);
   } finally {
     created.backendService.dispose?.();
   }

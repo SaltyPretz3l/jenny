@@ -134,12 +134,14 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
   };
 }
 
-function registerSaveFileHandler({ ipcMainLike, dialog, getMainWindow, getProtectedRoots, log }) {
+function registerSaveFileHandler({
+  ipcMainLike, dialog, getMainWindow, getProtectedRoots, log, authorization = {},
+}) {
   if (!ipcMainLike || typeof ipcMainLike.handle !== 'function') {
     throw new TypeError('registerSaveFileHandler requires an ipcMain-like object.');
   }
   const handler = buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log });
-  registerIpcInvokeHandlers(ipcMainLike, { 'dialog.saveFile': handler });
+  registerIpcInvokeHandlers(ipcMainLike, { 'dialog.saveFile': handler }, authorization);
   return handler;
 }
 

@@ -56,6 +56,8 @@ function writePidFile(pidPath, pid, { command = '' } = {}) {
   }
 }
 
+// Unconditional: for the reaper and shutdown, which act on the record they
+// just read. A launch clears its own record with clearOwnedPidFile instead.
 function clearPidFile(pidPath) {
   if (!pidPath) {
     return;
@@ -67,6 +69,18 @@ function clearPidFile(pidPath) {
       // swallow — cleanup is best effort
     }
   }
+}
+
+// Every launch shares one record, so a launch removes it only while it still
+// names that launch's child: the acceleration fallback relaunches the moment
+// the accelerated child is killed, and that child's 'exit' can land after the
+// retry wrote its own record. Anything but a positive integer pid owns no
+// record and clears nothing. Best effort and synchronous, like clearPidFile.
+function clearOwnedPidFile(pidPath, pid) {
+  if (!pidPath || !Number.isInteger(pid) || pid <= 0 || readPidFile(pidPath).pid !== pid) {
+    return;
+  }
+  clearPidFile(pidPath);
 }
 
 // Returns the whole record: { pid, command, startedAt }. A legacy file written
@@ -202,6 +216,7 @@ function shutdownLlamaServerSync({
 module.exports = {
   PID_FILENAME,
   buildPidRecordCommand,
+  clearOwnedPidFile,
   clearPidFile,
   getPidFilePath,
   llamaServerIdentityConfirmed,

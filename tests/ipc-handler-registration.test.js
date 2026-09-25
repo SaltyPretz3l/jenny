@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { EventEmitter } = require('node:events');
 
 const { getBridgeChannel } = require('../services/ipc-contract');
@@ -46,6 +47,24 @@ function createFakeIpcMain() {
 
 const invokeChannel = (methodPath) => getBridgeChannel(methodPath, 'invoke');
 const sendChannel = (methodPath) => getBridgeChannel(methodPath, 'send');
+
+function createTrustedSenderHarness() {
+  const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+  const mainFrame = { url };
+  const webContents = {
+    id: 7,
+    mainFrame,
+    isDestroyed: () => false,
+    getURL: () => url,
+  };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  return {
+    mainWindow,
+    trustedEvent: { sender: webContents, senderFrame: mainFrame },
+    foreignEvent: { sender: { id: 8 }, senderFrame: { url } },
+    subframeEvent: { sender: webContents, senderFrame: { url } },
+  };
+}
 
 // A recording service double: every property access yields a function that logs
 // its name + args and echoes them back, so handler forwarding is assertable
@@ -105,8 +124,8 @@ describe('registerWorkspaceFsIpcHandlers', () => {
 
     const noWatcher = createFakeIpcMain();
     registerWorkspaceFsIpcHandlers(noWatcher, proxy, { watcher: null });
-    // 15 legacy service channels + 3 versioned channels + watchStart/Stop.
-    assert.equal(noWatcher.invoke.size, 20);
+    // 15 legacy service channels + 5 versioned channels + watchStart/Stop.
+    assert.equal(noWatcher.invoke.size, 22);
     assert.deepEqual(await noWatcher.invoke.get(invokeChannel('workspaceFs.watchStart'))(), {
       watching: false,
     });
@@ -246,6 +265,10 @@ describe('registerWorkspaceRootIpcHandlers', () => {
           representation: 'base64',
         };
       },
+      async readDocument(payload) {
+        calls.push(['readDocument', payload]);
+        return { path: payload.path, fileVersion: 'vf2_document', kind: 'document', format: 'pdf' };
+      },
       async writeText(payload) {
         calls.push(['writeText', payload]);
         const error = new Error('File changed on disk since it was loaded.');
@@ -254,9 +277,12 @@ describe('registerWorkspaceRootIpcHandlers', () => {
         error.details = { path_hash: 'abc123', current_file_version: 'vf2_new' };
         throw error;
       },
+      async writeDocument(payload) {
+        calls.push(['writeDocument', payload]);
+        return { path: payload.path, fileVersion: 'vf2_saved', kind: 'document' };
+      },
     };
     registerWorkspaceFsIpcHandlers(ipc, proxy, { versionedFileService });
-
     assert.deepEqual(
       await ipc.invoke.get(invokeChannel('workspaceFs.readText'))({}, { path: 'note.txt' }),
       { ok: true, path: 'note.txt', fileVersion: 'vf2_open', editable: true }
@@ -272,6 +298,10 @@ describe('registerWorkspaceRootIpcHandlers', () => {
       }
     );
     assert.deepEqual(
+      await ipc.invoke.get(invokeChannel('workspaceFs.readDocument'))({}, { path: 'report.pdf' }),
+      { ok: true, path: 'report.pdf', fileVersion: 'vf2_document', kind: 'document', format: 'pdf' }
+    );
+    assert.deepEqual(
       await ipc.invoke.get(invokeChannel('workspaceFs.writeText'))({}, {
         path: 'note.txt', content: 'new', expectedGeneration: 1, expectedFileVersion: 'vf2_open',
       }),
@@ -283,7 +313,14 @@ describe('registerWorkspaceRootIpcHandlers', () => {
         details: { path_hash: 'abc123', current_file_version: 'vf2_new' },
       }
     );
-    assert.deepEqual(calls.map(([name]) => name), ['readText', 'readImage', 'writeText']);
+    assert.deepEqual(
+      await ipc.invoke.get(invokeChannel('workspaceFs.writeDocument'))({}, {
+        path: 'report.pdf', base64: 'JVBERi0=', format: 'pdf', expectedGeneration: 1,
+        expectedFileVersion: 'vf2_document',
+      }),
+      { ok: true, path: 'report.pdf', fileVersion: 'vf2_saved', kind: 'document' }
+    );
+    assert.deepEqual(calls.map(([name]) => name), ['readText', 'readImage', 'readDocument', 'writeText', 'writeDocument']);
   });
 });
 
@@ -712,6 +749,64 @@ describe('registerMainIpcHandlers', () => {
       backendCalls.find(([name]) => name === 'loadModel'),
       ['loadModel', [{ model: 'gemma', engine_type: 'ollama' }]]
     );
+  });
+
+  test('privileged main registrations reject foreign and subframe senders before side effects', async () => {
+    const sender = createTrustedSenderHarness();
+    const calls = { update: 0, personality: 0, features: 0, skills: 0, dialog: 0 };
+    const { deps, backendCalls } = buildDeps({
+      authorizeWorkspaceSender: null,
+      getMainWindow: () => sender.mainWindow,
+      updateService: { install: () => { calls.update += 1; return 'installed'; } },
+      personalityWorkspace: {
+        getState: () => ({}),
+        save: () => { calls.personality += 1; return { ok: true }; },
+        clear: () => ({}),
+        openWorkspaceFolder: () => ({}),
+        getNotesState: () => ({}),
+        writeNotes: () => ({}),
+        resetNotes: () => ({}),
+      },
+      applyFeatureSettingsPatch: () => { calls.features += 1; return { ok: true }; },
+      skillsService: {
+        getState: () => ({}),
+        updateSettings: () => { calls.skills += 1; return { ok: true }; },
+        openScopeFolder: () => ({}),
+      },
+      dialog: {
+        showSaveDialog: async () => { calls.dialog += 1; return { canceled: true }; },
+        showOpenDialog: async () => ({ canceled: true }),
+      },
+    });
+    registerMainIpcHandlers(deps);
+
+    const cases = [
+      ['sessions.rename', ['session-1', 'Renamed']],
+      ['backend.retryStart', []],
+      ['updates.install', []],
+      ['personality.save', [{ personality: 'warm' }]],
+      ['features.updateSettings', [{ tools: { web: false } }]],
+      ['skills.updateSettings', [{ enabled: false }]],
+      ['dialog.saveFile', [{ defaultName: 'x.md', content: '', format: 'markdown' }]],
+    ];
+    const refusal = { ok: false, authorized: false, code: 'ipc_sender_unauthorized' };
+
+    for (const event of [sender.foreignEvent, sender.subframeEvent]) {
+      for (const [methodPath, args] of cases) {
+        const handler = deps.ipcMain.invoke.get(invokeChannel(methodPath));
+        assert.deepEqual(await handler(event, ...args), refusal, methodPath);
+      }
+    }
+    assert.equal(backendCalls.some(([name]) => name === 'renameSession' || name === 'retryStart'), false);
+    assert.deepEqual(calls, { update: 0, personality: 0, features: 0, skills: 0, dialog: 0 });
+
+    for (const [methodPath, args] of cases) {
+      const handler = deps.ipcMain.invoke.get(invokeChannel(methodPath));
+      await handler(sender.trustedEvent, ...args);
+    }
+    assert.equal(backendCalls.filter(([name]) => name === 'renameSession').length, 1);
+    assert.equal(backendCalls.filter(([name]) => name === 'retryStart').length, 1);
+    assert.deepEqual(calls, { update: 1, personality: 1, features: 1, skills: 1, dialog: 1 });
   });
 
   test('composition keeps root and versioned-file owners lazy but authoritative', () => {

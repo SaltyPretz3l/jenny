@@ -56,6 +56,7 @@ REQUIRED_SCRIPTS = {
     ),
     "pack:dir": (
         "npm run build:preload && npm run check:python-runtime-bundle && "
+        "npm run check:media-site && "
         "npm run build:sidecar && npm run build:restricted-host && "
         "npm run build:full-host-supervisor && npm run sbom:sidecar && "
         "npm exec -- electron-builder --dir "
@@ -63,6 +64,7 @@ REQUIRED_SCRIPTS = {
     ),
     "pack:release": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run check:media-site && "
         "npm run build:sidecar && npm run build:restricted-host:release && "
         "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
         "npm exec -- electron-builder "
@@ -70,12 +72,14 @@ REQUIRED_SCRIPTS = {
     ),
     "pack:linux": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run check:media-site && "
         "npm run build:sidecar && npm run sbom:sidecar && "
         "npm exec -- electron-builder --linux "
         "--config electron-builder.yml --publish never"
     ),
     "release:windows": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
+        "npm run check:media-site && "
         "npm run build:sidecar && npm run build:restricted-host:release && "
         "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "

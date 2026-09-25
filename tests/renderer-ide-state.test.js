@@ -367,7 +367,7 @@ test('ide state accepts the test-runner bottom-panel view (Wave C mirror, additi
   assert.equal(bogus.bottomPanelActiveView, 'terminal');
 });
 
-test('chat dock triad persists round-trip and clampChatDockWidth bounds 280/2400/380', () => {
+test('chat dock triad persists round-trip and clampChatDockWidth bounds 320/2400/380', () => {
   // Fresh defaults: closed, right side, 380 wide (decision 1 — right is the default).
   const ide = freshIde();
   assert.equal(ide.chatDockOpen, false);
@@ -376,11 +376,11 @@ test('chat dock triad persists round-trip and clampChatDockWidth bounds 280/2400
 
   // The dock bounds are their OWN design constants — not the secondary
   // sidebar's 160/480/260 (plan §4: pattern of clampSecondaryWidth, not values).
-  assert.equal(ideState.CHAT_DOCK_WIDTH_MIN, 280);
+  assert.equal(ideState.CHAT_DOCK_WIDTH_MIN, 320);
   assert.equal(ideState.CHAT_DOCK_WIDTH_MAX, 2400);
   assert.equal(ideState.CHAT_DOCK_WIDTH_DEFAULT, 380);
   assert.equal(ideState.clampChatDockWidth(500), 500);
-  assert.equal(ideState.clampChatDockWidth(10), 280);
+  assert.equal(ideState.clampChatDockWidth(10), 320);
   assert.equal(ideState.clampChatDockWidth(9999), 2400);
   assert.equal(ideState.clampChatDockWidth(500.9), 500);
   assert.equal(ideState.clampChatDockWidth('wide'), 380);

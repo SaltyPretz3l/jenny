@@ -1,4 +1,5 @@
 const { API_VERSION } = require('./sidecar-client');
+const { requestRuntimeInference } = require('./backend-runtime-inference');
 const { SIDECAR_ERROR_CODES } = require('./error-codes');
 
 const SUGGESTION_CACHE_TTL_MS = 30 * 60 * 1_000;
@@ -97,7 +98,7 @@ async function generateSuggestions(service, companionState) {
   };
 
   try {
-    const payload = await service.sidecarClient.request('suggestions.generate', {
+    const payload = await requestRuntimeInference(service, 'suggestions.generate', {
       accept_version: API_VERSION,
       ...context,
     });

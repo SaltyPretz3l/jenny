@@ -267,6 +267,53 @@ test('wide-043: a hanging preview open is deadline-bounded and closes a late han
   assert.equal(closeCalls, 1, 'a file handle arriving after timeout is not leaked');
 });
 
+test('a live UI root switch during preview sniff prevents the synchronous presentation dispatch', async (t) => {
+  const sniffStarted = deferred();
+  const releaseSniff = deferred();
+  let requestCalls = 0;
+  let uiRoot = '';
+  const presentationService = {
+    getUiWorkspaceRoot: () => uiRoot,
+    requestPresentation: () => {
+      requestCalls += 1;
+      return { delivered: true, request_id: 'must-not-dispatch' };
+    },
+  };
+  const { context, workspaceRoot } = makeContext(t, { presentationService });
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-wsp-switched-'));
+  t.after(() => fs.rmSync(otherRoot, { recursive: true, force: true }));
+  uiRoot = workspaceRoot;
+  context.pathPolicy = {
+    resolvePath: (relPath) => path.join(workspaceRoot, relPath),
+    assertInsideRoot: async (target) => target,
+  };
+  const injected = tool.createWorkspacePresentTool({
+    fsLike: {
+      realpath: async (target) => target,
+      stat: async () => ({ isDirectory: () => false, isFile: () => true, size: 4 }),
+      open: async () => ({
+        stat: async () => ({ isFile: () => true, size: 4 }),
+        read: async (buffer) => {
+          buffer.fill(0x61);
+          sniffStarted.resolve();
+          await releaseSniff.promise;
+        },
+        close: async () => {},
+      }),
+    },
+    setTimeoutImpl: () => ({ unref() {} }),
+    clearTimeoutImpl: () => {},
+  });
+
+  const pending = injected.execute({ view: 'preview', path: 'notes.md' }, context);
+  await sniffStarted.promise;
+  uiRoot = otherRoot;
+  releaseSniff.resolve();
+  const result = await pending;
+  assert.equal(result.metadata.reason, 'workspace_root_mismatch');
+  assert.equal(requestCalls, 0);
+});
+
 test('unsupported view / no workspace / root mismatch / service+renderer unavailable', async (t) => {
   const base = makeContext(t, {});
   const badView = await tool.execute({ view: 'editor' }, base.context);

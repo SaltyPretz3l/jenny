@@ -159,9 +159,11 @@ test('renderer home tab renders local companion information and today cards with
     // widget at all (registry flag-gating stays covered by
     // tests/renderer-dashboard.test.js).
     // scratchpad is registered FIRST but carries slot:'rail', so it paints into
-    // the rail column, not the main grid.
+    // the rail column, not the main grid. The While-you-were-away digest moved
+    // to Home on 2026-09-21 (519fe1a7d).
     assert.deepEqual(cardIds, [
       'calendar',
+      'away-digest',
       'open-loops',
     ]);
     const rail = window.document.getElementById('homeDashboardRail');

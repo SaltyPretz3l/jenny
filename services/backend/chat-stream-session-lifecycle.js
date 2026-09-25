@@ -45,13 +45,21 @@ function buildAssistantTranscriptFields({
   visibleSegments = [],
   toolSteps = [],
   reasoningEntries = [],
+  contextCompactions = [],
 } = {}) {
+  const compactions = Array.isArray(contextCompactions) ? contextCompactions : [];
   return {
     parent_stream_id: String(parentStreamId || '').trim(),
     phases: Array.isArray(phases) ? phases : [],
     visible_segments: Array.isArray(visibleSegments) ? visibleSegments : [],
     tool_steps: Array.isArray(toolSteps) ? toolSteps : [],
     reasoning: buildReasoningPayload(reasoningEntries, phases),
+    // Same conditional shape as TranscriptPhaseCollector.buildAssistantMessageFields:
+    // the keys exist only when a compaction happened, so older messages are untouched.
+    ...(compactions.length ? {
+      context_compactions: compactions.map((entry) => ({ ...entry })),
+      context_compacted: { ...compactions[compactions.length - 1] },
+    } : {}),
   };
 }
 
@@ -172,6 +180,7 @@ function createManagedSessionLifecycleAdapter(service, sessionId, turnLease = nu
         sessionId,
         {
           ...message,
+          ...(turnLease?.identity?.turnId ? { turn_id: turnLease.identity.turnId } : {}),
           ...(model && !String(message?.model_used || '').trim() ? { model_used: model } : {}),
         },
         {
@@ -401,9 +410,11 @@ function buildAssistantFailureTerminalMutation({
   phases = [],
   visibleSegments = [],
   toolSteps = [],
+  contextCompactions = [],
   model = '',
   terminalStatus = 'error',
   terminalSubcode = '',
+  exchangeTitle = '',
   timestamp = new Date().toISOString(),
 }) {
   const normalizedPayload =
@@ -444,10 +455,14 @@ function buildAssistantFailureTerminalMutation({
         visibleSegments,
         toolSteps,
         reasoningEntries,
+        contextCompactions,
       }),
     }],
     preferencePatch: {},
-    title: null,
+    // A failed turn still names the chat: the title is derived from the user's
+    // own prompt at preflight (and only supplied while the session still holds
+    // the default title), so an engine error must not leave it "New Chat".
+    title: String(exchangeTitle || '').trim() || null,
   };
 }
 
@@ -464,6 +479,7 @@ function buildAssistantCompletionTerminalMutation({
   phases = [],
   visibleSegments = [],
   toolSteps = [],
+  contextCompactions = [],
   model = '',
   normalizedPreferences,
   normalizedInteractiveResponse,
@@ -489,6 +505,7 @@ function buildAssistantCompletionTerminalMutation({
         visibleSegments,
         toolSteps,
         reasoningEntries,
+        contextCompactions,
       }),
     });
   }

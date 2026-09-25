@@ -7,9 +7,13 @@ from dataclasses import replace
 from typing import Any, Iterable, Sequence
 
 from sidecar.ai.context.builder_shared import RuntimeToolStatus
-from sidecar.ai.context.prompt_modes import build_approved_plan_overlay
+from sidecar.ai.context.prompt_modes import (
+    build_approved_plan_overlay,
+    build_plan_revision_overlay,
+)
 from sidecar.ai.context.runtime_message_markers import (
     PLAN_MODE_OVERLAY_HEADING,
+    PLAN_REVISION_OVERLAY_HEADING,
     RESTORED_TOOL_CONTRACT_HEADING,
 )
 from sidecar.ai.tools.preconditions import PRECONDITION_RENDER
@@ -117,6 +121,17 @@ def _insert_transition_system_message(
     working_messages.insert(index, {"role": "system", "content": content})
 
 
+def _drop_system_messages(working_messages: list[dict[str, object]], *headings: str) -> None:
+    working_messages[:] = [
+        message
+        for message in working_messages
+        if not (
+            message.get("role") == "system"
+            and str(message.get("content") or "").startswith(headings)
+        )
+    ]
+
+
 def apply_restored_tool_contract(
     *,
     working_messages: list[dict[str, object]],
@@ -168,7 +183,7 @@ def context_with_plan_decision(context: Any, decision: str, feedback: str = "") 
     )
 
 
-def transition_after_exit_outcome(
+def transition_after_exit_outcome(  # noqa: PLR0911
     *,
     request_context: Any,
     outcomes: Iterable[Any],
@@ -183,6 +198,18 @@ def transition_after_exit_outcome(
         None,
     )
     if exit_outcome is None:
+        return request_context
+    if not bool(getattr(request_context, "plan_mode", False)):
+        # Already transitioned (or never in Plan Mode): re-applying would strip
+        # the overlay again, insert a second approved-plan overlay, and log a
+        # second "applied" (owner gate 2026-09-20, scenario C).
+        _log_transition(
+            logging.INFO,
+            "plan_mode.exit_transition_skipped",
+            "Plan Mode exit transition skipped: Plan Mode is not active.",
+            {"reason": "plan_mode_not_active"},
+            status="skipped",
+        )
         return request_context
     metadata = getattr(exit_outcome, "metadata", None)
     decision = ""
@@ -202,18 +229,36 @@ def transition_after_exit_outcome(
         _log_transition(
             # A user rejecting the plan is an expected outcome, not a defect;
             # WARNING is reserved for the guards that indicate a broken exit.
-            logging.INFO if decision == "rejected" else logging.WARNING,
+            logging.INFO if decision in {"rejected", "accepted"} else logging.WARNING,
             "plan_mode.exit_transition_declined",
             "Plan Mode exit transition declined.",
             _decline_data(exit_outcome, metadata, declined_guard),
             status="declined",
         )
         if decision == "rejected":
+            # The request context carries the feedback from the approval
+            # response (the consent path), not from the tool result.
+            feedback = str(getattr(request_context, "plan_feedback", "") or "")
+            _drop_system_messages(working_messages, PLAN_REVISION_OVERLAY_HEADING)
+            _insert_transition_system_message(
+                working_messages, build_plan_revision_overlay(feedback)
+            )
             return replace(
                 request_context,
                 approvals_pre_granted=False,
                 plan_decision="",
                 plan_feedback="",
+            )
+        if decision == "accepted" and isinstance(metadata, dict) and metadata.get(
+            "plan_mode_cleared"
+        ) is False:
+            # Accepted, not built: stay in Plan Mode and allow one toolless reply.
+            return replace(
+                request_context,
+                approvals_pre_granted=False,
+                plan_decision="",
+                plan_feedback="",
+                final_toolless_reply=True,
             )
         return request_context
     if not isinstance(metadata, dict):
@@ -221,16 +266,16 @@ def transition_after_exit_outcome(
         # metadata. Kept as an explicit narrowing so mypy tracks the type.
         return request_context
 
-    working_messages[:] = [
-        message
-        for message in working_messages
-        if not (
-            message.get("role") == "system"
-            and str(message.get("content") or "").startswith(PLAN_MODE_OVERLAY_HEADING)
-        )
-    ]
+    _drop_system_messages(
+        working_messages, PLAN_MODE_OVERLAY_HEADING, PLAN_REVISION_OVERLAY_HEADING
+    )
     plan = metadata.get("plan") if isinstance(metadata.get("plan"), dict) else None
-    _insert_transition_system_message(working_messages, build_approved_plan_overlay(plan))
+    _insert_transition_system_message(
+        working_messages,
+        build_approved_plan_overlay(
+            plan, edited=metadata.get("plan_edited") is True
+        ),
+    )
     approval_mode = "auto_run" if metadata.get("run_mode_restored") == "auto" else "prompt"
     _log_transition(
         logging.INFO,

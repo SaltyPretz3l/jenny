@@ -243,6 +243,7 @@ def test_install_runtime_packages_prefers_configured_offline_wheelhouse(
     assert calls == [
         [
             str(venv_python),
+            "-s",
             "-m",
             "pip",
             "install",
@@ -807,7 +808,7 @@ def test_install_runtime_packages_fails_closed_on_wheelhouse_checksum_mismatch(
     monkeypatch.setattr(
         interpreter_module,
         "_install_via_network_pip",
-        lambda candidate: network_calls.append(candidate),
+        network_calls.append,
     )
 
     with pytest.raises(interpreter_module.PythonRuntimeWheelhouseIntegrityError):
@@ -832,7 +833,7 @@ def test_install_runtime_packages_fails_closed_on_missing_wheelhouse_manifest(
     monkeypatch.setattr(
         interpreter_module,
         "_install_via_network_pip",
-        lambda candidate: network_calls.append(candidate),
+        network_calls.append,
     )
 
     with pytest.raises(interpreter_module.PythonRuntimeWheelhouseIntegrityError):
@@ -1416,7 +1417,7 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
 
         def __init__(self, argv: list[str], **kwargs: object) -> None:
             events.append("popen")
-            self.result_path = Path(argv[3])
+            self.result_path = Path(argv[-2])
             self.creationflags = kwargs.get("creationflags")
             self.env = kwargs.get("env")
             self.stdout = io.BytesIO()
@@ -1482,6 +1483,7 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
     try:
         assert result.returncode == 0
         assert events == ["enter_job", "popen", "assign", "resume", "exit_job"]
+        assert processes[0].args[:2] == [str(tmp_path / "python.exe"), "-s"]
         assert processes[0].creationflags == 4
         assert processes[0].env["OPENBLAS_NUM_THREADS"] == "1"
         assert processes[0].env["OMP_NUM_THREADS"] == "1"
@@ -1565,7 +1567,7 @@ def test_windows_sandbox_working_directory_and_scratch_environment(
             self.env = kwargs["env"]
             self.stdout = io.BytesIO()
             self.stderr = io.BytesIO()
-            Path(argv[3]).write_text(
+            Path(argv[-2]).write_text(
                 json.dumps(
                     {
                         "schema_version": 1,

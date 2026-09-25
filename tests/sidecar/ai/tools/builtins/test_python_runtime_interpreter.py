@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +20,7 @@ from sidecar.ai.tools.builtins.python_runtime import (
     bootstrap_subprocess,
     bootstrap_telemetry,
     interpreter,
+    pip_bootstrap,
     tool,
 )
 from sidecar.ai.tools.builtins.python_runtime.errors import (
@@ -24,6 +28,52 @@ from sidecar.ai.tools.builtins.python_runtime.errors import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+
+_EMBED = Path(interpreter._SIDECAR_PACKAGE_DIR).parent / "vendor" / "python-embed"  # noqa: SLF001
+
+
+def test_managed_runtime_invocations_disable_user_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append([str(argument) for argument in argv])
+        return subprocess.CompletedProcess(argv, 0, "3.13.14\n", "")
+
+    monkeypatch.setattr(interpreter.bootstrap_subprocess, "run", fake_run)
+    python = tmp_path / "python.exe"
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    (wheelhouse / "example-1.0-py3-none-any.whl").write_bytes(b"pure Python wheel")
+
+    interpreter._interpreter_identity(python)  # noqa: SLF001
+    interpreter._validate_runtime_imports(python)  # noqa: SLF001
+    interpreter._install_from_wheelhouse(python, wheelhouse)  # noqa: SLF001
+    interpreter._install_via_network_pip(python)  # noqa: SLF001
+    pip_bootstrap._probe_pip(python, timeout=1)  # noqa: SLF001
+
+    assert calls
+    assert all(call[:2] == [str(python), "-s"] for call in calls), calls
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" or not (_EMBED / "python.exe").is_file(),
+    reason="needs the vendored Windows embeddable runtime",
+)
+def test_embedded_runtime_import_validation_ignores_user_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    shutil.copytree(_EMBED, runtime)
+    user_site = tmp_path / "appdata" / "Python" / "Python313" / "site-packages"
+    user_site.mkdir(parents=True)
+    (user_site / "jenny_user_site_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+
+    assert not interpreter._validate_runtime_imports(  # noqa: SLF001
+        runtime / "python.exe", ("jenny_user_site_probe",)
+    )
 
 
 def test_default_wheelhouse_is_anchored_independent_of_cwd(
@@ -247,7 +297,7 @@ def test_abi3_wheel_does_not_reject_later_python(
     )
 
     assert len(install_calls) == 1
-    assert install_calls[0][1:4] == ["-m", "pip", "install"]
+    assert install_calls[0][1:5] == ["-s", "-m", "pip", "install"]
 
 
 def test_python_runtime_tool_forwards_bootstrap_remediation(
@@ -337,6 +387,75 @@ def test_bootstrap_lock_write_failure_closes_descriptor_and_removes_file(
     assert acquired_fds
     with pytest.raises(OSError):
         os.fstat(acquired_fds[0])
+    assert not lock_path.exists()
+
+
+def test_bootstrap_lock_waits_for_unpublished_owner_record_grace(tmp_path: Path) -> None:
+    lock_path = tmp_path / ".bootstrap.lock"
+    lock_path.write_text("", encoding="utf-8")
+
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False  # noqa: SLF001
+
+    old_mtime = time.time() - bootstrap_lock.BOOTSTRAP_LOCK_PUBLISH_GRACE_SECONDS - 1
+    os.utime(lock_path, (old_mtime, old_mtime))
+
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True  # noqa: SLF001
+
+    lock_path.write_text("{not-json", encoding="utf-8")
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False  # noqa: SLF001
+    os.utime(lock_path, (old_mtime, old_mtime))
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True  # noqa: SLF001
+
+
+def test_bootstrap_thread_lock_honors_deadline_before_file_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / ".bootstrap.lock"
+    owner_entered = threading.Event()
+    release_owner = threading.Event()
+    errors: list[BaseException] = []
+
+    def run_owner() -> None:
+        try:
+            with bootstrap_lock._bootstrap_thread_lock(lock_path):  # noqa: SLF001
+                owner_entered.set()
+                release_owner.wait(timeout=2)
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    owner = threading.Thread(target=run_owner)
+    owner.start()
+    assert owner_entered.wait(timeout=2)
+
+    release_timer = threading.Timer(0.2, release_owner.set)
+    release_timer.start()
+    try:
+        started = time.monotonic()
+        deadline = started + 0.02
+        with pytest.raises(TimeoutError) as exc_info:
+            with interpreter._bootstrap_lock(  # noqa: SLF001
+                lock_path,
+                deadline_monotonic=deadline,
+            ):
+                pytest.fail("thread-lock timeout must not fall through to the file lock")
+        elapsed = time.monotonic() - started
+
+        assert str(exc_info.value) == (
+            f"Timed out waiting for python runtime bootstrap lock: {lock_path}"
+        )
+        assert elapsed < 0.1
+        assert not lock_path.exists()
+    finally:
+        release_owner.set()
+        release_timer.cancel()
+        owner.join(timeout=2)
+
+    assert not owner.is_alive()
+    assert not errors
+
+    with interpreter._bootstrap_lock(  # noqa: SLF001
+        lock_path,
+        deadline_monotonic=time.monotonic() + 0.1,
+    ):
+        assert lock_path.exists()
     assert not lock_path.exists()
 
 

@@ -369,6 +369,27 @@
       return memoryStatusLoadPromise;
     }
 
+    function getMemoryProjectLabel(projectId) {
+      const id = String(projectId || '').trim();
+      const projects = Array.isArray(state.memoryManager.projects) ? state.memoryManager.projects : [];
+      return projects.find((project) => project.id === id)?.name || id;
+    }
+
+    // Project names are display-only; a failed registry read leaves rows labelled by id.
+    function refreshMemoryProjects() {
+      const projectsApi = window.jennyShell?.projects || null;
+      if (!projectsApi || typeof projectsApi.list !== 'function') return Promise.resolve();
+      return Promise.resolve()
+        .then(() => projectsApi.list())
+        .then((result) => {
+          if (disposed || !Array.isArray(result?.projects)) return;
+          state.memoryManager.projects = result.projects
+            .map((project) => ({ id: String(project?.id || '').trim(), name: String(project?.name || '').trim() }))
+            .filter((project) => project.id);
+        })
+        .catch(() => {});
+    }
+
     async function refreshApprovedMemories(options) {
       if (disposed) return { memories: [] };
       const force = options?.force === true;
@@ -407,8 +428,8 @@
       renderMemorySurfaces();
       const generation = ++approvedLoadGeneration;
 
-      approvedMemoryLoadPromise = memoryApi.listApproved()
-        .then((result) => {
+      approvedMemoryLoadPromise = Promise.all([memoryApi.listApproved(), refreshMemoryProjects()])
+        .then(([result]) => {
           if (disposed || generation !== approvedLoadGeneration) return { memories: [] };
           if (!result || typeof result !== 'object' || !Array.isArray(result.memories)) {
             throw new Error('Approved memory returned a malformed response.');
@@ -537,6 +558,7 @@
       escapeHtml,
       kindOptions: getApprovedMemoryKindOptions(),
       getKindLabel: getApprovedMemoryKindLabel,
+      getProjectLabel: getMemoryProjectLabel,
       getFieldValue: getApprovedMemoryFieldValue,
       hasDraftChanges: hasApprovedMemoryDraftChanges,
       searchText: buildApprovedMemorySearchText,

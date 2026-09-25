@@ -78,3 +78,60 @@ def test_large_repeated_chunks_trip_guard_despite_window_word_splits() -> None:
     assert guard.feed(repeated) is False
     assert guard.feed(repeated) is True
     assert guard.stop_reason == "repetition"
+
+# ---------------------------------------------------------------------------
+# Loophole (owner turn 2026-09-20): once a repetition trip latched the guard,
+# feed() returned before counting, so a later char-budget overrun could never
+# become a ``char_limit`` trip and the engine kept generating hidden reasoning
+# to the provider's hard cap.
+# ---------------------------------------------------------------------------
+
+
+def _trip_on_repetition(guard: ThinkingRepetitionGuard) -> int:
+    repeated = "Checking the request intent carefully. "
+    fed = 0
+    for _ in range(4):
+        guard.feed(repeated)
+        fed += len(repeated)
+    assert guard.stop_reason == "repetition"
+    return fed
+
+
+def test_repetition_trip_keeps_counting_and_escalates_to_char_limit() -> None:
+    guard = ThinkingRepetitionGuard(max_chars=4096)
+    fed = _trip_on_repetition(guard)
+
+    # Still suppressed, still short of the budget: repetition stays the reason.
+    assert guard.feed("x" * 100) is True
+    assert guard.stop_reason == "repetition"
+    assert guard.tripped_on_budget() is False
+    assert guard.total_chars == fed + 100
+
+    # Crossing the budget while suppressed becomes a budget trip.
+    assert guard.feed("y" * 4096) is True
+    assert guard.stop_reason == "char_limit"
+    assert guard.tripped_on_budget() is True
+    assert guard.total_chars == fed + 100 + 4096
+
+
+def test_char_limit_trip_is_never_downgraded_by_later_repetition() -> None:
+    guard = ThinkingRepetitionGuard(max_chars=10)
+    assert guard.feed("12345678901") is True
+    assert guard.stop_reason == "char_limit"
+
+    repeated = "Checking the request intent carefully. "
+    for _ in range(4):
+        assert guard.feed(repeated) is True
+    assert guard.stop_reason == "char_limit"
+    assert guard.tripped_on_budget() is True
+
+
+def test_total_chars_counts_every_fed_delta_before_and_after_a_trip() -> None:
+    guard = ThinkingRepetitionGuard(max_chars=4096)
+    assert guard.total_chars == 0
+    guard.feed("abc")
+    guard.feed("")
+    assert guard.total_chars == 3
+    _trip_on_repetition(guard)
+    guard.feed("after")
+    assert guard.total_chars == 3 + 4 * len("Checking the request intent carefully. ") + 5

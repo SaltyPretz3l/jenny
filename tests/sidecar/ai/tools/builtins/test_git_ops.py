@@ -143,6 +143,34 @@ def test_git_diff_builds_staged_command(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert captured["cwd"] == str(repo)
 
 
+def test_git_log_disables_signature_display(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_minimal_repo(repo)
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="log output", stderr="")
+
+    monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
+
+    output = git_log_tool({"cwd": "repo", "max_count": 3}, _guard(tmp_path))
+
+    assert output == "log output"
+    assert captured["command"] == [
+        "git",
+        "--no-pager",
+        "--no-optional-locks",
+        "log",
+        "--no-show-signature",
+        "--max-count=3",
+        "--oneline",
+    ]
+
+
 def test_git_diff_builds_ref_and_path_command(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -212,6 +240,7 @@ def test_git_show_defaults_to_head(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         "--no-pager",
         "--no-optional-locks",
         "show",
+        "--no-show-signature",
         "--no-ext-diff",
         "--no-textconv",
         "--stat",

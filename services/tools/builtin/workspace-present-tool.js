@@ -213,7 +213,10 @@ function createWorkspacePresentTool({
     // directory (stale loop state, mid-flight root switch) must fail closed
     // rather than present a file from a root the IDE is not showing.
     const configService = context.configService || context.backendService?.configService || null;
-    const ideRoot = normalizeString(configService?.getToolsWorkspaceRoot?.());
+    const getUiWorkspaceRoot = typeof service.getUiWorkspaceRoot === 'function'
+      ? () => service.getUiWorkspaceRoot()
+      : () => configService?.getToolsWorkspaceRoot?.();
+    const ideRoot = normalizeString(getUiWorkspaceRoot());
     if (!ideRoot) {
       return failure({
         reason: 'no_workspace_root',
@@ -376,6 +379,27 @@ function createWorkspacePresentTool({
 
     // 7. Exactly one presentation event; the result is computed from
     // validation + dispatch only (no renderer acknowledgment is awaited).
+    const finalIdeRoot = normalizeString(getUiWorkspaceRoot());
+    if (!finalIdeRoot) {
+      return failure({
+        reason: 'no_workspace_root',
+        errorCode: TOOL_ERROR_CODES.DISABLED,
+        message: 'The IDE has no configured workspace root; workspace presentation is blocked.',
+        summary: 'No workspace root',
+      });
+    }
+    const [finalToolRootReal, finalIdeRootReal] = await Promise.all([
+      realpathSafe(fsLike, workingDirectory),
+      realpathSafe(fsLike, finalIdeRoot),
+    ]);
+    if (normalizeForComparison(finalToolRootReal) !== normalizeForComparison(toolRootReal)
+      || normalizeForComparison(finalToolRootReal) !== normalizeForComparison(finalIdeRootReal)) {
+      return failure({
+        reason: 'workspace_root_mismatch',
+        message: 'The tool workspace root and the IDE workspace root do not match; refusing to present across roots.',
+        summary: 'Workspace root mismatch',
+      });
+    }
     const sessionId = normalizeString(context.sessionId);
     const workspaceId = workspaceRootId(workingDirectory) || '';
     if (view === 'change_diff' && (!sessionId || !workspaceId)) {

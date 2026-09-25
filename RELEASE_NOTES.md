@@ -1,5 +1,66 @@
 # Release Notes
 
+## 1.2.0 - 2026-09-25
+
+### Highlights
+
+- **Open and edit PDF and DOCX files in the Workspace.** PDFs open in IDE tabs
+  beside chat with pages, zoom, search, form filling, highlights, text notes and
+  ink. DOCX files support text, bold/italic/underline, lists, table cells,
+  embedded images and existing headers/footers. Parts the editor does not handle
+  are preserved. Saves detect conflicts and replace the file atomically.
+- **Projects you can manage.** Choosing a Workspace folder makes it a project and
+  new chats default into it. Settings › Projects renames and deletes projects. One
+  project menu (Explorer header, welcome page, composer) switches projects and
+  moves a chat. The Chats panel filters by project.
+- **Work that keeps going.** Every Send queues, and the composer shows the queue.
+  Replies can be paused and resumed. A "Needs you" inbox collects approvals and
+  questions. Home summarizes what Jenny did while you were away, and chat rows show
+  each chat's last outcome. Refusals say why.
+- **Local GGUF models.** Add a `.gguf` file to Settings › Models as a model card
+  and pick a llama-server build per model. Vision projectors pair with their model.
+  Bonsai 2 runs on the PrismML build.
+- **Sturdier long turns.** A tool call cut off by the output limit now continues
+  instead of failing. Long reasoning streams stay live and incremental. Compaction
+  shows as it runs and stays in history. Local servers stream without bursts or
+  false "stalled engine" warnings.
+- **Better PDF reading by the model**, with numbered lines, page continuation and
+  OCR for scanned pages. It needs the optional PDF add-on below.
+- **Reminders and safety nets.** Reminders notify while Jenny runs, with Snooze.
+  After 50 consecutive automatic approvals in a turn Jenny asks again (Settings;
+  0 turns it off). An idle-guard pause waits up to four hours for you.
+- **Smaller improvements.** Rendered chat tables copy as TSV. Timeline code is
+  syntax-colored. The Tasks rail shows Jenny's checklist. The dock composer
+  toolbar has a fixed two-row layout. The Model library now lives in Settings ›
+  Models, and a new setting loads a model at startup.
+
+### Optional PDF add-on (PyMuPDF, AGPL-3.0)
+
+PDF reading by the model uses PyMuPDF, which is licensed AGPL-3.0. It is not
+bundled. Installing it is an explicit opt-in from Settings › Tools › PDF reading
+add-on, which shows the licence first and downloads a fingerprint-pinned wheel
+from pypi.org. An offline computer can install the same wheel from a file.
+Without the add-on, a PDF read fails with a **Set up PDF reading** link to that
+setting. The Workspace PDF viewer and editor (pdf.js, Apache-2.0) work either way.
+
+### Migration notes
+
+- Shell configuration schema 53 → 55 (streak cap and related safety settings).
+- Session store schema 20 → 22, and shadow store 8 → 9 (durable session runtime;
+  failed-attempt reasoning kept for retries).
+- Sidecar `API_VERSION` (`2026-08-17`) and diagnostics `SCHEMA_VERSION` (1) are
+  unchanged.
+
+### Known limits
+
+Windows remains unsigned. Linux packages remain experimental and macOS is
+source-only. Remote Control is off by default in 1.2.0 because the updated relay
+is not deployed.
+
+The 1.2.0 owner gate passed every row on 1.2.0 release candidates, including the
+packaged Windows smoke, the installed upgrade from 1.1.1 and the GUI smoke suite.
+Remote Control's row was waived because the relay is not deployed.
+
 ## 1.1.1 - 2026-09-11
 
 Small bug fixes.

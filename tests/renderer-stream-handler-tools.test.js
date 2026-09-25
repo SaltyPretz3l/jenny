@@ -170,6 +170,32 @@ test('tool_result falls back to message render when live tool patching cannot ta
   assert.equal(harness.renderCalls[0].flags.messages, true);
 });
 
+test('stored todo_write tool results refresh the task rail once and other tools do not', async (t) => {
+  const previousActions = globalThis.rendererTaskRailActions;
+  let refreshCount = 0;
+  globalThis.rendererTaskRailActions = {
+    refreshChecklist() {
+      const stored = todoHarness.messagesBySession.get('session-1');
+      assert.ok(stored.some((message) => message.kind === 'tool_result'));
+      refreshCount += 1;
+    },
+  };
+  t.after(() => { globalThis.rendererTaskRailActions = previousActions; });
+  const todoHarness = createToolHandlerHarness({ initialToolName: 'todo_write' });
+  await todoHarness.handlers.handleToolResult({
+    type: 'tool_result', sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
+    toolName: 'todo_write', content: '{"count":0,"todos":[]}', summary: 'Updated todos', isError: false,
+  });
+  assert.equal(refreshCount, 1);
+
+  const readHarness = createToolHandlerHarness({ initialToolName: 'Read' });
+  await readHarness.handlers.handleToolResult({
+    type: 'tool_result', sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
+    toolName: 'Read', content: 'contents', summary: 'Read file', isError: false,
+  });
+  assert.equal(refreshCount, 1);
+});
+
 test('tool_result falls back to message render when live patch scheduling throws', async () => {
   const harness = createToolHandlerHarness({ patchThrows: true });
 

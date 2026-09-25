@@ -71,6 +71,66 @@ test('generic details are flat, ordered, copyable sections with no legacy panel 
   assert.doesNotMatch(html, /tool-io-panel|inv-codeblock-gutter|overflow-y/);
 });
 
+test('tool detail code sections carry language hints only for code-shaped content', () => {
+  const builder = createBuilder();
+  const bash = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'run_command', toolKind: 'Bash', domToken: 'languages-bash',
+    input: { command: 'npm test', env: { CI: true } },
+    metadata: { stdout: 'plain stdout' },
+  })}</body>`).window.document;
+  const bashSections = Object.fromEntries(Array.from(bash.querySelectorAll('.tool-call-section')).map((section) => [
+    section.querySelector('.tool-call-section-kicker')?.textContent,
+    section.querySelector('code'),
+  ]));
+  assert.equal(bashSections.Args.dataset.languageId, 'json');
+  assert.equal(bashSections.Args.dataset.codeHighlight, 'pending');
+  assert.equal(bashSections.Command.dataset.languageId, 'shell');
+  assert.equal(bashSections.Command.classList.contains('language-shell'), true);
+  assert.equal(bashSections.Stdout.hasAttribute('data-language-id'), false);
+  assert.equal(bashSections.Stdout.hasAttribute('data-code-highlight'), false);
+
+  const jsonStdout = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'run_command', toolKind: 'Bash', domToken: 'languages-json-stdout',
+    input: { command: 'echo json' }, metadata: { stdout: '{"ok":true}' },
+  })}</body>`).window.document;
+  const stdoutCode = Array.from(jsonStdout.querySelectorAll('.tool-call-section')).find((section) => (
+    section.querySelector('.tool-call-section-kicker')?.textContent === 'Stdout'
+  )).querySelector('code');
+  assert.equal(stdoutCode.hasAttribute('data-language-id'), false);
+  assert.equal(stdoutCode.hasAttribute('data-code-highlight'), false);
+
+  const read = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'read_file', toolKind: 'Read', domToken: 'languages-read',
+    input: { path: 'src/example.ts' }, outputText: 'const value: number = 1;',
+  })}</body>`).window.document;
+  const output = Array.from(read.querySelectorAll('.tool-call-section')).find((section) => (
+    section.querySelector('.tool-call-section-kicker')?.textContent === 'Output'
+  )).querySelector('code');
+  assert.equal(output.dataset.languageId, 'typescript');
+  assert.equal(output.dataset.codeHighlight, 'pending');
+
+  const write = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'write_file', toolKind: 'Write', domToken: 'languages-write',
+    path: 'src/example.js', outputText: 'Wrote 120 bytes to src/example.js',
+  })}</body>`).window.document;
+  assert.equal(
+    write.querySelector('.tool-call-section code').hasAttribute('data-language-id'),
+    false,
+    'a write receipt is prose, not code in the file language'
+  );
+
+  const jsonOutput = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'custom_tool', domToken: 'languages-json-output', outputText: '{"ok":true}',
+  })}</body>`).window.document;
+  assert.equal(jsonOutput.querySelector('.tool-call-section code').dataset.languageId, 'json');
+
+  const python = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', domToken: 'languages-python',
+    input: { code: 'print("ok")' }, outputText: '{"stdout":"ok"}',
+  })}</body>`).window.document;
+  assert.equal(python.querySelector('.tool-call-section code').dataset.languageId, 'python');
+});
+
 test('a failed tool error chip deep-links to Activity when the row carries a stream id', () => {
   // Owner report 2026-08-20: tool-row error chips rendered inert while the
   // assistant-error card chips deep-linked. The stream id (row.turn_id) now
@@ -331,8 +391,12 @@ test('capped payloads retain complete copy text and materialize it on Show more'
   const dom = new JSDOM(`<div>${html}</div>`);
   const control = dom.window.document.querySelector('[data-tool-detail-toggle]');
   assert.equal(control.getAttribute('title'), 'Show full output');
+  const code = dom.window.document.querySelector('code');
+  code.setAttribute('data-code-highlighted', 'tokenized');
   assert.equal(isolatedDetailBody.toggleDetailClamp(control), true);
-  assert.equal(dom.window.document.querySelector('code').textContent, full);
+  assert.equal(code.textContent, full);
+  assert.equal(code.hasAttribute('data-code-highlighted'), false,
+    'replacing the preview text invalidates the highlight marker so the full body is colored again');
   assert.equal(control.getAttribute('aria-expanded'), 'true');
   assert.equal(control.textContent, 'Show less');
   assert.equal(control.getAttribute('title'), 'Collapse output');

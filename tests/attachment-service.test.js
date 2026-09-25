@@ -135,6 +135,8 @@ test('prepareAttachmentEntries rejects bytes beyond the cap when stat is stale',
     isFile: () => true,
     size: 10,
   }));
+  t.mock.method(fs, 'realpathSync', value => value);
+  t.mock.method(fs, 'fstatSync', () => ({ isFile: () => true, size: 10 }));
   t.mock.method(fs, 'readFileSync', () => fileBytes);
   t.mock.method(fs, 'openSync', () => 41);
   t.mock.method(fs, 'readSync', (fileDescriptor, target, targetOffset, length) => {
@@ -165,7 +167,9 @@ test('prepareAttachmentEntries records accepted bytes instead of stale stat size
 
   t.mock.method(fs, 'statSync', (target, ...args) => {
     if (path.resolve(String(target)) === filePath) {
-      return { isFile: () => true, size: 1 };
+      const actual = statSync(target, ...args);
+      actual.size = 1;
+      return actual;
     }
     return statSync(target, ...args);
   });
@@ -176,6 +180,32 @@ test('prepareAttachmentEntries records accepted bytes instead of stale stat size
   assert.equal(payload.accepted.length, 1);
   assert.equal(payload.accepted[0].text, fileBytes.toString('utf8'));
   assert.equal(payload.accepted[0].sizeBytes, fileBytes.length);
+});
+
+test('dropped text requires captured realpath containment while explicit picker imports remain usable', () => {
+  const tempDir = createTrackedTempDir('jenny-attachment-project-');
+  const root = path.join(tempDir, 'project');
+  const outside = path.join(tempDir, 'outside');
+  fs.mkdirSync(root); fs.mkdirSync(outside);
+  const secret = writeTempFile(outside, 'notes.txt', 'other project');
+  fs.symlinkSync(outside, path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  const linked = path.join(root, 'linked', 'notes.txt');
+  const blocked = prepareAttachmentEntries([linked], { cwd: root, textRoot: root });
+  assert.equal(blocked.accepted.length, 0);
+  assert.match(blocked.rejected[0].reason, /outside this session.*project/);
+  assert.equal(prepareAttachmentEntries([secret], { cwd: root }).accepted[0].text, 'other project');
+});
+
+test('a dropped text read is rejected if authority changes before reading bytes', t => {
+  const root = createTrackedTempDir('jenny-attachment-revoked-');
+  const file = writeTempFile(root, 'notes.txt', 'must not be returned');
+  let checks = 0;
+  const read = t.mock.method(fs, 'readSync', () => { throw new Error('bytes must not be read'); });
+  const result = prepareAttachmentEntries([file], { cwd: root, textRoot: root,
+    assertAuthority() { if (++checks === 2) throw new Error('authority revoked'); } });
+  assert.equal(read.mock.callCount(), 0);
+  assert.equal(result.accepted.length, 0);
+  assert.match(result.rejected[0].reason, /authority revoked/);
 });
 
 test('attachment truncation markers stay inside per-file and total character limits', () => {

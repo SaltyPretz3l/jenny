@@ -95,3 +95,27 @@ test('stopRuntimeWithDependencies still runs aggressive Ollama cleanup after sto
   assert.equal(logs[0].level, 'ERROR');
   assert.equal(logs[0].event, 'backend.stop_failed');
 });
+
+test('stopRuntimeWithDependencies still stops the backend gracefully when sandbox close fails', async () => {
+  const calls = [];
+  const logs = [];
+  await stopRuntimeWithDependencies({
+    backendService: {
+      commandSandbox: {
+        async close() {
+          calls.push('sandbox.close');
+          throw Object.assign(new Error('docker_operation_failed'), { reason: 'docker_operation_failed' });
+        },
+      },
+      ollamaManager: { async stop() { calls.push('ollama.fallback'); } },
+      async stop(options = {}) { calls.push(`backend.stop:${options.ollamaShutdownScope}`); },
+    },
+    clearSuggestionCacheImpl() {},
+    suggestionCacheValue: {},
+    emitLifecycleProgressImpl(_scenario, phase) { calls.push(`progress:${phase}`); },
+    logImpl(level, event, details) { logs.push({ level, event, details }); },
+    runEmergencyShutdownImpl() { calls.push('emergency'); },
+  });
+  assert.deepEqual(calls, ['sandbox.close', 'backend.stop:any_local', 'progress:done', 'emergency']);
+  assert.deepEqual(logs, [{ level: 'WARN', event: 'command_sandbox.close_failed', details: { message: 'docker_operation_failed' } }]);
+});

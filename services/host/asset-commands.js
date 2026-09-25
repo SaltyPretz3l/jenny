@@ -196,6 +196,29 @@ function createTextAttachment(bytes, displayName) {
   }
 }
 
+function retainedRuntimeAttachments(backend, userDataPath) {
+  const runtimeStore = backend?.sessionRuntime?.store;
+  if (!runtimeStore) {
+    if (fs.existsSync(path.join(userDataPath, 'session-runtime'))) throw new Error('runtime_references_unavailable');
+    return [];
+  }
+  if (runtimeStore.getStatus().read_only) throw new Error('runtime_references_unavailable');
+  const attachments = [];
+  let cursor = null;
+  do {
+    const page = runtimeStore.listSummaries({ cursor, limit: 100 });
+    for (const summary of page.items) {
+      if (['completed', 'failed', 'cancelled'].includes(summary.status)) continue;
+      const work = runtimeStore.get(summary.work_id);
+      if (!work || work.revision !== summary.revision) throw new Error('runtime_references_unavailable');
+      attachments.push(...(work.input?.request?.attachments || []));
+    }
+    cursor = page.next_cursor;
+  } while (cursor);
+  if (runtimeStore.getStatus().read_only) throw new Error('runtime_references_unavailable');
+  return attachments;
+}
+
 function createAssetCommands({ backend, userDataPath } = {}) {
   const metadataPath = path.join(String(userDataPath || '').trim(), 'host-attachments.json');
   const store = backend?.attachmentAssetStore || null;
@@ -263,7 +286,9 @@ function createAssetCommands({ backend, userDataPath } = {}) {
     const ids = backend?.sessionStore?.listSessions?.();
     if (!Array.isArray(ids) || ids.length > 10_000) throw new Error('canonical_references_unavailable');
     const referencedIds = new Set();
-    const referencedPaths = [];
+    const retained = retainedRuntimeAttachments(backend, userDataPath);
+    const referencedPaths = collectAssetPaths(retained);
+    for (const attachment of retained) referencedIds.add(attachment.id);
     for (const summary of ids) {
       for (const message of readSessionMessagesForReferenceScan(backend.sessionStore, summary)) {
         referencedPaths.push(...collectAssetPaths(message.attachments));

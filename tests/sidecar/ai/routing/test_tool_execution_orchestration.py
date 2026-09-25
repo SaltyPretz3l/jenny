@@ -43,6 +43,7 @@ from sidecar.ai.routing.tool_observation import (
     KIND_TOOL_EXECUTION_STARTED,
     ToolObservationStore,
 )
+from sidecar.ai.routing.tool_resource_deferral import ToolResourceDeferred, ToolResourceWait
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.tool_call_healing import configure_tool_call_healing
@@ -229,6 +230,46 @@ def test_execute_tool_success_dispatches_and_audits_observed() -> None:
     assert client.calls[0][2] == 120.0
     assert client.calls[0][3] is runtime.cancel_handle
     assert _audit_kinds(store) == [KIND_TOOL_EXECUTION_STARTED, KIND_TOOL_EXECUTION_OBSERVED]
+
+
+def test_resource_wait_captures_full_frozen_input_before_any_started_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptor = _descriptor("read_file")
+    client = _RecordingMCPClient(descriptor, result=_mcp_result(success=True))
+    kernel = _kernel(client)
+    runtime, store = _runtime()
+
+    def defer(**_kwargs: Any) -> Any:
+        raise ToolResourceDeferred(ToolResourceWait(
+            operation_id="call_wait_1",
+            resource_class="filesystem",
+            reason="capacity",
+        ))
+
+    monkeypatch.setattr(_tool_execution_module, "_dispatch_tool_call", defer)
+    with pytest.raises(ToolResourceDeferred) as caught:
+        execute_tool(
+            kernel,
+            ToolCallRequest(
+                tool_id="read_file",
+                arguments={"path": "caf\u00e9.txt", "offset": 1.0},
+                call_id="call_wait_1",
+            ),
+            request_id=REQUEST_ID,
+            session_id=SESSION_ID,
+            read_snapshot_cache={},
+            tool_contract=_Contract(descriptor),
+            runtime=runtime,
+        )
+
+    prepared = caught.value.prepared
+    assert prepared is not None
+    assert prepared.frozen_input()["call_id"] == "call_wait_1"
+    assert prepared.effective_arguments()["path"] == "caf\u00e9.txt"
+    assert b'"offset":1.0' in prepared.frozen_input_bytes
+    assert _audit_kinds(store) == []
+    assert client.calls == []
 
 
 def test_execute_tool_injects_authoritative_read_only_only_into_mermaid_dispatch() -> None:
@@ -689,6 +730,55 @@ def test_execute_tool_delegate_invalid_top_level_uses_existing_repair_contract()
     assert outcome.metadata["minimal_valid_arguments"] == {
         "tasks": ["Inspect the repository"]
     }
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "handler_name"),
+    [
+        ("monitor", {"command": "echo hi"}, "_execute_monitor_tool"),
+        ("check_monitor", {"monitor_id": "monitor_1"}, "_execute_check_monitor_tool"),
+        ("delegate", {"tasks": ["inspect"]}, "_execute_delegate_synthetic_tool"),
+    ],
+)
+def test_revoked_scoped_authority_stops_synthetic_tool_before_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    arguments: dict[str, object],
+    handler_name: str,
+) -> None:
+    descriptor = _descriptor(tool_name, side_effecting=True)
+    client = _RecordingMCPClient(descriptor, result=_mcp_result())
+    kernel = _kernel(client)
+    runtime, _store = _runtime()
+    runtime.request_context = SimpleNamespace(execution_context=object())
+    invoked: list[bool] = []
+
+    def reject_authority(**_kwargs: Any) -> dict[str, Any]:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="runtime operation authority is stale",
+            retryable=False,
+        )
+
+    runtime.operation_admission = reject_authority
+    monkeypatch.setattr(
+        _tool_execution_module,
+        handler_name,
+        lambda **_kwargs: invoked.append(True),
+    )
+
+    with pytest.raises(ToolExecutionFailure, match="stale"):
+        execute_tool(
+            kernel,
+            ToolCallRequest(tool_id=tool_name, arguments=arguments, call_id=f"call-{tool_name}"),
+            request_id=REQUEST_ID,
+            read_snapshot_cache={},
+            tool_contract=_Contract(descriptor),
+            runtime=runtime,
+        )
+
+    assert invoked == []
     assert client.calls == []
 
 

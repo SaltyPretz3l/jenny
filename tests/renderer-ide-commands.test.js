@@ -159,6 +159,31 @@ function fakeKeyEvent(key, mods = {}) {
   };
 }
 
+test('Ctrl+S inside a pane-owned save target defers to the pane', () => {
+  let saves = 0;
+  const handler = createViewKeydownHandler({
+    state: { ui: { activeView: 'ide' } },
+    saveActiveFile: () => { saves += 1; },
+  });
+  const paneEvent = fakeKeyEvent('s', { ctrl: true });
+  paneEvent.target = {
+    closest: (selector) => selector === '[data-ide-save-shortcut="pane"]' ? {} : null,
+  };
+  handler(paneEvent);
+  assert.equal(saves, 0, 'the pane owns the save request');
+  assert.equal(paneEvent.defaultPrevented, true, 'the browser save is still prevented');
+
+  const nullTargetEvent = fakeKeyEvent('s', { ctrl: true });
+  nullTargetEvent.target = null;
+  handler(nullTargetEvent);
+  assert.equal(saves, 1, 'a null target keeps the capture-phase save');
+
+  const outsideEvent = fakeKeyEvent('s', { ctrl: true });
+  outsideEvent.target = { closest: () => null };
+  handler(outsideEvent);
+  assert.equal(saves, 2, 'a target outside an owned pane keeps the capture-phase save');
+});
+
 test('Ctrl+Backslash falls through while the chat dock flag is disabled and binds after hydration', () => {
   let enabled = false;
   let toggles = 0;

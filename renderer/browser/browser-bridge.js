@@ -17,7 +17,12 @@
   const API_VERSION = 1;
   const DEFAULT_BASE_PATH = '/api/v1';
   const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
-  const NO_SESSION_OPERATIONS = new Set(['sessions.list', 'sessions.create', 'requests.status']);
+  const NO_SESSION_OPERATIONS = new Set([
+    'sessionRuntime.getSnapshot', 'sessionRuntime.getWork', 'sessionRuntime.getResult', 'sessionRuntime.updateLimits',
+    'sessions.list', 'sessions.create', 'requests.status',
+    'projects.list', 'projects.create', 'projects.rename', 'projects.bindRoot',
+    'permissionReview.getState', 'permissionReview.resolve',
+  ]);
   const ATTACHMENT_MIME_TYPES = Object.freeze(new Set([
     'image/png', 'image/jpeg', 'image/webp', 'text/plain',
   ]));

@@ -4,8 +4,16 @@ const semver = require('semver');
 
 const RELEASES_URL = 'https://github.com/SaltyPretz3l/jenny/releases';
 const LATEST_API_URL = 'https://api.github.com/repos/SaltyPretz3l/jenny/releases/latest';
+const GITHUB_UPDATE_HOSTS = Object.freeze([
+  'github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+]);
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_NOTES_LENGTH = 65536;
+const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 
 function releaseError(code) {
   return Object.assign(new Error(code), { code });
@@ -79,7 +87,7 @@ async function readBoundedBody(response, signal) {
 // The deadline covers headers AND the streamed body, including a stalled peer.
 // Fixed destination + rejected redirects prevents forwarding credentials or
 // following remote metadata into another service. There are no retries.
-function createGitHubReleaseClient({ fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+function createGitHubReleaseClient({ fetchImpl = globalThis.fetch, timeoutMs = UPDATE_CHECK_TIMEOUT_MS } = {}) {
   return async function checkRelease({ platform, arch, signal } = {}) {
     const controller = new AbortController();
     let timer;
@@ -122,4 +130,12 @@ function createGitHubReleaseClient({ fetchImpl = globalThis.fetch, timeoutMs = 1
   };
 }
 
-module.exports = { createGitHubReleaseClient, RELEASES_URL, stableVersion, MAX_NOTES_LENGTH };
+module.exports = {
+  createGitHubReleaseClient,
+  GITHUB_UPDATE_HOSTS,
+  MAX_BODY_BYTES,
+  MAX_NOTES_LENGTH,
+  RELEASES_URL,
+  stableVersion,
+  UPDATE_CHECK_TIMEOUT_MS,
+};

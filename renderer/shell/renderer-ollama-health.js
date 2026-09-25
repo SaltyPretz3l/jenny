@@ -18,7 +18,7 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var GROUP_ID = 'ollamaHealthGroup';
-  // Card-scoped selector — see renderer-model-library.js's identical comment:
+  // Card-scoped selector — see renderer-knowledge-folders.js's identical comment:
   // the settings NAV items carry the same data-settings-section attribute and
   // precede the cards in the DOM, so a bare attribute selector would mount
   // into the nav sidebar instead of the card.
@@ -203,7 +203,11 @@
       }
       var html = buildGroupHtml(view);
       var existing = card.querySelector('#' + GROUP_ID);
-      if (existing) {
+      var libraryToolbar = card.querySelector('#modelLibrarySectionToolbarHost');
+      if (libraryToolbar) {
+        if (existing) existing.remove();
+        libraryToolbar.insertAdjacentHTML('beforebegin', html);
+      } else if (existing) {
         existing.outerHTML = html;
       } else {
         card.insertAdjacentHTML('beforeend', html);

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { normalizeState, serializeState } = require('../../services/shell-config-state');
 test('v53 defaults old profiles off and preserves model and preferences', () => {
  const previous = normalizeState({ version: 52, preferredEngineType: 'ollama', uiLanguage: 'ja', safetyMode: 'paranoid', toolsWorkspaceRoot: 'C:\\work' });
- assert.equal(previous.version, 53);
+ assert.equal(previous.version, 55);
  assert.deepEqual(previous.commandSandbox, { enabled: false });
  assert.equal(previous.preferredEngineType, 'ollama'); assert.equal(previous.uiLanguage, 'ja'); assert.equal(previous.safetyMode, 'paranoid');
  const enabled = normalizeState({ ...previous, commandSandbox: { enabled: true } });

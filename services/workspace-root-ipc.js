@@ -18,6 +18,7 @@ function registerWorkspaceRootIpcHandlers(
     captureContext,
     prepareChoose,
     prepareClear,
+    prepareProject = () => ({ prepared: false, blocked: true, code: 'project_switch_unavailable' }),
     commit,
     cancel,
     respondExternalTransition = () => ({
@@ -31,6 +32,7 @@ function registerWorkspaceRootIpcHandlers(
     'workspaceRoot.captureContext': () => captureContext(),
     'workspaceRoot.prepareChoose': () => prepareChoose(),
     'workspaceRoot.prepareClear': () => prepareClear(),
+    'workspaceRoot.prepareProject': (_event, payload) => prepareProject(payload),
     'workspaceRoot.commit': (_event, payload) => commit(payload),
     'workspaceRoot.cancel': (_event, payload) => cancel(payload),
     'workspaceRoot.respondExternalTransition': (_event, payload) => respondExternalTransition(payload),

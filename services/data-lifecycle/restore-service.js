@@ -1,9 +1,7 @@
 'use strict';
-
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-
 const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { ElectronSessionStore } = require('../backend/electron-session-store');
@@ -17,23 +15,24 @@ const {
   verifyArchive,
 } = require('./archive-service');
 const { archiveError, validateLogicalPath } = require('./archive-format');
-const { projectRestoredPreference, readBoundedJson } = require('./restore-preferences');
+const restorePreferences = require('./restore-preferences');
+const runtimeArchive = require('./runtime-archive');
+const runtimeBackup = require('./restore-runtime-backup');
+const { isUntouchedPersonalityBootstrap, isUntouchedMemoryBootstrap } = require('./fresh-profile-bootstrap');
 const restoreDurability = require('./workspace-restore-durability');
 const { WORKSPACE_RESTORE_JOURNAL, WORKSPACE_RESTORE_ROOT, createWorkspaceRestoreStage } = restoreDurability;
 const { fsyncFile, listWorkspaceRestoreStages } = restoreDurability;
 const { removeWorkspaceRestoreStage, writeJsonDurable } = restoreDurability;
-
 const RESTORE_SCHEMA_VERSION = 1;
 const RESTORE_SCAN_LIMIT = 50;
 const MAX_WORKSPACE_RESTORE_FILE_BYTES = 8 * 1024 * 1024 * 1024;
 const PENDING_SUFFIX = '.jenny-restore-pending.json';
 const ACTIVE_RESTORE_RELATIVE_PATH = path.join('data-lifecycle', 'restore-active.json');
-const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'workspace']);
+const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'workspace', 'runtime']);
 function restorePointerPath(userDataPath) {
   const root = path.resolve(String(userDataPath || ''));
   return path.join(path.dirname(root), `.${path.basename(root)}${PENDING_SUFFIX}`);
 }
-
 function writeJsonAtomic(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
@@ -45,7 +44,6 @@ function writeJsonAtomic(filePath, value) {
     throw error;
   }
 }
-
 function listDirectoryEntries(targetPath) {
   try {
     return fs.readdirSync(targetPath);
@@ -62,6 +60,10 @@ function isPathWithin(ownerRoot, targetPath) {
 
 function isMeaningfullyFresh({ userDataPath, sessionStore = null } = {}) {
   if (!String(userDataPath || '').trim()) return false;
+  if (!runtimeArchive.isUntouchedProjectBootstrap(userDataPath)) return false;
+  if (!runtimeArchive.isUntouchedRuntimeBootstrap(userDataPath)) return false;
+  if (!runtimeArchive.isUntouchedRuntimeCoordinationBootstrap(userDataPath)) return false;
+  if (!isUntouchedPersonalityBootstrap(userDataPath) || !isUntouchedMemoryBootstrap(userDataPath)) return false;
   if (sessionStore && typeof sessionStore.listSessions === 'function') {
     if ((sessionStore.listSessions() || []).length > 0) return false;
   } else if (listDirectoryEntries(path.join(userDataPath, 'sessions')).length > 0) {
@@ -70,9 +72,7 @@ function isMeaningfullyFresh({ userDataPath, sessionStore = null } = {}) {
   const meaningfulPaths = [
     path.join(userDataPath, 'sessions.json'),
     path.join(userDataPath, 'attachments'),
-    path.join(userDataPath, 'personality', 'default-workspace'),
     path.join(userDataPath, 'home-calendar.json'),
-    path.join(userDataPath, 'sidecar-memory.db'),
   ];
   return meaningfulPaths.every((targetPath) => {
     try {
@@ -140,6 +140,7 @@ function describeRestoreCandidate(archivePath) {
 }
 
 function validateRestorableManifest(manifest) {
+  runtimeArchive.validateRuntimeManifestEntries(manifest);
   const sessionIds = new Set();
   for (const entry of manifest.entries) {
     const logicalPath = validateLogicalPath(entry.logical_path);
@@ -362,7 +363,7 @@ function parseWorkspaceRestoreJournal(stagePath, identity) {
     || realStagePath !== path.resolve(stagePath)) {
     throw archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'workspace_restore_recovery_incomplete', 'Workspace restore recovery requires attention.');
   }
-  const journal = readBoundedJson(path.join(stagePath, WORKSPACE_RESTORE_JOURNAL), 2 * 1024 * 1024);
+  const journal = restorePreferences.readBoundedJson(path.join(stagePath, WORKSPACE_RESTORE_JOURNAL), 2 * 1024 * 1024);
   const journalIdentity = journal?.workspace || {};
   const entries = Array.isArray(journal?.entries) ? journal.entries : [];
   const completedPaths = Array.isArray(journal?.completed_paths) ? journal.completed_paths : [];
@@ -643,6 +644,7 @@ async function stageRestore({
   try {
     await fs.promises.mkdir(stagePath, { recursive: false });
     const extracted = await extractArchive(archivePath, dataPath, { passphrase });
+    runtimeArchive.validateStagedRuntimeEntries(extracted.manifest, dataPath);
     const journal = {
       schema_version: RESTORE_SCHEMA_VERSION,
       operation_id: operationId,
@@ -713,19 +715,18 @@ function assertSafeStagedSource(stagePath, sourcePath) {
 }
 
 async function verifyStagedEntry(stagePath, entry) {
-  const sourcePath = assertSafeStagedSource(
-    stagePath,
-    path.join(stagePath, 'data', ...entry.logical_path.split('/'))
-  );
+  const sourcePath = assertSafeStagedSource(stagePath, path.join(stagePath, 'data', ...entry.logical_path.split('/')));
+  const verifiedBytes = await runtimeArchive.verifyRuntimeArchiveEntryBytes(entry, sourcePath);
+  if (verifiedBytes) return Object.freeze({ path: sourcePath, verifiedBytes });
   const sourceStat = fs.lstatSync(sourcePath);
   if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size !== entry.size) {
-    throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT, 'restore_state_invalid', 'Staged restore entry is unsafe.');
+    throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT, 'restore_state_invalid',
+      'Staged restore entry is unsafe.');
   }
   const hash = crypto.createHash('sha256');
   for await (const chunk of fs.createReadStream(sourcePath)) hash.update(chunk);
-  if (hash.digest('hex') !== entry.sha256) {
-    throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT, 'archive_checksum_failed', 'Staged restore entry failed verification.');
-  }
+  if (hash.digest('hex') !== entry.sha256) throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT,
+    'archive_checksum_failed', 'Staged restore entry failed verification.');
   return sourcePath;
 }
 
@@ -754,20 +755,11 @@ function destinationForEntry(entry, { userDataPath, runtimePath, workspaceRoot, 
     const targetName = fileName === 'legacy-memory.db' ? 'memory.db' : fileName;
     return ensureSafeDestination(runtimePath, path.join(runtimePath, targetName));
   }
+  if (root === 'runtime') return ensureSafeDestination(userDataPath, runtimeArchive.runtimeDestinationForEntry(entry, userDataPath));
   if (root === 'workspace' && includeWorkspace && workspaceRoot) {
     return ensureSafeDestination(workspaceRoot, path.join(workspaceRoot, '.jenny', ...rest));
   }
   return null;
-}
-
-function backupExisting(targetPath, rollbackRoot, ownerRoot, ownerKey) {
-  ensureSafeDestination(ownerRoot, targetPath);
-  if (!fs.existsSync(targetPath)) return null;
-  const relative = path.relative(path.resolve(ownerRoot), path.resolve(targetPath));
-  const backupPath = ensureSafeDestination(rollbackRoot, path.join(rollbackRoot, ownerKey, relative));
-  fs.mkdirSync(path.dirname(backupPath), { recursive: true });
-  fs.renameSync(targetPath, backupPath);
-  return backupPath;
 }
 
 function buildPromotionActions(manifest, context) {
@@ -787,6 +779,9 @@ function buildPromotionActions(manifest, context) {
       ownerKey: workspaceEntry ? 'workspace' : runtimeEntry ? 'runtime' : 'user',
     });
   }
+  for (const targetPath of runtimeArchive.additionalRuntimeDestinations(manifest, context.userDataPath)) {
+    actions.push({ targetPath, ownerRoot: context.userDataPath, ownerKey: 'user' });
+  }
   const seen = new Set();
   for (const action of actions) {
     const key = path.resolve(action.targetPath).toLocaleLowerCase('en-US');
@@ -796,26 +791,6 @@ function buildPromotionActions(manifest, context) {
     seen.add(key);
   }
   return actions;
-}
-
-function backupPathForAction(action, rollbackRoot) {
-  const relative = path.relative(path.resolve(action.ownerRoot), path.resolve(action.targetPath));
-  return ensureSafeDestination(rollbackRoot, path.join(rollbackRoot, action.ownerKey, relative));
-}
-
-function rollbackPromotion(actions, rollbackRoot, removeTargets) {
-  for (const action of actions.slice().reverse()) {
-    ensureSafeDestination(action.ownerRoot, action.targetPath);
-    const backupPath = backupPathForAction(action, rollbackRoot);
-    if (removeTargets || fs.existsSync(backupPath)) {
-      fs.rmSync(action.targetPath, { recursive: true, force: true });
-    }
-    if (fs.existsSync(backupPath)) {
-      fs.mkdirSync(path.dirname(action.targetPath), { recursive: true });
-      fs.renameSync(backupPath, action.targetPath);
-    }
-  }
-  fs.rmSync(rollbackRoot, { recursive: true, force: true });
 }
 
 function createRestoreStores(userDataPath, nativeImage) {
@@ -829,7 +804,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   const userRoot = path.resolve(String(userDataPath || ''));
   const pointerPath = restorePointerPath(userRoot);
   if (!fs.existsSync(pointerPath)) return { ok: true, status: 'none' };
-  const pointer = readBoundedJson(pointerPath);
+  const pointer = restorePreferences.readBoundedJson(pointerPath);
   if (
     pointer.schema_version !== RESTORE_SCHEMA_VERSION
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pointer.operation_id || '')
@@ -839,7 +814,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   }
   const stagePath = assertSiblingStage(userRoot, pointer.stage_path, { operationId: pointer.operation_id });
   const journalPath = path.join(stagePath, 'restore-journal.json');
-  const journal = readBoundedJson(journalPath, 4 * 1024 * 1024);
+  const journal = restorePreferences.readBoundedJson(journalPath, 4 * 1024 * 1024);
   if (
     journal.schema_version !== RESTORE_SCHEMA_VERSION
     || journal.operation_id !== pointer.operation_id
@@ -858,38 +833,40 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
     includeWorkspace: journal.include_workspace,
   };
   const actions = buildPromotionActions(manifest, context);
+  runtimeBackup.assignPromotionOriginals(journal, actions);
+  runtimeBackup.assignRuntimeBackups(actions, journal, runtimePath);
   const activeMarkerPath = path.join(userRoot, ACTIVE_RESTORE_RELATIVE_PATH);
   if (fs.existsSync(activeMarkerPath)) {
-    const active = readBoundedJson(activeMarkerPath);
+    const active = restorePreferences.readBoundedJson(activeMarkerPath);
     if (active.operation_id === journal.operation_id && active.status === 'promoted') {
       fs.rmSync(pointerPath, { force: true });
       return { ok: true, status: 'promoted', operationId: journal.operation_id };
     }
   }
   if (journal.status === 'promoting' || journal.status === 'copying') {
-    rollbackPromotion(actions, rollbackRoot, journal.status === 'copying');
+    runtimeBackup.rollbackPromotion(actions, rollbackRoot, ensureSafeDestination, journal.status === 'copying');
     journal.status = 'staged';
     writeJsonAtomic(journalPath, journal);
   }
   if (!isMeaningfullyFresh({ userDataPath: userRoot })) {
     throw archiveError(DATA_ERROR_CODES.RESTORE_CONFLICT, 'profile_not_fresh', 'Jenny data appeared before restore promotion.');
   }
-  const projectedPreferences = new Map();
-  for (const entry of manifest.entries) {
-    const sourcePath = await verifyStagedEntry(stagePath, entry);
-    const projected = projectRestoredPreference(entry, sourcePath);
-    if (projected) projectedPreferences.set(entry.logical_path, projected);
-  }
+  const projectedEntries = await restorePreferences.collectRestoredProjections(manifest.entries,
+    (entry) => verifyStagedEntry(stagePath, entry));
+  runtimeBackup.captureRuntimeBackupOwner(journal, actions, runtimePath);
+  const runtimeRollbackRoot = runtimeBackup.assignRuntimeBackups(actions, journal, runtimePath);
+  runtimeBackup.capturePromotionOriginals(journal, actions, ensureSafeDestination);
   try {
     fs.mkdirSync(userRoot, { recursive: true });
     journal.status = 'promoting';
-    writeJsonAtomic(journalPath, journal);
+    writeJsonDurable(journalPath, journal);
     fs.mkdirSync(rollbackRoot, { recursive: false });
+    if (runtimeRollbackRoot) fs.mkdirSync(runtimeRollbackRoot, { recursive: false });
     for (const action of actions) {
-      backupExisting(action.targetPath, rollbackRoot, action.ownerRoot, action.ownerKey);
+      runtimeBackup.backupExisting(action, rollbackRoot, ensureSafeDestination);
     }
     journal.status = 'copying';
-    writeJsonAtomic(journalPath, journal);
+    writeJsonDurable(journalPath, journal);
     ensureSafeDestination(userRoot, path.join(userRoot, 'sessions'));
     ensureSafeDestination(userRoot, path.join(userRoot, 'sessions.json'));
     ensureSafeDestination(userRoot, path.join(userRoot, 'attachments'));
@@ -926,9 +903,11 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
           ? runtimePath
           : userRoot;
       ensureSafeDestination(ownerRoot, targetPath);
+      const projected = projectedEntries.get(entry.logical_path);
+      if (runtimeArchive.publishRuntimeProjection(projected, targetPath, ownerRoot,
+        { sessionStore: stores.sessionStore })) continue;
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       ensureSafeDestination(ownerRoot, targetPath);
-      const projected = projectedPreferences.get(entry.logical_path);
       if (projected) fs.writeFileSync(targetPath, projected, { flag: 'wx' });
       else fs.copyFileSync(sourcePath, targetPath, fs.constants.COPYFILE_EXCL);
       const copiedHash = crypto.createHash('sha256');
@@ -945,12 +924,15 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
       operation_id: journal.operation_id,
       rollback_path: rollbackRoot,
       stage_path: stagePath,
+      rollback_runtime_path: journal.rollback_runtime_path,
+      rollback_runtime_device: journal.rollback_runtime_device,
+      rollback_runtime_inode: journal.rollback_runtime_inode,
       status: 'promoted',
     });
     fs.rmSync(pointerPath, { force: true });
     return { ok: true, status: 'promoted', operationId: journal.operation_id };
   } catch (error) {
-    rollbackPromotion(actions, rollbackRoot, journal.status === 'copying');
+    runtimeBackup.rollbackPromotion(actions, rollbackRoot, ensureSafeDestination, journal.status === 'copying');
     journal.status = 'staged';
     writeJsonAtomic(journalPath, journal);
     throw error;
@@ -972,12 +954,13 @@ async function attemptPendingRestore(options = {}) {
   }
 }
 
-async function finalizeRestoredBoot(userDataPath) {
+async function finalizeRestoredBoot(userDataPath, { runtimePath = '' } = {}) {
   const markerPath = path.join(path.resolve(userDataPath), ACTIVE_RESTORE_RELATIVE_PATH);
   if (!fs.existsSync(markerPath)) return false;
-  const marker = readBoundedJson(markerPath);
+  const marker = restorePreferences.readBoundedJson(markerPath);
   const rollbackRoot = path.resolve(String(marker.rollback_path || ''));
   const stagePath = path.resolve(String(marker.stage_path || ''));
+  const runtimeRollbackRoot = runtimeBackup.runtimeBackupRoot(marker, runtimePath);
   assertSiblingStage(userDataPath, stagePath, { mustExist: false, operationId: marker.operation_id });
   const parent = path.dirname(path.resolve(userDataPath));
   const expectedRollbackName = `${path.basename(path.resolve(userDataPath))}.jenny-restore-rollback-${marker.operation_id}`;
@@ -992,6 +975,7 @@ async function finalizeRestoredBoot(userDataPath) {
     }
   }
   await fs.promises.rm(rollbackRoot, { recursive: true, force: true });
+  if (runtimeRollbackRoot) await fs.promises.rm(runtimeRollbackRoot, { recursive: true, force: true });
   await fs.promises.rm(stagePath, { recursive: true, force: true });
   await fs.promises.rm(markerPath, { force: true });
   return true;

@@ -15,16 +15,19 @@ from sidecar.ai.engines.base import ModelModality
 from sidecar.ai.engines.provider_http import ProviderHttpService
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.engines.vllm_engine import VLLMEngine, _model_matches
+from sidecar.ai.engines.vllm_sse_stream import _resolve_vllm_stream_finish_reason
 from sidecar.ai.exceptions import UnsupportedModalityError
 from sidecar.ai.routing.generation_runtime_stream import _StreamFailure, _StreamReader
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_INCOMPLETE,
     FINISH_REASON_PROVIDER_ERROR,
+    FINISH_REASON_REASONING_ONLY,
 )
 from sidecar.ai.tools.models import StreamingEvent
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
+from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER
 from sidecar.runtime.vllm_engine_support import _build_messages, _build_tools_payload
 
 _PNG_BASE64 = (
@@ -136,6 +139,34 @@ class TestBuildMessages:
             {"role": "assistant", "content": "answer"},
             {"role": "tool", "tool_call_id": "call-1", "content": "result"},
         ]
+
+    def test_tool_call_row_never_ships_the_empty_content_placeholder(self) -> None:
+        # Owner session 2026-09-19: the backfilled placeholder reached the model
+        # as assistant text and Bonsai copied it, replying "(no content)". It is
+        # a provider-API shim, not something the model wrote.
+        result = _build_messages(
+            prompt="",
+            system="",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": EMPTY_ASSISTANT_CONTENT_PLACEHOLDER,
+                    "tool_calls": [
+                        {"name": "read_file", "arguments": {}, "call_id": "call-1"}
+                    ],
+                },
+                # Without tool calls the placeholder is all the row has: keep it,
+                # since a provider that rejects empty content still needs it.
+                {"role": "assistant", "content": EMPTY_ASSISTANT_CONTENT_PLACEHOLDER},
+            ],
+        )
+
+        assert result[0]["content"] is None
+        assert result[0]["tool_calls"][0]["function"]["name"] == "read_file"
+        assert result[1] == {
+            "role": "assistant",
+            "content": EMPTY_ASSISTANT_CONTENT_PLACEHOLDER,
+        }
 
     def test_rows_without_images_keep_plain_string_content(self) -> None:
         result = _build_messages(
@@ -1538,6 +1569,197 @@ class TestStreamTerminalEvidence:
         chunks = list(engine.stream(prompt="hi"))
 
         assert chunks[-1].finish_reason == "reasoning_only"
+
+    def test_reasoning_only_length_terminal_surfaces_length_through_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The owner's live shape: llama-server caps a turn still inside its
+        thinking block. ``length`` must survive the resolver so routing can
+        continue the turn from a thinking-budget checkpoint; the old
+        ``reasoning_only`` verdict dead-ended it at the empty-generation guard.
+        """
+        engine = _make_streaming_engine(monkeypatch)
+        lines = [
+            _sse_chunk({"reasoning_content": "still thinking"}),
+            "data: "
+            + json.dumps({"choices": [{"delta": {}, "finish_reason": "length"}]}),
+            "data: [DONE]",
+        ]
+        _patch_stream_response(monkeypatch, _FakeSSEStream(lines))
+
+        chunks = list(engine.stream(prompt="hi"))
+
+        assert chunks[-1].kind == "done"
+        assert chunks[-1].finish_reason == "length"
+
+    def test_length_finish_reason_surfaces_through_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An answer truncated at max_tokens must not reach the router as a
+        # clean ``stop``: the provider verdict rides the terminal chunk.
+        engine = _make_streaming_engine(monkeypatch)
+        lines = [
+            "data: "
+            + json.dumps(
+                {"choices": [{"delta": {"content": "cut off"}, "finish_reason": "length"}]}
+            ),
+            "data: [DONE]",
+        ]
+        _patch_stream_response(monkeypatch, _FakeSSEStream(lines))
+
+        chunks = list(engine.stream(prompt="hi"))
+
+        assert chunks[-1].kind == "done"
+        assert chunks[-1].finish_reason == "length"
+
+    def test_eof_after_parsed_tool_call_reports_incomplete(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # One complete tool call then EOF -- no finish_reason, no sentinel.
+        # A parsed tool call is not evidence that the stream actually ended.
+        engine = _make_streaming_engine(monkeypatch)
+        lines = [
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {
+                                            "name": "read_file",
+                                            "arguments": '{"path": "README.md"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        ]
+        _patch_stream_response(monkeypatch, _FakeSSEStream(lines))
+
+        chunks, result = _drain_stream(
+            engine.stream_with_tools(
+                prompt="read README",
+                tools=[{"name": "read_file", "parameters": {"type": "object"}}],
+            )
+        )
+
+        assert chunks[-1].kind == "done"
+        assert chunks[-1].finish_reason == FINISH_REASON_INCOMPLETE
+        assert result.finish_reason == FINISH_REASON_INCOMPLETE
+        assert result.tool_calls[0].tool_id == "read_file"
+
+
+class TestResolveVllmStreamFinishReason:
+    """Terminal-classification precedence, mirroring the Ollama sibling.
+
+    Parsed tool calls are NOT evidence that the stream actually ended, and a
+    provider error outranks them too.
+    """
+
+    def test_missing_terminal_is_incomplete_even_with_tool_calls(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=False,
+                inband_error="",
+                reasoning_only=False,
+                has_tool_calls=True,
+            )
+            == FINISH_REASON_INCOMPLETE
+        )
+
+    def test_inband_error_wins_over_tool_calls(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="engine died",
+                reasoning_only=False,
+                has_tool_calls=True,
+            )
+            == FINISH_REASON_PROVIDER_ERROR
+        )
+
+    def test_terminal_error_verdict_wins_over_tool_calls(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="",
+                reasoning_only=False,
+                terminal_finish_reason=FINISH_REASON_PROVIDER_ERROR,
+                has_tool_calls=True,
+            )
+            == FINISH_REASON_PROVIDER_ERROR
+        )
+
+    def test_tool_calls_win_over_length_on_a_clean_terminal(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="",
+                reasoning_only=False,
+                terminal_finish_reason="length",
+                has_tool_calls=True,
+            )
+            == "tool_calls"
+        )
+
+    def test_clean_terminal_without_tools_surfaces_length(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="",
+                reasoning_only=False,
+                terminal_finish_reason="length",
+            )
+            == "length"
+        )
+
+    def test_reasoning_only_yields_to_a_length_terminal(self) -> None:
+        """A model still thinking when n_predict ran out was cut off, not done.
+
+        Surfacing ``length`` is what routes the turn into the thinking-budget
+        checkpoint continuation instead of the empty-generation fallback.
+        """
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="",
+                reasoning_only=True,
+                terminal_finish_reason="length",
+            )
+            == "length"
+        )
+
+    @pytest.mark.parametrize("terminal", ["stop", "", "unrecognized"])
+    def test_reasoning_only_stays_the_verdict_on_a_clean_terminal(
+        self, terminal: str
+    ) -> None:
+        """The fail-closed CMP-STREAM-REASONING-ONLY verdict must not regress."""
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=True,
+                inband_error="",
+                reasoning_only=True,
+                terminal_finish_reason=terminal,
+            )
+            == FINISH_REASON_REASONING_ONLY
+        )
+
+    def test_missing_terminal_is_incomplete_even_when_reasoning_only(self) -> None:
+        assert (
+            _resolve_vllm_stream_finish_reason(
+                saw_terminal=False,
+                inband_error="",
+                reasoning_only=True,
+            )
+            == FINISH_REASON_INCOMPLETE
+        )
 
 
 class TestStreamDeadlinePlumbing:

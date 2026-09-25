@@ -231,3 +231,51 @@ test('a supported log version still prefers the carried log', (t) => {
   assert.equal(findParitySignal(harness).details.projectionSource, 'finalized_canonical_events');
   assert.strictEqual(harness.projectionInputs[0].turnEvents, finalizedEvents);
 });
+
+test('a resumed turn keeps its paused stream\'s persisted events ahead of the carried log (F18)', (t) => {
+  // The carried log is the resumed stream's; the paused stream's events exist
+  // only in the store. The resumed stream's own pre-finalization captures stay
+  // out (the carried log supersedes them), and so do other turns' events.
+  const harness = createHarness(t);
+  const pausedReasoning = { ...makeEvent('stream-a:reasoning_phase:live:0', 'reasoning_phase', 'paused thought'),
+    primary_message_id: 'assistant_stream-a_seg0' };
+  const resumedCapture = { ...makeEvent('stream-b:reasoning_phase:live:0', 'reasoning_phase', 'captured'),
+    primary_message_id: 'assistant_stream-b' };
+  const resumedAnswerCapture = { ...makeEvent('turn:canonical:66', 'assistant_text', 'captured answer'),
+    primary_message_id: 'assistant_stream-b' };
+  const otherTurn = { ...makeEvent('other:answer', 'assistant_text', 'other turn'), turn_id: 'other-turn' };
+  const finalizedEvents = [
+    { ...makeEvent('stream-b:reasoning_phase:live:0', 'reasoning_phase', 'settled'), primary_message_id: 'assistant_stream-b' },
+    { ...makeEvent('turn:canonical:66', 'assistant_text', 'answer'), primary_message_id: 'assistant_stream-b' },
+  ];
+
+  const result = harness.wiring.reconcileLiveTurnWithHydratedRows(
+    SESSION_ID,
+    TURN_ID,
+    [],
+    { turnEventLogVersion: PERSISTED_LOG_VERSION,
+      turnEvents: [otherTurn, pausedReasoning, resumedCapture, resumedAnswerCapture] },
+    finalizedEvents,
+    'stream-b'
+  );
+
+  assert.deepEqual(
+    harness.projectionInputs[0].turnEvents.map((event) => [event.event_id, event.payload.text]),
+    [
+      ['stream-a:reasoning_phase:live:0', 'paused thought'],
+      ['stream-b:reasoning_phase:live:0', 'settled'],
+      ['turn:canonical:66', 'answer'],
+    ]
+  );
+  assert.equal(result.finalRows.length, 3);
+});
+
+test('without an attempt stream id the carried log is used as is', (t) => {
+  const harness = createHarness(t);
+  const pausedReasoning = makeEvent('stream-a:reasoning_phase:live:0', 'reasoning_phase', 'paused thought');
+  const finalizedEvents = [makeEvent('answer-1', 'assistant_text', 'answer')];
+
+  reconcile(harness, [pausedReasoning], finalizedEvents);
+
+  assert.strictEqual(harness.projectionInputs[0].turnEvents, finalizedEvents);
+});

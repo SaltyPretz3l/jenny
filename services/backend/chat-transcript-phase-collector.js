@@ -160,6 +160,7 @@ class TranscriptPhaseCollector {
       phases: [],
       visibleSegments: [],
       toolSteps: [],
+      contextCompactions: [],
     };
   }
 
@@ -361,6 +362,37 @@ class TranscriptPhaseCollector {
     return next;
   }
 
+  noteContextCompaction(entry = {}) {
+    const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+    const tokensBefore = Number(source.tokensBefore);
+    const tokensAfter = Number(source.tokensAfter);
+    const droppedMessages = Number(source.droppedMessages);
+    const droppedBytes = Number(source.droppedBytes);
+    const occurredAt = String(source.occurredAt || '').trim();
+    const stored = {
+      strategy: String(source.strategy || '').trim().slice(0, 40),
+      tokensBefore: Number.isFinite(tokensBefore)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(tokensBefore))) : 0,
+      tokensAfter: Number.isFinite(tokensAfter)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(tokensAfter))) : 0,
+      phase: String(source.phase || '').trim().slice(0, 40),
+      summaryStatus: String(source.summaryStatus || '').trim().slice(0, 40),
+      reasonCode: String(source.reasonCode || '').trim().slice(0, 80),
+      inputComplete: Boolean(source.inputComplete),
+      droppedMessages: Number.isFinite(droppedMessages)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedMessages))) : 0,
+      droppedBytes: Number.isFinite(droppedBytes)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedBytes))) : 0,
+      summaryPersisted: Boolean(source.summaryPersisted),
+      historyScopeFallback: String(source.historyScopeFallback || '').trim().slice(0, 40),
+      summaryExcerpt: String(source.summaryExcerpt || '').trim().slice(0, 1200),
+      ...(Number.isFinite(Date.parse(occurredAt)) ? { occurredAt } : {}),
+    };
+    this.slice.contextCompactions.push(stored);
+    this.slice.contextCompactions = this.slice.contextCompactions.slice(-20);
+    return stored;
+  }
+
   buildAssistantMessageFields({ fallbackReasoningEntries = [] } = {}) {
     const phases = cloneValue(this.slice.phases);
     const visibleSegments = cloneValue(this.slice.visibleSegments);
@@ -372,6 +404,10 @@ class TranscriptPhaseCollector {
       tool_steps: toolSteps,
       reasoning: buildReasoningPayloadFromPhases(phases, fallbackReasoningEntries),
       reasoning_phases: buildReasoningPhaseView(phases),
+      ...(this.slice.contextCompactions.length ? {
+        context_compactions: cloneValue(this.slice.contextCompactions),
+        context_compacted: cloneValue(this.slice.contextCompactions.at(-1)),
+      } : {}),
     };
   }
 

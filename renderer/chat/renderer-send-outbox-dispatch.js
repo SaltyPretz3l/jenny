@@ -6,11 +6,9 @@
   }
   root.rendererSendOutboxDispatch = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  // A failed head blocks every queued send behind it (FIFO is deliberate —
-  // §9), and for a non-current session there is no composer affordance and no
-  // further turn terminal to re-trigger a drain. Bounded self-scheduled
-  // retries cover transient failures; a persistently failing head stays
-  // visible for manual retry (which resets the budget via failure: null).
+  // A failed dispatch blocks later entries only while bounded auto-retries own
+  // it. Once exhausted it is parked for review and FIFO draining skips it;
+  // manual retry returns the entry to its original place in dispatch order.
   const MAX_QUEUED_SEND_AUTO_RETRIES = 3;
   const QUEUED_SEND_AUTO_RETRY_BASE_DELAY_MS = 2000;
 
@@ -32,6 +30,10 @@
     } = deps;
     const autoRetryTimers = new Map();
     const pendingDispatches = new Map();
+    const continuationOptionsBySession = new Map();
+    const getDispatchableQueuedSend = typeof sendOutbox.firstDispatchable === 'function'
+      ? (sessionId) => sendOutbox.firstDispatchable(sessionId)
+      : getQueuedSend;
     let disposed = false;
 
     function cancelAutoRetry(sessionId) {
@@ -55,7 +57,7 @@
       autoRetryTimers.set(sessionId, setTimeoutImpl(() => {
         autoRetryTimers.delete(sessionId);
         if (disposed) return;
-        const head = getQueuedSend(sessionId);
+        const head = getDispatchableQueuedSend(sessionId);
         // Only retry the same still-failed head; anything else (removed,
         // edited, manually retried, replaced) owns its own transitions.
         if (!head || head.id !== failedEntryId || head.status !== 'failed') return;
@@ -66,7 +68,7 @@
     }
 
     async function runQueuedSendDispatch(normalizedSessionId, options) {
-      let queuedSend = getQueuedSend(normalizedSessionId);
+      let queuedSend = getDispatchableQueuedSend(normalizedSessionId);
       if (disposed || !normalizedSessionId || !queuedSend) return null;
       queuedSend = await sendOutbox.awaitContextCapture(queuedSend);
       if (disposed || !queuedSend) return null;
@@ -102,6 +104,8 @@
         runtimePreferencesSnapshot: queuedSend.runtimePreferences || null,
       };
       const queuedMeta = sendingEntry.meta && typeof sendingEntry.meta === 'object' ? sendingEntry.meta : null;
+      dispatchOptions.skillInvocation = queuedMeta?.skillInvocation && typeof queuedMeta.skillInvocation === 'object'
+        ? queuedMeta.skillInvocation : null;
       if (queuedMeta && Object.prototype.hasOwnProperty.call(queuedMeta, 'mentionContentsSnapshot')) {
         dispatchOptions.mentionContentsSnapshot = Array.isArray(queuedMeta.mentionContentsSnapshot)
           ? queuedMeta.mentionContentsSnapshot
@@ -137,10 +141,15 @@
         if (failedEntry && attempt <= maxAutoRetries) {
           scheduleAutoRetry(normalizedSessionId, failedEntry.id, attempt, options);
         } else if (failedEntry) {
-          appendClientLog('WARN', 'send.outbox_auto_retry_exhausted', {
-            sessionId: normalizedSessionId.slice(0, 30),
-            attempts: attempt,
-          });
+          const parkedEntry = sendOutbox.replace(failedEntry, { status: 'needs_review' });
+          if (parkedEntry) {
+            appendClientLog('WARN', 'send.outbox_auto_retry_exhausted', {
+              sessionId: normalizedSessionId.slice(0, 30),
+              attempts: attempt,
+              reason: 'auto_retry_exhausted',
+            });
+            continuationOptionsBySession.set(normalizedSessionId, options);
+          }
         }
       }
       renderComposerState();
@@ -187,6 +196,13 @@
         if (pendingDispatches.get(normalizedSessionId) === operation) {
           pendingDispatches.delete(normalizedSessionId);
         }
+        const continuationOptions = continuationOptionsBySession.get(normalizedSessionId);
+        if (!disposed && continuationOptions) {
+          continuationOptionsBySession.delete(normalizedSessionId);
+          dispatchQueuedSendForSession(normalizedSessionId, continuationOptions).catch(() => {
+            /* dispatch failures are recorded on the entry itself */
+          });
+        }
       });
       pendingDispatches.set(normalizedSessionId, operation);
       return operation;
@@ -198,6 +214,7 @@
       for (const timer of autoRetryTimers.values()) clearTimeoutImpl(timer);
       autoRetryTimers.clear();
       pendingDispatches.clear();
+      continuationOptionsBySession.clear();
     }
 
     dispatchQueuedSendForSession.cancelAutoRetry = cancelAutoRetry;

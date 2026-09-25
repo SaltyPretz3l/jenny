@@ -29,16 +29,28 @@ class FakeMemoryStore:
 
     # Public API mirrored from MemoryStore --------------------------------
 
-    def get_pending_candidates(self, session_id: str) -> list:
+    def get_pending_candidates(
+        self,
+        session_id: str,
+        *,
+        limit: int = 5,
+        project_id: str = "project_general",
+    ) -> list:
         self.calls.append(("get_pending_candidates", session_id))
         return list(self._pending)
 
-    def has_memory_fingerprint(self, fp: str) -> bool:
+    def has_memory_fingerprint(
+        self, fp: str, *, project_id: str = "project_general"
+    ) -> bool:
         self.calls.append(("has_memory_fingerprint", fp))
         return self._fingerprint_known
 
     def delete_pending_candidate(
-        self, *, session_id: str, content_fingerprint: str
+        self,
+        *,
+        session_id: str,
+        content_fingerprint: str,
+        project_id: str = "project_general",
     ) -> None:
         self.calls.append(
             ("delete_pending_candidate", session_id, content_fingerprint)
@@ -222,6 +234,7 @@ def _make_pending_candidate(**kwargs) -> SimpleNamespace:
     defaults = dict(
         id=1,
         session_id="sess",
+        project_id="project_general",
         source_request_id="req-1",
         title="Preferred name: Seen",
         lesson_text="The user's name is Seen.",
@@ -257,7 +270,9 @@ def test_pending_candidate_short_circuit_filters_seen_and_returns_unseen() -> No
             super().__init__(fingerprint_known=False)
             self._pending = [cand_seen, cand_unseen]
 
-        def has_memory_fingerprint(self, fp: str) -> bool:
+        def has_memory_fingerprint(
+            self, fp: str, *, project_id: str = "project_general"
+        ) -> bool:
             self.calls.append(("has_memory_fingerprint", fp))
             # seen candidate -> already in store; unseen -> not in store
             return fp == cand_seen.content_fingerprint

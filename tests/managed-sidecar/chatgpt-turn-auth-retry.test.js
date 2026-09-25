@@ -47,6 +47,7 @@ function createHarness({
   aborted = false,
   getAccessToken = null,
   refreshManagedConfig = null,
+  assertBeforeSend = null,
 } = {}) {
   const record = {
     chatSendParams: [],
@@ -107,6 +108,7 @@ function createHarness({
     options: {},
     log: (level, event, details) => record.logs.push({ level, event, details }),
     ids: { sessionId: 'session_1', streamId: REQUEST_ID, traceId: 'trace_1' },
+    assertBeforeSend,
   });
   return { controller, probe, record, send, service };
 }
@@ -114,6 +116,47 @@ function createHarness({
 function loggedEvents(record) {
   return record.logs.map((entry) => entry.event);
 }
+
+test('send joins a pending initialization before checking protocol or dispatching', async () => {
+  let finish;
+  let fences = 0;
+  const harness = createHarness({ attempts: [{ status: 'completed' }],
+    assertBeforeSend: () => { fences += 1; assert.equal(harness.service._managedInitializeFlight, null); } });
+  const process = {};
+  harness.service.sidecarManager = { process };
+  harness.service._managedInitializeFlight = { process, promise: new Promise(resolve => { finish = resolve; }) };
+  const pending = harness.send();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.record.chatSendParams.length, 0);
+  assert.equal(fences, 0);
+  harness.service._managedInitializeFlight = null;
+  finish();
+  assert.deepEqual(await pending, { status: 'completed' });
+  assert.equal(fences, 1);
+  assert.equal(harness.record.chatSendParams.length, 1);
+});
+
+test('cancelling a send waiting for initialization does not cancel the shared flight', async () => {
+  const harness = createHarness();
+  const controller = new AbortController();
+  harness.controller.signal = controller.signal;
+  const shared = new AbortController();
+  harness.service._managedInitializeFlight = { controller: shared, promise: new Promise(() => {}) };
+  const pending = harness.send();
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(shared.signal.aborted, false);
+  assert.equal(harness.record.chatSendParams.length, 0);
+});
+
+test('failed initialization is propagated without a send or auth retry', async () => {
+  const harness = createHarness();
+  const failure = new Error('initialization deadline');
+  harness.service._managedInitializeFlight = { promise: Promise.reject(failure) };
+  await assert.rejects(harness.send(), error => error === failure);
+  assert.equal(harness.record.chatSendParams.length, 0);
+  assert.equal(harness.record.refreshCalls.length, 0);
+});
 
 test('a 401 before any output refreshes once, reconfigures once, and retries the same request_id', async () => {
   const harness = createHarness({
@@ -138,6 +181,23 @@ test('a 401 before any output refreshes once, reconfigures once, and retries the
   assert.equal(harness.record.refreshCalls[0].options.absoluteTimeoutMs, RECONFIGURE_TIMEOUT_MS);
   assert.equal(harness.record.permanentlyExpireCalls, 0);
   assert.ok(loggedEvents(harness.record).includes('chatgpt_auth.turn_retry_started'));
+});
+
+test('the provider fence runs again after auth reinitialization and before the retry send', async () => {
+  let fenceCalls = 0;
+  const fenceError = new Error('runtime inference protocol changed');
+  const harness = createHarness({
+    attempts: [authRejection(), { status: 'completed', attempt: 2 }],
+    assertBeforeSend: () => {
+      fenceCalls += 1;
+      if (fenceCalls === 2) throw fenceError;
+    },
+  });
+
+  await assert.rejects(harness.send(), error => error === fenceError);
+  assert.equal(fenceCalls, 2);
+  assert.equal(harness.record.chatSendParams.length, 1);
+  assert.equal(harness.record.refreshCalls.length, 1);
 });
 
 const PROBE_EFFECT_CASES = [
@@ -296,16 +356,16 @@ test('a duplicate-request-id rejection on the retry surfaces the ORIGINAL 401', 
   assert.equal(harness.record.permanentlyExpireCalls, 0);
 });
 
-test('an aborted controller suppresses the retry', async () => {
+test('an already aborted controller suppresses both dispatch and retry', async () => {
   const original = authRejection();
   const harness = createHarness({
     attempts: [original, { status: 'completed', attempt: 2 }],
     aborted: true,
   });
 
-  await assert.rejects(harness.send(), (error) => error === original);
+  await assert.rejects(harness.send(), { name: 'AbortError' });
 
-  assert.equal(harness.record.chatSendParams.length, 1);
+  assert.equal(harness.record.chatSendParams.length, 0);
   assert.equal(harness.record.getAccessTokenCalls.length, 0);
 });
 
@@ -381,8 +441,15 @@ test('rejection classifiers key on classification, not provider_code alone', () 
 
 function buildProbeWiredOptions({ onNotificationObserved, onApprovalObserved, runtime }) {
   const controller = new AbortController();
+  const executionAuthority = {};
   return buildManagedSidecarChatSendOptions({
-    service: { _emitServiceLog() {} },
+    service: {
+      _emitServiceLog() {},
+      sessionExecutionAuthority: {
+        requireCurrent: () => ({}),
+        noteApproved: () => true,
+      },
+    },
     controller,
     streamId: REQUEST_ID,
     resolvedSessionId: 'session_1',
@@ -399,6 +466,7 @@ function buildProbeWiredOptions({ onNotificationObserved, onApprovalObserved, ru
     pauseStreamIdleTimer: () => {},
     onNotificationObserved,
     onApprovalObserved,
+    executionAuthority,
   });
 }
 

@@ -26,7 +26,7 @@ function createShellStub(options = {}) {
   const listeners = { auth: [], backend: [], chat: [], logs: [], proactive: [], skills: [], tips: [], system: [], features: [], speech: [], updates: [], planUsage: [] };
   const state = {
     authState: { authenticated: true, user: { email: 'local@jenny.local', display_name: 'Local User' } },
-    sessions: [],
+    sessions: Array.isArray(options.sessions) ? options.sessions.map((session) => ({ ...session })) : [],
     messagesBySession: new Map(),
     chatCalls: [],
     cancelCalls: [],
@@ -34,7 +34,7 @@ function createShellStub(options = {}) {
     renameCalls: [],
     setMetaCalls: [],
     sweepCalls: [],
-    workspaceState: { activeSessionId: '', openSessionIds: [] },
+    workspaceState: { activeSessionId: '', openSessionIds: [], ...options.workspaceState },
     chatUiState: {
       zoomPercent: Number(options.chatUi?.state?.zoomPercent || 100),
     },
@@ -366,6 +366,7 @@ function createShellStub(options = {}) {
       return { auth: listeners.auth.length, backend: listeners.backend.length, chat: listeners.chat.length, logs: listeners.logs.length, proactive: listeners.proactive.length, skills: listeners.skills.length, tips: listeners.tips.length, system: listeners.system.length, features: listeners.features.length, speech: listeners.speech.length, planUsage: listeners.planUsage.length };
     },
     backend: createBackendStub(options, state, listeners, addListener),
+    knowledge: options.knowledge,
     auth: {
       async getState() {
         return state.authState;
@@ -494,6 +495,10 @@ function createShellStub(options = {}) {
         return { candidateIds, deleted: candidateIds.length };
       },
       async getMessages(sessionId) {
+        // options.sessionMessagePayloads[id] models main's full reply (turn_events,
+        // active_turn) for a chat that is already persisted when the app boots.
+        const persisted = options.sessionMessagePayloads?.[sessionId];
+        if (persisted && !state.messagesBySession.has(sessionId)) return structuredClone(persisted);
         return { data: state.messagesBySession.get(sessionId) || [] };
       },
       async setPreferences(sessionId, preferences) {
@@ -544,6 +549,10 @@ function createShellStub(options = {}) {
         return { ok: true };
       },
     },
+    // A test may hand the shell a session-runtime bridge stub
+    // (`loadRendererApp({ shell: { sessionRuntime } })`). Left out, the
+    // renderer sees no runtime bridge, which is a real state of its own.
+    ...(options.sessionRuntime && typeof options.sessionRuntime === 'object' ? { sessionRuntime: options.sessionRuntime } : {}),
     ...createShellStubServices({
       options,
       state,

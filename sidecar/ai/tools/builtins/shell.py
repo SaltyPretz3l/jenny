@@ -29,6 +29,7 @@ from sidecar.ai.tools.builtins import cancellation, output_chunk_slot
 from sidecar.ai.tools.builtins.git_tracking import detect_git_operations
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessCapacityError,
+    OwnedProcessCleanupVerdict,
     OwnedProcessResult,
     OwnedProcessShutdownError,
     get_owned_process_service,
@@ -372,6 +373,18 @@ def _run_owned_process(
             streamer.close()
 
 
+def _resource_cleanup_metadata(completed: object) -> dict[str, object]:
+    verdict = getattr(completed, "cleanup_verdict", None)
+    if not isinstance(verdict, OwnedProcessCleanupVerdict):
+        verdict = OwnedProcessCleanupVerdict(
+            cleanup="uncertain",
+            process_tree_terminated=False,
+            output_readers_terminated=False,
+            reason="cleanup_evidence_unavailable",
+        )
+    return verdict.metadata()
+
+
 def _persist_large_output(
     workspace: WorkspaceGuard,
     output: str,
@@ -563,6 +576,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         )
         or getattr(completed, "drain_incomplete", False)
     )
+    resource_cleanup = _resource_cleanup_metadata(completed)
 
     if getattr(completed, "aborted", False):
         # Distinct from timeout: the user cancelled the turn and the owned
@@ -593,6 +607,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             error_code=CMP_TOOL_IO_FAILED,
             metadata={
                 "shell": _shell_name(),
+                "resource_cleanup": resource_cleanup,
                 "timed_out": True,
                 "timeout_seconds": timeout_seconds,
                 **({"output_counters": output_counters} if output_counters is not None else {}),
@@ -677,7 +692,10 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             payload["hint"] = hint
 
     # ── Metadata enrichment ───────────────────────────────────────
-    metadata: dict[str, object] = {"shell": _shell_name()}
+    metadata: dict[str, object] = {
+        "shell": _shell_name(),
+        "resource_cleanup": resource_cleanup,
+    }
     if expected_exit_codes is not None:
         metadata["expected_exit_codes"] = list(expected_exit_codes)
         metadata["expectation_met"] = expectation_met

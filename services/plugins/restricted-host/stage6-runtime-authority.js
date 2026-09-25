@@ -10,6 +10,35 @@ function descriptorName(descriptor) {
   return String(descriptor?.namespaced_name || '');
 }
 
+function sameList(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function matchesExecutionAuthority(descriptor, generation, captured) {
+  const fingerprint = captured?.authority;
+  const identity = captured?.descriptor?.capability_identity;
+  if (!fingerprint || !identity || identity.runtime_kind !== 'restricted'
+    || identity.name !== descriptorName(descriptor)
+    || fingerprint.active_generation_id !== generation?.generation_id
+    || fingerprint.commit_epoch !== generation?.commit_epoch
+    || fingerprint.registry_revision !== generation?.registry_revision
+    || fingerprint.dependency_graph_hash !== generation?.dependency_graph_hash) return false;
+  const scalarFields = [
+    'artifact_digest', 'component_digest', 'content_digest', 'generation_id', 'commit_epoch',
+    'lifecycle_epoch', 'policy_revision', 'workspace_incarnation_id', 'abi_digest',
+    'protocol_digest',
+  ];
+  return scalarFields.every((field) => identity[field] === descriptor?.[field])
+    && sameList(identity.capabilities, descriptor?.capabilities)
+    && sameList(identity.network_origins, descriptor?.network_origins);
+}
+
+function noInvocation(reason) {
+  return { ...refusal(reason),
+    execution_settlement: { cleanup: 'confirmed', producer_started: false } };
+}
+
 class Stage6RuntimeAuthority {
   constructor({ diagnostics = null } = {}) {
     this._diagnostics = diagnostics;
@@ -118,9 +147,13 @@ class Stage6RuntimeAuthority {
   }
 
   execute(toolName, args, context = {}) {
-    if (this._disposed || !this._controller) return refusal('restricted_runtime_unavailable');
+    if (this._disposed || !this._controller) return noInvocation('restricted_runtime_unavailable');
     const descriptor = this._descriptors.get(String(toolName || ''));
-    if (!descriptor) return refusal('restricted_tool_unknown');
+    if (!descriptor) return noInvocation('restricted_tool_unknown');
+    if (context.executionAuthority
+      && !matchesExecutionAuthority(descriptor, this._generation, context.executionAuthority)) {
+      return noInvocation('restricted_tool_authority_stale');
+    }
     return this._controller.invoke(descriptor, args, context);
   }
 

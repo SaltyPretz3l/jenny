@@ -1,5 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { isChildPath } = require('./backend/path-utils');
+const { sameFileIdentity } = require('./versioned-workspace-file-bytes');
+const { t } = require('./i18n-main');
 
 const {
   AUDIO_EXTENSION_TO_MIME,
@@ -325,8 +328,20 @@ function prepareAttachmentEntries(filePaths, options = {}) {
 
     let buffer;
     try {
-      const fileDescriptor = fs.openSync(absolutePath, 'r');
+      options.assertAuthority?.();
+      const readPath = fs.realpathSync(absolutePath);
+      if (isSensitiveAttachmentPath(readPath)) throw new Error('Sensitive credential or browser-profile files cannot be attached.');
+      if (Object.hasOwn(options, 'textRoot') && (!options.textRoot
+        || !isChildPath(fs.realpathSync(options.textRoot), readPath))) {
+        throw new Error(t('main.attachments.outsideProject', 'File is outside this session’s project folder, so it cannot be attached.'));
+      }
+      const beforeOpen = fs.statSync(readPath);
+      const fileDescriptor = fs.openSync(readPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
       try {
+        options.assertAuthority?.();
+        if (!sameFileIdentity(beforeOpen, fs.fstatSync(fileDescriptor))
+          || fs.realpathSync(absolutePath) !== readPath
+          || !beforeOpen.isFile()) throw new Error(t('error.tool.fileChangedSinceRead', 'File changed since last read; re-read and retry.'));
         const boundedBuffer = Buffer.allocUnsafe(MAX_FILE_SIZE_BYTES + 1);
         let bytesRead = 0;
         while (bytesRead < boundedBuffer.length) {
@@ -343,6 +358,8 @@ function prepareAttachmentEntries(filePaths, options = {}) {
           bytesRead += chunkSize;
         }
         buffer = boundedBuffer.subarray(0, bytesRead);
+        options.assertAuthority?.();
+        if (fs.realpathSync(absolutePath) !== readPath) throw new Error(t('error.tool.fileChangedSinceRead', 'File changed since last read; re-read and retry.'));
       } finally {
         fs.closeSync(fileDescriptor);
       }

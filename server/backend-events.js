@@ -4,7 +4,10 @@ const { EventStream } = require('./event-stream');
 
 const LIVE_CHAR_LIMIT = 262_144;
 const LIVE_REASONING_LIMIT = 65_536;
+// At most 32 configured runnable chat lanes; identities stay separate from the
+// eight transcript aggregates so cache eviction never suppresses live publication.
 const MAX_LIVE_SESSIONS = 8;
+const MAX_ACTIVE_IDENTITIES = 64;
 const STREAM_TYPES = new Set(['user_questions_requested', 'user_questions_resolved', 'started', 'delta', 'thinking_status', 'phase_started', 'phase_completed',
   'stream_reset', 'tool_use', 'tool_result', 'tool_output_chunk', 'message_updated',
   'tool_approval_needed', 'question_batch', 'complete', 'error', 'context_compacted', 'context_usage']);
@@ -32,6 +35,14 @@ function streamEventDto(event) {
   const type = event.type === 'user_questions_requested' ? 'question_batch'
     : event.type === 'user_questions_resolved' ? 'message_updated' : event.type;
   const dto = { session_id: event.sessionId, stream_id: event.streamId, type };
+  if (validId(event.turnId)) dto.turn_id = event.turnId;
+  if (event.runtimeAdmission) {
+    const source = event.runtimeAdmission;
+    const fields = ['work_id', 'turn_id', 'session_id', 'stream_id', 'user_message_id', 'idempotency_key'];
+    if (!fields.every(key => validId(source[key])) || source.session_id !== dto.session_id
+      || source.stream_id !== dto.stream_id || source.turn_id !== dto.turn_id) return null;
+    dto.runtime_admission = Object.fromEntries(fields.map(key => [key, source[key]]));
+  }
   if (event.type === 'error') return { ...dto, reason: 'turn_failed' };
   for (const key of ['content', 'aggregate', 'text', 'summary', 'status', 'reason']) {
     if (typeof event[key] === 'string') dto[key] = event[key].slice(0, LIVE_CHAR_LIMIT);
@@ -61,11 +72,15 @@ class BackendEvents {
     this.backend = backend;
     this.events = new EventStream({ bootEpoch, now });
     this.live = new Map();
+    this.active = new Map();
     this.onStream = (event) => {
       const dto = streamEventDto(event);
       if (!dto) return;
-      const current = this.live.get(dto.session_id);
-      if (dto.type !== 'started' && current?.stream_id !== dto.stream_id) return;
+      if (dto.type === 'started') {
+        if (!this.active.has(dto.session_id) && this.active.size >= MAX_ACTIVE_IDENTITIES) return;
+        this.active.set(dto.session_id, dto.stream_id);
+      } else if (this.active.get(dto.session_id) !== dto.stream_id) return;
+      if (dto.type === 'complete' || dto.type === 'error') this.active.delete(dto.session_id);
       this._updateLive(dto);
       this.events.publish('chat_stream', { session_id: dto.session_id, stream_id: dto.stream_id, event: dto });
     };
@@ -76,7 +91,7 @@ class BackendEvents {
 
   _updateLive(event) {
     if (event.type === 'started') {
-      this.live.set(event.session_id, { stream_id: event.stream_id, content: '', reasoning: [], status: '', truncated: false });
+      this.live.set(event.session_id, { stream_id: event.stream_id, ...(event.turn_id ? { turn_id: event.turn_id } : {}), content: '', reasoning: [], status: '', truncated: false });
       if (this.live.size > MAX_LIVE_SESSIONS) this.live.delete(this.live.keys().next().value);
       return;
     }
@@ -120,6 +135,7 @@ class BackendEvents {
   dispose() {
     this.backend.off('chat-stream', this.onStream);
     this.live.clear();
+    this.active.clear();
     this.events.dispose();
   }
 }

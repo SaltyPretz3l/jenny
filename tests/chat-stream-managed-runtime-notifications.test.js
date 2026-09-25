@@ -21,11 +21,8 @@ const {
   makeCtx,
   makeHandleToolNotification,
   callsOf,
+  canonicalEvent,
 } = require('./helpers/managed-runtime-notification-harness');
-
-// ===========================================================================
-// chat.token -> applyVisibleTextDelta
-// ===========================================================================
 
 test('chat.token accrues visible text and emits a response delta', () => {
   const ctx = makeCtx();
@@ -100,10 +97,6 @@ test('chat.token deduplicates a repeated token sequence under the canonical brid
   assert.equal(callsOf(ctx, 'emitChatStream').length, 1);
 });
 
-// ===========================================================================
-// chat.thinking
-// ===========================================================================
-
 test('chat.thinking with kind=reasoning persists a reasoning entry via appendProviderReasoningDelta', () => {
   const ctx = makeCtx();
   handleNotification(
@@ -153,10 +146,6 @@ test('chat.thinking with explicit persist=true persists even when kind is not re
   assert.equal(callsOf(ctx, 'appendReasoningEntries').length, 1);
   assert.equal(callsOf(ctx, 'emitThinkingStatus').length, 0);
 });
-
-// ===========================================================================
-// agent.progress
-// ===========================================================================
 
 test('agent.progress is dropped when the agent_executor flag is off', () => {
   const ctx = makeCtx();
@@ -212,10 +201,6 @@ test('agent.progress emits a control event when the agent_executor flag is on', 
   assert.equal(emits[0].payload.agentId, 'research@stream-1:call-1:1');
   assert.equal(emits[0].payload.parentAgentId, 'main@stream-1');
 });
-
-// ===========================================================================
-// chat.question_batch
-// ===========================================================================
 
 test('chat.question_batch after visible text sets MIXED_TEXT_AND_BATCH and does not set a batch', () => {
   const ctx = makeCtx();
@@ -274,10 +259,6 @@ test('chat.question_batch with a valid payload stores the normalized batch, flip
   assert.equal(thinking[0].delta, '');
 });
 
-// ===========================================================================
-// chat.phase_started / chat.phase_completed
-// ===========================================================================
-
 test('chat.phase_started notes the phase on the collector and emits a phase_started stream event', () => {
   const ctx = makeCtx();
   handleNotification(
@@ -334,10 +315,6 @@ test('chat.phase_completed notes completion on the collector and emits a phase_c
   assert.equal(emits[0].payload.toolName, 'read_file');
   assert.equal(emits[0].options.channel, 'phase');
 });
-
-// ===========================================================================
-// chat.stream_reset
-// ===========================================================================
 
 test('chat.stream_reset discards persisted segments, clears accrued state, and emits a stream_reset control event', () => {
   const ctx = makeCtx();
@@ -548,10 +525,6 @@ test('chat.stream_reset forwards the sidecar reason to the renderer payload', ()
   assert.equal(emits[0].payload.reason, 'tool_continuation');
 });
 
-// ===========================================================================
-// tool.executing / tool.result (legacy notifications)
-// ===========================================================================
-
 test('legacy tool.executing notes a running step, persists the segment, and delegates to handleToolNotification', () => {
   const ctx = makeCtx();
   const handle = makeHandleToolNotification(ctx, false);
@@ -634,10 +607,6 @@ test('a tool notification claimed by handleToolNotification returns before the u
   assert.deepEqual(ctx.toolResultCounts, { successful: 0, failed: 1 });
 });
 
-// ===========================================================================
-// unknown method warn-once
-// ===========================================================================
-
 test('an unknown notification method warns once and counts repeats without re-warning', () => {
   const ctx = makeCtx();
   const handle = makeHandleToolNotification(ctx, false);
@@ -653,33 +622,76 @@ test('an unknown notification method warns once and counts repeats without re-wa
   assert.equal(ctx.unknownNotificationMethodCounts.get('chat.mystery'), 2);
 });
 
-// ===========================================================================
-// context.compacted
-// ===========================================================================
-
-test('context.compacted emits a context_compacted control event with normalized counts', () => {
+test('context.compaction_started emits exactly one ephemeral context_compacting control event', () => {
   const ctx = makeCtx();
-  handleNotification(
-    ctx,
-    {
-      method: 'context.compacted',
-      params: { strategy: 'macro', tokens_before: 5000, tokens_after: 1200 },
+  handleNotification(ctx, {
+    method: 'context.compaction_started',
+    params: { phase: 'tool_loop', tokens_before: 5000, message_count: 12 },
+  }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  assert.deepEqual(callsOf(ctx, 'emitChatStream'), [{
+    payload: {
+      type: 'context_compacting',
+      compactionPhase: 'tool_loop',
+      tokensBefore: 5000,
+      messageCount: 12,
+      requestId: 'stream-1',
     },
-    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) }
-  );
-
-  const emits = callsOf(ctx, 'emitChatStream');
-  assert.equal(emits.length, 1);
-  assert.equal(emits[0].payload.type, 'context_compacted');
-  assert.equal(emits[0].payload.strategy, 'macro');
-  assert.equal(emits[0].payload.tokensBefore, 5000);
-  assert.equal(emits[0].payload.tokensAfter, 1200);
-  assert.equal(emits[0].options.channel, 'control');
+    options: { channel: 'control' },
+  }]);
+  assert.equal(callsOf(ctx, 'serviceLog').some((l) => l.code === 'chat.unknown_notification_method'), false);
 });
 
-// ===========================================================================
-// context.usage (ephemeral mid-turn composer-ring snapshot)
-// ===========================================================================
+test('turn.event tool_input_delta folds a burst into one control event per 100 ms with cumulative bytes', () => {
+  const ctx = makeCtx();
+  let nowMs = 1000;
+  ctx.now = () => nowMs;
+  const send = (delta, sequence, toolCallId = 'call-delta-1') => handleNotification(ctx, {
+    method: 'turn.event',
+    params: canonicalEvent('tool_input_delta', { tool_name: 'write_file', arguments_delta: delta, sequence }, { tool_call_id: toolCallId }),
+  }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  send('{"path":', 1);
+  send('"a.js","content":"é', 2); // within the interval: folded, not sent
+  nowMs = 1100;
+  send('x'.repeat(5000), 3); // interval elapsed: one send carrying the fold + this chunk
+  send('tail', 4); // folded again; nothing trails (the next tool_use replaces the row)
+  const calls = callsOf(ctx, 'emitChatStream');
+  assert.equal(calls.length, 2, 'one event per interval, never per fragment');
+  assert.deepEqual(calls[0].payload, {
+    type: 'tool_input_delta', toolCallId: 'call-delta-1', toolName: 'write_file',
+    argumentsDelta: '{"path":', argumentsBytes: 8, sequence: 1, requestId: 'stream-1',
+  });
+  assert.equal(calls[1].payload.argumentsDelta.length, 4096 - 8, 'preview stops at 4 KB cumulative');
+  assert.equal(calls[1].payload.argumentsBytes, 8 + Buffer.byteLength('"a.js","content":"é') + 5000, 'UTF-8 bytes of every fragment, clipped or not');
+  assert.equal(calls[1].payload.sequence, 3);
+});
+
+test('context.compacted emits and collects one context_compacted event with a summary excerpt', () => {
+  const ctx = makeCtx();
+  const collected = [];
+  ctx.transcriptCollector.noteContextCompaction = (entry) => collected.push(entry);
+  const params = {
+    strategy: 'macro', tokens_before: 5000, tokens_after: 1200,
+    summary_message: { content: ` summary\n ${'x'.repeat(1300)} ` },
+  };
+  handleNotification(ctx, { method: 'context.compacted', params }, {
+    toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx),
+  });
+  const [{ payload, options }] = callsOf(ctx, 'emitChatStream');
+  assert.equal(callsOf(ctx, 'emitChatStream').length, 1, 'exactly one context_compacted event');
+  assert.deepEqual([payload.type, payload.strategy, payload.tokensBefore, payload.tokensAfter],
+    ['context_compacted', 'macro', 5000, 1200]);
+  assert.equal(payload.compactionPhase, 'preflight', 'the site travels as compactionPhase, never as `phase`');
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, 'phase'), false);
+  assert.equal(payload.summaryExcerpt.length, 1200);
+  assert.equal(payload.summaryExcerpt.startsWith('summary x'), true);
+  assert.deepEqual(options, { channel: 'control' });
+  assert.equal(collected.length, 1);
+  const { occurredAt, phase, ...storedValues } = collected[0];
+  const { type, requestId, compactionPhase, ...emittedValues } = payload;
+  assert.equal(phase, compactionPhase);
+  assert.equal(Number.isFinite(Date.parse(occurredAt)), true);
+  assert.deepEqual(storedValues, emittedValues);
+});
 
 const CONTEXT_USAGE_PARAMS = Object.freeze({
   phase: 'iteration',
@@ -748,10 +760,6 @@ test('context.usage is dropped when the context_usage_live kill switch is off', 
   const warns = callsOf(ctx, 'serviceLog').filter((l) => l.code === 'chat.unknown_notification_method');
   assert.equal(warns.length, 0, 'a deliberate flag-off drop is not protocol drift');
 });
-
-// ===========================================================================
-// chat.done
-// ===========================================================================
 
 test('chat.done with usage and a successful stop reason captures usage, settles tools, and begins finalization', () => {
   const ctx = makeCtx();
@@ -970,10 +978,6 @@ test('chat.done with a non-success stop reason records a terminal error and clea
   assert.equal(callsOf(ctx, 'beginVisibleCompletionFinalization').length, 0);
 });
 
-// ===========================================================================
-// chat.error
-// ===========================================================================
-
 test('chat.error records the sidecar error from params', () => {
   const ctx = makeCtx();
   handleNotification(
@@ -987,10 +991,6 @@ test('chat.error records the sidecar error from params', () => {
   assert.equal(recorded[0].params.error_code, 'CMP-AI-0002');
   assert.equal(recorded[0].params.message, 'boom');
 });
-
-// ===========================================================================
-// runtime.gap_candidate
-// ===========================================================================
 
 test('runtime.gap_candidate emits a runtime-gap-candidate service event carrying the params payload', () => {
   const ctx = makeCtx();

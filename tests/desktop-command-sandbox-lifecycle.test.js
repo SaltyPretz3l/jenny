@@ -11,118 +11,151 @@ const { DesktopSandboxService } = require('../services/execution/desktop-sandbox
 const { ExecutionBroker } = require('../services/execution/execution-broker');
 const { ExecutionReceipts } = require('../services/execution/execution-receipts');
 const { digest, sandboxError } = require('../services/execution/sandbox-errors');
+const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+const { ResourceBroker, filesystemResource, capacityResource } = require('../services/session-runtime/resource-broker');
+const { PhysicalPathResolver } = require('../services/session-runtime/physical-paths');
+const { ToolResourceOperations } = require('../services/session-runtime/resource-operations');
+const { createToolResourceClaim, projectToolResourceWait } = require('../services/tools/tool-resource-execution');
 
-function deferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
+const { deferred, fixture, fakeLauncher, stagedSnapshot, readyService, attachFakeWorker, runtimeResources } = require('./helpers/desktop-sandbox-lifecycle-fixture');
 
-async function fixture(t, { enabled = false, root = null, getBackend = () => null } = {}) {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-desktop-sandbox-lifecycle-'));
-  const workspace = root || path.join(base, 'workspace');
-  await fs.mkdir(workspace, { recursive: true });
-  const config = Object.assign(new EventEmitter(), {
-    state: { toolsWorkspaceRoot: workspace, commandSandbox: { enabled } },
-    getState() { return this.state; },
-    updateCommandSandbox(patch) {
-      this.state = { ...this.state, commandSandbox: { enabled: patch.enabled } };
-      this.emit('changed');
-    },
-    setWorkspaceRoot(value) {
-      this.state = { ...this.state, toolsWorkspaceRoot: value };
-      this.emit('changed');
-    },
-  });
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  return { base, workspace, config, getBackend };
-}
+test('sandbox preparation refuses a locked root before snapshot or worker production', async t => {
+  const setup = await readyService(t);
+  const resources = runtimeResources(setup);
+  let copies = 0;
+  setup.service.snapshot = async () => { copies += 1; throw new Error('must not copy'); };
+  const workers = attachFakeWorker(setup.service);
+  const held = resources.broker.tryAcquire({ ownerId: 'writer', resources: [
+    filesystemResource(resources.pathResolver.resolve(setup.workspace)),
+  ] });
+  await assert.rejects(setup.service.execute({ command: 'true' }, { sessionId: 'session', streamId: 'stream',
+    callId: 'call', projectAuthority: setup.authority, resourceClaim: resources.resourceClaim },
+  async () => { throw new Error('must not request approval'); }), error => error.code === 'CMP-RUNTIME-0001');
+  assert.equal(copies, 0);
+  assert.equal(workers.length, 0);
+  assert.equal(resources.broker.snapshot().lease_count, 1);
+  assert.equal(setup.service.pendingRuntimeCleanup, null);
+  resources.broker.confirmCleanup(held.lease);
+});
 
-function fakeLauncher({ detectError = null, cleanupError = null } = {}) {
+test('denied exact approval releases the prepared worker without admitting a command', async t => {
+  const setup = await readyService(t);
+  const resources = runtimeResources(setup);
+  attachFakeWorker(setup.service);
+  await assert.rejects(setup.service.execute({ command: 'true' }, { sessionId: 'session', streamId: 'stream',
+    callId: 'call', projectAuthority: setup.authority, resourceClaim: resources.resourceClaim },
+  async binding => {
+    assert.ok(binding.snapshot_digest && binding.container_id && binding.incarnation);
+    assert.equal(resources.broker.snapshot().capacity.native_processes, 1);
+    assert.equal(resources.broker.snapshot().capacity.sandbox_commands, 1);
+    assert.equal(resources.broker.snapshot().capacity.tool_operations, 0);
+    const writer = resources.broker.tryAcquire({ ownerId: 'writer', resources: [
+      filesystemResource(resources.pathResolver.resolve(setup.workspace)),
+    ] });
+    assert.equal(writer.status, 'granted');
+    resources.broker.confirmCleanup(writer.lease);
+    return { approved: false };
+  }), /sandbox_approval_denied/);
+  assert.equal(resources.broker.snapshot().lease_count, 0);
+  assert.equal(setup.service.pendingRuntimeCleanup, null);
+});
+
+test('cancellation just after staging still removes the completed snapshot', async t => {
+  const setup = await readyService(t);
+  const resources = runtimeResources(setup);
+  const controller = new AbortController();
+  const stage = setup.service.snapshot;
+  setup.service.snapshot = async options => {
+    const result = await stage(options);
+    controller.abort();
+    return result;
+  };
+  const workers = attachFakeWorker(setup.service);
+  await assert.rejects(setup.service.execute({ command: 'true' }, { sessionId: 'session', streamId: 'stream',
+    callId: 'call', projectAuthority: setup.authority, resourceClaim: resources.resourceClaim,
+    signal: controller.signal }, async () => { throw new Error('must not request approval'); }), /sandbox_stale_authority/);
+  assert.equal(workers.length, 0);
+  assert.deepEqual(await fs.readdir(setup.service.stagingRoot), []);
+  assert.equal(resources.broker.snapshot().lease_count, 0);
+});
+
+test('readiness retry shares native capacity before any Docker preparation', async t => {
+  const setup = await readyService(t);
+  const resources = runtimeResources(setup);
+  setup.getBackend = () => ({ sessionRuntime: { resourceBroker: resources.broker } });
+  const held = resources.broker.tryAcquire({ ownerId: 'test-runner', resources: [
+    { type: 'capacity', key: 'native_processes' },
+  ] });
+  const unavailable = await setup.service.retry();
+  assert.equal(unavailable.reason, 'sandbox_resource_busy');
+  assert.deepEqual(setup.launcher.calls, []);
+  resources.broker.confirmCleanup(held.lease);
+  setup.service._worker = async () => {
+    assert.equal(resources.broker.snapshot().capacity.native_processes, 1);
+    assert.equal(resources.broker.snapshot().capacity.sandbox_commands, 1);
+    return { containerId: 'c'.repeat(64), transport: { dispose() {} } };
+  };
+  assert.equal((await setup.service.retry()).state, 'ready');
+  assert.equal(resources.broker.snapshot().lease_count, 0);
+});
+
+test('runtime command resources wait for approval and remain owned through container removal', async (t) => {
+  const setup = await readyService(t);
+  const removal = deferred();
+  const removing = deferred();
+  setup.launcher.stopAndRemove = async () => { removing.resolve(); await removal.promise; };
+  attachFakeWorker(setup.service, { result: { status: 'completed', success: true,
+    cleanup_confirmed: true, stdout: '', stderr: '' } });
+  const approval = deferred();
+  const approving = deferred();
   const calls = [];
-  const launcher = {
-    endpoint: 'unix:///var/run/docker.sock',
-    calls,
-    async detect() {
-      calls.push(['detect']);
-      if (detectError) throw detectError;
-      return { engine: 'linux', architecture: 'amd64' };
-    },
-    async listOwned() { calls.push(['listOwned']); return []; },
-    async build() { calls.push(['build']); return 'sha256:' + 'a'.repeat(64); },
-    async ensureVolume() { calls.push(['ensureVolume']); },
-    async create() { calls.push(['create']); return 'c'.repeat(64); },
-    async stopAndRemove(id) {
-      calls.push(['stopAndRemove', id]);
-      if (cleanupError) throw cleanupError;
-      return { cleanupConfirmed: true };
-    },
+  const resourceClaim = {
+    async admit() { calls.push('admit'); },
+    async settle(verdict) { calls.push(verdict); },
   };
-  return launcher;
-}
+  const running = setup.service.execute({ command: 'true' }, {
+    sessionId: 'session', streamId: 'stream', callId: 'call',
+    projectAuthority: setup.authority, resourceClaim,
+  }, async () => { approving.resolve(); await approval.promise; return { approved: true, digest: 'approved' }; });
+  await approving.promise;
+  assert.deepEqual(calls, []);
+  approval.resolve();
+  await removing.promise;
+  assert.deepEqual(calls, ['admit']);
+  removal.resolve();
+  await running;
+  assert.deepEqual(calls, ['admit', { status: 'succeeded', cleanup: 'confirmed' }]);
+});
 
-function stagedSnapshot(base) {
-  return async ({ stagingRoot }) => {
-    await fs.mkdir(stagingRoot, { recursive: true });
-    const id = randomUUID();
-    const directory = path.join(stagingRoot, id);
-    await fs.mkdir(directory);
-    return { id, directory, digest: digest([]), root: base };
-  };
-}
-
-async function readyService(t, options = {}) {
-  const setup = await fixture(t, options);
-  const launcher = options.launcher || fakeLauncher();
-  const service = new DesktopSandboxService({
-    userDataPath: setup.base,
-    sourceRoot: setup.base,
-    configService: setup.config,
-    getBackend: setup.getBackend,
-    launcherFactory: () => launcher,
-    snapshot: options.snapshot || stagedSnapshot(setup.workspace),
-    buildContext: async () => ({ directory: setup.base, digest: 'b'.repeat(64) }),
-    platform: 'win32',
-  });
-  service.enabled = true;
-  service.state = 'ready';
-  service.launcher = launcher;
-  service.receipts = new ExecutionReceipts(service.directory);
-  service.imageId = 'sha256:' + 'a'.repeat(64);
-  t.after(() => service.close().catch(() => {}));
-  return { ...setup, launcher, service };
-}
-
-function attachFakeWorker(service, { executeGate = null, validateError = null, result = null } = {}) {
-  const workers = [];
-  service._worker = async (_snapshot, binding) => {
-    const transport = {
-      admissionCheck: null,
-      async request(operation) {
-        assert.equal(operation, 'status');
-        return { incarnation: '11111111-1111-4111-8111-111111111111' };
-      },
-      dispose() { this.disposed = true; },
-    };
-    Object.assign(binding, { container_id: 'c'.repeat(64), image_id: service.imageId });
-    const worker = {
-      containerId: binding.container_id,
-      transport,
-      broker: {
-        async execute() {
-          await transport.admissionCheck?.();
-          if (validateError) throw validateError;
-          if (executeGate) await executeGate.promise;
-          return result || { status: 'completed', exit_code: 0, stdout: 'ok', stderr: '', output_truncated: false };
-        },
-      },
-    };
-    workers.push(worker);
-    return worker;
-  };
-  return workers;
-}
+test('runtime command resources retain uncertain container cleanup', async (t) => {
+  const setup = await readyService(t);
+  attachFakeWorker(setup.service, { result: { status: 'completed', success: true,
+    cleanup_confirmed: true, stdout: '', stderr: '' } });
+  setup.launcher.stopAndRemove = async () => { throw sandboxError('sandbox_cleanup_unconfirmed'); };
+  const settlements = [];
+  await assert.rejects(setup.service.execute({ command: 'true' }, {
+    sessionId: 'session', streamId: 'stream', callId: 'call', projectAuthority: setup.authority,
+    resourceClaim: { async admit() {}, async settle(value) { settlements.push(value); } },
+  }, async () => ({ approved: true, digest: 'approved' })), /sandbox_cleanup_unconfirmed/);
+  assert.deepEqual(settlements, [{ status: 'failed', cleanup: 'uncertain' }]);
+  assert.ok(setup.service.pendingRuntimeCleanup);
+  await setup.service.retry();
+  assert.equal(settlements.length, 1);
+  assert.ok(setup.service.pendingRuntimeCleanup);
+  const removed = [];
+  setup.launcher.stopAndRemove = async id => { removed.push(id); };
+  // The runtime claim's exact container must be checked even if discovery no
+  // longer lists it. Preparation is unrelated to recovery evidence in this test.
+  setup.service._prepare = async () => setup.service._publish('ready');
+  const recovered = await setup.service.retry();
+  assert.equal(recovered.state, 'ready');
+  assert.ok(removed.includes('c'.repeat(64)));
+  assert.deepEqual(settlements, [{ status: 'failed', cleanup: 'uncertain' },
+    { status: 'failed', cleanup: 'confirmed' }]);
+  assert.equal(setup.service.pendingRuntimeCleanup, null);
+  await setup.service.retry();
+  assert.equal(settlements.length, 2);
+});
 
 test('settings changes require quiescence across active work, transitions, and backend streams', async (t) => {
   const active = await readyService(t);
@@ -155,12 +188,54 @@ test('missing Docker is unavailable and never falls back to a host launcher', as
   assert.deepEqual(launcher.calls, [['detect']]);
 });
 
+// F22 (1.2.0 gate C3 attempt 3): switching the sandbox on while Docker is not
+// running launched nothing, so its maintenance lease must not stay quarantined
+// and leave the runtime reading busy (it also refused switching back off).
+test('switching on without Docker leaves no held lease and can switch back off', async (t) => {
+  const broker = new ResourceBroker({ limits: { native_processes: 1, sandbox_commands: 1 } });
+  const sessionRuntime = { resourceBroker: broker,
+    hasPendingOrAdmittedWork: () => broker.snapshot().lease_count > 0 };
+  const setup = await fixture(t, { getBackend: () => ({ sessionRuntime }) });
+  const service = new DesktopSandboxService({
+    userDataPath: setup.base, sourceRoot: setup.base, configService: setup.config,
+    getBackend: setup.getBackend, launcherFactory: () => fakeLauncher({ detectError: sandboxError('docker_operation_failed') }),
+  });
+  t.after(() => service.close().catch(() => {}));
+  await assert.rejects(service.setEnabled({ enabled: true }), (error) => error.reason === 'docker_operation_failed');
+  assert.equal(service.getState().state, 'unavailable');
+  assert.equal(broker.snapshot().lease_count, 0);
+  assert.equal((await service.setEnabled({ enabled: false })).state, 'disabled');
+});
+
+// Astra review of F22: a worker whose removal failed stays unconfirmed even when
+// Docker is gone by the time the user switches off (after a backend restart freed the
+// quarantined lease); only a later confirmed reconcile clears it.
+test('an unconfirmed worker keeps the lease when Docker disappears before switching off', async (t) => {
+  const broker = new ResourceBroker({ limits: { native_processes: 1, sandbox_commands: 1 } });
+  const sessionRuntime = { resourceBroker: broker, hasPendingOrAdmittedWork: () => false };
+  const launcher = fakeLauncher({ cleanupError: sandboxError('sandbox_cleanup_unconfirmed') });
+  const setup = await fixture(t, { enabled: true, getBackend: () => ({ sessionRuntime }) });
+  const service = new DesktopSandboxService({
+    userDataPath: setup.base, sourceRoot: setup.base, configService: setup.config, getBackend: setup.getBackend,
+    launcherFactory: () => launcher, buildContext: async () => ({ directory: setup.base, digest: 'b'.repeat(64) }),
+  });
+  service._worker = async () => ({ containerId: 'c'.repeat(64), transport: { dispose() {} } });
+  t.after(() => service.close().catch(() => {}));
+  assert.equal((await service.retry()).state, 'recovery-required');
+  broker.confirmCleanup(service.maintenanceResources.lease); // what a backend restart does
+  launcher.detect = async () => { throw sandboxError('docker_operation_failed'); };
+  await assert.rejects(service.setEnabled({ enabled: false }));
+  assert.equal(broker.snapshot().lease_count, 1, 'the maintenance lease stays held');
+  assert.notEqual(service.getState().state, 'disabled');
+});
+
 test('admission is bound to session, workspace, snapshot, policy, container, and worker incarnation', async (t) => {
   const setup = await readyService(t);
   const workers = attachFakeWorker(setup.service);
   let binding = null;
   const input = { command: 'printf hello', cwd: 'src', timeoutSeconds: 4, expectedExitCodes: [0] };
   const result = await setup.service.execute(input, {
+    projectAuthority: setup.authority,
     sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
     isLive: () => true,
   }, async (candidate, live) => {
@@ -190,12 +265,13 @@ test('stale workspace and stale approval cannot submit a command', async (t) => 
   const setup = await readyService(t, { snapshot: async () => snapshotGate.promise });
   const workers = attachFakeWorker(setup.service);
   const first = setup.service.execute({ command: 'echo stale' }, {
+    projectAuthority: setup.authority,
     sessionId: 'session', streamId: 'stream', callId: 'stale-workspace', isLive: () => true,
   }, async () => ({ approved: true, digest: 'approval', validate() {} }));
   await new Promise((resolve) => setImmediate(resolve));
   const changedRoot = path.join(setup.base, 'new-workspace');
   await fs.mkdir(changedRoot);
-  setup.config.setWorkspaceRoot(changedRoot);
+  setup.currentAuthority = { ...setup.authority, root_path: changedRoot, root_revision: 1 };
   const snapshotId = randomUUID();
   const snapshotDirectory = path.join(setup.service.stagingRoot, snapshotId);
   await fs.mkdir(snapshotDirectory, { recursive: true });
@@ -206,6 +282,7 @@ test('stale workspace and stale approval cannot submit a command', async (t) => 
   const approval = await readyService(t);
   const approvalWorkers = attachFakeWorker(approval.service, { validateError: sandboxError('sandbox_stale_authority') });
   await assert.rejects(approval.service.execute({ command: 'echo approval' }, {
+    projectAuthority: approval.authority,
     sessionId: 'session', streamId: 'stream', callId: 'stale-approval', isLive: () => true,
   }, async () => ({ approved: true, digest: 'approval', validate() { throw sandboxError('sandbox_stale_authority'); } })),
   (error) => error.reason === 'sandbox_stale_authority');
@@ -218,13 +295,13 @@ test('duplicate requests are rejected and concurrent requests are never queued',
   const setup = await readyService(t);
   attachFakeWorker(setup.service, { executeGate: gate });
   const input = { command: 'echo once' };
-  const first = setup.service.execute(input, { sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true, digest: 'a', validate() {} }));
+  const first = setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true, digest: 'a', validate() {} }));
   await new Promise((resolve) => setImmediate(resolve));
-  await assert.rejects(setup.service.execute(input, { sessionId: 's', streamId: 'stream', callId: 'other', isLive: () => true }, async () => ({ approved: true })),
+  await assert.rejects(setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'other', isLive: () => true }, async () => ({ approved: true })),
     (error) => error.reason === 'sandbox_unavailable');
   gate.resolve();
   await first;
-  await assert.rejects(setup.service.execute(input, { sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true })),
+  await assert.rejects(setup.service.execute(input, { projectAuthority: setup.authority, sessionId: 's', streamId: 'stream', callId: 'call', isLive: () => true }, async () => ({ approved: true })),
     (error) => error.reason === 'sandbox_duplicate_request');
 });
 
@@ -234,6 +311,7 @@ test('cancellation drains the active stream and restart reconciles an admitted j
   attachFakeWorker(setup.service, { executeGate: gate });
   const signal = new AbortController();
   const run = setup.service.execute({ command: 'echo cancel' }, {
+    projectAuthority: setup.authority,
     sessionId: 'session', streamId: 'cancel-stream', callId: 'cancel', signal: signal.signal, isLive: () => true,
   }, async () => ({ approved: true, digest: 'approval', validate() {} }));
   await new Promise((resolve) => setImmediate(resolve));
@@ -293,4 +371,55 @@ test('owned cleanup failure without an admission journal still requires recovery
  assert.equal(state.state, 'recovery-required');
  assert.equal(state.reason, 'sandbox_cleanup_unconfirmed');
  assert.equal(setup.service.receipts.pending().length, 0);
+});
+
+test('UI workspace changes neither retarget nor cancel a captured sandbox command', async t => {
+ const setup = await readyService(t);
+ const workers = attachFakeWorker(setup.service);
+ let copiedRoot;
+ setup.service.snapshot = async options => {
+  copiedRoot = options.root;
+  setup.config.setWorkspaceRoot(path.join(setup.base, 'unrelated-ui-folder'));
+  assert.equal(options.signal.aborted, false);
+  return stagedSnapshot(setup.workspace)(options);
+ };
+ const result = await setup.service.execute({ command: 'echo scoped' }, {
+  sessionId: 'session', streamId: 'stream', callId: 'scoped', projectAuthority: setup.authority,
+ }, async binding => {
+  assert.equal(binding.project_id, setup.authority.project_id);
+  return { approved: true, digest: 'approval' };
+ });
+ assert.equal(result.status, 'completed');
+ assert.equal(copiedRoot, setup.workspace);
+ assert.equal(workers.length, 1);
+});
+
+test('missing and null-root authority cannot allocate a snapshot or worker', async t => {
+ const setup = await readyService(t);
+ const workers = attachFakeWorker(setup.service);
+ setup.service.snapshot = async () => assert.fail('must not snapshot');
+ const context = { sessionId: 'session', streamId: 'stream', callId: 'unbound' };
+ await assert.rejects(setup.service.execute({ command: 'echo fail' }, context, async () => true),
+  error => error.reason === 'sandbox_authority_invalid');
+ setup.currentAuthority = { ...setup.authority, root_path: null, root_id: null };
+ await assert.rejects(setup.service.execute({ command: 'echo fail' }, {
+  ...context, projectAuthority: setup.currentAuthority,
+ }, async () => true), error => error.reason === 'sandbox_workspace_required');
+ assert.equal(workers.length, 0);
+ assert.equal(setup.service.active, null);
+});
+
+test('project rebinding during approval prevents dispatch and confirms worker cleanup', async t => {
+ const setup = await readyService(t);
+ const workers = attachFakeWorker(setup.service);
+ await assert.rejects(setup.service.execute({ command: 'echo stale' }, {
+  sessionId: 'session', streamId: 'stream', callId: 'rebind', projectAuthority: setup.authority,
+ }, async () => {
+  setup.currentAuthority = { ...setup.authority, root_revision: 1 };
+  return { approved: true, digest: 'approval' };
+ }), error => error.reason === 'sandbox_stale_authority');
+ assert.equal(workers.length, 1);
+ assert.equal(workers[0].transport.disposed, true);
+ assert.equal(setup.launcher.calls.some(call => call[0] === 'stopAndRemove'), true);
+ assert.equal(setup.service.state, 'ready');
 });

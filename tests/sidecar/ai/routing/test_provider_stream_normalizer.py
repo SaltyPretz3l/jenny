@@ -1171,6 +1171,64 @@ def test_provider_argument_aggregate_limit_fails_closed() -> None:
     )
 
 
+def test_vllm_dict_arguments_refund_the_fragments_they_replace() -> None:
+    """A parsed dict replaces earlier fragments, so their bytes stop being charged."""
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    # Valid JSON so the two calls left open still parse at finalize().
+    fragment = '{"p": "' + "x" * (MAX_TOOL_CALL_ARGUMENT_BYTES - 25) + '"}'
+    assert len(fragment.encode("utf-8")) == MAX_TOOL_CALL_ARGUMENT_BYTES - 16
+    all_events = []
+
+    def feed(index: int, arguments: object) -> None:
+        all_events.extend(
+            _drain_chunk(
+                normalizer,
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "id": f"call-{index}",
+                                        "function": {
+                                            "name": "read_file",
+                                            "arguments": arguments,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+        )
+
+    for index in range(3):
+        feed(index, fragment)
+    for index in range(3):
+        feed(index, {"path": "README.md"})
+    for index in (3, 4):
+        feed(index, fragment)
+
+    # The per-call record mirrors the aggregate charge for the replacing dict.
+    assert normalizer._tool_calls["call-0"].argument_bytes == len(b'{"path":"README.md"}')
+    assert all(event.kind != NORMALIZED_KIND_FAILED for event in all_events)
+    assert (
+        sum(event.kind == NORMALIZED_KIND_TOOL_CALL_COMPLETED for event in all_events)
+        == 3
+    )
+    final_events = _drain_finalize(normalizer)
+    assert all(event.kind != NORMALIZED_KIND_FAILED for event in final_events)
+    assert (
+        sum(
+            event.kind == NORMALIZED_KIND_TOOL_CALL_COMPLETED
+            for event in final_events
+        )
+        == 2
+    )
+
+
 def test_provider_tool_call_count_limit_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1302,3 +1360,131 @@ def test_new_finish_reason_constants_are_exported() -> None:
     assert "FINISH_REASON_INCOMPLETE" in provider_stream_normalizer.__all__
     assert "FINISH_REASON_PROVIDER_ERROR" in provider_stream_normalizer.__all__
     assert FINISH_REASON_INCOMPLETE == "incomplete"
+
+# ---------------------------------------------------------------------------
+# Truncated tool calls (owner turn 2026-09-20 20:21): a tool call whose
+# argument fragments were cut off by the provider's ``length`` terminal, or by
+# the socket closing with no terminal at all, is INCOMPLETE, not malformed.
+# Only a clean terminal (``stop`` / ``tool_calls``) over unparseable JSON is
+# the model's own fault.
+# ---------------------------------------------------------------------------
+
+
+def _vllm_fragment(index: int, fragment: str, *, call_id: str = "", name: str = "") -> dict:
+    call: dict = {"index": index, "function": {"arguments": fragment}}
+    if call_id:
+        call["id"] = call_id
+    if name:
+        call["function"]["name"] = name
+    return {"choices": [{"delta": {"tool_calls": [call]}}]}
+
+
+def _vllm_terminal(finish_reason: str, *, with_delta: bool = True) -> dict:
+    choice: dict = {"finish_reason": finish_reason}
+    if with_delta:
+        choice["delta"] = {}
+    return {"choices": [choice]}
+
+
+def _incomplete(events: list) -> list:
+    kind = provider_stream_normalizer.NORMALIZED_KIND_TOOL_CALL_INCOMPLETE
+    return [event for event in events if event.kind == kind]
+
+
+def test_vllm_length_terminal_with_partial_arguments_is_incomplete_not_malformed() -> None:
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(
+        normalizer,
+        _vllm_fragment(0, '{"path": "docs/RE', call_id="call_cut", name="read_file"),
+    )
+    events = _drain_chunk(normalizer, _vllm_terminal("length"))
+
+    incomplete = _incomplete(events)
+    assert len(incomplete) == 1
+    assert incomplete[0].tool_call_id == "call_cut"
+    assert incomplete[0].tool_name == "read_file"
+    assert incomplete[0].arguments_delta == '{"path": "docs/RE'
+    assert [e for e in events if e.kind == NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS] == []
+    counters = normalizer.counters
+    assert counters.tool_call_incomplete_count == 1
+    assert counters.malformed_tool_arguments_count == 0
+    assert counters.tool_call_completed_count == 0
+    assert normalizer.terminal_finish_reason == "length"
+
+
+def test_vllm_length_terminal_without_delta_flushes_partial_call_as_incomplete() -> None:
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(normalizer, _vllm_fragment(0, '{"title": "Bad', call_id="c1", name="create"))
+    events = _drain_chunk(normalizer, _vllm_terminal("max_tokens", with_delta=False))
+
+    assert len(_incomplete(events)) == 1
+    assert normalizer.counters.malformed_tool_arguments_count == 0
+    assert normalizer.counters.tool_call_incomplete_count == 1
+
+
+def test_vllm_eof_without_terminal_flushes_partial_call_as_incomplete() -> None:
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(normalizer, _vllm_fragment(0, '{"query": "unfinished', call_id="c1", name="grep"))
+    events = _drain_finalize(normalizer)
+
+    assert normalizer.terminal_finish_reason == ""
+    assert len(_incomplete(events)) == 1
+    assert normalizer.counters.malformed_tool_arguments_count == 0
+    assert events[-1].kind == NORMALIZED_KIND_DONE
+
+
+def test_vllm_clean_stop_terminal_with_bad_json_stays_malformed() -> None:
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(normalizer, _vllm_fragment(0, '{"path":', call_id="c1", name="read_file"))
+    events = _drain_chunk(normalizer, _vllm_terminal("stop"))
+
+    malformed = [e for e in events if e.kind == NORMALIZED_KIND_MALFORMED_TOOL_ARGUMENTS]
+    assert len(malformed) == 1
+    assert _incomplete(events) == []
+    assert normalizer.counters.malformed_tool_arguments_count == 1
+    assert normalizer.counters.tool_call_incomplete_count == 0
+
+
+def test_vllm_mixed_complete_and_incomplete_calls_under_length() -> None:
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(normalizer, _vllm_fragment(0, '{"path": "a.txt"}', call_id="c_ok", name="read"))
+    _drain_chunk(normalizer, _vllm_fragment(1, '{"path": "b.', call_id="c_cut", name="read"))
+    events = _drain_chunk(normalizer, _vllm_terminal("length"))
+
+    completed = [e for e in events if e.kind == NORMALIZED_KIND_TOOL_CALL_COMPLETED]
+    assert [(e.tool_call_id, e.arguments_delta) for e in completed] == [
+        ("c_ok", {"path": "a.txt"})
+    ]
+    assert [e.tool_call_id for e in _incomplete(events)] == ["c_cut"]
+    assert normalizer.counters.tool_call_completed_count == 1
+    assert normalizer.counters.tool_call_incomplete_count == 1
+    assert normalizer.counters.malformed_tool_arguments_count == 0
+
+
+def test_ollama_length_done_reason_with_bad_json_is_incomplete() -> None:
+    normalizer = ProviderStreamNormalizer(provider="ollama")
+    events = _drain_chunk(
+        normalizer,
+        {
+            "done": True,
+            "done_reason": "length",
+            "message": {
+                "tool_calls": [
+                    {"id": "call_cut", "function": {"name": "do_thing", "arguments": "{bad"}}
+                ]
+            },
+        },
+    )
+
+    assert len(_incomplete(events)) == 1
+    assert _incomplete(events)[0].tool_name == "do_thing"
+    assert normalizer.counters.malformed_tool_arguments_count == 0
+    assert normalizer.counters.tool_call_incomplete_count == 1
+
+
+def test_stream_counters_payload_carries_the_incomplete_count() -> None:
+    counters = StreamCounters(tool_call_incomplete_count=2, provider="vllm")
+    payload = counters.to_payload()
+
+    assert payload["tool_call_incomplete_count"] == 2
+    assert "malformed_tool_arguments_count" in payload

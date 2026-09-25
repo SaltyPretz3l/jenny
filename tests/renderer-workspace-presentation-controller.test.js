@@ -169,6 +169,41 @@ test('change_diff denies wrong session/workspace and drops a request after conte
   assert.deepEqual(h.calls.diffs, [], 'a root switch invalidates the one-shot intent');
 });
 
+test('scoped preview and file_map requests cannot repaint another selected session or root', (t) => {
+  let sessionId = 'session-1';
+  let workspaceId = WORKSPACE_ID;
+  const h = makeController({
+    getSessionId: () => sessionId,
+    getWorkspaceId: () => workspaceId,
+  });
+  t.after(() => h.controller.dispose());
+
+  h.controller.handleRequest({
+    view: 'preview', path: 'docs/other.md',
+    session_id: 'session-other', workspace_id: WORKSPACE_ID,
+  });
+  h.fireTimers();
+  assert.deepEqual(h.calls.previews, []);
+
+  h.controller.handleRequest({
+    view: 'preview', path: 'docs/current.md',
+    session_id: 'session-1', workspace_id: WORKSPACE_ID,
+  });
+  workspaceId = `root_${'b'.repeat(24)}`;
+  h.fireTimers();
+  assert.deepEqual(h.calls.previews, [], 'coalesced preview is dropped after a root switch');
+
+  workspaceId = WORKSPACE_ID;
+  h.controller.handleRequest({
+    view: 'file_map', path: 'src/current.js',
+    session_id: 'session-1', workspace_id: WORKSPACE_ID,
+  });
+  sessionId = 'session-2';
+  h.fireTimers();
+  assert.equal(h.calls.maps, 0, 'coalesced map is dropped after a session switch');
+  assert.deepEqual(h.calls.reveals, []);
+});
+
 test('missing change falls back to the passive Changes panel with bounded warning', (t) => {
   const h = makeController();
   t.after(() => h.controller.dispose());
@@ -219,6 +254,28 @@ test('recent typing defers to the non-stealing chip; Show applies user-initiated
   assert.equal(h.chip(), null, 'chip removed after apply');
   const applied = h.calls.logs.find((l) => l.event === 'workspace_presentation.applied');
   assert.equal(applied.meta.user_initiated, true);
+});
+
+test('deferred Show revalidates scoped identity immediately before applying a relative path', (t) => {
+  let sessionId = 'session-1';
+  const h = makeController({
+    getActiveView: () => 'chat',
+    getSessionId: () => sessionId,
+  });
+  t.after(() => h.controller.dispose());
+  h.controller.handleRequest({
+    view: 'file_map', path: 'src/scoped.js',
+    session_id: 'session-1', workspace_id: WORKSPACE_ID,
+  });
+  h.fireTimers();
+  const chip = h.chip();
+  assert.ok(chip);
+
+  sessionId = 'session-2';
+  click(chip.querySelector('[data-presentation-show]'));
+  assert.equal(h.calls.maps, 0);
+  assert.deepEqual(h.calls.reveals, []);
+  assert.equal(h.chip(), null);
 });
 
 test('typing guard drains: the same request auto-applies once the horizon passes', (t) => {

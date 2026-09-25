@@ -43,6 +43,13 @@
   flex: 0 0 auto;
 }
 
+.model-library-folders-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .model-library-folders-empty,
 .model-library-folders-status {
   color: var(--text-muted);

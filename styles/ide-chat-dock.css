@@ -237,7 +237,9 @@
   margin-inline-start: 0;
 }
 
-/* §17.1: terminal shortcut is main-chat-only. */
+/* §17.1: terminal shortcut is main-chat-only (the IDE has its own terminal).
+ * Unconditional — it must stay hidden at every dock width, not only inside
+ * the narrow-layout port below. */
 .ide-chat-dock-body #composerTerminalShortcut {
   display: none;
 }
@@ -385,10 +387,10 @@
 
   .ide-chat-dock-body .composer-toolbar {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    justify-content: flex-start;
+    align-items: center;
+    gap: var(--space-2) var(--space-2);
     width: 100%;
     padding-top: var(--space-3);
     margin-top: var(--space-2);
@@ -397,21 +399,110 @@
 
   .ide-chat-dock-body .composer-toolbar-left,
   .ide-chat-dock-body .composer-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    display: contents;
   }
 
-  .ide-chat-dock-body .composer-toolbar-right {
+  .ide-chat-dock-body .composer-toolbar::after {
+    content: '';
+    flex-basis: 100%;
+    height: 0;
+    order: 10;
+  }
+
+  .ide-chat-dock-body #composerAttachShortcut {
+    flex: none;
+    order: 1;
+  }
+
+  /* The terminal shortcut is hidden above (§17.1); the order slot is kept so
+   * the row reads the same if it ever returns. */
+  .ide-chat-dock-body #composerTerminalShortcut {
+    flex: none;
+    order: 2;
+  }
+
+  /* Row 1 must fit at the 320px floor (~250px of toolbar): attach + run mode +
+   * tools already take ~185px, so the project pill (≈100px even with a capped
+   * label) cannot join it. The IDE header names the workspace folder, and the
+   * pill returns with the roomier single-row toolbar above 700px. */
+  .ide-chat-dock-body #composerProjectPillSlot {
+    display: none;
+  }
+
+  .ide-chat-dock-body #composerRunModeSlot {
+    flex: none;
+    order: 4;
+  }
+
+  /* Zero basis: flex lines are collected from the hypothetical (basis) size
+   * before shrinking, so an `auto` basis let a long model name push the tools
+   * chip onto its own line instead of ellipsizing. */
+  .ide-chat-dock-body #composerModelPillSlot {
+    flex: 1 1 0;
+    min-width: 0;
+    order: 5;
+  }
+
+  .ide-chat-dock-body #composerToolToggleSlot {
+    flex: none;
+    order: 6;
+  }
+
+  .ide-chat-dock-body #composerContextUsageSlot {
+    order: 11;
+  }
+
+  .ide-chat-dock-body #composerPlanUsageSlot {
+    order: 12;
+  }
+
+  .ide-chat-dock-body #composerSettingsButton {
+    order: 13;
+  }
+
+  .ide-chat-dock-body #stopStreamButton {
+    order: 14;
+  }
+
+  .ide-chat-dock-body #sendButton {
+    order: 15;
+  }
+
+  .ide-chat-dock-body #composerSendDisabledReason {
+    order: 16;
+  }
+
+  .ide-chat-dock-body #composerContextUsageSlot:not(:empty),
+  .ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:not(:empty),
+  .ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:empty + #composerSettingsButton {
     margin-inline-start: auto;
   }
 
-  .ide-chat-dock-body .composer-send {
-    width: calc(44px * var(--chat-zoom-factor, 1));
-    height: calc(44px * var(--chat-zoom-factor, 1));
+  .ide-chat-dock-body .composer-model-pill {
+    max-width: 100%;
   }
 
-  /* The 44px rule above ties chat-composer.css's queue-pill rule (0,2,0) and
+  .ide-chat-dock-body .composer-model-pill .inv-chip-label {
+    max-width: none;
+  }
+
+  .ide-chat-dock-body #composerRunModeSlot .composer-run-mode-chip {
+    min-width: 0;
+  }
+
+  .ide-chat-dock-body .composer-send,
+  .ide-chat-dock-body .composer-stop-button {
+    width: calc(36px * var(--chat-zoom-factor, 1));
+    height: calc(36px * var(--chat-zoom-factor, 1));
+  }
+
+  .ide-chat-dock-body .composer-gear {
+    width: calc(28px * var(--chat-zoom-factor, 1));
+    height: calc(28px * var(--chat-zoom-factor, 1));
+    flex-basis: calc(28px * var(--chat-zoom-factor, 1));
+  }
+
+  /* The fixed-width rule above ties chat-composer.css's queue-pill rule (0,2,0) and
    * loads later; this (0,3,0) override keeps "Queue - runs in X" unclipped. */
   .ide-chat-dock-body .composer-send.composer-send-queue {
     width: auto;
@@ -435,10 +526,8 @@
   }
 
   .ide-chat-dock-body .composer-stop-button {
-    width: calc(44px * var(--chat-zoom-factor, 1));
-    height: calc(44px * var(--chat-zoom-factor, 1));
-    min-width: calc(44px * var(--chat-zoom-factor, 1));
-    min-height: calc(44px * var(--chat-zoom-factor, 1));
+    min-width: calc(36px * var(--chat-zoom-factor, 1));
+    min-height: calc(36px * var(--chat-zoom-factor, 1));
   }
 
   .ide-chat-dock-body .composer-meta {

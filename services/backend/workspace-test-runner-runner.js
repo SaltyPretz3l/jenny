@@ -71,18 +71,24 @@ function runTestCommand({
     let timeoutHandle = null;
     let abortListener = null;
     let terminationPending = false;
+    let childError = false;
+    let readersClosed = false;
+    const readerWaiters = new Set();
     const terminateTree = typeof killProcessTree === 'function'
       ? killProcessTree
       : async (ownedChild) => {
         const pid = ownedChild && ownedChild.pid;
-        if (!pid) return { terminated: true };
-        return killProcessTreeByPid(pid, {
+        if (!pid) return { terminated: true, containmentConfirmed: true };
+        const outcome = await killProcessTreeByPid(pid, {
           force: true,
           processGroup: platform !== 'win32',
           confirmExit: true,
           timeoutMs: terminationTimeoutMs,
           platform,
         });
+        // killProcessTree confirms only the root PID. It cannot prove a child
+        // that detached from the shell's tree/process group is gone.
+        return { ...outcome, containmentConfirmed: false };
       };
 
     function finish(payload) {
@@ -126,30 +132,62 @@ function runTestCommand({
     async function attemptTermination() {
       try {
         const outcome = await terminateTree(child);
-        return { confirmed: outcome?.terminated === true };
+        if (outcome?.terminated !== true) return { confirmed: false };
+        return outcome.containmentConfirmed === true
+          ? { confirmed: true }
+          : { confirmed: false, warning: 'process_tree_containment_unconfirmed' };
       } catch (_error) {
         return { confirmed: false, warning: 'kill_failed' };
       }
     }
 
-    function requestTermination(status) {
-      if (settled || terminationPending) return;
+    function waitForReadersClosed() {
+      if (readersClosed) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        let timer = null;
+        const finishWait = (confirmed) => {
+          readerWaiters.delete(finishWait);
+          if (timer !== null) clearTimeoutImpl(timer);
+          resolve(confirmed);
+        };
+        readerWaiters.add(finishWait);
+        timer = setTimeoutImpl(() => finishWait(false), terminationTimeoutMs);
+        timer?.unref?.();
+      });
+    }
+
+    function markReadersClosed() {
+      readersClosed = true;
+      for (const finishWait of [...readerWaiters]) finishWait(true);
+    }
+
+    async function attemptFullTermination() {
+      const outcome = await attemptTermination();
+      if (outcome.confirmed !== true) return outcome;
+      const confirmed = await waitForReadersClosed();
+      return { confirmed, warning: confirmed ? '' : 'reader_close_unconfirmed' };
+    }
+
+    function finishAfterTreeConfirmation(payload) {
       terminationPending = true;
-      void attemptTermination().then((outcome) => {
+      void attemptFullTermination().then((outcome) => {
         const confirmed = outcome.confirmed === true;
         finish({
-          status,
-          exitCode: null,
-          signal: 'SIGTERM',
+          ...payload,
           terminationConfirmed: confirmed,
           terminationWarning: outcome.warning || (confirmed ? '' : 'kill_unconfirmed'),
-          retryTermination: confirmed ? null : attemptTermination,
+          retryTermination: confirmed ? null : attemptFullTermination,
         });
       });
     }
 
+    function requestTermination(status) {
+      if (settled || terminationPending) return;
+      finishAfterTreeConfirmation({ status, exitCode: null, signal: 'SIGTERM' });
+    }
+
     if (abortSignal && abortSignal.aborted) {
-      finish({ status: 'aborted', exitCode: null, signal: 'SIGTERM' });
+      finish({ status: 'aborted', exitCode: null, signal: 'SIGTERM', terminationConfirmed: true });
       return;
     }
 
@@ -168,6 +206,7 @@ function runTestCommand({
         exitCode: null,
         signal: null,
         errorCode: WORKSPACE_TEST_RUNNER_ERROR_CODES.SPAWN_FAILED,
+        terminationConfirmed: true,
       });
       return;
     }
@@ -204,14 +243,16 @@ function runTestCommand({
     });
     child.once?.('error', () => {
       if (terminationPending) return;
-      finish({
-        status: 'error',
-        exitCode: null,
-        signal: null,
+      if (child?.pid) {
+        childError = true;
+        return;
+      }
+      finish({ status: 'error', exitCode: null, signal: null,
         errorCode: WORKSPACE_TEST_RUNNER_ERROR_CODES.SPAWN_FAILED,
-      });
+        terminationConfirmed: true });
     });
     child.once?.('close', (exitCode, exitSignal) => {
+      markReadersClosed();
       if (settled || terminationPending) {
         return;
       }
@@ -220,10 +261,11 @@ function runTestCommand({
       // NOT Number(): `Number(null) === 0` would mis-map a signal-kill to 'passed'.
       // Only a real numeric 0 passes; a null code collapses to 'failed'.
       const code = typeof exitCode === 'number' ? exitCode : null;
-      finish({
-        status: code === 0 ? 'passed' : 'failed',
+      finishAfterTreeConfirmation({
+        status: childError ? 'error' : code === 0 ? 'passed' : 'failed',
         exitCode: code,
         signal: exitSignal || null,
+        ...(childError ? { errorCode: WORKSPACE_TEST_RUNNER_ERROR_CODES.SPAWN_FAILED } : {}),
       });
     });
   });

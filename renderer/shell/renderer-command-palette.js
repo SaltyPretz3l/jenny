@@ -150,6 +150,10 @@
     return decay * 0.9;
   }
 
+  // Shared with the app-shell bindings, which list it as the one overlay the
+  // capture chord may dismiss (renderer-global-shortcuts.js).
+  const COMMAND_PALETTE_OVERLAY_ID = 'command-palette';
+
   function createCommandPaletteController(deps) {
     const {
       state,
@@ -189,7 +193,7 @@
       },
     } = callbacks;
 
-    const OVERLAY_ID = 'command-palette';
+    const OVERLAY_ID = COMMAND_PALETTE_OVERLAY_ID;
 
     const boundListeners = [];
     let _active = false;
@@ -672,6 +676,7 @@
 
   return {
     createCommandPaletteController,
+    COMMAND_PALETTE_OVERLAY_ID,
     // Shared fuzzy primitives (also used by the IDE Quick Open picker).
     highlightRanges,
     isCommandPaletteEnabled,

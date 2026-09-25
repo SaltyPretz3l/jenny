@@ -11,7 +11,7 @@ from sidecar.ai.error_codes import (
     CMP_MEMORY_FAILED,
     CMP_MEMORY_ROW_QUARANTINED,
 )
-from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy, require_project_id
 from sidecar.ai.memory.store import (
     ApprovedMemory,
     MemoryStore,
@@ -29,46 +29,86 @@ class ApprovedMemoryService:
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
-    def save_memory(self, **kwargs: Any) -> tuple[ApprovedMemory, bool]:
-        return self._store.save_memory(**kwargs)
+    def save_memory(
+        self, *, project_id: str = GENERAL_PROJECT_ID, **kwargs: Any
+    ) -> tuple[ApprovedMemory, bool]:
+        return self._store.save_memory(project_id=project_id, **kwargs)
 
-    def get_all_memories(self) -> list[ApprovedMemory]:
-        return self._store.get_all_memories()
+    def get_all_memories(
+        self, *, project_id: str = GENERAL_PROJECT_ID
+    ) -> list[ApprovedMemory]:
+        return self._store.get_all_memories(project_id=project_id)
 
-    def get_memories_page(
+    def get_memories_page(  # noqa: PLR0913 - mirrors the paged store contract.
         self,
         *,
         limit: int,
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
         legacy_offset: int | None = None,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
     ) -> tuple[list[ApprovedMemory], tuple[int, int] | int | None]:
         return self._store.get_memories_page(
             limit=limit,
             snapshot_max_id=snapshot_max_id,
             after_id=after_id,
             legacy_offset=legacy_offset,
+            project_id=project_id,
+            all_projects=all_projects,
         )
 
-    def get_memory_by_id(self, memory_id: int) -> ApprovedMemory | None:
-        return self._store.get_memory_by_id(memory_id)
+    def get_memory_by_id(
+        self, memory_id: int, *, project_id: str = GENERAL_PROJECT_ID
+    ) -> ApprovedMemory | None:
+        return self._store.get_memory_by_id(memory_id, project_id=project_id)
 
-    def update_memory(self, **kwargs: Any) -> ApprovedMemory:
-        return self._store.update_memory(**kwargs)
+    def update_memory(
+        self, *, project_id: str = GENERAL_PROJECT_ID, **kwargs: Any
+    ) -> ApprovedMemory:
+        return self._store.update_memory(project_id=project_id, **kwargs)
 
-    def delete_memory(self, memory_id: int) -> bool:
-        return self._store.delete_memory(memory_id)
+    def delete_memory(
+        self, memory_id: int, *, project_id: str = GENERAL_PROJECT_ID
+    ) -> bool:
+        return self._store.delete_memory(memory_id, project_id=project_id)
 
-    def recall_memories(self, query: str, *, limit: int) -> list[ApprovedMemory]:
-        return self._store.recall_memories(query, limit=limit)
+    def recall_memories(
+        self,
+        query: str,
+        *,
+        limit: int,
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
+    ) -> list[ApprovedMemory]:
+        return self._store.recall_memories(
+            query,
+            limit=limit,
+            project_id=project_id,
+            include_general=include_general,
+        )
 
     def get_recent_memories_by_kind(
-        self, lesson_kind: str, limit: int
+        self,
+        lesson_kind: str,
+        limit: int,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
     ) -> list[ApprovedMemory]:
-        return self._store.get_recent_memories_by_kind(lesson_kind, limit)
+        return self._store.get_recent_memories_by_kind(
+            lesson_kind,
+            limit,
+            project_id=project_id,
+            include_general=include_general,
+        )
 
-    def has_memory_fingerprint(self, content_fingerprint: str) -> bool:
-        return self._store.has_memory_fingerprint(content_fingerprint)
+    def has_memory_fingerprint(
+        self, content_fingerprint: str, *, project_id: str = GENERAL_PROJECT_ID
+    ) -> bool:
+        return self._store.has_memory_fingerprint(
+            content_fingerprint, project_id=project_id
+        )
 
 
 class PendingMemoryService:
@@ -78,40 +118,61 @@ class PendingMemoryService:
         self._store = store
 
     def get_pending_candidates(
-        self, session_id: str, *, limit: int = 5
+        self,
+        session_id: str,
+        *,
+        limit: int = 5,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> list[PendingMemoryCandidate]:
-        return self._store.get_pending_candidates(session_id, limit=limit)
+        return self._store.get_pending_candidates(
+            session_id, limit=limit, project_id=project_id
+        )
 
     def get_pending_candidates_for_harness(
-        self, *, limit: int
+        self, *, limit: int, project_id: str = GENERAL_PROJECT_ID
     ) -> list[PendingMemoryCandidate]:
-        return self._store.get_pending_candidates_for_harness(limit=limit)
+        return self._store.get_pending_candidates_for_harness(
+            limit=limit, project_id=project_id
+        )
 
-    def get_pending_candidates_page(
+    def get_pending_candidates_page(  # noqa: PLR0913 - mirrors the paged store contract.
         self,
         *,
         limit: int,
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
         legacy_offset: int | None = None,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
     ) -> tuple[list[PendingMemoryCandidate], tuple[int, int] | int | None]:
         return self._store.get_pending_candidates_page(
             limit=limit,
             snapshot_max_id=snapshot_max_id,
             after_id=after_id,
             legacy_offset=legacy_offset,
+            project_id=project_id,
+            all_projects=all_projects,
         )
 
     def delete_pending_candidate(
-        self, *, session_id: str, content_fingerprint: str
+        self,
+        *,
+        session_id: str,
+        content_fingerprint: str,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> bool:
         return self._store.delete_pending_candidate(
             session_id=session_id,
             content_fingerprint=content_fingerprint,
+            project_id=project_id,
         )
 
-    def is_memory_suppressed(self, content_fingerprint: str) -> bool:
-        return self._store.is_memory_suppressed(content_fingerprint)
+    def is_memory_suppressed(
+        self, content_fingerprint: str, *, project_id: str = GENERAL_PROJECT_ID
+    ) -> bool:
+        return self._store.is_memory_suppressed(
+            content_fingerprint, project_id=project_id
+        )
 
 
 class MemoryService:
@@ -152,9 +213,19 @@ class MemoryService:
         approved = self.approved
         if not effective_policy.enabled or approved is None:
             return []
-        recalled = approved.recall_memories(query, limit=limit)
+        recalled = approved.recall_memories(
+            query,
+            limit=limit,
+            project_id=effective_policy.project_id,
+            include_general=True,
+        )
         style_rows = (
-            approved.get_recent_memories_by_kind("response_style", 1)
+            approved.get_recent_memories_by_kind(
+                "response_style",
+                1,
+                project_id=effective_policy.project_id,
+                include_general=True,
+            )
             if effective_policy.include_response_style
             else []
         )
@@ -181,7 +252,13 @@ class MemoryService:
             tokens_used += memory_tokens
         return merged
 
-    def status(self) -> dict[str, Any]:
+    def status(
+        self,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
+    ) -> dict[str, Any]:
+        scope = require_project_id(project_id)
         if isinstance(self._store, UnavailableMemoryStore):
             return {
                 "available": False,
@@ -193,9 +270,12 @@ class MemoryService:
                 "preserved": self._store.preserved,
                 "repair_required": True,
                 "degraded_reasons": [self._store.reason_code],
+                "project_id": scope,
             }
         try:
-            status = self._store.status_snapshot()
+            status = self._store.status_snapshot(
+                project_id=scope, all_projects=all_projects
+            )
         except Exception as error:  # noqa: BLE001 - status must never terminate the sidecar.
             code = error.code if isinstance(error, MemoryStoreError) else CMP_MEMORY_FAILED
             logger.warning(
@@ -216,11 +296,15 @@ class MemoryService:
                 "preserved": False,
                 "repair_required": True,
                 "degraded_reasons": [code],
+                "project_id": scope,
             }
         degraded_reasons: list[str] = []
-        counts = status.get("counts", {})
+        operational_counts = status.get("operational_counts", {})
         storage = status.get("storage", {})
-        if isinstance(counts, dict) and int(counts.get("quarantined", 0) or 0) > 0:
+        if (
+            isinstance(operational_counts, dict)
+            and int(operational_counts.get("quarantined", 0) or 0) > 0
+        ):
             degraded_reasons.append(CMP_MEMORY_ROW_QUARANTINED)
         if isinstance(storage, dict) and storage.get("state") == "blocked":
             degraded_reasons.append(CMP_MEMORY_CAPACITY_EXCEEDED)

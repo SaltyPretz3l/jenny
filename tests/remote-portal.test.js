@@ -267,6 +267,68 @@ test('snapshot pending rows open decisions and free-text questions require valid
   await tick();
 });
 
+test('snapshot pending plans render the same facts as live plan events', () => {
+  const dom = portalDom();
+  const { createPortalDecisions } = loadPortalSource('portal-decisions.js');
+  const decisions = createPortalDecisions({
+    document: dom.window.document,
+    connection: { sendCommand: async () => ({ ok: true }) },
+  });
+  decisions.setProjectedPending([{
+    session_id: 'session_test_1234',
+    pending: {
+      tool: [],
+      questions: [],
+      plan: [{
+        stream_id: 'stream_test_1234',
+        approval_id: 'approval_plan_1234',
+        decision_revision: 1,
+        tool_name: 'exit_plan_mode',
+        facts: {
+          plan: {
+            title: 'Ship safely',
+            summary: 'Keep the remote boundary closed.',
+            steps: ['Fence publication', 'Verify suspend'],
+          },
+        },
+      }],
+    },
+  }]);
+
+  decisions.openPending('session_test_1234');
+
+  assert.equal(dom.window.document.getElementById('decision-title').textContent, 'Ship safely');
+  assert.match(dom.window.document.querySelector('.decision-facts').textContent, /Fence publication/);
+  assert.ok(dom.window.document.querySelector('[data-action="approve"]'));
+});
+
+test('snapshot pending plans without presentable plan facts have no Approve control', () => {
+  const dom = portalDom();
+  const { createPortalDecisions } = loadPortalSource('portal-decisions.js');
+  const decisions = createPortalDecisions({
+    document: dom.window.document,
+    connection: { sendCommand: async () => ({ ok: true }) },
+  });
+  decisions.setProjectedPending([{
+    session_id: 'session_test_1234',
+    pending: {
+      tool: [],
+      questions: [],
+      plan: [{
+        stream_id: 'stream_test_1234',
+        approval_id: 'approval_plan_1234',
+        decision_revision: 1,
+        tool_name: 'exit_plan_mode',
+        facts: {},
+      }],
+    },
+  }]);
+
+  decisions.openPending('session_test_1234');
+
+  assert.equal(dom.window.document.querySelector('[data-action="approve"]'), null);
+});
+
 test('snapshot recovery honors per-session truncation without a replay flag', async () => {
   const calls = [];
   const snapshots = [];
@@ -300,6 +362,62 @@ test('snapshot recovery honors per-session truncation without a replay flag', as
   ]);
   assert.equal(snapshots[0].transcripts.length, 2);
   assert.equal(reconciler.getLastEventSeq(), 5);
+});
+
+test('snapshot buffer overflow recovers canonical state before advancing past dropped events', async () => {
+  const sessionId = 'session_stale_1234';
+  const calls = [];
+  const dispatched = [];
+  let sessions = [];
+  const { createPortalReconciler } = loadPortalSource('portal-reconcile.js');
+  const reconciler = createPortalReconciler({
+    contracts,
+    validId: (value) => typeof value === 'string' && value.length >= 8,
+    rawCommand: async (operation, sessionIdArg, payload) => {
+      calls.push([operation, sessionIdArg, payload]);
+      if (operation === 'resync') {
+        return { ok: false, error: { reason: 'resync_required' } };
+      }
+      if (operation === 'session.list') return { ok: true, data: { sessions: [] } };
+      return { ok: true, data: { messages: [] } };
+    },
+    onEvent: (event) => {
+      dispatched.push(event);
+      if (event.type === 'session_unshared') {
+        sessions = sessions.filter((session) => session.id !== event.session_id);
+      }
+    },
+    onSnapshot: (snapshot) => { sessions = snapshot.sessions; },
+    closeCurrent: () => assert.fail('recovery must not close'),
+  });
+
+  reconciler.beginReady(10, false);
+  for (let eventSeq = 11; eventSeq < 75; eventSeq += 1) {
+    reconciler.handleEvent({
+      v: 1, kind: 'event', event_seq: eventSeq, type: 'status',
+      session_id: sessionId, payload: {},
+    });
+  }
+  reconciler.handleEvent({
+    v: 1, kind: 'event', event_seq: 75, type: 'session_unshared',
+    session_id: sessionId, payload: {},
+  });
+  reconciler.handleEvent({
+    v: 1, kind: 'event', event_seq: 10, type: 'session_shared',
+    payload: {
+      event_seq_head: 10,
+      sessions: [{ session_id: sessionId, transcript: { messages: [] } }],
+    },
+  });
+
+  for (let attempt = 0; attempt < 10 && calls.length < 2; attempt += 1) await tick();
+  assert.deepEqual(calls.slice(0, 2), [
+    ['resync', null, { last_event_seq: 10 }],
+    ['session.list', null, {}],
+  ]);
+  assert.deepEqual(dispatched, []);
+  assert.deepEqual(sessions, []);
+  assert.equal(reconciler.getLastEventSeq(), 10);
 });
 
 test('snapshot active turn reuses the recovered assistant row for its next delta', async () => {

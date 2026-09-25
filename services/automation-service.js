@@ -2,7 +2,7 @@
 
 const { normalizeString } = require('../renderer/shared/string-utils');
 const { t } = require('./i18n-main');
-const { redactLogValue } = require('./log-entry-normalizer');
+const { collapseRedactedPathTails, redactLogValue } = require('./log-entry-normalizer');
 const {
   readScheduledTasksFileAsync,
   resolveBackgroundRuntimeRoot,
@@ -39,7 +39,7 @@ function summarizeRunForList(run) {
 function sanitizeFailureSummary(value, redactionOptions) {
   const summary = normalizeString(value).slice(0, MAX_AUTOMATION_STATUS_SUMMARY_LENGTH);
   const redacted = normalizeString(redactLogValue(summary, redactionOptions));
-  return redacted.replace(/\[redacted:path\](?:[\\/][^\s"'`<>|]+)*/g, '[redacted]');
+  return collapseRedactedPathTails(redacted, '[redacted]');
 }
 
 function failureTimestamp(run) {

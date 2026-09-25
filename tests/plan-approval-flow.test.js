@@ -14,6 +14,8 @@ const {
   preparePlanApproval,
   denyUnrenderablePlan,
   planApprovalWaiterResult,
+  resolvePlanApprovalState,
+  markAcceptedPlanApproved,
   DUPLICATE_PLAN_MESSAGE,
   UNRENDERABLE_PLAN_MESSAGE,
 } = require('../services/backend/plan-document-events');
@@ -157,6 +159,10 @@ test('plan approval waiter maps only object edits to edited_plan', () => {
   assert.equal(Object.hasOwn(planApprovalWaiterResult({
     toolName: 'exit_plan_mode', approved: true, state: 'approved', feedback: '', plan: 'bad',
   }), 'edited_plan'), false);
+  assert.equal(Object.hasOwn(planApprovalWaiterResult({
+    toolName: 'exit_plan_mode', approved: true, state: 'approved', feedback: '',
+    plan: { title: 'Huge', steps: ['x'.repeat(16 * 1024)] },
+  }), 'edited_plan'), false, 'an edit over the 16 KiB sidecar cap is dropped');
 });
 
 test('approveToolCall passes the renderer plan object to the waiter untouched', () => {
@@ -172,6 +178,120 @@ test('approveToolCall passes the renderer plan object to the waiter untouched', 
     decision: 'approved', feedback: 'ok', plan,
   }), true);
   assert.deepEqual(resolved, [[true, 'approved', 'ok', plan]]);
+});
+
+test('approveToolCall denies an unrecognized decision instead of approving it', () => {
+  const resolved = [];
+  const service = {
+    pendingToolApprovals: new Map([['approval', {
+      toolName: 'exit_plan_mode', resolve: (...args) => resolved.push(args),
+    }]]),
+  };
+  assert.equal(approveToolCall(service, 'approval', { decision: 'build_everything' }), true);
+  assert.deepEqual(resolved, [[false, 'denied']]);
+  assert.equal(service.pendingToolApprovals.size, 0);
+});
+
+test('an approval whose state is unknown never resolves to execute', () => {
+  assert.equal(resolvePlanApprovalState(true, 'yolo'), 'denied');
+  assert.equal(resolvePlanApprovalState(true, 'accepted'), 'accepted');
+  assert.deepEqual(planApprovalWaiterResult({
+    toolName: 'exit_plan_mode', approved: true, state: 'accepted', feedback: '',
+  }), { approved: true, decision: 'accepted', feedback: '' });
+});
+
+test('accepted outcome records an accepted receipt that blocks a same-turn re-proposal', () => {
+  const service = fakeService();
+  const turnEventCollector = new CanonicalTurnEventCollector({ turnId: 'turn', sessionId: 's' });
+  recordPendingPlanDocument({
+    service, sessionId: 's', streamId: 'turn', callId: 'call_1',
+    input: { title: 'Hold', steps: ['One'] }, turnEventCollector,
+  });
+  const entry = recordPlanDocumentOutcome({
+    service, sessionId: 's', streamId: 'turn', callId: 'call_1', turnEventCollector,
+    result: { isError: false, metadata: { result_kind: 'plan_mode_transition', plan_decision: 'accepted' } },
+  });
+  assert.equal(entry.state, 'accepted');
+  assert.equal(service.messages[0].plan_document.state, 'accepted');
+  assert.equal(recordPendingPlanDocument({
+    service, sessionId: 's', streamId: 'turn', callId: 'call_2',
+    input: { title: 'Again', steps: ['Two'] }, turnEventCollector,
+  }), null);
+  assert.equal(deriveApprovedPlanContext(service.messages), null, 'an accepted plan is not injected');
+});
+
+function acceptedPlanSession({ activeTurn = null, state = 'accepted', priorEvent = true, appendResult = { ok: true } } = {}) {
+  const messages = [
+    { id: 'plan_document_plan_old', kind: 'plan_document',
+      plan_document: { plan_id: 'plan_old', state: 'accepted', title: 'Old', steps: ['A'] } },
+    { id: 'plan_document_plan_new', kind: 'plan_document',
+      plan_document: { plan_id: 'plan_new', state, title: 'New', steps: ['B'], parent_stream_id: 'stream_1' } },
+  ];
+  const events = priorEvent ? [{
+    event_id: 'stream_1:plan_document:plan_new:accepted', kind: 'plan_document', status: 'accepted',
+    payload: { plan_id: 'plan_new', transition: 'accepted' },
+  }] : [];
+  const appended = [];
+  const service = {
+    sessionStore: {
+      getActiveTurn: () => activeTurn,
+      getSessionMessages: () => messages,
+      getSessionTurnEvents: () => events,
+      appendTurnEvents: (_id, rows) => {
+        if (appendResult.ok) appended.push(...rows);
+        return appendResult;
+      },
+      updateMessage: (_id, messageId, patch) => {
+        const index = messages.findIndex((message) => message.id === messageId);
+        if (index >= 0) messages[index] = { ...messages[index], ...patch };
+      },
+    },
+  };
+  return { service, messages, appended };
+}
+
+test('building an accepted plan flips only the latest idle accepted plan to approved', () => {
+  const busy = acceptedPlanSession({ activeTurn: { stream_id: 'x' } });
+  assert.deepEqual(markAcceptedPlanApproved({ service: busy.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: false, reason: 'busy' });
+  const older = acceptedPlanSession();
+  assert.deepEqual(markAcceptedPlanApproved({ service: older.service, sessionId: 's', planId: 'plan_old' }),
+    { ok: false, reason: 'not_latest' });
+  const built = acceptedPlanSession({ state: 'approved' });
+  assert.deepEqual(markAcceptedPlanApproved({ service: built.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: false, reason: 'not_accepted' });
+
+  const live = acceptedPlanSession();
+  assert.deepEqual(markAcceptedPlanApproved({ service: live.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: true });
+  assert.equal(live.messages[1].plan_document.state, 'approved');
+  assert.equal(live.appended.length, 1);
+  assert.equal(live.appended[0].event_id, 'stream_1:plan_document:plan_new:approved');
+  assert.equal(live.appended[0].payload.transition, 'approved');
+  assert.equal(deriveApprovedPlanContext(live.messages)?.title, 'New', 'the next send carries the plan');
+});
+
+test('building an accepted plan with no prior turn event still records the approved event', () => {
+  const live = acceptedPlanSession({ priorEvent: false });
+  assert.deepEqual(markAcceptedPlanApproved({ service: live.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: true });
+  assert.equal(live.messages[1].plan_document.state, 'approved');
+  assert.equal(live.appended.length, 1, 'the message and the turn events agree');
+  const [event] = live.appended;
+  assert.equal(event.event_id, 'stream_1:plan_document:plan_new:approved');
+  assert.equal(event.kind, 'plan_document');
+  assert.equal(event.status, 'approved');
+  assert.equal(event.primary_message_id, 'plan_document_plan_new');
+  assert.equal(event.payload.transition, 'approved');
+  assert.equal(event.payload.title, 'New');
+  assert.deepEqual(event.payload.steps, ['B']);
+});
+
+test('building an accepted plan refuses without touching the message when the event cannot persist', () => {
+  const refused = acceptedPlanSession({ appendResult: { ok: false, reason: 'durability_failed' } });
+  assert.deepEqual(markAcceptedPlanApproved({ service: refused.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: false, reason: 'persist_failed' });
+  assert.equal(refused.messages[1].plan_document.state, 'accepted', 'the message still says accepted');
 });
 
 function approvedPlanMessage() {
@@ -266,4 +386,15 @@ test('files-read projection trusts only successful executor metadata from the cu
       is_error: false, metadata: { path: 'src/older.js' } } },
   ];
   assert.deepEqual(deriveFilesRead(messages, 'turn'), ['src/validated.js']);
+});
+
+test('an accepted plan-document projection is a continuation event like the other states', () => {
+  const { isContinuationTextProjection } = require('../services/session-runtime/continuation-events');
+  const planId = 'plan_0123456789abcdef0123';
+  const event = (state) => ({
+    event_id: `stream_1:plan_document:${planId}:${state}`, kind: 'plan_document', status: state,
+    tool_call_id: 'call_1', payload: { plan_id: planId, transition: state, tool_call_id: 'call_1' },
+  });
+  assert.equal(isContinuationTextProjection(event('accepted')), true);
+  assert.equal(isContinuationTextProjection(event('yolo')), false);
 });

@@ -185,6 +185,46 @@ function buildPersistedToolInputSnapshot(input) {
   };
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Matches the workspace root as a whole path prefix inside any string: not
+// preceded by a path character (so /x/home/ws is not the root /home/ws), and
+// not followed by a character that would continue its last segment (so
+// C:\ws2 and C:\ws.bak are not C:\ws, while "cd C:\ws; dir" is).
+function buildWorkspaceRootRegExp(root) {
+  const rootPattern = Array.from(root.replace(/[\\/]+$/, '') || root)
+    .map((character) => (character === '\\' || character === '/' ? '[\\\\/]' : escapeRegExp(character)))
+    .join('');
+  const segmentContinues = '[\\w.~@#$%+=-]';
+  // Windows drive and UNC paths are case-insensitive; POSIX paths are not.
+  const caseInsensitive = /^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/.test(root);
+  return new RegExp(
+    `(?<![\\w.~\\\\/-])${rootPattern}(?:[\\\\/]+(?![^\\s"'\`<>|;&,)])|(?!${segmentContinues}))`,
+    caseInsensitive ? 'gi' : 'g'
+  );
+}
+
+// The persisted input_json redacts absolute paths to [redacted:path], which the
+// model copies back as a literal argument when history replays its own calls.
+// This model-facing copy states workspace paths relative to the root instead;
+// secrets, paths outside the workspace and size bounds follow input_json.
+function buildModelReplayToolInputJson(input, workspaceRoot) {
+  const root = typeof workspaceRoot === 'string' ? workspaceRoot.trim() : '';
+  if (!root) return '';
+  const rootRegExp = buildWorkspaceRootRegExp(root);
+  let rewritten;
+  try {
+    rewritten = JSON.parse(JSON.stringify(input ?? {}), (_key, value) => (
+      typeof value === 'string' ? value.replace(rootRegExp, '.') : value
+    ));
+  } catch (_error) {
+    return '';
+  }
+  return buildPersistedToolInputSnapshot(rewritten).inputJson;
+}
+
 function buildRedactedRawArgumentsPreview(rawArguments) {
   const preview = redactSensitiveLikeText(rawArguments);
   if (preview.length <= MAX_TOOL_INPUT_STRING_CHARS) {
@@ -246,6 +286,7 @@ module.exports = {
   sanitizeToolSummary,
   sanitizeToolInputValue,
   buildPersistedToolInputSnapshot,
+  buildModelReplayToolInputJson,
   buildRedactedRawArgumentsPreview,
   buildInvalidToolArgumentsMessage,
   normalizeGeneratedArtifactsFromToolResult,

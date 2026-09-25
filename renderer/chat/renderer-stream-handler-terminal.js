@@ -207,11 +207,15 @@
       isPostworkContinuationValid,
     });
     const { beginMessageUpdate, createTerminalContinuation } = continuationOwner;
+    function resolvePayloadTurnId(payload) {
+      return normalizeId(payload?.turnId) || normalizeId(payload?.turn_id)
+        || normalizeId(payload?.streamId || payload?.requestId || payload?.request_id);
+    }
     // Audit A5: close the postwork window with compare-and-clear so an older
     // overlapping continuation's finally cannot tear down a newer generation.
-    // ide_chat_dock W5: a render draining while postwork is open recomputes the
-    // composer from sendBusy === true. Closing must always queue another
-    // composer recompute or that last pre-close render can latch it disabled.
+    // ide_chat_dock W5 + F27: a render draining while postwork is open recomputes
+    // the composer and the timeline's follow-up actions from sendBusy === true.
+    // Closing must queue both again or that last pre-close render latches them.
     function finishPostworkWindow(sessionId, token) {
       const closeResult = typeof finishTerminalPostwork === 'function'
         ? finishTerminalPostwork(sessionId, token)
@@ -233,7 +237,7 @@
       }
       const turnClock = state?.turnClockBySession?.get(sessionId);
       if (turnClock && turnClock.endedAt == null) turnClock.endedAt = Date.now();
-      queueSessionRender(sessionId, { composer: true, composerStatus: true });
+      queueSessionRender(sessionId, { messages: true, composer: true, composerStatus: true });
       return closeResult;
     }
 
@@ -243,7 +247,7 @@
       return terminalMergeUtils.mergeTerminalHydratedMessages(
         currentMessages,
         hydratedMessages,
-        { ...options, sessionId }
+        { ...options, sessionId, pendingStreams: state?.pendingStreams }
       );
     }
 
@@ -337,20 +341,22 @@
     // Terminal-once is enforced synchronously at the dispatch boundary.
     function settleRowModelTerminalState(
       sessionId,
-      streamId,
+      turnId,
       messages,
       turnEventState = null,
-      canonicalTurnEvents = undefined
+      canonicalTurnEvents = undefined,
+      attemptStreamId = ''
     ) {
       if (isRowModelEnabled(sessionId)) {
-        reconcileLiveTurnWithHydratedRows(
+        const reconciliation = reconcileLiveTurnWithHydratedRows(
           sessionId,
-          streamId,
+          turnId,
           messages,
           turnEventState,
-          canonicalTurnEvents
+          canonicalTurnEvents,
+          attemptStreamId
         );
-        if (!isVisibleChatSession(sessionId)) {
+        if (reconciliation && !isVisibleChatSession(sessionId)) {
           clearSessionLiveTurnState(sessionId);
         }
       } else {
@@ -537,7 +543,7 @@
             title: jt('chat.streamTerminal.replyNotSavedTitle', 'Reply not saved'),
             tone: 'warning',
             sticky: true,
-            source: TOAST_SOURCE.chatStream,
+            source: TOAST_SOURCE.chatStream, sessionId: payload.sessionId,
             dedupeKey: `${TOAST_SOURCE.chatStream}:durability:${String(payload.sessionId || payload.streamId || 'active')}`,
           }
         );
@@ -673,10 +679,11 @@
         });
         settleRowModelTerminalState(
           payload.sessionId,
-          payload.streamId,
+          resolvePayloadTurnId(payload),
           activeMessages,
           null,
-          payload.canonicalTurnEvents
+          payload.canonicalTurnEvents,
+          payload.streamId
         );
         return { buffered: false, terminal: true };
       }
@@ -710,7 +717,7 @@
           pretextUtils.evictStreamingEntry(completedMsgId);
         }
       }
-      dismissStreamErrors();
+      dismissStreamErrors(payload.sessionId);
       clearInteractiveDraft(payload.sessionId);
       resetLifecycleIfSettling(payload.sessionId);
       queueSessionRender(payload.sessionId, {
@@ -738,18 +745,19 @@
           const terminalMessages = Array.isArray(terminalHydration?.messages) ? terminalHydration.messages : activeMessages;
           settleRowModelTerminalState(
             payload.sessionId,
-            payload.streamId,
+            resolvePayloadTurnId(payload),
             terminalMessages,
             terminalHydration?.turnEventState || null,
-            payload.canonicalTurnEvents
+            payload.canonicalTurnEvents,
+            payload.streamId
           );
           // Independent refreshes are deadline-bounded and failure-isolated.
           await Promise.allSettled([
             runDeadlineStage('refreshSessionMetadata', payload.sessionId, payload.streamId,
-              ({ signal, guard }) => refreshSessionMetadata(payload.sessionId, { signal, guard }),
+              (stage) => refreshSessionMetadata(payload.sessionId, stage),
               REFRESH_DEADLINE_MS, { continuationGuard }),
             runDeadlineStage('refreshSnapshots', payload.sessionId, payload.streamId,
-              ({ signal, guard }) => refreshSnapshots({ signal, guard, includeModels: false }),
+              (stage) => refreshSnapshots({ ...stage, includeModels: false }),
               REFRESH_DEADLINE_MS, { continuationGuard }),
             runDeadlineStage('refreshObservability', payload.sessionId, payload.streamId,
               ({ signal, guard }) => refreshObservability({ silent: true, force: true, signal, guard }),
@@ -905,17 +913,18 @@
         // send the live turn owns (code review 2026-07-10).
         settleRowModelTerminalState(
           payload.sessionId,
-          payload.streamId,
+          resolvePayloadTurnId(payload),
           activeMessages,
           null,
-          payload.canonicalTurnEvents
+          payload.canonicalTurnEvents,
+          payload.streamId
         );
         if (!isUserIntentTerminal) {
           showToastMessage(streamErrorMessage, {
             title: jt('chat.streamTerminal.streamingErrorTitle', 'Streaming Error'),
             tone: 'danger',
             sticky: true,
-            source: TOAST_SOURCE.chatStream,
+            source: TOAST_SOURCE.chatStream, sessionId: payload.sessionId,
             dedupeKey: `${TOAST_SOURCE.chatStream}:${String(payload.sessionId || payload.streamId || 'active')}`,
           });
         }
@@ -937,17 +946,18 @@
           const terminalMessages = Array.isArray(terminalHydration?.messages) ? terminalHydration.messages : activeMessages;
           settleRowModelTerminalState(
             payload.sessionId,
-            payload.streamId,
+            resolvePayloadTurnId(payload),
             terminalMessages,
             terminalHydration?.turnEventState || null,
-            payload.canonicalTurnEvents
+            payload.canonicalTurnEvents,
+            payload.streamId
           );
           if (continuationGuard.isCurrent() && !isUserIntentTerminal) {
             showToastMessage(streamErrorMessage, {
               title: jt('chat.streamTerminal.streamingErrorTitle', 'Streaming Error'),
               tone: 'danger',
               sticky: true,
-              source: TOAST_SOURCE.chatStream,
+              source: TOAST_SOURCE.chatStream, sessionId: payload.sessionId,
               dedupeKey: `${TOAST_SOURCE.chatStream}:${String(payload.sessionId || payload.streamId || 'active')}`,
             });
           }
@@ -977,9 +987,9 @@
       } finally {
         finishPostworkWindow(payload.sessionId, postworkToken);
       }
-      // Error and complete terminals share one FIFO drain contract. A failed
-      // dispatch remains visible/retryable; only a current-session conflict
-      // falls back to conflict-aware composer restore.
+      // The current session's head was already restored by
+      // finalizeTerminalStream({ restoreQueuedDraft: true }); only background
+      // sessions drain here (owner decision 2026-09-15).
       const queuedSend = getQueuedSend(payload.sessionId);
       if (queuedSend) {
         const queuedDispatchResult = await dispatchQueuedSendForSession(payload.sessionId, {

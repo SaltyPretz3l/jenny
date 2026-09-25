@@ -36,15 +36,23 @@ def test_notification_rejects_request_methods() -> None:
 
 def test_every_method_constant_is_classified() -> None:
     # Drift guard: every `*_METHOD` constant must be classified as a sidecar
-    # notification, request, or inbound-only shell notification.
+    # notification, request, inbound-only shell notification, or private helper request.
     inbound_notification_methods = {
         protocol.ENGINE_ACTIVITY_METHOD,
         protocol.SESSION_RUN_MODE_UPDATED_METHOD,
     }
     known_request_methods = set(protocol.INBOUND_VERSIONED_REQUEST_METHODS) | {
-        # Sidecar -> Electron blocking request; it is deliberately not part of
+        # Sidecar -> Electron blocking requests; they are deliberately not part of
         # the shell -> sidecar versioned request set.
         protocol.TOOL_EXECUTE_ELECTRON_METHOD,
+        protocol.RUNTIME_OPERATION_METHOD,
+    }
+    helper_private_methods = {
+        # Electron -> contained-helper private JSON-RPC; never main sidecar transport.
+        protocol.WORKSPACE_TEST_RUN_METHOD,
+        protocol.WORKSPACE_TEST_CANCEL_METHOD,
+        protocol.WORKSPACE_TEST_CLEANUP_METHOD,
+        protocol.WORKSPACE_TEST_CLOSE_METHOD,
     }
     declared_values = {
         value
@@ -56,6 +64,7 @@ def test_every_method_constant_is_classified() -> None:
         - set(ALLOWED_NOTIFICATION_METHODS)
         - known_request_methods
         - inbound_notification_methods
+        - helper_private_methods
     )
     assert not unclassified, f"unclassified *_METHOD constants: {sorted(unclassified)}"
     # No phantom allow-listed strings: every entry in the frozenset is a real constant.

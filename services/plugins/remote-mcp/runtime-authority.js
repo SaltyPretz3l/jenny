@@ -23,6 +23,29 @@ function fail(reason, code = PLUGIN_ERROR_CODES.POLICY_BLOCKED) {
   return { ok: false, code, reason, retryable: false };
 }
 
+function noInvocation(result) {
+  return { ...result, execution_settlement: { cleanup: 'confirmed', producer_started: false } };
+}
+
+function matchesExecutionAuthority(committed, descriptor, contribution, captured, name) {
+  const fingerprint = captured?.authority;
+  const identity = captured?.descriptor?.capability_identity;
+  const generation = committed?.generation;
+  const pointer = committed?.pointer;
+  const binding = descriptor?.binding;
+  return Boolean(fingerprint && identity && generation && pointer && binding && contribution
+    && identity.runtime_kind === 'remote_mcp' && identity.name === name
+    && fingerprint.active_generation_id === generation.generation_id
+    && fingerprint.commit_epoch === pointer.commit_epoch
+    && fingerprint.registry_revision === pointer.revision
+    && fingerprint.dependency_graph_hash === generation.graph_hash
+    && identity.binding_digest === binding.binding_digest
+    && identity.descriptor_digest === binding.descriptor_digest
+    && identity.artifact_digest === binding.artifact_digest
+    && identity.schema_digest === contribution.schema_digest
+    && identity.endpoint_origin_digest === binding.endpoint_origin_digest);
+}
+
 function authProfileRef({ publisherId, pluginId, contributionId, descriptorDigest,
   endpointOriginDigest }) {
   return hash(stableStringify({
@@ -274,7 +297,9 @@ class RemoteMcpRuntimeAuthority {
     return { ok: true, runtimeBindings };
   }
 
-  async execute(namespacedName, args, { signal = null, sessionId = '' } = {}) {
+  async execute(namespacedName, args, {
+    signal = null, sessionId = '', executionAuthority = null, requireCurrent = null,
+  } = {}) {
     const committed = await readCommittedState(this._facade, this._baseDir);
     const generation = committed.generation;
     const pointer = committed.pointer;
@@ -287,21 +312,28 @@ class RemoteMcpRuntimeAuthority {
     const descriptor = this._remoteMcpService.descriptorForName(
       namespacedName, committedBindingDigests
     );
-    if (!descriptor) return fail('remote_descriptor_rediscovery_required');
+    if (!descriptor) return noInvocation(fail('remote_descriptor_rediscovery_required'));
     const binding = descriptor.binding;
+    const contribution = descriptor.contribution;
+    if (executionAuthority
+      && !matchesExecutionAuthority(
+        committed, descriptor, contribution, executionAuthority, namespacedName
+      )) {
+      return noInvocation(fail('remote_tool_authority_stale'));
+    }
     const entry = generation?.plugins?.find((item) => (
       item.publisher_id === binding.publisher_id && item.plugin_id === binding.plugin_id
     ));
     if (!entry || !pointer || entry.effective_state !== 'active'
       || !entry.remote_binding_digests?.includes(binding.binding_digest)) {
-      return fail('remote_descriptor_inactive');
+      return noInvocation(fail('remote_descriptor_inactive'));
     }
     const consent = await readNetworkConsent(this._facade, this._baseDir);
-    if (!consent.ok) return consent;
+    if (!consent.ok) return noInvocation(consent);
     const advisoryPolicy = await readInvocationAdvisoryPolicy({
       facade: this._facade, baseDir: this._baseDir, entry,
     });
-    if (!advisoryPolicy.ok) return advisoryPolicy;
+    if (!advisoryPolicy.ok) return noInvocation(advisoryPolicy);
     const policy = {
       stage5_enabled: true,
       consent_granted: consent.digest === binding.consent_digest,
@@ -315,7 +347,7 @@ class RemoteMcpRuntimeAuthority {
     let authAuthority = null;
     if (policy.authorization === 'required') {
       const credential = await this._credential(binding, 'oauth_2_1');
-      if (!credential.ok) return credential;
+      if (!credential.ok) return noInvocation(credential);
       authAuthority = credential.authority;
     }
     return this._remoteMcpService.invoke({
@@ -339,6 +371,20 @@ class RemoteMcpRuntimeAuthority {
       context: { signal, session_id: String(sessionId || '').trim() },
       signal,
       authAuthority,
+      requireCurrent: executionAuthority ? async () => {
+        await requireCurrent?.();
+        const latest = await readCommittedState(this._facade, this._baseDir);
+        const latestDescriptor = this._remoteMcpService.descriptorForName(
+          namespacedName,
+          new Set((latest.generation?.plugins || [])
+            .filter((item) => item.effective_state === 'active')
+            .flatMap((item) => item.remote_binding_digests || []))
+        );
+        if (!matchesExecutionAuthority(
+          latest, latestDescriptor, latestDescriptor?.contribution,
+          executionAuthority, namespacedName
+        )) throw new Error('remote_tool_authority_stale');
+      } : requireCurrent,
     });
   }
 

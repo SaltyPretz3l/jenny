@@ -19,6 +19,7 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.mutation_change_set_lifecycle import (
     MutationChangeSetLifecycle,
     bind_run_context,
+    current_run_change_set_id,
     finish_run_change_set,
     freeze_approval_tool_calls,
     inject_tool_attribution,
@@ -60,6 +61,46 @@ def _lifecycle(
     workspace.mkdir()
     store = WorkspaceMutationJournalStore(tmp_path / "recovery", **store_options)
     return workspace, store, MutationChangeSetLifecycle(store, workspace)
+
+
+def test_run_attribution_uses_logical_turn_across_fresh_stream_attempt() -> None:
+    run = SimpleNamespace(
+        request_id="stream-fresh",
+        session_id="session-one",
+        runtime=SimpleNamespace(logical_turn_id="turn-one"),
+    )
+    bind_run_context(run)
+    try:
+        attribution = inject_tool_attribution(
+            tool_name="run_command",
+            tool_call_id="call-one",
+            session_id="session-one",
+        )
+        assert attribution["_jenny_turn_id"] == "turn-one"
+        assert attribution["_jenny_tool_call_id"] == "call-one"
+    finally:
+        finish_run_change_set(run, approval_paused=False, reason="test_complete")
+
+
+def test_release_run_context_restores_previous_binding_and_is_idempotent() -> None:
+    outer = SimpleNamespace(
+        request_id="outer-turn",
+        session_id="outer-session",
+        _jenny_change_set_id="outer-change-set",
+    )
+    bind_run_context(outer)
+    previous = lifecycle_module._CURRENT_RUN.get()
+    run = SimpleNamespace(request_id="turn-one", session_id="session-one")
+    try:
+        bind_run_context(run)
+        lifecycle_module.release_run_context(run)
+
+        assert lifecycle_module._CURRENT_RUN.get() is previous
+        assert current_run_change_set_id() == "outer-change-set"
+        lifecycle_module.release_run_context(run)
+        assert lifecycle_module._CURRENT_RUN.get() is previous
+    finally:
+        lifecycle_module.release_run_context(outer)
 
 
 def test_one_turn_one_set_terminal_commit_and_cancellation(tmp_path: Path) -> None:

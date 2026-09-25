@@ -8,6 +8,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const {
   ARTIFACT_FRAME_SCHEME,
@@ -15,6 +17,10 @@ const {
   registerArtifactFramePrivilegedScheme,
 } = require('../services/artifact-frame-protocol.js');
 const { HTML_ARTIFACT_FRAME_CSP } = require('../renderer/features/renderer-html-artifact-frame-utils.js');
+const {
+  createTrustedSenderAuthorizer,
+  unauthorizedIpcResult,
+} = require('../services/main/ipc-sender-authorization');
 
 function makeProtocol(overrides = {}) {
   let currentTime = 1_000;
@@ -98,6 +104,31 @@ test('install registers the protocol handler and the artifactFrame.stage invoke 
   assert.ok(invokeHandlers.has('artifact-frame:stage'), `channels registered: ${[...invokeHandlers.keys()]}`);
   const staged = invokeHandlers.get('artifact-frame:stage')({}, '<p>via ipc</p>');
   assert.equal(staged.ok, true);
+});
+
+test('install applies authorization before staging artifact documents', () => {
+  const { instance } = makeProtocol();
+  const invokeHandlers = new Map();
+  const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+  const mainFrame = { url };
+  const webContents = { id: 7, mainFrame, isDestroyed: () => false, getURL: () => url };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  instance.install({
+    ipcMainLike: { handle: (channel, handler) => invokeHandlers.set(channel, handler) },
+    authorization: {
+      authorize: createTrustedSenderAuthorizer({ getMainWindow: () => mainWindow }),
+      unauthorizedResult: unauthorizedIpcResult,
+    },
+  });
+
+  const handler = invokeHandlers.get('artifact-frame:stage');
+  assert.deepEqual(handler({ sender: { id: 8 }, senderFrame: { url } }, '<p>blocked</p>'),
+    unauthorizedIpcResult());
+  assert.deepEqual(handler({ sender: webContents, senderFrame: { url } }, '<p>blocked</p>'),
+    unauthorizedIpcResult());
+  assert.equal(instance.entryCount(), 0);
+  assert.equal(handler({ sender: webContents, senderFrame: mainFrame }, '<p>allowed</p>').ok, true);
+  assert.equal(instance.entryCount(), 1);
 });
 
 test('dispose clears all staged entries', () => {

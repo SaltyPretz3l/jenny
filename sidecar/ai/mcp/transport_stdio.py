@@ -35,7 +35,12 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 MCP_READER_QUEUE_MAXSIZE = 32
 MCP_STDERR_TAIL_MAX_CHARS = 4096
-MCP_MAX_STDOUT_LINE_CHARS = 256 * 1024
+# One JSON-RPC reply is one stdout line. The builtin server rides typed
+# attachments inline (up to TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES decoded, ~4/3
+# that once base64-encoded) next to the 16K-char model-visible output, so the
+# reader's cap must stay above that or a three-page PDF read kills the server
+# (2026-09-20: 3 x ~290KB page renders ended the transport with CMP-MCP-0004).
+MCP_MAX_STDOUT_LINE_CHARS = 4 * 1024 * 1024
 MCP_MAX_STDERR_LINE_CHARS = 64 * 1024
 MCP_QUEUE_PUT_TIMEOUT_SECONDS = 0.05
 MCP_REQUEST_LOCK_POLL_SECONDS = 0.05
@@ -501,6 +506,7 @@ class StdioMCPTransport(MCPTransport):
                         f"waiting to {wait_label}"
                     ),
                     retryable=True,
+                    transport_terminated=False,  # a lock wait never stops the server
                 )
             if lock.acquire(
                 timeout=min(MCP_REQUEST_LOCK_POLL_SECONDS, remaining_seconds)
@@ -637,7 +643,9 @@ class StdioMCPTransport(MCPTransport):
                 self._raise_for_error(response)
                 return response
         except MCPError as error:
-            if pending.method != "tools/call" or error.code != CMP_MCP_SERVER_FAILED:
+            lost = error.code == CMP_MCP_SERVER_FAILED or (
+                error.code == CMP_MCP_PROTOCOL_FAILED and error.transport_terminated is True)
+            if pending.method != "tools/call" or not lost:
                 raise
             lifecycle = self._request_lifecycle()
             raise lifecycle.classify_error(
@@ -733,11 +741,9 @@ class StdioMCPTransport(MCPTransport):
             self._response_read_lock.release()
 
     def _raise_response_timeout(self, request_id: int) -> NoReturn:
-        # A request timeout is local while another request is still pending.
-        # Killing the shared stdio server here would turn one caller's shorter
-        # deadline into a failure for every concurrent turn. Serialize the
-        # final check with dispatch so a new request cannot race between the
-        # pending-set observation and process termination.
+        # A timeout stays local while another request is pending: killing the shared
+        # server would fail every concurrent turn. Serialize this check with dispatch
+        # so a new request cannot race process termination.
         with self._request_lock:
             with self._pending_lock:
                 has_other_pending = any(
@@ -745,10 +751,12 @@ class StdioMCPTransport(MCPTransport):
                 )
             if not has_other_pending:
                 self._terminate_after_reader_failure("timeout")
+        poll = getattr(self._process, "poll", None)
         raise MCPError(
             code=CMP_MCP_SERVER_FAILED,
             message=f"mcp server '{self.server_name}' response timed out",
             retryable=True,
+            transport_terminated=not has_other_pending and callable(poll) and poll() is not None,
         )
 
     def _handle_out_of_band_response(
@@ -902,6 +910,8 @@ class StdioMCPTransport(MCPTransport):
             stderr_text = self._request_stderr_evidence().since(scoped_cursor)
             if stderr_text:
                 message = f"{message}: {stderr_text}"
+            # The pipe stays dead: leave the sentinel for every other pending caller.
+            self._queue_reader_item(self._SENTINEL, retry_until_available=False)
             raise MCPError(
                 code=CMP_MCP_SERVER_FAILED,
                 message=message,
@@ -914,21 +924,16 @@ class StdioMCPTransport(MCPTransport):
                 retryable=False,
             )
 
-        line = item
+        detail = "non-object response"
         try:
-            data = json.loads(line)
+            data = json.loads(item)
         except json.JSONDecodeError as error:
-            raise MCPError(
-                code=CMP_MCP_PROTOCOL_FAILED,
-                message=f"mcp server '{self.server_name}' returned invalid json: {error}",
-                retryable=False,
-            ) from error
+            data, detail = None, f"invalid json: {error}"
         if not isinstance(data, dict):
-            raise MCPError(
-                code=CMP_MCP_PROTOCOL_FAILED,
-                message=f"mcp server '{self.server_name}' returned non-object response",
-                retryable=False,
-            )
+            # A stream that carried a non-frame can't be re-framed: end it for every caller.
+            self._terminate_after_reader_failure("protocol")
+            raise MCPError(code=CMP_MCP_PROTOCOL_FAILED, retryable=True, transport_terminated=True,
+                           message=f"mcp server '{self.server_name}' returned {detail}")
         return data
 
     def _notify_cancelled(self, request_id: Any) -> None:
@@ -1002,4 +1007,6 @@ class StdioMCPTransport(MCPTransport):
                 if isinstance(data, dict)
                 else "unknown"
             ),
+            response_received=True,
+            resource_cleanup=data.get("resource_cleanup") if isinstance(data, dict) else None,
         )

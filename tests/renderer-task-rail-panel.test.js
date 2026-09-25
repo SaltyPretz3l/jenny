@@ -95,6 +95,28 @@ async function openTasks(app) {
   return window.document.getElementById('artifactReviewPanel');
 }
 
+function checklistMessage(items, timestamp = '2026-09-21T10:00:00.000Z') {
+  return {
+    kind: 'tool_result',
+    timestamp,
+    tool_result: {
+      tool_name: 'todo_write',
+      output_text: JSON.stringify({ count: items.length, todos: items }),
+      is_error: false,
+      error_code: '',
+    },
+  };
+}
+
+function setSessionChecklist(app, sessionId, items, timestamp) {
+  app.window.__rendererState.messagesBySession.set(sessionId, [checklistMessage(items, timestamp)]);
+}
+
+function menuItem(app, label) {
+  return Array.from(app.window.document.querySelectorAll('.inv-context-menu-item'))
+    .find((button) => button.textContent.includes(label));
+}
+
 test('toggle opens tasks mode with rail layout and narrow overlay behavior', async (t) => {
   const app = await boot({ active: [row('open-1', 'Open one')] });
   t.after(() => app.dispose());
@@ -246,12 +268,12 @@ test('starts linked sessions and recognizes an existing linked session', async (
     calls.push(payload);
     return new Promise((resolve) => { finishStart = resolve; });
   } };
-  panel.querySelector('[data-action="task-rail-start"]').click();
+  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  menuItem(app, 'Start a session').click();
   assert.equal(calls[0].linkedTaskId, 'task-link');
   assert.match(calls[0].initialPrompt, /Jenny task id: task-link/);
-  const busyButton = panel.querySelector('[data-action="task-rail-start"]');
+  const busyButton = panel.querySelector('[data-action="task-rail-overflow"]');
   assert.equal(busyButton.disabled, true);
-  busyButton.dispatchEvent(new app.window.MouseEvent('click', { bubbles: true }));
   assert.equal(calls.length, 1);
   finishStart();
   await new Promise((resolve) => setImmediate(resolve));
@@ -259,8 +281,9 @@ test('starts linked sessions and recognizes an existing linked session', async (
   app.window.__rendererState.sessions.push({ id: 'linked-session', title: 'Linked', linked_task_id: 'task-link' });
   app.window.rendererTaskRailActions.open();
   await waitForUi(app.window, 10);
-  assert.match(panel.textContent, /Open session/);
-  assert.doesNotMatch(panel.textContent, /Start a session/);
+  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  assert.ok(menuItem(app, 'Open session'));
+  assert.equal(menuItem(app, 'Start a session'), undefined);
 });
 
 test('send list composes open tasks only', async (t) => {
@@ -295,6 +318,62 @@ test('overflow exposes task actions and delete invokes companion IPC', async (t)
   deleteButton.click();
   await waitForUi(app.window, 30);
   assert.deepEqual(app.shell.__state.companionCalls.deleteFollowUp, ['menu-task']);
+});
+
+test('checklist refresh is exposed, rerenders visible content, and contributes open items to the count', async (t) => {
+  const app = await boot({ active: [row('follow-up', 'Follow-up')] });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  const sessionId = app.window.__rendererState.currentSessionId;
+  setSessionChecklist(app, sessionId, [
+    { content: 'Model pending', status: 'pending' },
+    { content: 'Model active', status: 'in_progress' },
+    { content: 'Model done', status: 'completed' },
+  ]);
+
+  assert.equal(typeof app.window.rendererTaskRailActions.refreshChecklist, 'function');
+  app.window.rendererTaskRailActions.refreshChecklist();
+  assert.match(panel.textContent, /Model pending/);
+  assert.match(panel.textContent, /Model active/);
+  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '3');
+});
+
+test('checklist refresh skips other sessions and never discards an open editor or draft', async (t) => {
+  const app = await boot({ active: [row('edit-me', 'Stored title')] });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  const sessionId = app.window.__rendererState.currentSessionId;
+  setSessionChecklist(app, sessionId, [{ content: 'Model pending', status: 'pending' }]);
+
+  app.window.rendererTaskRailActions.refreshChecklist({ sessionId: 'someone-else' });
+  assert.doesNotMatch(panel.textContent, /Model pending/, 'another session\'s todo_write does not repaint this rail');
+
+  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  menuItem(app, 'Edit').click();
+  await waitForUi(app.window, 10);
+  const title = panel.querySelector('#taskRailEditTitle-edit-me');
+  title.value = 'Unsaved title';
+  app.window.rendererTaskRailActions.refreshChecklist({ sessionId });
+  assert.equal(panel.querySelector('#taskRailEditTitle-edit-me').value, 'Unsaved title', 'the editor survives a checklist refresh');
+  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '2', 'the count still syncs');
+});
+
+test('rerender derives the checklist from the current session after a session switch', async (t) => {
+  const app = await boot({});
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  const firstSessionId = app.window.__rendererState.currentSessionId;
+  setSessionChecklist(app, firstSessionId, [{ content: 'First session item', status: 'pending' }]);
+  app.window.rendererTaskRailActions.refreshChecklist();
+  assert.match(panel.textContent, /First session item/);
+
+  const secondSessionId = 'session-second';
+  setSessionChecklist(app, secondSessionId, [{ content: 'Second session item', status: 'pending' }]);
+  app.window.__rendererState.currentSessionId = secondSessionId;
+  app.window.rendererTaskRailActions.refreshChecklist();
+  await waitForUi(app.window, 10);
+  assert.match(panel.textContent, /Second session item/);
+  assert.doesNotMatch(panel.textContent, /First session item/);
 });
 
 test('mutation refreshes rows and the count badge hides at zero', async (t) => {

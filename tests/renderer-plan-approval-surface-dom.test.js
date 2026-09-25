@@ -39,7 +39,7 @@ async function loadRendererTestApp(t, options) {
 }
 
 async function runPlanApprovalScenario(t, {
-  sessionId, streamId, rowModelEnabled, omitToolUseEvent,
+  sessionId, streamId, turnId = streamId, rowModelEnabled, omitToolUseEvent,
 }) {
   const approvals = [];
   const { window, shell } = await loadRendererTestApp(t, {
@@ -52,7 +52,7 @@ async function runPlanApprovalScenario(t, {
             reasoning_effort: payload.reasoningEffort || 'default',
           })];
           state.messagesBySession.set(sessionId, []);
-          return { sessionId, streamId };
+          return { sessionId, streamId, turnId };
         },
       },
       tools: {
@@ -80,8 +80,9 @@ async function runPlanApprovalScenario(t, {
     rendererState.ui.chatTimelineRowModelBySession.set(sessionId, false);
   }
 
-  await shell.__emitChat({ type: 'started', sessionId, streamId });
-  await shell.__emitChat({
+  const emit = (event) => shell.__emitChat({ turnId, ...event });
+  await emit({ type: 'started', sessionId, streamId });
+  await emit({
     type: 'delta',
     sessionId,
     streamId,
@@ -92,7 +93,7 @@ async function runPlanApprovalScenario(t, {
       entriesDelta: [{ id: 'reason-plan-dom', text: 'I should propose a plan for the user.' }],
     },
   });
-  await shell.__emitChat({
+  await emit({
     type: 'delta',
     sessionId,
     streamId,
@@ -100,7 +101,7 @@ async function runPlanApprovalScenario(t, {
     aggregate: 'Here is the plan. ',
   });
   if (omitToolUseEvent !== true) {
-    await shell.__emitChat({
+    await emit({
       type: 'tool_use',
       sessionId,
       streamId,
@@ -111,7 +112,7 @@ async function runPlanApprovalScenario(t, {
       status: 'pending_approval',
     });
   }
-  await shell.__emitChat({
+  await emit({
     type: 'tool_approval_needed',
     sessionId,
     streamId,
@@ -142,7 +143,7 @@ async function runPlanApprovalScenario(t, {
     planDocument,
     `expected a pending plan document in the timeline DOM; timeline HTML was:\n${String(timeline.innerHTML || '').slice(0, 6000)}`
   );
-  assert.equal(planDocument.querySelectorAll('[data-plan-decision]').length, 3);
+  assert.equal(planDocument.querySelectorAll('[data-plan-decision]').length, 4);
   // Exactly one card: the live reducer row and the message-path twin must
   // dedup, never render side by side.
   assert.equal(timeline.querySelectorAll('[data-plan-document="true"]').length, 1);
@@ -157,7 +158,7 @@ async function runPlanApprovalScenario(t, {
   await waitForUi(window, 20);
   assert.deepEqual(approvals, [[
     'approval-plan-dom',
-    { decision: 'approved', feedback: '<no feedback given>' },
+    { decision: 'approved', feedback: '' },
   ]]);
 }
 
@@ -166,6 +167,13 @@ test('live plan approval renders its plan card and decisions (row model on)', as
     sessionId: 'session-plan-dom',
     streamId: 'stream-plan-dom',
     rowModelEnabled: true,
+  });
+});
+
+test('live plan approval retains all decisions with distinct logical turn and stream IDs', async (t) => {
+  await runPlanApprovalScenario(t, {
+    sessionId: 'session-plan-runtime', streamId: 'stream-plan-runtime',
+    turnId: 'turn-plan-runtime', rowModelEnabled: true,
   });
 });
 

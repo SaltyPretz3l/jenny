@@ -453,6 +453,59 @@
           "tool_input_summary": "Read \"[redacted:path]/jenny\""
         }
       }
+    },
+    {
+      "name": "tool_input_keeps_model_authored_prompt",
+      "input": {
+        "v": 1,
+        "turn_id": "turn_ask_prompt",
+        "seq": 3,
+        "type": "tool_call_requested",
+        "tool_call_id": "call_ask",
+        "payload": {
+          "tool_name": "ask_user",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "season_pref",
+                "prompt": "Which season do you prefer?",
+                "options": [
+                  "summer",
+                  "winter"
+                ]
+              }
+            ],
+            "api_key": "keep-out"
+          },
+          "prompt": "engine prompt text"
+        }
+      },
+      "expected": {
+        "status": "accepted",
+        "event_id": "turn_ask_prompt:canonical:3",
+        "part_id": "turn_ask_prompt:tool_part:3",
+        "durability": "durable",
+        "persisted_kind": "tool_use",
+        "part_kind": "tool_part",
+        "part_state": "pending",
+        "sanitized_payload": {
+          "tool_name": "ask_user",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "season_pref",
+                "prompt": "Which season do you prefer?",
+                "options": [
+                  "summer",
+                  "winter"
+                ]
+              }
+            ],
+            "api_key": "[redacted:secret]"
+          },
+          "prompt": "[redacted]"
+        }
+      }
     }
   ]
 }

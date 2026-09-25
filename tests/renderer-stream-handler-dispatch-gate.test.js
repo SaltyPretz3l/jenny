@@ -19,6 +19,9 @@ function buildRouterHarness({
   throwOnQuestionBatch = false,
   degradation = null,
   shouldBufferStreamEvent = null,
+  bufferedStreamEventsByStream = new Map(),
+  isRenderableBufferedStreamEvent = () => false,
+  waitForRenderFrame = async () => {},
 } = {}) {
   const controller = createMultiStreamController({ getState: () => ({}) });
   const logs = [];
@@ -58,7 +61,7 @@ function buildRouterHarness({
     handleError: record('handleError'),
   };
   const router = createStreamDispatchRouter({
-    state: { bufferedStreamEventsByStream: new Map() },
+    state: { bufferedStreamEventsByStream },
     normalizeId: (value) => String(value || '').trim(),
     normalizeString: (value) => String(value || '').trim(),
     appendClientLog: (level, event, details) => logs.push({ level, event, details }),
@@ -68,8 +71,8 @@ function buildRouterHarness({
       degradation = null;
       return marker;
     },
-    isRenderableBufferedStreamEvent: () => false,
-    waitForRenderFrame: async () => {},
+    isRenderableBufferedStreamEvent,
+    waitForRenderFrame,
     ...(typeof shouldBufferStreamEvent === 'function'
       ? { shouldBufferStreamEvent, bufferStreamEvent: (payload) => buffered.push(payload) }
       : {}),
@@ -344,4 +347,48 @@ test('context_usage arriving after the turn terminal is dropped', async () => {
 
   assert.equal(late.droppedLate, true);
   assert.equal(harness.invocationsOf('handleContextUsage').length, 0);
+});
+
+test('typed activity events are dropped during flush and are no-op dispatches otherwise', async () => {
+  const streamId = 'stream-typed-activity';
+  let releaseFrame;
+  let markFrameReached;
+  const frameReached = new Promise((resolve) => { markFrameReached = resolve; });
+  const frameRelease = new Promise((resolve) => { releaseFrame = resolve; });
+  const bufferedStreamEventsByStream = new Map([[
+    streamId,
+    Array.from({ length: 6 }, () => ({ type: 'started', sessionId: 'session-1', streamId })),
+  ]]);
+  const harness = buildRouterHarness({
+    bufferedStreamEventsByStream,
+    isRenderableBufferedStreamEvent: () => true,
+    waitForRenderFrame: async () => {
+      markFrameReached();
+      await frameRelease;
+    },
+  });
+  const flush = harness.router.flushBufferedStreamEvents(streamId);
+  await frameReached;
+
+  for (const payload of [
+    { type: 'context_compacting', phase: 'preflight' },
+    { type: 'tool_input_delta', toolCallId: 'call-1', toolName: 'write_file', argumentsDelta: '{}' },
+  ]) {
+    const result = await harness.router.handleStreamPayload({ ...payload, sessionId: 'session-1', streamId });
+    assert.deepEqual(result, { buffered: false, terminal: false }, payload.type);
+  }
+  assert.equal(bufferedStreamEventsByStream.get(streamId).length, 0, 'typed activity never enters replay');
+  releaseFrame();
+  await flush;
+
+  const outside = buildRouterHarness();
+  for (const payload of [
+    { type: 'context_compacting', phase: 'tool_loop' },
+    { type: 'tool_input_delta', toolCallId: 'call-2', toolName: 'edit_file', argumentsDelta: '{' },
+  ]) {
+    const result = await outside.router.handleStreamPayload({
+      ...payload, sessionId: 'session-1', streamId: 'stream-outside',
+    });
+    assert.deepEqual(result, { buffered: false, terminal: false }, payload.type);
+  }
 });

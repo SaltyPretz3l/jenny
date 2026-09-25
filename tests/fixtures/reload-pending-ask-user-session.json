@@ -1,0 +1,302 @@
+{
+ "session_id": "sess_1790255972408_199544cf9524",
+ "stream_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+ "messages": [
+  {
+   "id": "user_stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+   "role": "user",
+   "content": "Use the ask_user tool to ask me which season I prefer, with the options summer and winter. After I answer, reply in one sentence naming my choice.",
+   "timestamp": "2026-09-24T13:19:33.999Z",
+   "client_message_id": "user_stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+   "attachments": [],
+   "skill_invocation": null,
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "event_seq": 0,
+   "kind": "",
+   "status": "",
+   "terminal_subcode": "",
+   "model_used": "",
+   "parent_stream_id": "",
+   "phases": [],
+   "visible_segments": [],
+   "tool_steps": [],
+   "reasoning": {
+    "source": "none",
+    "entries": []
+   },
+   "interactive_batch": null,
+   "tool_call": null,
+   "tool_result": null,
+   "proactive_suggestion": null,
+   "plugin_operation": null,
+   "message_reactions": {},
+   "finalizedAt": null,
+   "interactive_round_recap": null
+  },
+  {
+   "id": "assistant_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_seg0",
+   "role": "assistant",
+   "content": "",
+   "timestamp": "2026-09-24T13:19:36.764Z",
+   "finalizedAt": "2026-09-24T13:19:36.764Z",
+   "client_message_id": "assistant_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_seg0",
+   "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+   "parent_stream_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+   "phases": [
+    {
+     "phase_id": "phase_reasoning_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1_1",
+     "phase_kind": "reasoning",
+     "iteration": 1,
+     "thinking_id": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1",
+     "tool_call_id": "",
+     "tool_name": "",
+     "render_collapsed": false,
+     "started_at": "2026-09-24T13:19:35.724Z",
+     "completed_at": "2026-09-24T13:19:36.764Z",
+     "entries": [
+      {
+       "id": "reasoning_1790255975724_0_4f0998",
+       "text": "The user wants me to use the ask_user tool to ask which season they prefer, with options summer and winter. After they answer, I reply in one sentence naming their choice.\n\nLet me make the ask_user call.",
+       "timestamp": "2026-09-24T13:19:36.184Z",
+       "thinkingId": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1"
+      }
+     ]
+    }
+   ],
+   "visible_segments": [],
+   "tool_steps": [],
+   "reasoning": {
+    "source": "provider",
+    "entries": [
+     {
+      "id": "reasoning_1790255975724_0_4f0998",
+      "text": "The user wants me to use the ask_user tool to ask which season they prefer, with options summer and winter. After they answer, I reply in one sentence naming their choice.\n\nLet me make the ask_user call.",
+      "timestamp": "2026-09-24T13:19:36.184Z",
+      "thinkingId": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1"
+     }
+    ]
+   },
+   "reasoning_phases": [
+    {
+     "phaseId": "phase_reasoning_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1_1",
+     "phaseKind": "reasoning",
+     "iteration": 1,
+     "thinkingId": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1",
+     "toolCallId": "",
+     "toolName": "",
+     "completed": true,
+     "renderCollapsed": false,
+     "startedAt": "2026-09-24T13:19:35.724Z",
+     "completedAt": "2026-09-24T13:19:36.764Z",
+     "summary": "Reasoning through the turn"
+    }
+   ],
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "event_seq": 1,
+   "kind": "",
+   "status": "",
+   "terminal_subcode": "",
+   "attachments": [],
+   "interactive_batch": null,
+   "tool_call": null,
+   "tool_result": null,
+   "proactive_suggestion": null,
+   "skill_invocation": null,
+   "plugin_operation": null,
+   "message_reactions": {},
+   "interactive_round_recap": null
+  },
+  {
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "id": "tool_use_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+   "role": "assistant",
+   "kind": "tool_use",
+   "content": "ask_user",
+   "tool_call": {
+    "call_id": "MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+    "tool_name": "ask_user",
+    "input_json": "{\"questions\":[{\"id\":\"season\",\"options\":[\"summer\",\"winter\"],\"prompt\":\"Which season do you prefer?\"}]}",
+    "model_input_json": "{\"questions\":[{\"id\":\"season\",\"options\":[\"summer\",\"winter\"],\"prompt\":\"Which season do you prefer?\"}]}",
+    "input": {
+     "questions": [
+      {
+       "id": "season",
+       "options": [
+        "summer",
+        "winter"
+       ],
+       "prompt": "Which season do you prefer?"
+      }
+     ]
+    },
+    "summary": "ask_user",
+    "status": "running",
+    "approval_state": "auto",
+    "duration_ms": 0,
+    "parent_stream_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990"
+   },
+   "finalizedAt": "2026-09-24T13:19:36.765Z",
+   "timestamp": "2026-09-24T13:19:36.765Z",
+   "model_used": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
+   "event_seq": 2,
+   "status": "",
+   "terminal_subcode": "",
+   "client_message_id": "",
+   "parent_stream_id": "",
+   "phases": [],
+   "visible_segments": [],
+   "tool_steps": [],
+   "reasoning": {
+    "source": "none",
+    "entries": []
+   },
+   "attachments": [],
+   "interactive_batch": null,
+   "tool_result": null,
+   "proactive_suggestion": null,
+   "skill_invocation": null,
+   "plugin_operation": null,
+   "message_reactions": {},
+   "interactive_round_recap": null
+  }
+ ],
+ "turn_events": [
+  {
+   "event_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426:user_prompt:0",
+   "event_seq": 0,
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "kind": "user_prompt",
+   "status": "",
+   "primary_message_id": "user_stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+   "source_message_ids": [
+    "user_stream_4f24b656-609a-4ec4-9715-7dffc5c20990"
+   ],
+   "target_message_id": "",
+   "tool_call_id": "",
+   "segment_group_index": 0,
+   "phase_id": "",
+   "started_at": "2026-09-24T13:19:33.999Z",
+   "completed_at": "2026-09-24T13:19:33.999Z",
+   "payload": {
+    "content": "Use the ask_user tool to ask me which season I prefer, with the options summer and winter. After I answer, reply in one sentence naming my choice.",
+    "attachments": []
+   }
+  },
+  {
+   "event_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990:reasoning_phase:live:0",
+   "event_seq": 1,
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "kind": "reasoning_phase",
+   "status": "completed",
+   "primary_message_id": "assistant_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_seg0",
+   "source_message_ids": [
+    "assistant_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_seg0"
+   ],
+   "target_message_id": "",
+   "tool_call_id": "",
+   "segment_group_index": 0,
+   "phase_id": "phase_reasoning_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1_1",
+   "started_at": "2026-09-24T13:19:35.724Z",
+   "completed_at": "2026-09-24T13:19:36.764Z",
+   "payload": {
+    "phase_id": "phase_reasoning_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1_1",
+    "phase_kind": "reasoning",
+    "thinking_id": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1",
+    "summary": "Reasoning through the turn",
+    "render_collapsed": false,
+    "entries": [
+     {
+      "id": "reasoning_1790255975724_0_4f0998",
+      "text": "The user wants me to use the ask_user tool to ask which season they prefer, with options summer and winter. After they answer, I reply in one sentence naming their choice.\n\nLet me make the ask_user call.",
+      "timestamp": "2026-09-24T13:19:36.184Z",
+      "thinkingId": "think_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_iter1"
+     }
+    ],
+    "chunk_count": 44,
+    "completed": true
+   }
+  },
+  {
+   "event_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990:canonical:49",
+   "event_seq": 2,
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "kind": "tool_use",
+   "status": "pending",
+   "primary_message_id": "tool_use_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+   "source_message_ids": [
+    "tool_use_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ"
+   ],
+   "target_message_id": "",
+   "tool_call_id": "MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+   "segment_group_index": 0,
+   "phase_id": "",
+   "started_at": "2026-09-24T13:19:36.765Z",
+   "completed_at": "2026-09-24T13:19:36.765Z",
+   "payload": {
+    "tool_name": "ask_user",
+    "tool_input": {
+     "questions": [
+      {
+       "id": "season",
+       "options": [
+        "summer",
+        "winter"
+       ],
+       "prompt": "Which season do you prefer?"
+      }
+     ]
+    },
+    "sequence": 0,
+    "trace_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+    "canonical_event_type": "tool_call_requested",
+    "canonical_part_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990:tool_part:49",
+    "canonical_seq": 49
+   }
+  },
+  {
+   "event_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990:canonical:52",
+   "event_seq": 3,
+   "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+   "kind": "tool_executing",
+   "status": "running",
+   "primary_message_id": "tool_use_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+   "source_message_ids": [
+    "tool_use_stream_4f24b656-609a-4ec4-9715-7dffc5c20990_MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ"
+   ],
+   "target_message_id": "",
+   "tool_call_id": "MoAHuTss9Ylf5npJn02ZJY5NDI1ZD1SQ",
+   "segment_group_index": 0,
+   "phase_id": "",
+   "started_at": "2026-09-24T13:19:36.798Z",
+   "completed_at": "2026-09-24T13:19:36.765Z",
+   "payload": {
+    "tool_name": "ask_user",
+    "tool_input": {
+     "questions": [
+      {
+       "id": "season",
+       "options": [
+        "summer",
+        "winter"
+       ],
+       "prompt": "Which season do you prefer?"
+      }
+     ]
+    },
+    "trace_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+    "canonical_event_type": "tool_execution_started",
+    "canonical_part_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990:tool_part:52",
+    "canonical_seq": 52
+   }
+  }
+ ],
+ "active_turn": {
+  "request_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+  "stream_id": "stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+  "turn_id": "turn_bee8d6e1-4f9b-4463-a76a-532d651bc426",
+  "user_message_id": "user_stream_4f24b656-609a-4ec4-9715-7dffc5c20990",
+  "started_at": "2026-09-24T13:19:33.999Z",
+  "last_event_at": "2026-09-24T13:19:36.798Z",
+  "status": "streaming"
+ }
+}

@@ -31,6 +31,7 @@
     };
 
   var VIRT_THRESHOLD = 80;
+  var VIRT_WEIGHT_THRESHOLD_CHARS = 400000;
   var DEFAULT_ROOT_MARGIN = '2000px 0px';
   var MAX_UNMOUNTS_PER_FRAME = 64;
   var MAX_UNMOUNT_WORK_MS = 8;
@@ -74,6 +75,9 @@
     var threshold = Number.isFinite(Number(options.threshold))
       ? Math.max(0, Number(options.threshold))
       : VIRT_THRESHOLD;
+    var weightThreshold = Number.isFinite(Number(options.weightThreshold))
+      ? Math.max(0, Number(options.weightThreshold))
+      : VIRT_WEIGHT_THRESHOLD_CHARS;
     var configuredRootMargin = typeof options.rootMargin === 'string' && options.rootMargin
       ? options.rootMargin
       : '';
@@ -106,6 +110,7 @@
     var lastDiagnosticAtByEvent = new Map();
     var stats = {
       articles: 0,
+      entryWeight: 0,
       observerFallbacks: 0,
       observeFailures: 0,
       materializedHighWater: 0,
@@ -249,6 +254,8 @@
         strategy: strategy,
         fallbackReason: fallbackReason,
         articles: stats.articles,
+        entryWeight: stats.entryWeight,
+        weightThreshold: weightThreshold,
         materializedArticles: materialized,
         normalMaterializedArticles: Math.max(0, materialized
           - uniquePinnedCount),
@@ -623,9 +630,9 @@
       publishStats('fallback');
     }
 
-    function chooseStrategy(entryCount) {
+    function chooseStrategy(entryCount, entryWeight = 0) {
       if (observerFallbackReason) return STRATEGY_NONE;
-      if (boundsEnabled && entryCount > threshold) return STRATEGY_DOM_WINDOW;
+      if (boundsEnabled && (entryCount > threshold || entryWeight > weightThreshold)) return STRATEGY_DOM_WINDOW;
       if (contentVisibilityEnabled) return STRATEGY_CONTENT_VISIBILITY;
       return STRATEGY_NONE;
     }
@@ -704,8 +711,9 @@
       return true;
     }
 
-    function rebuild() {
+    function rebuild(entryWeight) {
       if (disposed) return;
+      if (entryWeight !== undefined) stats.entryWeight = Number.isSafeInteger(entryWeight) && entryWeight > 0 ? entryWeight : 0;
       var rebuildStartedAt = now();
       entryStore.pruneIndexes();
       var entries = getEntries();
@@ -719,7 +727,7 @@
       layoutWidth = nextLayoutWidth;
       countPinnedExemptions(entries);
       var pinsCountedAt = now();
-      var desiredStrategy = chooseStrategy(entries.length);
+      var desiredStrategy = chooseStrategy(entries.length, stats.entryWeight);
       if (desiredStrategy !== STRATEGY_DOM_WINDOW) {
         disconnectObserver();
         cancelUnmountQueue();

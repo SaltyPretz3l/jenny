@@ -131,7 +131,7 @@ function persistCurrentTextSegment(ctx, options) {
     && turnEventCollector
     && typeof turnEventCollector.retargetCapturedEvents === 'function'
   ) {
-    turnEventCollector.retargetCapturedEvents(streamId, {
+    turnEventCollector.retargetCapturedEvents(ctx.turnId || streamId, {
       phaseIds: reasoningPhaseIds,
       messageId: segmentId,
     });
@@ -160,6 +160,17 @@ function persistCurrentTextSegment(ctx, options) {
       ctx.visibleAssistantMessageId = segmentId;
     }
   }
+  // A persisted segment closes its generation's token-sequence space. The
+  // sidecar restarts `token_index` (sent as `chat.token.sequence`) at 1 for
+  // every generation, and the in-band tool round follows its tools with a
+  // `chat.stream_reset` that resets the dedupe gate -- but the approval-resume
+  // path (`resume_before_tool_dispatch`) continues into the next generation
+  // without one, so a gate still holding this segment's watermark would drop
+  // the continuation's restarted sequences as replays (nothing streams; only
+  // chat.done's authoritative text repairs the transcript). Reset it here so
+  // streaming never depends on the sidecar reset.
+  ctx.appliedTextSequenceGate?.reset();
+  ctx.legacyTextSequence = 0;
   transcriptCollector.resetSlice();
   ctx.textSegmentIndex += 1;
   ctx.currentSegmentText = '';

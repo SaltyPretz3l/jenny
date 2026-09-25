@@ -58,6 +58,9 @@ function createStreamEnvelopeReceiptGate({ log = () => {}, maxStreams = DEFAULT_
   const sentProofByStream = new Map();
   const streamCap = Math.max(1, normalizeInteger(maxStreams) || DEFAULT_MAX_STREAMS);
   let rendererEpoch = 0;
+  let pageLoadId = '';
+  // Superseded page loads never open a sequence again (bounded).
+  const retiredPageLoadIds = new Set();
   let subscriptionMode = 'legacy';
   let proven = false;
 
@@ -86,12 +89,22 @@ function createStreamEnvelopeReceiptGate({ log = () => {}, maxStreams = DEFAULT_
     if (epoch == null || epoch < 1 || (mode !== 'envelope' && mode !== 'legacy')) {
       return revoke('invalid_subscription_epoch');
     }
-    if (rendererEpoch > 0 && epoch <= rendererEpoch) {
+    // A reloaded page restarts its epoch counter while this gate lives as
+    // long as main; a new page-load id opens a new epoch sequence instead of
+    // refusing the page's first subscription as stale.
+    const loadId = normalizeToken(record?.pageLoadId ?? record?.page_load_id).slice(0, 64);
+    const newPage = Boolean(loadId) && loadId !== pageLoadId;
+    if (retiredPageLoadIds.has(loadId) || (!newPage && rendererEpoch > 0 && epoch <= rendererEpoch)) {
       return revoke('stale_subscription_epoch', { rendererEpoch: epoch });
     }
     sentProofByStream.clear();
     proven = false;
     rendererEpoch = epoch;
+    if (newPage && pageLoadId) {
+      retiredPageLoadIds.add(pageLoadId);
+      if (retiredPageLoadIds.size > 16) retiredPageLoadIds.delete(retiredPageLoadIds.values().next().value);
+    }
+    if (loadId) pageLoadId = loadId;
     subscriptionMode = mode;
     emit('INFO', 'chat.stream_envelope_v2_subscription_epoch', {
       rendererEpoch,

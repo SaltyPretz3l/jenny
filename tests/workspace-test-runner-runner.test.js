@@ -16,12 +16,12 @@ const { MAX_TEST_TIMEOUT_MS } = require('../services/workspace-test-runner-confi
 // Minimal fake child + spawn: registers on/once handlers and lets the test drive
 // stdout/stderr/close/error. spawn is synchronous, so emitting AFTER the call
 // reaches the already-registered handlers.
-function makeFakeChild() {
+function makeFakeChild(pid = 0) {
   const bags = { stdout: {}, stderr: {}, child: {} };
   const reg = (bag) => (event, cb) => { (bag[event] = bag[event] || []).push(cb); };
   const fire = (bag, event, ...args) => (bag[event] || []).slice().forEach((cb) => cb(...args));
   const child = {
-    pid: 4242,
+    pid,
     killed: false,
     stdout: { on: reg(bags.stdout) },
     stderr: { on: reg(bags.stderr) },
@@ -63,6 +63,7 @@ test('s1/s2: exit code 0 yields a passed structured result', async () => {
   assert.equal(result.startedAt, new Date(1000).toISOString());
   assert.equal(result.finishedAt, new Date(2500).toISOString());
   assert.equal(result.stdoutTail, 'ok\n', 'the captured tail is exactly what was emitted');
+  assert.equal(result.terminationConfirmed, true);
 });
 
 test('s2: a non-zero exit code maps to failed', async () => {
@@ -84,6 +85,7 @@ test('s2: a spawn that never starts (ENOENT) records error + SPAWN_FAILED', asyn
   assert.equal(result.status, 'error', 'a process that never ran is "error", not "failed"');
   assert.equal(result.errorCode, WORKSPACE_TEST_RUNNER_ERROR_CODES.SPAWN_FAILED);
   assert.equal(result.exitCode, null);
+  assert.equal(result.terminationConfirmed, true);
 });
 
 test('s2: a synchronous spawn throw also records error + SPAWN_FAILED', async () => {
@@ -95,6 +97,7 @@ test('s2: a synchronous spawn throw also records error + SPAWN_FAILED', async ()
   });
   assert.equal(result.status, 'error');
   assert.equal(result.errorCode, WORKSPACE_TEST_RUNNER_ERROR_CODES.SPAWN_FAILED);
+  assert.equal(result.terminationConfirmed, true);
 });
 
 test('s2: a signal-killed child (null exit code) is failed, never passed', async () => {
@@ -108,6 +111,53 @@ test('s2: a signal-killed child (null exit code) is failed, never passed', async
   assert.equal(result.status, 'failed', 'a null exit code (signal kill) is a failure, not a pass');
   assert.equal(result.exitCode, null);
   assert.equal(result.signal, 'SIGKILL');
+  assert.equal(result.terminationConfirmed, true);
+});
+
+test('natural close waits for process-tree confirmation and exposes an unconfirmed retry', async () => {
+  const fc = makeFakeChild(4242);
+  let finishConfirmation;
+  let attempts = 0;
+  const promise = runTestCommand({
+    command: 'npm test',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    killProcessTree: () => {
+      attempts += 1;
+      if (attempts === 1) return new Promise((resolve) => { finishConfirmation = resolve; });
+      return Promise.resolve({ terminated: true, containmentConfirmed: true });
+    },
+  });
+  let settled = false;
+  promise.then(() => { settled = true; });
+  fc.emitClose(0, null);
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  finishConfirmation({ terminated: false });
+  const result = await promise;
+  assert.equal(result.terminationConfirmed, false);
+  assert.equal(typeof result.retryTermination, 'function');
+  assert.deepEqual(await result.retryTermination(), { confirmed: true, warning: '' });
+});
+
+test('root-process exit without containment proof remains uncertain', async () => {
+  const fc = makeFakeChild(4242);
+  const promise = runTestCommand({
+    command: 'npm test',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    killProcessTree: () => ({ terminated: true }),
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.status, 'passed');
+  assert.equal(result.terminationConfirmed, false);
+  assert.equal(result.terminationWarning, 'process_tree_containment_unconfirmed');
+  assert.deepEqual(await result.retryTermination(), {
+    confirmed: false,
+    warning: 'process_tree_containment_unconfirmed',
+  });
 });
 
 test('s14: an already-aborted signal settles as aborted without spawning', async () => {
@@ -124,6 +174,7 @@ test('s14: an already-aborted signal settles as aborted without spawning', async
   });
   assert.equal(result.status, 'aborted');
   assert.equal(spawned, false, 'an already-aborted run never spawns a process');
+  assert.equal(result.terminationConfirmed, true);
 });
 
 test('s14: aborting a live run kills the tree, records aborted, and ignores a later close', async () => {
@@ -137,7 +188,8 @@ test('s14: aborting a live run kills the tree, records aborted, and ignores a la
     spawn: () => fc.child,
     abortSignal: controller.signal,
     now: fixedClock(0, 7),
-    killProcessTree: (child) => { killedChild = child; return { terminated: true }; },
+    killProcessTree: (child) => { killedChild = child;
+      return { terminated: true, containmentConfirmed: true }; },
   });
   controller.abort();
   fc.emitClose(0, null);   // the late close is ignored because the run already settled
@@ -166,7 +218,10 @@ test('wide-016: abort waits for async tree termination confirmation before settl
   await Promise.resolve();
   assert.equal(settled, false, 'the run lock must stay live while tree termination is unconfirmed');
 
-  confirmKill({ terminated: true });
+  confirmKill({ terminated: true, containmentConfirmed: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(settled, false, 'tree exit alone does not prove stdout and stderr readers closed');
   fc.emitClose(null, 'SIGKILL');
   const result = await promise;
   assert.equal(result.status, 'aborted');
@@ -185,7 +240,7 @@ test('wide-016: a failed kill stays unconfirmed and exposes a retry without clai
     killProcessTree: () => {
       killCalls += 1;
       if (killCalls === 1) return Promise.reject(new Error('taskkill failed'));
-      return Promise.resolve({ terminated: true });
+      return Promise.resolve({ terminated: true, containmentConfirmed: true });
     },
   });
 
@@ -195,7 +250,9 @@ test('wide-016: a failed kill stays unconfirmed and exposes a retry without clai
   assert.equal(result.terminationConfirmed, false, 'kill failure cannot masquerade as confirmed tree death');
   assert.equal(result.terminationWarning, 'kill_failed');
   assert.equal(typeof result.retryTermination, 'function');
-  assert.deepEqual(await result.retryTermination(), { confirmed: true });
+  const retry = result.retryTermination();
+  fc.emitClose(null, 'SIGKILL');
+  assert.deepEqual(await retry, { confirmed: true, warning: '' });
   assert.equal(killCalls, 2);
 });
 
@@ -248,13 +305,21 @@ test('s11: a run that exceeds the timeout is killed and recorded as timeout', as
   // RED-BECAUSE: runTestCommand rejects, so no timer/kill path runs.
   const fc = makeFakeChild();
   let killedChild = null;
-  const result = await runTestCommand({
+  let fireTimeout;
+  const resultPromise = runTestCommand({
     command: 'sleep 999',
-    spawn: () => fc.child,                 // never emits close
+    spawn: () => fc.child,
     now: fixedClock(0, 30),
     timeoutMs: 20,
-    killProcessTree: (child) => { killedChild = child; return { terminated: true }; },
+    killProcessTree: (child) => { killedChild = child;
+      return { terminated: true, containmentConfirmed: true }; },
+    setTimeoutImpl: (callback) => { fireTimeout = callback; return { unref() {} }; },
+    clearTimeoutImpl: () => {},
   });
+  fireTimeout();
+  await Promise.resolve();
+  fc.emitClose(null, 'SIGKILL');
+  const result = await resultPromise;
   assert.equal(result.status, 'timeout');
   assert.equal(result.exitCode, null);
   assert.equal(killedChild, fc.child, 'the process tree is killed on timeout');

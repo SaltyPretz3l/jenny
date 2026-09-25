@@ -4,12 +4,18 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
 const { isSensitiveAttachmentPath } = require('./attachment-service');
+const { FileJsonStore } = require('./backend/file-json-store');
+const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./projects/project-schema');
 
 const KNOWLEDGE_FILENAME = 'knowledge.json';
-const KNOWLEDGE_SCHEMA_VERSION = 1;
-// Resource-bounds rule (AGENTS.md §9): cap the registry so the sidecar config
-// payload and the on-disk file cannot grow unbounded from repeated adds.
+const KNOWLEDGE_SCHEMA_VERSION = 2;
+const LEGACY_KNOWLEDGE_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_ROOTS = 32;
+const DEFAULT_MAX_FILE_BYTES = 4 * 1024 * 1024;
+const CURRENT_DOCUMENT_KEYS = Object.freeze(['revision', 'roots', 'schemaVersion']);
+const LEGACY_DOCUMENT_KEYS = Object.freeze(['roots', 'schemaVersion']);
+const CURRENT_ROOT_KEYS = Object.freeze(['addedAt', 'id', 'label', 'path', 'project_id']);
+const LEGACY_ROOT_KEYS = Object.freeze(['addedAt', 'id', 'label', 'path']);
 
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -23,11 +29,26 @@ function defaultRealpath(targetPath) {
 
 function cloneRoot(root = {}) {
   return {
-    id: String(root.id || ''),
-    path: String(root.path || ''),
-    label: String(root.label || ''),
-    addedAt: String(root.addedAt || ''),
+    id: root.id,
+    path: root.path,
+    label: root.label,
+    addedAt: root.addedAt,
+    project_id: root.project_id,
   };
+}
+
+function hasExactKeys(value, expectedKeys) {
+  const keys = Object.keys(value).sort();
+  return keys.length === expectedKeys.length
+    && keys.every((key, index) => key === expectedKeys[index]);
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function emptyDocument(revision = 0) {
+  return { schemaVersion: KNOWLEDGE_SCHEMA_VERSION, revision, roots: [] };
 }
 
 /**
@@ -41,9 +62,11 @@ class KnowledgeService extends EventEmitter {
     userDataPath,
     featureFlagProvider = () => ({}),
     maxRoots = DEFAULT_MAX_ROOTS,
+    maxFileBytes = DEFAULT_MAX_FILE_BYTES,
     logger = null,
     refreshManagedConfig = null,
     fsImpl = fs,
+    store = null,
     realpathImpl = defaultRealpath,
     isSensitivePathImpl = isSensitiveAttachmentPath,
     nowProvider = () => new Date(),
@@ -56,27 +79,36 @@ class KnowledgeService extends EventEmitter {
     this.userDataPath = String(userDataPath);
     this.knowledgePath = path.join(this.userDataPath, KNOWLEDGE_FILENAME);
     this.featureFlagProvider = typeof featureFlagProvider === 'function' ? featureFlagProvider : () => ({});
-    this.maxRoots = Math.max(1, Number(maxRoots) || DEFAULT_MAX_ROOTS);
+    this.maxRoots = Math.min(
+      DEFAULT_MAX_ROOTS,
+      Math.max(1, Math.trunc(Number(maxRoots) || DEFAULT_MAX_ROOTS))
+    );
+    this.maxFileBytes = Math.min(
+      DEFAULT_MAX_FILE_BYTES,
+      Math.max(1, Math.trunc(Number(maxFileBytes) || DEFAULT_MAX_FILE_BYTES))
+    );
     this.logger = typeof logger === 'function' ? logger : null;
     this.refreshManagedConfig = typeof refreshManagedConfig === 'function' ? refreshManagedConfig : null;
     this.fs = fsImpl || fs;
+    this.store = store || new FileJsonStore(this.knowledgePath);
     this.realpathImpl = typeof realpathImpl === 'function' ? realpathImpl : defaultRealpath;
     this.isSensitivePathImpl = typeof isSensitivePathImpl === 'function'
       ? isSensitivePathImpl
       : isSensitiveAttachmentPath;
     this.nowProvider = typeof nowProvider === 'function' ? nowProvider : () => new Date();
     this.idFactory = typeof idFactory === 'function' ? idFactory : () => `kbroot_${crypto.randomUUID()}`;
-    // Lazy-load: roots hydrate from disk on first access, never at construction
+    // Lazy-load: the registry hydrates from disk on first access, never at construction
     // (flag-off construction must not touch the filesystem).
-    this._roots = null;
+    this._document = null;
     this._readOnlyReason = '';
   }
 
   _log(level, event, details = {}) {
-    if (!this.logger) {
-      return;
+    try {
+      this.logger?.(level, event, details);
+    } catch (_error) {
+      // Diagnostics cannot alter registry behavior.
     }
-    this.logger(level, event, details);
   }
 
   _isFeatureEnabled() {
@@ -89,92 +121,176 @@ class KnowledgeService extends EventEmitter {
     return flags.knowledge_layer === true;
   }
 
-  // Load + normalize persisted roots. Corrupt JSON or an unknown FUTURE
-  // schemaVersion loads empty + warns; never throws.
-  _loadRoots() {
-    let raw;
+  _setReadOnly(reason, event, details = {}) {
+    this._readOnlyReason = reason;
+    this._log('WARN', event, { reason, ...details });
+    return emptyDocument();
+  }
+
+  _readRawFile() {
+    let stats;
     try {
-      raw = this.fs.readFileSync(this.knowledgePath, 'utf8');
+      stats = this.fs.statSync(this.knowledgePath);
     } catch (error) {
-      if (error && error.code !== 'ENOENT') {
-        this._log('WARN', 'knowledge.read_failed', {
-          message: normalizeString(error.message) || 'knowledge.json could not be read.',
-          code: normalizeString(error.code),
-        });
-      }
-      return [];
+      if (error?.code === 'ENOENT') return { missing: true, raw: '' };
+      return { error, missing: false, raw: '' };
     }
+    if (!stats.isFile() || stats.size > this.maxFileBytes) {
+      return {
+        oversized: stats.isFile() && stats.size > this.maxFileBytes,
+        invalidType: !stats.isFile(),
+      };
+    }
+    try {
+      const raw = this.fs.readFileSync(this.knowledgePath, 'utf8');
+      if (Buffer.byteLength(raw, 'utf8') > this.maxFileBytes) return { oversized: true };
+      return { missing: false, raw };
+    } catch (error) {
+      return { error, missing: false, raw: '' };
+    }
+  }
+
+  _loadDocument() {
+    const read = this._readRawFile();
+    if (read.missing) return emptyDocument();
+    if (read.oversized) {
+      return this._setReadOnly('file_too_large', 'knowledge.file_too_large', {
+        maxBytes: this.maxFileBytes,
+      });
+    }
+    if (read.invalidType || read.error) {
+      return this._setReadOnly('read_failed', 'knowledge.read_failed', {
+        code: normalizeString(read.error?.code),
+        message: normalizeString(read.error?.message).slice(0, 240),
+      });
+    }
+
     let payload;
     try {
-      payload = JSON.parse(raw);
+      payload = JSON.parse(read.raw);
     } catch (_error) {
-      this._log('WARN', 'knowledge.corrupt_json', {
-        message: 'knowledge.json is malformed; loading an empty registry.',
-      });
-      return [];
+      return this._setReadOnly('malformed_json', 'knowledge.malformed_json');
     }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      this._log('WARN', 'knowledge.corrupt_json', {
-        message: 'knowledge.json is not an object; loading an empty registry.',
-      });
-      return [];
+    if (!isPlainObject(payload) || !Number.isSafeInteger(payload.schemaVersion)) {
+      return this._setReadOnly('invalid_schema', 'knowledge.invalid_schema');
     }
-    const version = Number(payload.schemaVersion);
-    if (Number.isFinite(version) && version > KNOWLEDGE_SCHEMA_VERSION) {
-      this._readOnlyReason = 'schema_too_new';
-      this._log('WARN', 'knowledge.schema_too_new', {
-        message: 'knowledge.json schemaVersion is newer than this build supports; loading an empty registry.',
-        foundVersion: version,
+    if (payload.schemaVersion > KNOWLEDGE_SCHEMA_VERSION) {
+      return this._setReadOnly('schema_too_new', 'knowledge.schema_too_new', {
+        foundVersion: payload.schemaVersion,
         supportedVersion: KNOWLEDGE_SCHEMA_VERSION,
       });
-      return [];
     }
-    const sourceRoots = Array.isArray(payload.roots) ? payload.roots : [];
-    const roots = [];
-    for (const [index, entry] of sourceRoots.entries()) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        this._log('WARN', 'knowledge.persisted_root_rejected', {
-          index,
-          reason: 'invalid_entry',
-        });
-        continue;
+    if (payload.schemaVersion === LEGACY_KNOWLEDGE_SCHEMA_VERSION) {
+      const legacy = this._validateDocument(payload, { legacy: true });
+      if (!legacy.ok) {
+        return this._setReadOnly(legacy.reason, 'knowledge.invalid_legacy_schema');
       }
-      // A persisted root on a disconnected drive must survive reloads, so a
-      // missing path is kept as stored; everything else is validated like addFolder.
-      const normalized = this._normalizeRootPath(entry.path, roots, { allowMissing: true });
-      if (!normalized.ok) {
-        this._log('WARN', 'knowledge.persisted_root_rejected', {
-          index,
-          reason: normalized.reason,
+      const migrated = {
+        schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+        revision: 1,
+        roots: legacy.roots.map((root) => ({ ...root, project_id: GENERAL_PROJECT_ID })),
+      };
+      try {
+        this._persistDocument(migrated);
+      } catch (error) {
+        return this._setReadOnly('migration_write_failed', 'knowledge.migration_write_failed', {
+          message: normalizeString(error?.message).slice(0, 240),
         });
-        continue;
       }
-      const id = normalizeString(entry.id) || this.idFactory();
-      if (roots.some((root) => root.id === id)) {
-        this._log('WARN', 'knowledge.persisted_root_rejected', {
-          index,
-          reason: 'duplicate_id',
-        });
-        continue;
-      }
-      roots.push({
-        id,
-        path: normalized.path,
-        label: normalizeString(entry.label),
-        addedAt: normalizeString(entry.addedAt),
+      return migrated;
+    }
+    if (payload.schemaVersion !== KNOWLEDGE_SCHEMA_VERSION) {
+      return this._setReadOnly('unsupported_schema', 'knowledge.unsupported_schema', {
+        foundVersion: payload.schemaVersion,
       });
     }
-    return roots;
+    const current = this._validateDocument(payload);
+    if (!current.ok) return this._setReadOnly(current.reason, 'knowledge.invalid_schema');
+    return current.document;
   }
 
-  _ensureRoots() {
-    if (this._roots === null) {
-      this._roots = this._loadRoots();
+  _validateDocument(payload, { legacy = false } = {}) {
+    const expectedDocumentKeys = legacy ? LEGACY_DOCUMENT_KEYS : CURRENT_DOCUMENT_KEYS;
+    if (!isPlainObject(payload)
+      || !hasExactKeys(payload, expectedDocumentKeys)
+      || !Array.isArray(payload.roots)
+      || payload.roots.length > this.maxRoots
+      || (!legacy && (!Number.isSafeInteger(payload.revision) || payload.revision < 0))) {
+      return { ok: false, reason: 'invalid_schema' };
     }
-    return this._roots;
+    const roots = [];
+    const ids = new Set();
+    const projectPaths = new Set();
+    for (const entry of payload.roots) {
+      const expectedRootKeys = legacy ? LEGACY_ROOT_KEYS : CURRENT_ROOT_KEYS;
+      if (!isPlainObject(entry) || !hasExactKeys(entry, expectedRootKeys)) {
+        return { ok: false, reason: 'invalid_schema' };
+      }
+      const id = normalizeString(entry.id);
+      const projectId = legacy ? GENERAL_PROJECT_ID : normalizeProjectId(entry.project_id);
+      if (!id || id !== entry.id || ids.has(id)
+        || typeof entry.label !== 'string'
+        || typeof entry.addedAt !== 'string'
+        || (!legacy && (!projectId || projectId !== entry.project_id))) {
+        return { ok: false, reason: 'invalid_schema' };
+      }
+      const normalized = this._normalizeRootPath(entry.path, roots, {
+        allowMissing: true,
+        projectId,
+        enforceLimit: false,
+      });
+      const projectPathKey = `${projectId}\u0000${normalized.path || ''}`;
+      if (!normalized.ok
+        || (!legacy && normalized.path !== entry.path)
+        || projectPaths.has(projectPathKey)) {
+        return { ok: false, reason: 'invalid_schema' };
+      }
+      ids.add(id);
+      projectPaths.add(projectPathKey);
+      roots.push({
+        id: entry.id,
+        path: normalized.path,
+        label: entry.label,
+        addedAt: entry.addedAt,
+        ...(legacy ? {} : { project_id: entry.project_id }),
+      });
+    }
+    if (legacy) return { ok: true, roots };
+    return {
+      ok: true,
+      document: { schemaVersion: KNOWLEDGE_SCHEMA_VERSION, revision: payload.revision, roots },
+    };
   }
 
-  _normalizeRootPath(inputPath, roots, { allowMissing = false } = {}) {
+  _ensureDocument() {
+    if (this._document === null) this._document = this._loadDocument();
+    return this._document;
+  }
+
+  _resolveProjectId(projectId) {
+    if (projectId === undefined) return { ok: true, projectId: GENERAL_PROJECT_ID };
+    const normalized = normalizeProjectId(projectId);
+    return normalized
+      ? { ok: true, projectId: normalized }
+      : { ok: false, reason: 'invalid_project_id' };
+  }
+
+  _validateExpectedRevision(expectedRevision, currentRevision) {
+    if (expectedRevision === undefined) return { ok: true };
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      return { ok: false, reason: 'invalid_expected_revision' };
+    }
+    if (expectedRevision !== currentRevision) {
+      return { ok: false, reason: 'stale_revision', current_revision: currentRevision };
+    }
+    return { ok: true };
+  }
+
+  _normalizeRootPath(
+    inputPath,
+    roots,
+    { allowMissing = false, projectId = GENERAL_PROJECT_ID, enforceLimit = true } = {}
+  ) {
     const candidate = normalizeString(inputPath);
     if (!candidate || !path.isAbsolute(candidate)) {
       return { ok: false, reason: 'invalid_path' };
@@ -206,32 +322,37 @@ class KnowledgeService extends EventEmitter {
         return { ok: false, reason: 'not_a_directory' };
       }
     }
-    if (roots.some((root) => root.path === realPath)) {
+    if (roots.some((root) => root.project_id === projectId && root.path === realPath)) {
       return { ok: false, reason: 'duplicate' };
     }
-    if (roots.length >= this.maxRoots) {
+    if (enforceLimit && roots.length >= this.maxRoots) {
       return { ok: false, reason: 'limit_reached' };
     }
     return { ok: true, path: realPath };
   }
 
-  _persist(roots) {
-    const payload = {
-      schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
-      roots: roots.map((root) => ({
-        id: root.id,
-        path: root.path,
-        label: root.label,
-        addedAt: root.addedAt,
-      })),
-    };
-    this.fs.mkdirSync(this.userDataPath, { recursive: true });
-    this.fs.writeFileSync(this.knowledgePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  _persistDocument(document) {
+    const bytes = JSON.stringify(document, null, 2);
+    if (Buffer.byteLength(bytes, 'utf8') > this.maxFileBytes) {
+      const error = new Error('Knowledge registry exceeds its serialized byte bound.');
+      error.code = 'file_too_large';
+      throw error;
+    }
+    const result = this.store.write(document);
+    if (result?.durable !== true) {
+      const error = new Error('Knowledge registry persistence was not durable.');
+      error.code = 'durability_deferred';
+      throw error;
+    }
   }
 
-  _emitChanged(reason) {
-    const snapshot = this.getStateSnapshot();
-    this.emit('changed', snapshot, { reason });
+  _nextRevision(document) {
+    return document.revision < Number.MAX_SAFE_INTEGER ? document.revision + 1 : null;
+  }
+
+  _emitChanged(reason, projectId) {
+    const snapshot = this.getStateSnapshot({ projectId });
+    this.emit('changed', snapshot, { reason, projectId, revision: snapshot.revision });
     if (this.refreshManagedConfig) {
       // Publish the updated roots into the managed-sidecar config channel.
       // Mirrors McpDiscoveryService.refresh(): a structured failure inside the
@@ -245,74 +366,117 @@ class KnowledgeService extends EventEmitter {
     }
   }
 
-  addFolder({ path: inputPath, label } = {}) {
-    if (!this._isFeatureEnabled()) {
-      return { ok: false, reason: 'feature_disabled' };
+  addFolder({ path: inputPath, label, projectId, expectedRevision } = {}) {
+    if (!this._isFeatureEnabled()) return { ok: false, reason: 'feature_disabled' };
+    const scope = this._resolveProjectId(projectId);
+    if (!scope.ok) return scope;
+    const document = this._ensureDocument();
+    if (this._readOnlyReason) return { ok: false, reason: this._readOnlyReason };
+    const revisionCheck = this._validateExpectedRevision(expectedRevision, document.revision);
+    if (!revisionCheck.ok) return revisionCheck;
+    const normalized = this._normalizeRootPath(inputPath, document.roots, {
+      projectId: scope.projectId,
+    });
+    if (!normalized.ok) return normalized;
+    const id = normalizeString(this.idFactory());
+    if (!id || document.roots.some((root) => root.id === id)) {
+      return { ok: false, reason: 'id_conflict' };
     }
-    const roots = this._ensureRoots();
-    if (this._readOnlyReason) {
-      return { ok: false, reason: this._readOnlyReason };
-    }
-    const normalized = this._normalizeRootPath(inputPath, roots);
-    if (!normalized.ok) {
-      return normalized;
-    }
+    const revision = this._nextRevision(document);
+    if (revision === null) return { ok: false, reason: 'revision_exhausted' };
     const root = {
-      id: this.idFactory(),
+      id,
       path: normalized.path,
       label: normalizeString(label),
       addedAt: this.nowProvider().toISOString(),
+      project_id: scope.projectId,
     };
-    const nextRoots = [...roots, root];
-    this._persist(nextRoots);
-    this._roots = nextRoots;
-    this._emitChanged('knowledge_root_added');
+    const nextDocument = { ...document, revision, roots: [...document.roots, root] };
+    try {
+      this._persistDocument(nextDocument);
+    } catch (error) {
+      if (error?.code === 'file_too_large') return { ok: false, reason: 'file_too_large' };
+      throw error;
+    }
+    this._document = nextDocument;
+    this._emitChanged('knowledge_root_added', scope.projectId);
     return { ok: true, root: cloneRoot(root) };
   }
 
-  removeFolder({ id } = {}) {
-    if (!this._isFeatureEnabled()) {
-      return { ok: false, reason: 'feature_disabled' };
-    }
+  removeFolder({ id, projectId, expectedRevision } = {}) {
+    if (!this._isFeatureEnabled()) return { ok: false, reason: 'feature_disabled' };
+    const scope = this._resolveProjectId(projectId);
+    if (!scope.ok) return scope;
     const targetId = normalizeString(id);
-    const roots = this._ensureRoots();
-    if (this._readOnlyReason) {
-      return { ok: false, reason: this._readOnlyReason };
-    }
-    const index = roots.findIndex((root) => root.id === targetId);
-    if (index === -1) {
-      return { ok: false, reason: 'not_found' };
-    }
-    const nextRoots = [...roots.slice(0, index), ...roots.slice(index + 1)];
-    this._persist(nextRoots);
-    this._roots = nextRoots;
-    this._emitChanged('knowledge_root_removed');
+    const document = this._ensureDocument();
+    if (this._readOnlyReason) return { ok: false, reason: this._readOnlyReason };
+    const revisionCheck = this._validateExpectedRevision(expectedRevision, document.revision);
+    if (!revisionCheck.ok) return revisionCheck;
+    const index = document.roots.findIndex(
+      (root) => root.id === targetId && root.project_id === scope.projectId
+    );
+    if (index === -1) return { ok: false, reason: 'not_found' };
+    const revision = this._nextRevision(document);
+    if (revision === null) return { ok: false, reason: 'revision_exhausted' };
+    const nextDocument = {
+      ...document,
+      revision,
+      roots: [...document.roots.slice(0, index), ...document.roots.slice(index + 1)],
+    };
+    this._persistDocument(nextDocument);
+    this._document = nextDocument;
+    this._emitChanged('knowledge_root_removed', scope.projectId);
     return { ok: true };
   }
 
-  getStateSnapshot() {
+  getStateSnapshot({ projectId } = {}) {
     const enabled = this._isFeatureEnabled();
-    if (!enabled) {
-      return { schemaVersion: KNOWLEDGE_SCHEMA_VERSION, roots: [], enabled: false };
+    const scope = this._resolveProjectId(projectId);
+    if (!enabled || !scope.ok) {
+      return {
+        schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+        revision: 0,
+        roots: [],
+        enabled,
+        projectId: scope.ok ? scope.projectId : '',
+        readOnly: false,
+        reason: scope.ok ? null : scope.reason,
+      };
     }
+    const document = this._ensureDocument();
     return {
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
-      roots: this._ensureRoots().map((root) => cloneRoot(root)),
+      revision: document.revision,
+      roots: this._readOnlyReason
+        ? []
+        : document.roots
+          .filter((root) => root.project_id === scope.projectId)
+          .map((root) => cloneRoot(root)),
       enabled: true,
+      projectId: scope.projectId,
+      readOnly: Boolean(this._readOnlyReason),
+      reason: this._readOnlyReason || null,
     };
   }
 
   // Contribution merged into the managed-sidecar config payload. Enabled only
   // when the flag is on AND the user opted in by registering a folder. Roots
   // are absolute realpaths (paths, not secrets — CONFIG channel, not safeStorage).
-  getSidecarConfig() {
+  getSidecarConfig({ projectId } = {}) {
     if (!this._isFeatureEnabled()) {
       return { tools_knowledge_enabled: false, knowledge_roots: [] };
     }
-    const knowledgeRoots = this._ensureRoots().map((root) => root.path);
+    const scope = this._resolveProjectId(projectId);
+    if (!scope.ok) return { tools_knowledge_enabled: false, knowledge_roots: [] };
+    const document = this._ensureDocument();
+    const knowledgeRoots = this._readOnlyReason
+      ? []
+      : document.roots
+        .filter((root) => root.project_id === scope.projectId)
+        .map((root) => root.path);
     return {
       tools_knowledge_enabled: knowledgeRoots.length > 0,
-      knowledge_roots: knowledgeRoots,
+      knowledge_roots: [...knowledgeRoots],
     };
   }
 }
@@ -321,5 +485,6 @@ module.exports = {
   KNOWLEDGE_FILENAME,
   KNOWLEDGE_SCHEMA_VERSION,
   DEFAULT_MAX_ROOTS,
+  DEFAULT_MAX_FILE_BYTES,
   KnowledgeService,
 };

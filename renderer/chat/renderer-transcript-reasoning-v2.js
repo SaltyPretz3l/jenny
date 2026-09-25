@@ -36,6 +36,19 @@
     summaryFromEntries,
   } = sharedUtils || {};
 
+  // FNV-1a over a settled phase's own visible inputs. Semantic, not the
+  // markup (per-render ids) and not the step name (it depends on how many
+  // phases the rendering scope holds), so an unchanged sibling phase matches.
+  function fingerprintSettledPhase(parts) {
+    let hash = 0x811c9dc5;
+    const text = parts.join('\u0000');
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
   // generation_runtime.py's hardcoded transition_phase summary.
   const GENERIC_PHASE_SUMMARY = jt('chat.reasoning.genericPhaseSummary', 'reasoning through the turn');
   const REASONING_STREAM_STATE_CACHE_LIMIT = 8;
@@ -54,12 +67,16 @@
     return cached;
   }
 
-  function setCachedStreamState(cacheKey, streamModel, liveWindowStart) {
+  function setCachedStreamState(cacheKey, streamModel, liveWindowStart, previousElidedChars) {
     streamStateCache.delete(cacheKey);
+    // Keep the historical maximum: a frame whose tail unit alone exceeds the
+    // window elides nothing, and that dip must not lower the floor for later frames.
+    const elidedChars = (streamModel.units || []).slice(0, liveWindowStart).reduce((total, unit) => total + String(unit?.html || '').length, 0);
     streamStateCache.set(cacheKey, {
       units: streamModel.units,
       streamState: streamModel.streamState,
       liveWindowStart: liveWindowStart || 0,
+      liveWindowElidedChars: Math.max(elidedChars, Number(previousElidedChars) || 0),
     });
     if (streamStateCache.size > REASONING_STREAM_STATE_CACHE_LIMIT) {
       streamStateCache.delete(streamStateCache.keys().next().value);
@@ -122,6 +139,40 @@
       shouldShowThinkingToggle,
       thinkingController,
     } = deps || {};
+    const settledBodyCache = new Map();
+    const settledBodyCacheLimit = 32;
+    let settledBodyContext = [];
+
+    function renderSettledBody(cacheKey, markdown) {
+      // The composition wrapper resolves markdownUtils at call time. Table
+      // labels can change even when a catalog reload keeps the same locale.
+      const context = [
+        globalThis.markdownUtils?.renderMarkdown,
+        globalThis.markdownInlinePaths?.decorateInlinePathChips,
+        globalThis.inventoryActionButton,
+        typeof document !== 'undefined' ? document : null,
+        jt('markdown.table.copyLabel', 'Copy table as tab-separated values'),
+        jt('common.copy', 'Copy'),
+      ];
+      if (context.some((value, index) => value !== settledBodyContext[index])) {
+        settledBodyCache.clear();
+        settledBodyContext = context;
+      }
+      const cached = settledBodyCache.get(cacheKey);
+      if (cached && cached.markdown === markdown) return cached.html;
+      const html = renderMarkdown(markdown, { mermaid: 'plain' });
+      settledBodyCache.delete(cacheKey);
+      // Fenced code depends on private Monaco warm-up/grammar state and,
+      // for collapsible blocks, a private generated-ID counter. Neither has
+      // an observable revision, so preserve fresh rendering for those bodies.
+      if (!/<pre(?:\s|>)/i.test(html)) {
+        settledBodyCache.set(cacheKey, { markdown, html });
+        if (settledBodyCache.size > settledBodyCacheLimit) {
+          settledBodyCache.delete(settledBodyCache.keys().next().value);
+        }
+      }
+      return html;
+    }
 
     function renderPhase({
       message,
@@ -148,6 +199,7 @@
       const isPhaseStreaming = isStreamingTail && status === 'streaming';
       const streamCacheKey = `${String(message?.id || '')}::${phaseKey}`;
       if (!isPhaseStreaming) streamStateCache.delete(streamCacheKey);
+      else settledBodyCache.delete(streamCacheKey);
       const tone = reasoningStatusTone(status, { isStreaming: isPhaseStreaming });
       const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming });
       const expanded = thinkingController.isPhaseExpanded(message.id, phaseKey, autoExpand);
@@ -209,11 +261,13 @@
           }
           // Trailing live window: earlier units become empty placeholders once
           // the body outgrows the window (see resolveLiveWindowStart); the
-          // start is threaded through the stream cache so it never retracts.
+          // elided character count is threaded through the cache so it never retracts.
           const liveWindowStart = typeof resolveLiveWindowStart === 'function'
-            ? resolveLiveWindowStart(streamModel.units, cached ? cached.liveWindowStart : 0)
+            ? resolveLiveWindowStart(streamModel.units, cached ? cached.liveWindowStart : 0, {
+              previousElidedChars: cached ? cached.liveWindowElidedChars : 0,
+            })
             : 0;
-          setCachedStreamState(streamCacheKey, streamModel, liveWindowStart);
+          setCachedStreamState(streamCacheKey, streamModel, liveWindowStart, cached ? cached.liveWindowElidedChars : 0);
           bodyHtml = streamModel.html;
           // Wrap each markdown unit so the live patch can reveal only newly
           // appended units (soft-landing) instead of replacing the whole body
@@ -233,7 +287,7 @@
               .join('');
           }
         } else {
-          bodyHtml = renderMarkdown(bodyMarkdown, { mermaid: 'plain' });
+          bodyHtml = renderSettledBody(streamCacheKey, bodyMarkdown);
         }
       }
       // Gate panel-open on the flat body's presence (bodyHtml); render the
@@ -279,6 +333,9 @@
       const ariaLabel = groupCount > 1
         ? jt('chat.reasoning.toggleStep', 'Toggle reasoning step {step}', { step: iteration })
         : jt('chat.reasoning.toggle', 'Toggle reasoning');
+      const settledFingerprint = isPhaseStreaming
+        ? ''
+        : fingerprintSettledPhase([status, headerLabel, secondaryMeta, bodyMarkdown]);
 
       return `
         <div
@@ -286,7 +343,8 @@
           data-reasoning-status="${escapeHtml(status)}"${isPhaseStreaming ? ' data-reasoning-live-tail="true"' : ''}
           data-reasoning-iteration="${escapeHtml(String(iteration))}"
           data-thinking-id="${escapeHtml(thinkingId)}"
-          data-phase-key="${escapeHtml(phaseKey)}"
+          data-phase-key="${escapeHtml(phaseKey)}"${settledFingerprint ? `
+          data-reasoning-fp="${settledFingerprint}"` : ''}
         >
           <button
             class="reasoning-row-header"

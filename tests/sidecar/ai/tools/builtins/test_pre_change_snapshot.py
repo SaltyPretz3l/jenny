@@ -40,6 +40,73 @@ def test_capture_dedupes_existing_snapshot(tmp_path: Path) -> None:
     assert len(list(tmp_path.glob("*.snap"))) == 1
 
 
+def test_capture_repairs_wrong_bytes_at_hash_path(tmp_path: Path) -> None:
+    normalized = "expected\n"
+    hash_value = structured_diff.sha256_text(normalized)
+    snapshot_path = _snapshot_path(tmp_path, hash_value)
+    snapshot_path.write_bytes(b"wrong bytes\n")
+
+    result = pre_change_snapshot.capture(str(tmp_path), "notes.txt", normalized)
+
+    assert result == {"stored": True, "hash": hash_value, "deduped": False}
+    assert snapshot_path.read_bytes() == normalized.encode("utf-8")
+
+
+def test_capture_does_not_endorse_or_touch_directory_at_hash_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized = "expected\n"
+    hash_value = structured_diff.sha256_text(normalized)
+    snapshot_path = _snapshot_path(tmp_path, hash_value)
+    snapshot_path.mkdir()
+    touched: list[object] = []
+
+    def record_utime(path: object, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        touched.append(path)
+
+    monkeypatch.setattr(pre_change_snapshot.os, "utime", record_utime)
+
+    result = pre_change_snapshot.capture(str(tmp_path), "notes.txt", normalized)
+
+    assert result.get("deduped") is not True
+    assert result["stored"] is False
+    assert touched == []
+    assert snapshot_path.is_dir()
+
+
+def test_capture_does_not_follow_symlink_at_hash_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized = "expected\n"
+    hash_value = structured_diff.sha256_text(normalized)
+    snapshot_path = _snapshot_path(tmp_path, hash_value)
+    symlink_target = tmp_path / "outside.snap"
+    symlink_target.write_bytes(b"wrong target bytes\n")
+    try:
+        snapshot_path.symlink_to(symlink_target)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+    touched: list[object] = []
+
+    def record_utime(path: object, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        touched.append(path)
+
+    monkeypatch.setattr(pre_change_snapshot.os, "utime", record_utime)
+
+    result = pre_change_snapshot.capture(str(tmp_path), "notes.txt", normalized)
+
+    assert result.get("deduped") is not True
+    assert touched == []
+    assert symlink_target.read_bytes() == b"wrong target bytes\n"
+    if result["stored"] is True:
+        assert snapshot_path.is_symlink() is False
+        assert snapshot_path.read_bytes() == normalized.encode("utf-8")
+
+
 def test_capture_rejects_too_large_text(tmp_path: Path) -> None:
     result = pre_change_snapshot.capture(
         str(tmp_path),

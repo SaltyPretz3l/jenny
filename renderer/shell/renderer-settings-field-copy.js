@@ -46,7 +46,19 @@
       sectionId: 'tools',
       keywords: ['unattended', 'idle', 'away', jt('settings.fieldCopy.unattendedGuardMinutesInput.keywords.autoMode', 'auto mode'), 'pause'],
     },
+    autoApproveStreakCapInput: {
+      label: jt('settings.autoApproveStreakCap.label', 'Auto-approval streak cap'),
+      description: jt('settings.autoApproveStreakCap.description', 'In Auto mode, ask once after this many consecutive automatic approvals in a turn. 0 turns the cap off.'),
+      sectionId: 'tools',
+      keywords: ['auto', 'approval', 'streak', 'cap', 'limit', jt('settings.fieldCopy.autoApproveStreakCapInput.keywords.turn', 'turn')],
+    },
     // ── Context ──────────────────────────────────────────────────────────
+    modelStartupLoadToggle: {
+      label: jt('settings.models.startupLoad.label', 'Load model at startup'),
+      description: jt('settings.models.startupLoad.description', 'On: your last-used local model loads when Jenny starts. Off: it loads with your first message.'),
+      sectionId: 'models',
+      keywords: ['startup', 'launch', 'lazy', 'message', 'warm', 'vram'],
+    },
     contextHistoryScopeSelect: {
       label: jt('settings.fieldCopy.contextHistoryScopeSelect.label', 'History scope'),
       description: jt('settings.fieldCopy.contextHistoryScopeSelect.description', 'How much of this conversation rides along with your next message.'),

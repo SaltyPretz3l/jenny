@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFile, execFileSync, spawnSync } = require('child_process');
 
 const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
 
@@ -107,13 +107,7 @@ function probeCapabilities(options = {}) {
     return cached.result;
   }
 
-  const execOptions = {
-    timeout: 10_000,
-    maxBuffer: 4 * 1024 * 1024,
-    windowsHide: true,
-    encoding: 'utf8',
-    env: sanitizeSpawnEnv(process.env),
-  };
+  const execOptions = probeExecOptions();
   let helpText;
   try {
     helpText = execFileSyncImpl(binaryPath, ['--help'], execOptions);
@@ -133,20 +127,99 @@ function probeCapabilities(options = {}) {
     /* provenance is best-effort; the help parse is the authority */
   }
 
+  return cacheResult(binaryPath, signature, probedResult(helpText, versionText));
+}
+
+function probeExecOptions() {
+  return {
+    timeout: 10_000,
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+    encoding: 'utf8',
+    env: sanitizeSpawnEnv(process.env),
+  };
+}
+
+function probedResult(helpText, versionText) {
   const specTypes = parseSpecTypeValues(helpText);
   const { build, commit } = parseServerBuild(versionText);
-  return cacheResult(binaryPath, signature, {
+  return {
     ok: true,
     specTypes,
     supportsMtp: specTypes.includes('draft-mtp'),
     build,
     commit,
     reason: 'probed',
+  };
+}
+
+function execFileResult(execFileImpl, binaryPath, args, options) {
+  return new Promise((resolve) => {
+    try {
+      execFileImpl(binaryPath, args, options, (error, stdout, stderr) => {
+        resolve({ error: error || null, stdout: String(stdout || ''), stderr: String(stderr || '') });
+      });
+    } catch (error) {
+      resolve({ error, stdout: '', stderr: '' });
+    }
   });
+}
+
+// Non-blocking twin of probeCapabilities for main-process IPC (the runtime
+// picker): same commands, parse and cache, so a later launch-time probe of the
+// same unchanged binary spawns nothing. `retryFailed` re-probes a cached
+// failure only (a first run slowed by an antivirus scan), never a success.
+async function probeCapabilitiesAsync(options = {}) {
+  const source = options && typeof options === 'object' ? options : {};
+  const binaryPath = source.binaryPath;
+  const execFileImpl = source.execFileImpl || execFile;
+  const fsImpl = source.fsImpl || fs;
+  if (typeof binaryPath !== 'string' || !binaryPath.trim()) {
+    return failedResult('no_binary');
+  }
+  let stat;
+  try {
+    stat = fsImpl.statSync(binaryPath);
+  } catch (_error) {
+    return failedResult('no_binary');
+  }
+  const signature = `${stat.mtimeMs}:${stat.size}`;
+  const cached = capabilityCache.get(binaryPath);
+  if (cached && cached.signature === signature && (cached.result.ok || source.retryFailed !== true)) {
+    return cached.result;
+  }
+  const execOptions = probeExecOptions();
+  const help = await execFileResult(execFileImpl, binaryPath, ['--help'], execOptions);
+  if (help.error) {
+    return cacheResult(binaryPath, signature, failedResult('exec_error'));
+  }
+  // The banner goes to STDERR with exit 0; the callback sees both streams.
+  const version = await execFileResult(execFileImpl, binaryPath, ['--version'], execOptions);
+  return cacheResult(binaryPath, signature, probedResult(help.stdout, version.stdout + version.stderr));
+}
+
+// The cached probe of an unchanged binary, or null. Never spawns: status
+// labels read it on every poll.
+function peekCapabilities(binaryPath, { fsImpl = fs } = {}) {
+  if (typeof binaryPath !== 'string' || !binaryPath.trim()) {
+    return null;
+  }
+  const cached = capabilityCache.get(binaryPath);
+  if (!cached) {
+    return null;
+  }
+  try {
+    const stat = fsImpl.statSync(binaryPath);
+    return cached.signature === `${stat.mtimeMs}:${stat.size}` ? cached.result : null;
+  } catch (_error) {
+    return null;
+  }
 }
 
 module.exports = {
   parseSpecTypeValues,
   parseServerBuild,
+  peekCapabilities,
   probeCapabilities,
+  probeCapabilitiesAsync,
 };

@@ -116,7 +116,7 @@ function sendInput(overrides = {}) {
     prompt: 'hello from phone',
     requestId: 'request_1',
     hasGrant: (id) => id === 'session_1',
-    lease: { device_id: 'device_1', session_id: 'session_1' },
+    lease: { lease_id: 'lease_1', device_id: 'device_1', session_id: 'session_1' },
     ...overrides,
   };
 }
@@ -196,6 +196,44 @@ test('validator rejection surfaces as invalid_request before backend start', asy
   assert.equal(result.detail, 'forced_invalid');
   assert.equal(validations(), 1);
   assert.equal(backend.startCalls.length, 0);
+});
+
+test('send rechecks command authority and the live lease after payload preflight', async () => {
+  let currentLease = {
+    lease_id: 'lease_1', device_id: 'device_1', session_id: 'session_1',
+  };
+  const leases = {
+    controllerOf: () => 'device_1',
+    leaseFor: () => currentLease,
+  };
+  const revoked = createAdapter(undefined, {
+    leases,
+    validate(value) {
+      currentLease = null;
+      return validateChatStartPayload(value);
+    },
+  });
+  const revokedResult = await revoked.adapter.send(sendInput({ isAuthorized: () => true }));
+  assert.equal(revokedResult.error, 'unauthorized');
+  assert.equal(revoked.backend.startCalls.length, 0);
+
+  let authorized = true;
+  currentLease = {
+    lease_id: 'lease_1', device_id: 'device_1', session_id: 'session_1',
+  };
+  const denied = createAdapter(undefined, {
+    leases,
+    validate(value) {
+      authorized = false;
+      return validateChatStartPayload(value);
+    },
+  });
+  const deniedResult = await denied.adapter.send(sendInput({
+    requestId: 'request_denied',
+    isAuthorized: () => authorized,
+  }));
+  assert.equal(deniedResult.error, 'unauthorized');
+  assert.equal(denied.backend.startCalls.length, 0);
 });
 
 test('unshared, lockdown, and busy sends map to bounded remote errors', async () => {

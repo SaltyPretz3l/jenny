@@ -184,6 +184,64 @@ function buildResumePayload(session) {
   };
 }
 
+function journalEventMatchesAttempt(event, turnId, streamId) {
+  const eventId = String(event?.event_id || '');
+  return String(event?.turn_id || '').trim() === turnId
+    && (eventId.startsWith(`${streamId}:`) || eventId.endsWith(`:${streamId}`));
+}
+
+function hasDurableTurnEventCommit(result) {
+  return Boolean(result?.ok === true && result.durable === true
+    && Number.isSafeInteger(result.commitEpoch) && result.commitEpoch > 0
+    && Number.isSafeInteger(result.durableEpoch) && result.durableEpoch >= result.commitEpoch);
+}
+
+function recoverCheckpointTurnEventJournal({ sessionStore, journal, recoveryFence } = {}) {
+  if (!sessionStore || typeof sessionStore.getSession !== 'function'
+    || typeof sessionStore.appendTurnEvents !== 'function'
+    || !journal || typeof journal.list !== 'function' || typeof journal.clear !== 'function') {
+    return { settled: false, reason: 'checkpoint_journal_dependencies_invalid' };
+  }
+  const fence = recoveryFence && typeof recoveryFence === 'object' && !Array.isArray(recoveryFence)
+    ? recoveryFence : null;
+  if (!fence || Object.keys(fence).sort().join(',')
+      !== 'generation,sessionId,sessionIncarnation,streamId,turnId,userMessageId') {
+    return { settled: false, reason: 'checkpoint_journal_fence_invalid' };
+  }
+  const session = sessionStore.getSession(fence.sessionId);
+  if (!session || session.session_incarnation !== fence.sessionIncarnation
+    || session.turn_generation !== fence.generation) {
+    return { settled: false, reason: 'checkpoint_journal_session_mismatch' };
+  }
+  const active = session.active_turn;
+  if (active && (active.request_id !== fence.turnId || active.turn_id !== fence.turnId
+    || active.stream_id !== fence.streamId || active.user_message_id !== fence.userMessageId
+    || active.session_incarnation !== fence.sessionIncarnation
+    || active.generation !== fence.generation)) {
+    return { settled: false, reason: 'checkpoint_journal_active_turn_mismatch' };
+  }
+  try {
+    const events = journal.list(fence.sessionId, fence.turnId);
+    if (!events.length) return { settled: true, replayed: 0, cleared: false };
+    if (events.some(event => !journalEventMatchesAttempt(event, fence.turnId, fence.streamId))) {
+      return { settled: false, reason: 'checkpoint_journal_attempt_mismatch' };
+    }
+    const committed = sessionStore.appendTurnEvents(fence.sessionId, events, {
+      updateLogVersion: true, bumpUpdatedAt: false, durable: true,
+    });
+    if (!hasDurableTurnEventCommit(committed)) {
+      return { settled: false, reason: committed?.reason || 'checkpoint_journal_persist_failed' };
+    }
+    const cleared = journal.clear(fence.sessionId, fence.turnId, { commitResult: committed });
+    if (cleared?.ok !== true || cleared.durable !== true) {
+      return { settled: false, reason: cleared?.reason || 'checkpoint_journal_clear_failed' };
+    }
+    return { settled: true, replayed: Number(committed.value?.appended) || 0, cleared: true };
+  } catch (_error) {
+    return { settled: false, reason: 'checkpoint_journal_recovery_failed' };
+  }
+}
+
 function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) {
   if (
     !sessionStore
@@ -193,18 +251,24 @@ function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) 
     || typeof sessionStore.appendTurnEvents !== 'function'
     || typeof sessionStore.getSession !== 'function'
   ) {
-    return { replayed: 0, sessions: 0, turns: 0 };
+    return { replayed: 0, sessions: 0, turns: 0, blocked: 0 };
   }
   let replayed = 0;
   let sessions = 0;
   let turns = 0;
+  let blocked = 0;
   const journalSessions = journal.listAll();
   for (const [sessionId, journalSession] of Object.entries(journalSessions || {})) {
     const session = sessionStore.getSession(sessionId);
     if (!session?.active_turn) {
       continue;
     }
-    const activeTurnId = String(session.active_turn.stream_id || session.active_turn.request_id || '').trim();
+    const activeTurnId = String(
+      session.active_turn.turn_id || session.active_turn.request_id || ''
+    ).trim();
+    const activeStreamId = String(
+      session.active_turn.stream_id || session.active_turn.request_id || ''
+    ).trim();
     const turnEntries = journalSession?.turns && typeof journalSession.turns === 'object'
       ? journalSession.turns
       : {};
@@ -213,6 +277,15 @@ function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) 
         continue;
       }
       const sourceEvents = Array.isArray(events) ? events : [];
+      if (sourceEvents.some(event => !journalEventMatchesAttempt(
+        event, activeTurnId, activeStreamId
+      ))) {
+        blocked += 1;
+        if (logger) logger('WARN', 'turn_journal.retained_after_identity_mismatch', {
+          sessionId, turnId, reason: 'active_attempt_mismatch',
+        });
+        continue;
+      }
       // durable:true forces the replayed events to disk before we clear the
       // journal, and the STRUCTURED result tells us whether they actually
       const appendResult = sessionStore.appendTurnEvents(sessionId, sourceEvents, {
@@ -220,15 +293,7 @@ function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) 
         bumpUpdatedAt: false,
         durable: true,
       });
-      if (
-        !appendResult
-        || appendResult.ok !== true
-        || appendResult.durable !== true
-        || !Number.isSafeInteger(appendResult.commitEpoch)
-        || appendResult.commitEpoch <= 0
-        || !Number.isSafeInteger(appendResult.durableEpoch)
-        || appendResult.durableEpoch < appendResult.commitEpoch
-      ) {
+      if (!hasDurableTurnEventCommit(appendResult)) {
         // Persist failed: KEEP the journal entry so a later recovery pass can
         // retry; replay dedupes on event_id, so a re-append is safe.
         if (logger) {
@@ -238,13 +303,15 @@ function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) 
             reason: (appendResult && appendResult.reason) || 'unknown',
           });
         }
+        blocked += 1;
         continue;
       }
       replayed += Number.isFinite(Number(appendResult.value?.appended))
         ? Math.max(0, Number(appendResult.value.appended))
         : 0;
       turns += 1;
-      journal.clear(sessionId, turnId, { commitResult: appendResult });
+      const cleared = journal.clear(sessionId, turnId, { commitResult: appendResult });
+      if (cleared?.ok !== true || cleared.durable !== true) blocked += 1;
     }
     sessions += 1;
   }
@@ -255,13 +322,14 @@ function recoverTurnEventJournal({ sessionStore, journal, logger = null } = {}) 
       turns,
     });
   }
-  return { replayed, sessions, turns };
+  return { replayed, sessions, turns, blocked };
 }
 
 module.exports = {
   buildResumePayload,
   detectInterruptionState,
   filterHistoryForResume,
+  recoverCheckpointTurnEventJournal,
   recoverTurnEventJournal,
   repairToolPairing,
 };

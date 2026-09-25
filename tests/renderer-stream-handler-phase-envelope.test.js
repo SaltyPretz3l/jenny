@@ -414,8 +414,9 @@ test('malformed V2 envelopes do not poison sequence or receipt accounting', asyn
     .find((message) => message.role === 'assistant');
   assert.ok(assistant);
   assert.equal(assistant.content, 'Hello');
+  assert.match(String(acks[0]?.pageLoadId), /^[\w-]{8,64}$/, 'the subscription names its page load');
   assert.deepEqual(acks, [
-    { recordType: 'subscription_started', rendererEpoch: 2, mode: 'envelope' },
+    { recordType: 'subscription_started', rendererEpoch: 2, pageLoadId: acks[0]?.pageLoadId, mode: 'envelope' },
     {
       recordType: 'terminal_receipt',
       rendererEpoch: 2,

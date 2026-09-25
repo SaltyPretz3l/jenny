@@ -30,6 +30,7 @@ const {
   normalizeActiveTurnStatus,
   normalizePreferredModel,
   normalizeReasoningEffort,
+  normalizeSessionProjectId,
 } = require('./session-normalizers');
 const {
   normalizeBranchOrigin,
@@ -54,10 +55,11 @@ const { settleStalePendingPlanDocuments } = require('./plan-document-events');
 // that prevents remote pre-edit descendants from reappearing after hydration.
 // v8 persists the session-incarnation and monotonic turn-generation identity
 // used by the session-local actor across process restarts and actor eviction.
+// v9 adds durable project attribution, defaulting legacy rows to General.
 // Old v1/v2/v3
 // monolithic files auto-migrate via SessionStorageBackend's
 // legacyMaxSchemaVersion path.
-const STORE_SCHEMA_VERSION = 8;
+const STORE_SCHEMA_VERSION = 9;
 const LEGACY_MONOLITHIC_MAX_SCHEMA_VERSION = 3;
 const MAX_EXTERNAL_EDIT_HIDDEN_MESSAGE_IDS = 4096;
 const MAX_EXTERNAL_EDIT_HIDDEN_MESSAGE_ID_BYTES = 512;
@@ -235,6 +237,7 @@ function normalizeShadowSession(sessionId, input = {}) {
   return {
     ...source,
     id: String(source.id || sessionId || '').trim() || sessionId,
+    project_id: normalizeSessionProjectId(source.project_id, { legacyFallback: false }),
     title: String(source.title || 'New Chat'),
     session_type: String(source.session_type || 'chat'),
     created_at: String(source.created_at || nowIso()),
@@ -270,6 +273,7 @@ function summarizeShadowSession(session) {
   );
   return {
     id: String(source.id || ''),
+    project_id: normalizeSessionProjectId(source.project_id, { legacyFallback: false }),
     title: String(source.title || 'New Chat'),
     session_type: String(source.session_type || 'chat'),
     created_at: String(source.created_at || ''),
@@ -301,7 +305,10 @@ function migrateShadowPayload(payload) {
       : {};
   return {
     schema_version: STORE_SCHEMA_VERSION,
-    sessions,
+    sessions: Object.fromEntries(Object.entries(sessions).map(([id, session]) => [id, {
+      ...session, project_id: normalizeSessionProjectId(session?.project_id,
+        { legacyFallback: Number(source.schema_version || 1) < 9 }),
+    }])),
   };
 }
 
@@ -323,6 +330,8 @@ class SessionShadowStore {
       migratePayload: migrateShadowPayload,
       normalizeSession: normalizeShadowSession,
       summarizeSession: summarizeShadowSession,
+      migrateSummary: (summary, version) => ({ ...summary,
+        project_id: normalizeSessionProjectId(summary?.project_id, { legacyFallback: version < 9 }) }),
       writeDebounceMs,
       logger: this._logger,
       storeName: 'session_shadow_store',
@@ -629,8 +638,9 @@ class SessionShadowStore {
         patch.attachments = replaceAttachments;
       }
       survivingTarget = createLocalMessage(
+        // Reuse the user message ID while explicitly adopting the new logical turn.
         String(targetMessage.role || 'user'),
-        patch,
+        typeof options.replaceMessageTurnId === 'string' ? { ...patch, turn_id: options.replaceMessageTurnId } : patch,
         session.last_model_used || ''
       ) || targetMessage;
     }

@@ -379,7 +379,7 @@ test('managed chat stream runtime stamps V2 stream metadata on raw events before
 test('managed chat stream runtime captures canonical turn.event without renderer duplication', () => {
   const emitted = [];
   const service = {
-    featureFlags: { stream_envelope_v2: true },
+    featureFlags: { stream_envelope_v2: true, canonical_turn_events: true },
     emit(eventName, payload) {
       if (eventName === 'chat-stream') {
         emitted.push(payload);

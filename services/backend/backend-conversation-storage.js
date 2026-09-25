@@ -9,6 +9,7 @@ const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
 const { SessionShadowStore } = require('./session-shadow-store');
 const { TerminalRepairStore } = require('./terminal-repair-store');
 const { TurnEventJournal } = require('./turn-event-journal');
+const { initializeApplicationProjects } = require('../projects/application-project-scope');
 
 function initializeConversationStorage(service, options) {
   const logger = (level, event, details) => service._emitServiceLog(level, event, details);
@@ -21,6 +22,7 @@ function initializeConversationStorage(service, options) {
       writeDebounceMs,
     }
   );
+  initializeApplicationProjects(service, options);
   if (typeof service.configService?.setWorkspaceSessionIdProvider === 'function') {
     service.configService.setWorkspaceSessionIdProvider(
       () => service.sessionStore.getSessionIds()

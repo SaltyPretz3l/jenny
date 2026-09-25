@@ -128,6 +128,8 @@
     const settingsFoundation = root.rendererSettingsFoundation || {};
     const settingsSupport = root.rendererSettingsSupport || {};
     const kindOptions = Array.isArray(deps?.kindOptions) ? deps.kindOptions : [];
+    const getProjectLabel = typeof deps?.getProjectLabel === 'function' ? deps.getProjectLabel : (projectId) => String(projectId || '');
+    const GENERAL_PROJECT_ID = 'project_general';
     const button = (options) => typeof actionButton === 'function' ? actionButton(options) : '';
     let scheduledPendingFocusKey = '';
 
@@ -173,6 +175,9 @@
           options: [{ value: 'newest', label: jt('memory.sort.newest', 'Newest') }, { value: 'oldest', label: jt('memory.sort.oldest', 'Oldest') }, { value: 'confidence', label: jt('memory.sort.highestConfidence', 'Highest confidence') }],
         });
       }
+      if (dom.memoryProjectFilterHost && typeof selectField === 'function') {
+        dom.memoryProjectFilterHost.innerHTML = selectField({ id: 'memoryManagerProjectFilter', label: jt('settings.runtime.projectLabel', 'Project'), value: state.memoryManager.projectFilter || 'all', options: projectOptions() });
+      }
       if (dom.memoryKindFilterHost && typeof selectField === 'function') {
         dom.memoryKindFilterHost.innerHTML = selectField({ id: 'memoryManagerKindFilter', label: jt('memory.settings.kindLabel', 'Kind'), value: state.memoryManager.filter, options: kindOptions });
       }
@@ -207,6 +212,31 @@
       return `<div class="memory-provenance">${trigger}${panel}</div>`;
     }
 
+    // Memories live in a per-project layer over the General layer, so the list
+    // shows every project and labels rows that belong to a named project.
+    function projectOptions() {
+      const options = [{ value: 'all', label: jt('memory.filters.all', 'All') }];
+      const seen = new Set(['all']);
+      const known = Array.isArray(state.memoryManager.projects) ? state.memoryManager.projects : [];
+      const memories = Array.isArray(state.memoryManager.memories) ? state.memoryManager.memories : [];
+      for (const id of [...known.map((project) => project.id), ...memories.map((memory) => memory.project_id)]) {
+        const projectId = String(id || '').trim();
+        if (!projectId || seen.has(projectId)) continue;
+        seen.add(projectId);
+        options.push({ value: projectId, label: getProjectLabel(projectId) });
+      }
+      return options;
+    }
+
+    function projectBadge(projectId) {
+      const id = String(projectId || '').trim();
+      if (!id || id === GENERAL_PROJECT_ID) return '';
+      const text = getProjectLabel(id);
+      return typeof badge === 'function'
+        ? badge({ tone: 'default', size: 'sm', text, className: 'memory-record-project' })
+        : `<span class="memory-record-project">${escapeHtml(text)}</span>`;
+    }
+
     function kindBadge(kind) {
       const text = deps.getKindLabel(kind);
       return typeof badge === 'function'
@@ -227,7 +257,7 @@
       const body = editing && typeof textField === 'function'
         ? textField({ id: `memoryTitle${memory.id}`, label: jt('memory.settings.titleLabel', 'Title'), value: title, maxLength: 120, spellcheck: true, dataset: { 'memory-draft-field': 'title', 'memory-id': String(memory.id) } })
           + textField({ id: `memoryLesson${memory.id}`, label: jt('memory.settings.memoryLabel', 'Memory'), value: lessonText, maxLength: 240, multiline: true, spellcheck: true, dataset: { 'memory-draft-field': 'lesson_text', 'memory-id': String(memory.id) } })
-        : `<div class="memory-record-heading">${kindBadge(memory.lesson_kind)}<strong class="memory-record-title">${escapeHtml(memory.title)}</strong></div><p>${escapeHtml(memory.lesson_text)}</p>`;
+        : `<div class="memory-record-heading">${kindBadge(memory.lesson_kind)}${projectBadge(memory.project_id)}<strong class="memory-record-title">${escapeHtml(memory.title)}</strong></div><p>${escapeHtml(memory.lesson_text)}</p>`;
       return `<article class="memory-record" role="listitem" data-memory-id="${memory.id}"><div class="memory-record-main">`
         + body + provenanceMarkup(memory, { allowRemove: true, identity: `approved-${memory.id}` })
         + `</div><div class="memory-record-actions">${actions}</div></article>`;
@@ -238,7 +268,7 @@
       const pendingAction = state.memoryManager.pendingReviewActionByKey.get(key) || '';
       const identity = `pending-${key}`;
       return `<article class="memory-record" role="listitem" data-pending-memory-key="${escapeHtml(key)}"><div class="memory-record-main">`
-        + `<div class="memory-record-heading">${kindBadge(candidate.lesson_kind)}<strong class="memory-record-title">${escapeHtml(candidate.title)}</strong></div><p>${escapeHtml(candidate.lesson_text)}</p>`
+        + `<div class="memory-record-heading">${kindBadge(candidate.lesson_kind)}${projectBadge(candidate.project_id)}<strong class="memory-record-title">${escapeHtml(candidate.title)}</strong></div><p>${escapeHtml(candidate.lesson_text)}</p>`
         + provenanceMarkup(candidate, { identity }) + `</div><div class="memory-record-actions">`
         + button({ id: `approve-${safeDomId(key)}`, label: pendingAction === 'approve' ? jt('memory.actions.approving', 'Approving…') : jt('memory.actions.approve', 'Approve'), variant: 'primary', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'approve', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
         + button({ id: `dismiss-${safeDomId(key)}`, label: pendingAction === 'discard' ? jt('memory.actions.dismissing', 'Dismissing…') : jt('common.dismiss', 'Dismiss'), variant: 'ghost', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'discard', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
@@ -327,7 +357,8 @@
       const memories = Array.isArray(state.memoryManager.memories) ? state.memoryManager.memories : [];
       const query = String(state.memoryManager.searchQuery || '').trim().toLowerCase();
       const kind = String(state.memoryManager.filter || 'all');
-      const filteredAll = memories.filter((memory) => (kind === 'all' || memory.lesson_kind === kind) && (!query || deps.searchText(memory).includes(query)));
+      const project = String(state.memoryManager.projectFilter || 'all');
+      const filteredAll = memories.filter((memory) => (kind === 'all' || memory.lesson_kind === kind) && (project === 'all' || memory.project_id === project) && (!query || deps.searchText(memory).includes(query)));
       const pendingAll = deps.sortPending(state.memoryManager.pendingCandidates, state.memoryManager.pendingSort);
       const approvedLimit = Math.max(Number(state.memoryManager.approvedVisibleLimit) || MAX_RENDERED_MEMORIES, MAX_RENDERED_MEMORIES);
       const basePendingLimit = Math.max(Number(state.memoryManager.pendingVisibleLimit) || MAX_RENDERED_MEMORIES, MAX_RENDERED_MEMORIES);

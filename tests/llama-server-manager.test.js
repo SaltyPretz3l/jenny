@@ -31,7 +31,7 @@ function makeSettings(overrides = {}) {
   };
 }
 
-function makeHarness({ settings = makeSettings(), accel, managed = null, acceleration = null, onReady = null, loadProfileImpl } = {}) {
+function makeHarness({ settings = makeSettings(), accel, managed = null, acceleration = null, startupModelLoad = true, onReady = null, loadProfileImpl } = {}) {
   const calls = [];
   const logs = [];
   const marks = [];
@@ -98,6 +98,7 @@ function makeHarness({ settings = makeSettings(), accel, managed = null, acceler
     lastHandle: null,
   };
   const resolverCalls = [];
+  const settingsResolverCalls = [];
   const transitions = [];
   const manager = createLlamaServerManager({
     onStateChange: (status) => {
@@ -108,7 +109,7 @@ function makeHarness({ settings = makeSettings(), accel, managed = null, acceler
     rootDir: 'G:/repo',
     userDataPath: 'G:/userData',
     getShellConfigService: () => ({
-      getLocalEngines: () => ({ openaiCompatible: { port: 8033, apiUrl: '', acceleration, managed } }),
+      getLocalEngines: () => ({ startupModelLoad, openaiCompatible: { port: 8033, apiUrl: '', acceleration, managed } }),
       getState: () => ({ featureOverrides: {} }),
     }),
     emitStartupAuditMark: (name, payload) => marks.push({ name, payload }),
@@ -119,11 +120,14 @@ function makeHarness({ settings = makeSettings(), accel, managed = null, acceler
       resolverCalls.push(options);
       return accel || { mode: 'off', reason: 'flag_off', extraArgs: [], drafter: '', vramHeadroomMb: 0 };
     },
-    resolveSettingsImpl: () => settings,
+    resolveSettingsImpl: (options) => {
+      settingsResolverCalls.push(options);
+      return options.startupModelLoad === false ? { ...settings, autostart: false } : settings;
+    },
     buildFeatureFlagsImpl: () => ({ llama_server_acceleration: false }),
     now: () => ++clock,
   });
-  return { manager, calls, logs, marks, launches, lifecycle, resolverCalls, transitions };
+  return { manager, calls, logs, marks, launches, lifecycle, resolverCalls, settingsResolverCalls, transitions };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -145,6 +149,15 @@ test('starts stopped and startFromSettings honors autostart=false without launch
   assert.deepEqual(h.launches, []);
   assert.ok(h.logs.some((entry) => entry.event === 'llama.server.autostart_disabled'));
   assert.deepEqual(h.calls, ['sweep:G:/userData'], 'stale key files are swept even without a launch');
+});
+
+test('startFromSettings does not launch when startup model loading is off', async () => {
+  const h = makeHarness({ startupModelLoad: false });
+  await h.manager.startFromSettings();
+  assert.deepEqual(h.launches, []);
+  assert.equal(h.settingsResolverCalls[0].startupModelLoad, false);
+  assert.deepEqual(h.logs.find((entry) => entry.event === 'llama.server.autostart_disabled')?.payload,
+    { reason: 'startup_model_load_off' });
 });
 
 test('a launch resolves only after the ready observer settles (api key re-brokered first)', async () => {

@@ -71,11 +71,31 @@
       applyLiveTurnPayload(payload, {
         primaryAssistantMessageId: buildAssistantShellMessageId(payload.streamId, 0),
       });
+      const pruned = pruneSupersededApprovals(payload.sessionId, payload.streamId);
       multiStreamController?.registerStream?.(payload.sessionId, payload.streamId);
       setChatSendLifecycle(payload.sessionId, 'streaming');
       syncThinkingIndicatorMode(payload.sessionId, 'thinking');
-      queueSessionRender(payload.sessionId, { composer: true, header: true });
+      queueSessionRender(payload.sessionId, { composer: true, header: true, ...(pruned ? { sessions: true } : {}) });
       return { buffered: false, terminal: false };
+    }
+
+    // A session runs one turn at a time, so a new stream supersedes approvals
+    // still filed under an older stream of the same session (a runtime pause
+    // suspends them main-side; Resume re-offers under a new approval id).
+    function pruneSupersededApprovals(sessionId, liveStreamId) {
+      const approvals = state.pendingToolApprovals;
+      const session = String(sessionId || '').trim();
+      const live = String(liveStreamId || '').trim();
+      if (!approvals?.entries || !session || !live) return 0;
+      let pruned = 0;
+      for (const [key, approval] of [...approvals.entries()]) {
+        const streamId = String(approval?.streamId || '').trim();
+        if (String(approval?.sessionId || '').trim() === session && streamId && streamId !== live) {
+          approvals.delete(key);
+          pruned += 1;
+        }
+      }
+      return pruned;
     }
 
     async function handleAgentStatus(payload) {
@@ -253,7 +273,9 @@
         strategy: String(payload.strategy || 'micro'),
         tokensBefore: Number(payload.tokensBefore || 0) || 0,
         tokensAfter: Number(payload.tokensAfter || 0) || 0,
-        phase: String(payload.phase || 'preflight'),
+        // `payload.phase` is the transport phase snapshot; the compaction site
+        // travels as `compactionPhase`.
+        phase: String(payload.compactionPhase || 'preflight'),
         summaryStatus: String(payload.summaryStatus || 'not_created'),
         reasonCode: String(payload.reasonCode || '').slice(0, 80),
         inputComplete: payload.inputComplete !== false,
@@ -261,6 +283,7 @@
         droppedBytes: Math.max(0, Number(payload.droppedBytes || 0) || 0),
         summaryPersisted: payload.summaryPersisted === true,
         historyScopeFallback: String(payload.historyScopeFallback || ''),
+        summaryExcerpt: String(payload.summaryExcerpt || '').slice(0, 1200),
         occurredAt: new Date().toISOString(),
       };
       const updated = updatePendingMessage(payload, {

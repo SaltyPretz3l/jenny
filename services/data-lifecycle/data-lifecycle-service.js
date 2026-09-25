@@ -131,6 +131,7 @@ class DataLifecycleService extends EventEmitter {
     attachmentStore = null,
     shellConfigService = null,
     workspaceRootCoordinator = null,
+    runtimeArchivePort = null,
     prepareForRemoval = async () => {},
     logger = null,
     nowProvider = () => Date.now(),
@@ -147,6 +148,7 @@ class DataLifecycleService extends EventEmitter {
     this.attachmentStore = attachmentStore;
     this.shellConfigService = shellConfigService;
     this.workspaceRootCoordinator = workspaceRootCoordinator;
+    this.runtimeArchivePort = runtimeArchivePort;
     this.prepareForRemoval = prepareForRemoval;
     this.logger = typeof logger === 'function' ? logger : null;
     this.preferencesStore = new PortablePreferencesStore(this.userDataPath, { logger });
@@ -257,6 +259,7 @@ class DataLifecycleService extends EventEmitter {
       attachmentStore: this.attachmentStore,
       portablePreferences: this.preferencesStore.read(),
       portableShellConfig: projectPortableShellConfig(this.shellConfigService?.getState?.()),
+      runtimeArchivePort: this.runtimeArchivePort,
     });
   }
 

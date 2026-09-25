@@ -43,6 +43,8 @@
       buildTurnRowId = (row) => String(row?.row_id || ''),
       buildTurnRowListMarkup = () => '',
       recordTurnArticleRolloutSignal = () => ({ logged: false, count: 0 }),
+      getRegisteredStreamIdForSession = (sessionId) =>
+        globalThis.rendererMultiStreamController?.getStreamIdForSession?.(sessionId) || null,
       // Single-sourced render-message-index builder shared with the
       // projection-context overlay path. Default fallback keeps tests/old
       // wirings working without the helper, but production wiring always
@@ -197,6 +199,11 @@
     // pendingStreams entry is dropped at each tool boundary (segment
     // finalized, next segment not yet created), which is exactly when the
     // interrupted flash happened.
+    function resolveMessagePhysicalStreamId(message) {
+      return String(message?.streamId || message?.stream_id || message?.parent_stream_id || message?.parentStreamId
+        || message?.tool_call?.parent_stream_id || message?.tool_result?.parent_stream_id || '').trim();
+    }
+
     function isTurnStreamLive(turnMeta, messageById, liveness) {
       const pendingStreams = state.pendingStreams;
       if (pendingStreams && typeof pendingStreams.has === 'function' && pendingStreams.size > 0) {
@@ -207,10 +214,25 @@
         const sourceIds = Array.isArray(turnMeta?.source_message_ids) ? turnMeta.source_message_ids : [];
         for (let index = 0; index < sourceIds.length; index += 1) {
           const message = messageById?.get?.(String(sourceIds[index] || '').trim());
-          const streamId = String(message?.streamId || '').trim();
+          const streamId = resolveMessagePhysicalStreamId(message);
           if (streamId && pendingStreams.has(streamId)) {
             return true;
           }
+        }
+      }
+      // After a renderer reload, rehydrateActiveTurnState re-attaches a turn
+      // still running in main (a pending ask_user) through the multi-stream
+      // controller only; pendingStreams and the send lifecycle start empty
+      // (gate A7 F9).
+      const registeredStreamId = liveness?.sessionId
+        ? String(getRegisteredStreamIdForSession(liveness.sessionId) || '').trim()
+        : '';
+      if (registeredStreamId) {
+        const sourceIds = Array.isArray(turnMeta?.source_message_ids) ? turnMeta.source_message_ids : [];
+        if (String(turnMeta?.turn_id || '').trim() === registeredStreamId) return true;
+        for (let index = 0; index < sourceIds.length; index += 1) {
+          const message = messageById?.get?.(String(sourceIds[index] || '').trim());
+          if (resolveMessagePhysicalStreamId(message) === registeredStreamId) return true;
         }
       }
       if (liveness?.isNewestTurn === true && liveness.sessionId) {

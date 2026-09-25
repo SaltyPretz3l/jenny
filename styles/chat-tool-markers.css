@@ -148,6 +148,38 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--tl-status-warn) 28%, transparent);
 }
 
+/* A4: a paused reply's approval waits on Resume, not on the user's answer. */
+.approval-gap-row[data-approval-status="paused"] .tool-approval-kicker {
+  color: var(--text-secondary);
+}
+
+.approval-gap-row[data-approval-status="paused"] .tool-approval-kicker-dot {
+  background: var(--tl-status-muted);
+  box-shadow: none;
+  opacity: 0.8;
+}
+
+.tool-approval-actions--paused {
+  gap: var(--space-5);
+}
+
+.tool-approval-paused-note {
+  color: var(--text-secondary);
+  font-size: var(--tl-font-detail);
+}
+
+/* A withdrawn approval folds to one quiet line. */
+.tool-approval-receipt {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--tl-font-detail);
+}
+
+.approval-gap-row > .tool-approval-receipt {
+  padding-block: var(--space-2) var(--space-3);
+  padding-inline-start: var(--space-5);
+}
+
 /* ── Approval batch banner (P.7) ── */
 
 .approval-batch-banner {

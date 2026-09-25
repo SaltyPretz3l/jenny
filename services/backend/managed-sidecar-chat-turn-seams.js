@@ -20,7 +20,7 @@ const { TERMINAL_STATUS_COMPLETED } = require('./chat-stream-terminal-utils');
 function acknowledgeFinalizedTurnPersistence(service, turnEventCollector, sessionId, streamId) {
   const outcome = turnEventCollector.persistFinalizedTurn(
     sessionId,
-    streamId,
+    turnEventCollector.turnId || streamId,
     service.sessionStore.getSessionMessages(sessionId)
   );
   if (
@@ -65,7 +65,7 @@ function dumpFailedTurnDiagnostic({
     service,
     sessionId,
     streamId,
-    requestId: streamId,
+    requestId: runtime.getEventBase?.().requestId || streamId,
     traceId,
     terminalStatus: terminal.status,
     timingMarkers,

@@ -23,7 +23,10 @@ const { FileJsonStore } = require('../backend/file-json-store');
 const { resolveRealPathSafe } = require('../backend/path-utils');
 const { createTestRunnerHistory } = require('../workspace-test-runner-history');
 const { createWorkspaceTestRunnerService, DEFAULT_TIMEOUT_MS } = require('../workspace-test-runner-service');
+const { normalizeConfigs } = require('../workspace-test-runner-config');
 const { runTestCommand: defaultRunTestCommand } = require('../backend/workspace-test-runner-runner');
+const { createContainedProcessRunner } = require('../backend/contained-process-runner');
+const { requireToolTestRunnerExecutionPort } = require('../tools/tool-test-runner-authority');
 
 const TEST_RUNNER_SUBDIR = 'test-runner';
 const ROOT_HASH_LENGTH = 16;
@@ -75,15 +78,24 @@ function disabledState() {
  *   app?:object, userDataDir?:string, shellConfigService:object,
  *   runner?:{runTestCommand:Function}, featureFlagProvider?:Function,
  *   now?:Function, defaultTimeoutMs?:number, makeRunId?:Function, log?:Function,
+ *   resourceAdmissionProvider?:Function,
  * }} deps
  * @returns {{ listConfigs:Function, run:Function, abort:Function, abortAndWait:Function, dispose:Function, saveConfigs:Function, getState:Function }}
  */
 function createWorkspaceTestRunnerWiring(deps = {}) {
   const shellConfigService = deps.shellConfigService || null;
   const userDataDir = resolveUserDataDir(deps);
+  const platform = deps.platform || process.platform;
+  const containedRunner = createContainedProcessRunner({
+    launchSpecProvider: deps.sidecarLaunchSpecProvider,
+    spawnImpl: deps.containedSpawnImpl,
+    platform,
+  });
   const runTestCommand = deps.runner && typeof deps.runner.runTestCommand === 'function'
     ? deps.runner.runTestCommand
-    : defaultRunTestCommand;
+    : platform === 'win32' && typeof deps.sidecarLaunchSpecProvider === 'function'
+      ? containedRunner.runShell
+      : defaultRunTestCommand;
   const featureFlagProvider = typeof deps.featureFlagProvider === 'function' ? deps.featureFlagProvider : null;
   // S13: the bridge-event sender for the workspaceTestRunner.onStateChanged push.
   const sendBridgeEvent = typeof deps.sendBridgeEvent === 'function' ? deps.sendBridgeEvent : null;
@@ -107,14 +119,14 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
   let cachedHash = null;
   let cachedBundle = null;
 
-  function bundleForCurrentRoot() {
-    const root = currentRoot();
+  function bundleForCurrentRoot(root = currentRoot()) {
     if (!root || !userDataDir) {
       cachedHash = null;
       cachedBundle = null;
       return null;
     }
     const hash = hashRoot(resolveRealPathSafe(root) || root);
+    if (pinnedRun?.bundle.hash === hash) return pinnedRun.bundle;
     if (cachedBundle && cachedHash === hash) {
       return cachedBundle;
     }
@@ -220,6 +232,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
     defaultTimeoutMs,
     makeRunId: deps.makeRunId,
     log,
+    resourceAdmissionProvider: deps.resourceAdmissionProvider,
     // S13: forward the service's run lifecycle to the renderer as a bridge push.
     // Flag-gated (belt-and-braces: run/abort are already gated, so the service
     // only emits under an enabled run) so a disabled feature never pushes.
@@ -237,7 +250,56 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
     return Boolean(flags && flags.workspace_test_runner === true);
   }
 
+  function forProjectAuthority(authority, owner, { isAllowed = () => true } = {}) {
+    const captured = Object.freeze({ ...authority });
+    const assertCurrent = () => owner.requireCurrent(captured);
+    assertCurrent();
+    const scopeForRun = (internalExecutionPort = null) => {
+      assertCurrent();
+      const execution = internalExecutionPort
+        ? requireToolTestRunnerExecutionPort(internalExecutionPort) : null;
+      const assertRunCurrent = () => {
+        assertCurrent();
+        if (!isAllowed()) throw new Error('Workspace test runner policy changed.');
+        execution?.assertCurrent();
+      };
+      assertRunCurrent();
+      const bundle = bundleForCurrentRoot(captured.root_path || '');
+      const configs = normalizeConfigs(bundle?.configStore.read({ configs: [] })?.configs || []);
+      return { root: captured.root_path || '', configs, assertCurrent: assertRunCurrent,
+        abortSignal: execution?.abortSignal || null,
+        beforeProducer: execution?.beforeProducer || null, toolClaim: execution?.toolClaim || null,
+        history: bundle ? {
+          read: () => bundle.history.read(),
+          recordStart(configId, record) {
+            pinnedRun = { runId: String(record.runId), bundle };
+            return bundle.history.recordStart(configId, record);
+          },
+          recordSkip: (...args) => bundle.history.recordSkip(...args),
+          recordFinish(configId, runId, patch) {
+            const result = bundle.history.recordFinish(configId, runId, patch);
+            if (pinnedRun?.runId === String(runId)) pinnedRun = null;
+            return result;
+          },
+        } : null };
+    };
+    return Object.freeze({
+      listConfigs() {
+        if (!flagEnabled() || !isAllowed()) return disabledEnvelope();
+        const scope = scopeForRun();
+        return scope.root ? { configs: scope.configs } : { configs: [], available: false, reason: 'root_missing' };
+      },
+      run(payload, internalExecutionPort = null) {
+        return flagEnabled() && isAllowed()
+          ? service.run(payload, scopeForRun(internalExecutionPort)) : disabledEnvelope();
+      },
+      getState() { return flagEnabled() && isAllowed() ? service.getState(scopeForRun()) : disabledState(); },
+    });
+  }
+
   return {
+    forProjectAuthority,
+    hasWorkspaceRun: () => service.hasWorkspaceRun(),
     listConfigs: () => (flagEnabled() ? service.listConfigs() : disabledEnvelope()),
     run: (payload) => (flagEnabled() ? service.run(payload) : disabledEnvelope()),
     // S14: abort is flag-gated like run — off => inert disabled envelope (no signal),

@@ -87,9 +87,10 @@ test('compactContextNow maps plain canonical messages to exact {role, content} r
     strategy: 'full',
     tokens_before: 4000,
     tokens_after: 1100,
+    // The sidecar's shape: the summary, then the latest round copied verbatim.
     messages: [
       { role: 'system', content: '## Compacted Conversation Summary\nHello was exchanged.' },
-      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'hi there' },
     ],
   };
 
@@ -139,9 +140,10 @@ test('compactContextNow maps plain canonical messages to exact {role, content} r
   });
   const session = service.sessionStore.getSession('sess-map');
   assert.ok(session.compaction_snapshot, 'a successful compaction must persist a session-owned snapshot');
-  assert.equal(session.compaction_snapshot.boundary_message_id, 'm2');
-  assert.equal(session.compaction_snapshot.boundary_message_count, 2);
-  assert.deepEqual(session.compaction_snapshot.messages, fakeResult.messages);
+  // The copied tail stays canonical: the snapshot covers only what precedes it.
+  assert.equal(session.compaction_snapshot.boundary_message_id, 'm1');
+  assert.equal(session.compaction_snapshot.boundary_message_count, 1);
+  assert.deepEqual(session.compaction_snapshot.messages, fakeResult.messages.slice(0, 1));
   service.sidecarClient = null;
   service.dispose();
 });

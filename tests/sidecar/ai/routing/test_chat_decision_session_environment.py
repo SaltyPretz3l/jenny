@@ -15,10 +15,12 @@ from dataclasses import replace
 from typing import Any
 
 from sidecar.ai.config import RuntimeConfig
+from sidecar.ai.config_models import ToolPolicySnapshot
 from sidecar.ai.context.builder import ContextBuilder
 from sidecar.ai.routing.router import ChatRouter
 from sidecar.ai.tools.models import GenerationResult
 from sidecar.runtime.chat_models import ChatRequestContext
+from sidecar.runtime.execution_context import ExecutionContext
 
 
 class _StubEngine:
@@ -141,3 +143,18 @@ def test_wiring_invokes_overlay_when_session_id_is_empty(monkeypatch: Any) -> No
         )
     )
     assert len(calls) == 1
+
+
+def test_wiring_preserves_captured_unbound_authority(monkeypatch: Any) -> None:
+    calls = _spy_overlay(monkeypatch)
+    authority = ExecutionContext(
+        schema_version=1, authority_revision="audit-revision", project_id="project_general",
+        root_path=None, root_id=None, root_revision=0, device_id=None, inode=None,
+        tool_policy_snapshot=ToolPolicySnapshot(), knowledge_roots=(),
+    )
+    _run_turn(request_context=ChatRequestContext(
+        request_id="req-unbound", trace_id=None, session_id="session-unbound",
+        mode="assist", approvals_pre_granted=True, execution_context=authority,
+    ))
+    assert len(calls) == 1
+    assert calls[0]["execution_context"] is authority

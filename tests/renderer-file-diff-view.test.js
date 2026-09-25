@@ -73,8 +73,15 @@ test('valid maximum-length diff ids keep distinct aria control targets', () => {
 });
 
 test('legacy artifact hunk renderer also advances after an empty context line', () => {
-  const doc = parse(renderDiffHunks(hunks, (value) => String(value)));
+  const doc = parse(renderDiffHunks(hunks, (value) => String(value), { languageId: 'javascript' }));
   const rows = [...doc.querySelectorAll('.diff-line')];
   assert.equal(rows[0].classList.contains('diff-line-context'), true);
   assert.equal(rows[1].querySelector('.diff-gutter-new').textContent, '48');
+  for (const content of doc.querySelectorAll('.diff-content')) {
+    assert.equal(content.hasAttribute('data-code-highlight-line'), true);
+    assert.equal(content.dataset.languageId, 'javascript');
+  }
+
+  const derived = parse(renderDiffHunks([{ ...hunks[0], path: 'src/example.ts' }], (value) => String(value)));
+  assert.equal(derived.querySelector('.diff-content').dataset.languageId, 'typescript');
 });

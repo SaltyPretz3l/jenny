@@ -1,7 +1,7 @@
 """Turn-finalization verification gate for the tool loop.
 
 Default-off (flag ``verification_gate``): when a run has mutated the workspace
-with the typed file tools and the model is about to finish, run whichever Test
+with typed file tools or an adapter-confirmed shell edit and is about to finish, run whichever Test
 Runner configuration the user designated as the gate, and hand a failing verdict
 back so the model can fix it instead of claiming success.
 
@@ -54,9 +54,8 @@ GATE_TOOL_NAME = "verify"
 GATE_MAX_RETRIES = 1
 
 # Deliberately NARROWER than REPO_MUTATING_TOOL_NAMES: ``run_command`` is
-# excluded because it is ambiguous (``git status`` is not a mutation) and firing a
-# whole test suite after every read-only shell call would be pure latency. The
-# typed file tools are the same signal Jenny's other recovery systems key off.
+# excluded from name-only matching because ``git status`` is not a mutation.
+# Shell adapters can separately supply explicit ``workspace_changed`` evidence.
 GATE_TRIGGER_TOOL_NAMES = frozenset(REPO_MUTATING_TOOL_NAMES - {"run_command"})
 
 # Verdict statuses the gate tool can report back.
@@ -90,32 +89,41 @@ NO_GATE_ACTION = GateDecision()
 
 
 def workspace_was_mutated(outcomes: Iterable[Any]) -> bool:
-    """True when a typed file-mutating tool succeeded in this run.
+    """True after a successful typed mutation or an adapter-confirmed shell edit."""
+    return any(_outcome_mutated(outcome) for outcome in outcomes)
 
-    Requires ``success``: a rejected ``edit_file`` changed nothing, so there is
-    nothing to verify.
-    """
-    return any(
-        getattr(outcome, "success", False)
-        and str(getattr(outcome, "tool_name", "") or "") in GATE_TRIGGER_TOOL_NAMES
-        for outcome in outcomes
-    )
+
+def _outcome_mutated(outcome: Any) -> bool:
+    name = str(getattr(outcome, "tool_name", "") or "")
+    metadata = getattr(outcome, "metadata", None)
+    # A command can modify files before returning a failing exit code. Only
+    # explicit environment evidence activates shell verification; merely running
+    # a read-only shell command does not launch a test suite.
+    if name == "run_command" and isinstance(metadata, dict):
+        return metadata.get("workspace_changed") is True
+    return bool(getattr(outcome, "success", False) and name in GATE_TRIGGER_TOOL_NAMES)
 
 
 def already_verified(outcomes: Iterable[Any]) -> bool:
-    """True when the model already ran ``verify`` itself and it passed.
+    """True when the latest verification passed after the latest mutation.
 
     Re-running the suite the model just ran green would be pure latency, and the
     point of the gate is that verification happened -- not that the gate is what
     did it.
     """
+    verified = False
     for outcome in outcomes:
+        if _outcome_mutated(outcome):
+            verified = False
         if str(getattr(outcome, "tool_name", "") or "") != GATE_TOOL_NAME:
             continue
         metadata = getattr(outcome, "metadata", None)
-        if isinstance(metadata, dict) and str(metadata.get("status") or "") == _STATUS_PASSED:
-            return True
-    return False
+        verified = bool(
+            getattr(outcome, "success", False)
+            and isinstance(metadata, dict)
+            and metadata.get("status") == _STATUS_PASSED
+        )
+    return verified
 
 
 def should_run_gate(
@@ -259,15 +267,10 @@ def build_unverified_note(*, status: str, reason: str, attempts: int = 0) -> str
         )
     if reason == "no_gate_configured":
         return ""
-    return (
-        "\n\n---\n*Verification gate: could not be run for this change, so it is "
-        "unverified.*"
-    )
+    return "\n\n---\n*Verification gate: could not be run for this change, so it is unverified.*"
 
 
-def _decide_from_result(
-    result: Any, *, retry_allowed: bool, attempts: int = 0
-) -> GateDecision:
+def _decide_from_result(result: Any, *, retry_allowed: bool, attempts: int = 0) -> GateDecision:
     """Map a gate tool result onto a decision. Pure; no bridge, no loop state."""
     metadata = getattr(result, "metadata", None)
     metadata = metadata if isinstance(metadata, dict) else {}
@@ -296,9 +299,7 @@ def _decide_from_result(
             reason=reason or "gate_failed",
         )
     return GateDecision(
-        note=build_unverified_note(
-            status=_STATUS_FAILED, reason=reason, attempts=attempts
-        ),
+        note=build_unverified_note(status=_STATUS_FAILED, reason=reason, attempts=attempts),
         status=_STATUS_FAILED,
         reason=reason or "gate_failed",
     )
@@ -325,6 +326,4 @@ def run_gate(loop_run: Any, *, retry_allowed: bool) -> GateDecision:
     if result is None:
         # Headless / no bridge (tests, sub-agents): not an error, nothing to say.
         return NO_GATE_ACTION
-    return _decide_from_result(
-        result, retry_allowed=retry_allowed, attempts=_attempts_of(loop_run)
-    )
+    return _decide_from_result(result, retry_allowed=retry_allowed, attempts=_attempts_of(loop_run))

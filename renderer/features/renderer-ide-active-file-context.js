@@ -119,6 +119,7 @@
     }
     return {
       path: path,
+      ...(typeof reader.getWorkspaceId === 'function' ? { workspace_id: String(reader.getWorkspaceId() || '') } : {}),
       languageId: typeof reader.getActiveLanguageId === 'function'
         ? String(reader.getActiveLanguageId() || '') : '',
       cursor: { lineNumber: cursorLine, column: cursorColumn },

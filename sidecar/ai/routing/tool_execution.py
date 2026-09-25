@@ -9,29 +9,33 @@ are plain module-level functions.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced
-from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.routing import delegate as _delegate
 from sidecar.ai.routing import harness_helpers as _harness_helpers
 from sidecar.ai.routing import loop_events as _loop_events
 from sidecar.ai.routing import resource_pressure as _resource_pressure
 from sidecar.ai.routing import route_policy_runtime as _route_policy_runtime
+from sidecar.ai.routing import tool_authority as _tool_authority
+from sidecar.ai.routing import tool_dispatch as _tool_dispatch
 from sidecar.ai.routing import tool_execution_ask_user_wait as _ask_user_wait
 from sidecar.ai.routing import tool_execution_results as _results
 from sidecar.ai.routing import tool_execution_snapshots as _snap
 from sidecar.ai.routing import tool_execution_tool_handlers as _handlers
 from sidecar.ai.routing import tool_observation as _tool_observation
+from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
+from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools import tool_actions as _tool_actions
 from sidecar.ai.tools.builtins import shell_security as _shell_security
+from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
 from sidecar.ai.tools.policy import (
     POLICY_DECISION_ASK,
     POLICY_DECISION_AUTO,
@@ -213,72 +217,20 @@ def _dispatch_tool_call(
     timeout_seconds: float | None,
     cancel_handle: Any,
     on_output_chunk: Any = None,
+    admission_arguments: dict[str, Any] | None = None,
+    on_dispatch_ready: Callable[[], None] | None = None,
+    decision_snapshot: Any = None,
 ):
-    dispatch_kwargs: dict[str, Any] = {}
-    if (
-        call.tool_id == "run_command"
-        and str(getattr(kernel._config, "host_mode", "") or "") == "server"
-        and (
-            int(getattr(kernel._config, "host_execution_policy_version", 0) or 0)
-            == HOST_EXECUTION_POLICY_VERSION
-        )
-        and getattr(descriptor, "server_name", "") != "electron_tool_bridge"
-    ):
-        # v2 has one execution owner. A forged/direct builtin-MCP dispatch must
-        # never reach the sidecar's local shell handler.
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_DISABLED,
-            message="hosted run_command requires the Electron execution worker bridge",
-            retryable=False,
-        )
-    if on_output_chunk is not None:
-        # Passed conditionally so MCP-client fakes without the parameter stay
-        # byte-compatible; only streaming-capable calls ever build an emitter.
-        dispatch_kwargs["on_output_chunk"] = on_output_chunk
-    if (
-        descriptor is not None
-        and getattr(descriptor, "server_name", "") == "electron_tool_bridge"
-    ):
-        request_context = getattr(runtime, "request_context", None)
-        if call.tool_id == "run_command":
-            # Builtin snapshot freezing adds private attribution. Electron binds
-            # identity from the request envelope; keep its command schema closed.
-            tool_arguments = {key: value for key, value in tool_arguments.items()
-                              if not key.startswith("_jenny_")}
-        return execute_electron_tool(ElectronToolBridgeRequest(
-            tool_name=call.tool_id,
-            arguments=tool_arguments,
-            request_id=request_id,
-            trace_id=getattr(runtime, "trace_id", None) if runtime is not None else None,
-            session_id=session_id,
-            tool_call_id=str(call.call_id or "").strip(),
-            write_message=getattr(runtime, "electron_tool_writer", None)
-            if runtime is not None else None,
-            read_message=getattr(runtime, "electron_tool_reader", None)
-            if runtime is not None else None,
-            response_reader_factory=getattr(
-                runtime,
-                "electron_tool_reader_factory",
-                None,
-            )
-            if runtime is not None
-            else None,
-            timeout_seconds=timeout_seconds,
-            logger=logger,
-            cancel_handle=cancel_handle,
-            plan_mode=bool(getattr(request_context, "plan_mode", False)),
-            read_only=bool(getattr(request_context, "read_only", False)),
-            plan_decision=str(getattr(request_context, "plan_decision", "") or ""),
-            plan_feedback=str(getattr(request_context, "plan_feedback", "") or "")[:800],
-            edited_plan=getattr(request_context, "edited_plan", None)
-            if call.tool_id == "exit_plan_mode" else None,
-        ))
-    return kernel._mcp_client.execute_tool(
-        call.tool_id,
-        tool_arguments,
-        timeout_seconds=timeout_seconds,
-        cancel_handle=cancel_handle,
-        **dispatch_kwargs,
+    return _tool_dispatch.dispatch_tool_call(
+        kernel=kernel, call=call, tool_arguments=tool_arguments, descriptor=descriptor,
+        request_id=request_id, session_id=session_id, runtime=runtime,
+        timeout_seconds=timeout_seconds, cancel_handle=cancel_handle,
+        on_output_chunk=on_output_chunk, admission_arguments=admission_arguments or {},
+        builtin_server_name=BUILTIN_MCP_SERVER_NAME,
+        electron_server_name="electron_tool_bridge",
+        electron_request_type=ElectronToolBridgeRequest,
+        electron_executor=execute_electron_tool, logger=logger,
+        on_dispatch_ready=on_dispatch_ready, decision_snapshot=decision_snapshot,
     )
 
 
@@ -369,10 +321,7 @@ def approval_if_needed(
     policy_decisions_by_call: dict[str, ToolPolicyDecision] | None = None,
     approval_mode: str = "prompt",
 ) -> ApprovalRequest | None:
-    # NOTE: this scan is per-call independent (every check reads only `call`),
-    # a property tool_loop_recovery.approval_with_recovery relies on to
-    # evaluate calls one at a time and attribute failures to the exact
-    # offending call. Keep new checks per-call.
+    # Keep every check per-call for tool_loop_recovery.approval_with_recovery.
     mod = _router()
     ApprovalRequest_ = mod.ApprovalRequest
 
@@ -553,17 +502,22 @@ def approval_if_needed(
                 policy_decision=policy_decision,
             )
         if auto_run:
+            streak_request = _route_policy_runtime.streak_cap_request(
+                live_run_mode, kernel._config.auto_approve_streak_cap, call, descriptor, mode
+            )
+            if streak_request is not None:
+                return streak_request
             continue
-        # An AUTO policy decision reflects explicit user intent for this tool
-        # (the one-send auto-run grant or per-tool "Always allow" — run_command's
-        # built-in default is `ask`), so it also covers the shell classifier's
-        # NEEDS_APPROVAL verdict. BLOCKED commands were already rejected above
-        # and paranoid mode still prompts.
+        if (paused_request := _route_policy_runtime.paused_unattended_approval_request(
+            live_run_mode, call_side_effecting, call, descriptor, mode
+        )) is not None:
+            return paused_request
         if (
             policy_decision is not None
             and policy_decision.decision == POLICY_DECISION_AUTO
             and not paranoid_mode
         ):
+            _route_policy_runtime.record_auto_approval(live_run_mode)
             continue
         if shell_classification is not None:
             if (
@@ -618,6 +572,7 @@ def filter_tool_calls_by_policy(
     plan_mode: bool = False,
     read_only: bool = False,
     request_disabled_tools: frozenset[str] = frozenset(),
+    policy_snapshot: Any | None = None,
 ) -> ToolPolicyFilterResult:
     return _filter_tool_calls_by_policy(
         kernel,
@@ -630,6 +585,7 @@ def filter_tool_calls_by_policy(
             plan_mode=plan_mode,
             read_only=read_only,
             request_disabled_tools=request_disabled_tools,
+            policy_snapshot=policy_snapshot,
         ),
     )
 
@@ -709,32 +665,49 @@ def execute_tool(
     trusted_plan_artifact_write: bool | None = None,
     audit_metadata: dict[str, object] | None = None,
     runtime: Any | None = None,
+    on_dispatch_ready: Callable[[], None] | None = None,
+    restored_inputs: _tool_restored_inputs.RestoredToolInputs | None = None,
+    on_frozen_input: Callable[[Any], Any] | None = None,
 ) -> ToolExecutionOutcome:
     cancel_handle = getattr(runtime, "cancel_handle", None)
     if runtime is not None:
         runtime.raise_if_interrupted()
-        runtime.audit(
-            KIND_TOOL_EXECUTION_STARTED,
-            tool_call_id=str(call.call_id or ""),
-            tool_name=str(call.tool_id or ""),
-            summary=f"tool_execution_started {call.tool_id}",
-        )
+    dispatch_started = False
+    def _mark_dispatch_ready() -> None:
+        nonlocal dispatch_started
+        if dispatch_started:
+            return
+        if callable(on_dispatch_ready):
+            on_dispatch_ready()
+        if runtime is not None:
+            runtime.audit(
+                KIND_TOOL_EXECUTION_STARTED,
+                tool_call_id=str(call.call_id or ""),
+                tool_name=str(call.tool_id or ""),
+                summary=f"tool_execution_started {call.tool_id}",
+            )
+            runtime.raise_if_interrupted()
+        dispatch_started = True
     mod = _router()
     ToolExecutionOutcome_ = mod.ToolExecutionOutcome
     request_context = getattr(runtime, "request_context", None)
-
-    frozen_inputs = freeze_effective_execution_inputs(
-        kernel,
-        call,
-        session_id=session_id,
-        read_snapshot_cache=read_snapshot_cache,
-        tool_contract=tool_contract,
-        plan_mode=bool(getattr(request_context, "plan_mode", False)),
-        read_only=bool(getattr(request_context, "read_only", False)),
-        approved_plan=getattr(request_context, "approved_plan", None),
-        trusted_plan_artifact_write=trusted_plan_artifact_write,
-        turn_id=request_id,
-    )
+    execution_context = getattr(request_context, "execution_context", None)
+    logical_turn_id = str(getattr(runtime, "logical_turn_id", "") or request_id)
+    if restored_inputs is not None:
+        frozen_inputs = restored_inputs.bind_for_attempt(
+            call=call, session_id=session_id, logical_turn_id=logical_turn_id,
+            execution_context=execution_context,
+        )
+    else:
+        frozen_inputs = freeze_effective_execution_inputs(
+            kernel, call, session_id=session_id,
+            read_snapshot_cache=read_snapshot_cache, tool_contract=tool_contract,
+            plan_mode=bool(getattr(request_context, "plan_mode", False)),
+            read_only=bool(getattr(request_context, "read_only", False)),
+            approved_plan=getattr(request_context, "approved_plan", None),
+            trusted_plan_artifact_write=trusted_plan_artifact_write,
+            turn_id=logical_turn_id, execution_context=execution_context,
+        )
     scan_tool_arguments(call.arguments, tool_name=call.tool_id)
     visible_tool_arguments = dict(frozen_inputs.visible_tool_arguments)
     apply_tool_pressure_backoff(
@@ -744,11 +717,16 @@ def execute_tool(
         runtime=runtime,
         decision=build_tool_pressure_backoff_decision(
             config=getattr(kernel, "_config", None),
-            root=getattr(getattr(kernel, "_config", None), "tools_workspace_root", None),
+            root=(
+                getattr(execution_context, "root_path", None)
+                if execution_context is not None
+                else getattr(getattr(kernel, "_config", None), "tools_workspace_root", None)
+            ),
         ),
     )
     entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
     if entry is not None and not entry.available:
+        _mark_dispatch_ready()
         return ToolExecutionOutcome_(
             tool_name=call.tool_id,
             output=blocked_tool_message(call.tool_id, entry.reason),
@@ -786,6 +764,7 @@ def execute_tool(
             increment_counter=increment_counter_for_kernel,
         )
         if validation_outcome is not None:
+            _mark_dispatch_ready()
             return validation_outcome
     else:
         validation_outcome = _descriptor_validation_outcome(
@@ -797,6 +776,7 @@ def execute_tool(
             outcome_type=ToolExecutionOutcome_,
         )
         if validation_outcome is not None:
+            _mark_dispatch_ready()
             return validation_outcome
     tool_arguments = dict(frozen_inputs.effective_tool_arguments)
     plan_artifact_write = (
@@ -804,7 +784,21 @@ def execute_tool(
     )
     if call.tool_id == "mermaid_generate" and plan_artifact_write:
         tool_arguments["_jenny_read_only"] = False
+    timeout_seconds = _tool_timeout_for_runtime(kernel, runtime, call)
+    synthetic_tool = call.tool_id in {"monitor", "check_monitor", "delegate"}
+    if synthetic_tool:
+        _tool_authority.admit_scoped_tool_call(
+            runtime=runtime,
+            call=call,
+            descriptor=descriptor,
+            tool_arguments=tool_arguments,
+            visible_arguments=visible_tool_arguments,
+            builtin_server_name=BUILTIN_MCP_SERVER_NAME,
+            timeout_seconds=timeout_seconds,
+            inject_trusted_envelope=False,
+        )
     if call.tool_id == "monitor":
+        _mark_dispatch_ready()
         return _execute_monitor_tool(
             kernel=kernel,
             call=call,
@@ -817,6 +811,7 @@ def execute_tool(
             outcome_type=ToolExecutionOutcome_,
         )
     if call.tool_id == "check_monitor":
+        _mark_dispatch_ready()
         return _execute_check_monitor_tool(
             kernel=kernel,
             call=call,
@@ -827,6 +822,7 @@ def execute_tool(
             outcome_type=ToolExecutionOutcome_,
         )
     if call.tool_id == "delegate":
+        _mark_dispatch_ready()
         return _execute_delegate_synthetic_tool(
             kernel=kernel,
             call=call,
@@ -852,9 +848,9 @@ def execute_tool(
                 runtime=runtime,
                 call=call,
             )
-        timeout_seconds = _tool_timeout_for_runtime(kernel, runtime, call)
         # See tool_execution_ask_user_wait for the approval-parity rationale:
         # a human-answer wait must not burn the turn's working-time budget.
+        decision_snapshot = on_frozen_input(frozen_inputs) if callable(on_frozen_input) else None
         wait_started_at = _ask_user_wait.ask_user_wait_started_at(runtime, call)
         try:
             if call.tool_id == "connections_list":
@@ -862,27 +858,32 @@ def execute_tool(
                     getattr(request_context, "session_offline_lockdown", False) is True
                 )
             result = _dispatch_tool_call(
-                kernel=kernel,
-                call=call,
-                tool_arguments=tool_arguments,
-                descriptor=descriptor,
-                request_id=request_id,
-                session_id=session_id,
-                runtime=runtime,
-                timeout_seconds=timeout_seconds,
-                cancel_handle=cancel_handle,
+                kernel=kernel, call=call, descriptor=descriptor,
+                tool_arguments=tool_arguments, admission_arguments=visible_tool_arguments,
+                request_id=request_id, session_id=session_id, runtime=runtime,
+                timeout_seconds=timeout_seconds, cancel_handle=cancel_handle,
                 on_output_chunk=_build_output_chunk_emitter(runtime, call),
+                on_dispatch_ready=_mark_dispatch_ready, decision_snapshot=decision_snapshot,
             )
         finally:
             _ask_user_wait.credit_ask_user_wait(runtime, wait_started_at)
-        # NO post-dispatch interruption check here. Once ``_dispatch_tool_call``
-        # returns, the tool's effect is already committed; raising
-        # ``TerminalChatStateError`` at this point would skip the whole
-        # outcome-construction block below and report a COMMITTED tool as a
-        # retryable interruption (CMP-LOOP-0013). The pre-dispatch guard above
-        # still refuses to start work after cancellation, and the sole caller
-        # (``execute_tool_calls_sequentially``) observes interruption only after
-        # the completed result has been appended and its ``tool.result`` emitted.
+        # Never check interruption after dispatch: its effect is already committed.
+        # The sequential caller first appends/emits the completed result, then
+        # observes cancellation. Otherwise committed work becomes a retryable
+        # interruption (CMP-LOOP-0013).
+    except (
+        _tool_resource_deferral.ToolLoopSuspended, _tool_resource_deferral.DecisionSuspensionError
+    ):
+        raise
+    except _tool_resource_deferral.ToolResourceDeferred as error:
+        try:
+            raise error.prepare(
+                call_id=str(call.call_id or ""),
+                tool_id=str(call.tool_id or ""),
+                frozen_inputs=frozen_inputs,
+            ) from error
+        except ValueError:
+            raise _tool_resource_deferral.resource_wait_failure(error.wait) from error
     except MCPError as error:
         # Runtime MCP servers / the Electron bridge may surface a blank or
         # non-`CMP-` code; normalise to a `CMP-TOOL-*` subcode so the failure
@@ -950,7 +951,6 @@ def execute_tool(
             message=f"tool '{call.tool_id}' execution failed: {error}",
             retryable=True,
         ) from error
-
     result_tool_name = str(result.tool_name or call.tool_id or "")
     sanitized_output, router_output_truncated = bounded_tool_output(
         result.output,
@@ -988,7 +988,6 @@ def execute_tool(
         tool_id=str(call.tool_id or ""),
         source_kind=str(getattr(descriptor, "source_kind", "") or "") if descriptor else "",
     )
-
     if runtime is not None:
         outcome_kind = (
             KIND_TOOL_EXECUTION_OBSERVED if result.success else KIND_TOOL_EXECUTION_FAILED

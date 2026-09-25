@@ -18,6 +18,9 @@ export default [
       "dist/**",
       // Generated hosted browser bundle; lint its server/browser sources.
       "build/browser/**",
+      // Owner-gate evidence (gitignored): captured profiles, venvs and sample
+      // projects from real-app gate runs, not Jenny source.
+      "build/gate-evidence/**",
       "locales/**",
       "node_modules/**",
       // Generated sandboxed preload bundle (gitignored; rebuilt by

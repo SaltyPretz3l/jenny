@@ -289,6 +289,30 @@ test('registerSaveFileHandler wires through registerIpcInvokeHandlers', async ()
   assert.equal(result.canceled, true);
 });
 
+test('registerSaveFileHandler applies authorization before opening the save dialog', async () => {
+  const channels = new Map();
+  const { dialog, calls } = makeDialogStub({ canceled: true });
+  registerSaveFileHandler({
+    ipcMainLike: { handle: (channel, handler) => channels.set(channel, handler) },
+    dialog,
+    getMainWindow: () => null,
+    log: makeLog(),
+    authorization: {
+      authorize: (event) => event?.trusted === true,
+      unauthorizedResult: () => ({ ok: false, authorized: false, code: 'ipc_sender_unauthorized' }),
+    },
+  });
+
+  const handler = channels.get('dialog:save-file');
+  const payload = { defaultName: 'x.md', content: '', format: 'markdown' };
+  assert.deepEqual(await handler({ trusted: false }, payload), {
+    ok: false, authorized: false, code: 'ipc_sender_unauthorized',
+  });
+  assert.equal(calls.length, 0);
+  assert.equal((await handler({ trusted: true }, payload)).canceled, true);
+  assert.equal(calls.length, 1);
+});
+
 test('SUPPORTED_FORMATS exposes the format whitelist', () => {
   assert.ok(SUPPORTED_FORMATS.has('markdown'));
   assert.ok(SUPPORTED_FORMATS.has('plain'));

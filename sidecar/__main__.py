@@ -25,6 +25,7 @@ if typing.TYPE_CHECKING:
     import argparse
 
 _GREP_SEARCH_WORKER_FLAG = "--grep-search-worker"
+_WORKSPACE_TEST_HELPER_FLAG = "--workspace-test-runner-helper"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -121,10 +122,54 @@ def _run_grep_search_worker() -> int:
     return _grep_search_worker_main()
 
 
-def run(argv: Sequence[str] | None = None) -> int:
+def _run_workspace_test_helper() -> int:
+    from sidecar.ai.tools.builtins.contained_process_helper import (
+        run_workspace_test_helper,
+    )
+
+    return run_workspace_test_helper()
+
+
+def _probe_pdf_addon() -> int:
+    import importlib
+    import json
+
+    from sidecar.runtime.media_site import pdf_addon_activated_dir
+
+    addon_dir = pdf_addon_activated_dir()
+    try:
+        fitz = importlib.import_module("fitz")
+        version = getattr(fitz, "VersionBind", None) or (
+            importlib.import_module("pymupdf").__version__
+        )
+        payload = {
+            "ok": True,
+            "version": str(version),
+            "addon_dir": str(addon_dir) if addon_dir is not None else None,
+        }
+        exit_code = 0
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "ok": False,
+            "error": type(exc).__name__,
+            "addon_dir": str(addon_dir) if addon_dir is not None else None,
+        }
+        exit_code = 1
+    sys.stdout.write(json.dumps(payload) + "\n")
+    sys.stdout.flush()
+    return exit_code
+
+
+def run(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one early return per launch mode
     raw_args = list(argv) if argv is not None else list(sys.argv[1:])
     if raw_args == [_owned_process_bootstrap.BOOTSTRAP_FLAG]:
         return _run_owned_process_bootstrap()
+
+    from sidecar.runtime.media_site import activate_optional_sites
+
+    activate_optional_sites()
+    if raw_args == ["--probe-pdf-addon"]:
+        return _probe_pdf_addon()
     if raw_args and raw_args[0] == "--mcp-builtin-server":
         return _run_builtin_mcp_server(raw_args[1:])
 
@@ -184,6 +229,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else list(sys.argv[1:])
     if raw_args == [_owned_process_bootstrap.BOOTSTRAP_FLAG]:
         return _run_owned_process_bootstrap()
+    if raw_args == [_WORKSPACE_TEST_HELPER_FLAG]:
+        return _run_workspace_test_helper()
     if raw_args == [_GREP_SEARCH_WORKER_FLAG]:
         return _run_grep_search_worker()
 

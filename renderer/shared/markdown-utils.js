@@ -26,11 +26,7 @@
       const createDOMPurify = require('dompurify');
       /* Node.js: DOMPurify needs a window object — use jsdom if available */
       if (typeof window !== 'undefined') return createDOMPurify(window);
-      try {
-        const { JSDOM } = require('jsdom');
-        return createDOMPurify(new JSDOM('').window);
-      } catch (_e2) { /* jsdom unavailable */ }
-      return null;
+      return getIsolatedDocument()?.defaultView ? createDOMPurify(getIsolatedDocument().defaultView) : null;
     } catch (_e) { /* dompurify unavailable */ }
     return null;
   }
@@ -140,16 +136,11 @@
     configured = true;
   }
 
+  // Node has no global document: one jsdom document (whose window DOMPurify shares) is built and reused.
+  let isolatedDocument = null;
   function getIsolatedDocument() {
-    if (typeof document !== 'undefined' && document && typeof document.createElement === 'function') {
-      return document;
-    }
-    try {
-      const { JSDOM } = require('jsdom');
-      return new JSDOM('').window.document;
-    } catch (_err) {
-      return null;
-    }
+    if (typeof document !== 'undefined' && document && typeof document.createElement === 'function') return document;
+    try { return isolatedDocument || (isolatedDocument = new (require('jsdom').JSDOM)('').window.document); } catch (_err) { return null; }
   }
 
   function createTemplateElement() {
@@ -232,14 +223,15 @@
     // Wrap tables in responsive wrapper for scroll shadows
     const tables = fragment.querySelectorAll('table');
     tables.forEach((tableNode) => {
-      if (tableNode.parentElement?.classList?.contains('markdown-table-wrapper')) {
-        return;
+      const ownerDoc = tableNode.ownerDocument; let tableWrapper = tableNode.parentElement;
+      if (!tableWrapper?.classList?.contains('markdown-table-wrapper')) {
+        tableWrapper = ownerDoc.createElement('div'); tableWrapper.className = 'markdown-table-wrapper';
+        tableNode.replaceWith(tableWrapper); tableWrapper.appendChild(tableNode);
       }
-      const ownerDoc = tableNode.ownerDocument;
-      const tableWrapper = ownerDoc.createElement('div');
-      tableWrapper.className = 'markdown-table-wrapper';
-      tableNode.replaceWith(tableWrapper);
-      tableWrapper.appendChild(tableNode);
+      if (tableWrapper.querySelector(':scope > .markdown-table-header')) return;
+      const header = ownerDoc.createElement('div'); header.className = 'markdown-table-header inv-codeblock-toolbar';
+      const copyBtn = createActionButtonNode(ownerDoc, { className: 'inv-table-copy', ariaLabel: jt('markdown.table.copyLabel', 'Copy table as tab-separated values'), label: jt('common.copy', 'Copy') });
+      if (copyBtn) { header.appendChild(copyBtn); tableWrapper.insertBefore(header, tableNode); }
     });
 
     const preCodeNodes = fragment.querySelectorAll('pre > code');
@@ -551,7 +543,9 @@
     const wantsFragment = options?.returnFragment === true;
     const sanitizeConfig = { ...SANITIZE_CONFIG, ...(wantsFragment ? { RETURN_DOM_FRAGMENT: true } : {}),
       ...(imagesMode === 'omit' ? { FORBID_TAGS: ['img', 'picture', 'source', 'video', 'audio'] } : {}) };
-    const sanitizedHtml = _purify.sanitize(rawHtml, sanitizeConfig);
+    const sanitized = _purify.sanitize(rawHtml, sanitizeConfig);
+    // Node only: jsdom never removes the window listeners a queried document adds, so query DOMPurify's fresh-document fragment in the reused one.
+    const sanitizedHtml = wantsFragment && isolatedDocument && sanitized?.nodeType ? isolatedDocument.adoptNode(sanitized) : sanitized;
     if (!bypassCache && _markdownRenderCache) {
       _markdownRenderCache.set(cacheParts, sanitizedHtml);
     }

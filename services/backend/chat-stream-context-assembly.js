@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 const {
   buildLinkedSessionContext,
 } = require('./linked-session-recall');
@@ -19,6 +21,31 @@ const {
 const {
   normalizeContextBlocksForSend,
 } = require('./chat-send-context-blocks');
+const { getTrustedExecutionBinding } = require('./session-execution-authority');
+
+function isAuthorizedRelativePath(value) {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  if (!candidate || path.isAbsolute(candidate)) return false;
+  const normalized = path.normalize(candidate);
+  return normalized !== '..'
+    && !normalized.startsWith(`..${path.sep}`)
+    && !normalized.includes('\0');
+}
+
+function scopeAutomaticFileContext(activeFileContext, mentionContents, authority) {
+  const rootId = String(authority?.root_id || '');
+  if (!rootId || !authority?.root_path) return { activeFileContext: null, mentionContents: [] };
+  const active = activeFileContext && typeof activeFileContext === 'object'
+    && activeFileContext.workspace_id === rootId
+    && isAuthorizedRelativePath(activeFileContext.path)
+    ? activeFileContext
+    : null;
+  const mentions = Array.isArray(mentionContents)
+    ? mentionContents.filter((entry) => entry && typeof entry === 'object'
+      && entry.workspace_id === rootId && isAuthorizedRelativePath(entry.path))
+    : [];
+  return { activeFileContext: active, mentionContents: mentions };
+}
 
 function summarizeTextBlock(text) {
   const normalized = String(text || '');
@@ -47,7 +74,19 @@ async function assembleContextForChat(service, options) {
     logTiming,
     activeFileContext,
     mentionContents,
+    executionAuthority,
   } = options;
+  const trustedExecution = getTrustedExecutionBinding(executionAuthority);
+  if (!trustedExecution || trustedExecution.sessionId !== resolvedSessionId) {
+    throw new Error('Trusted session execution authority is required for context assembly.');
+  }
+  const projectAuthority = trustedExecution.authority;
+  const projectRoot = String(projectAuthority.root_path || '');
+  const scopedAutomaticContext = scopeAutomaticFileContext(
+    activeFileContext,
+    mentionContents,
+    projectAuthority
+  );
 
   const usesMinimalSystemPrompt =
     String(engineType || service.currentEngineType || '').trim().toLowerCase() === 'chatgpt';
@@ -57,21 +96,16 @@ async function assembleContextForChat(service, options) {
     && service.personalityWorkspace
     && typeof service.personalityWorkspace.getCompiledContext === 'function';
   const shouldIncludeMemory = contextPreferences.include_memory !== false;
-  const hasConfigGet =
-    service.configService && typeof service.configService.get === 'function';
   const shouldIncludeGitContext =
-    contextPreferences.include_git_context !== false && hasConfigGet;
+    contextPreferences.include_git_context !== false && Boolean(projectRoot);
   // Codebase grounding ("local RAG-lite") is opt-in: gated behind the
   // default-ON workspace_codebase_context flag AND the include_codebase_context
   // context preference AND a configured workspace root. It is independent of the
   // git-context preference.
-  const codebaseWorkspaceRoot = hasConfigGet
-    ? String(service.configService.get('tools_workspace_root') || '').trim()
-    : '';
   const shouldIncludeCodebaseContext =
     service.featureFlags?.workspace_codebase_context === true
     && contextPreferences.include_codebase_context !== false
-    && Boolean(codebaseWorkspaceRoot);
+    && Boolean(projectRoot);
   const codebaseQuery = recallQuery || prompt || '';
   // Implicit active-file context + @-mentions (Tier-3): gated behind the
   // default-ON workspace_active_file_context flag AND the
@@ -84,8 +118,8 @@ async function assembleContextForChat(service, options) {
     service.featureFlags?.workspace_active_file_context === true
     && contextPreferences.include_active_file_context !== false
     && (
-      Boolean(activeFileContext && activeFileContext.slice)
-      || (Array.isArray(mentionContents) && mentionContents.length > 0)
+      Boolean(scopedAutomaticContext.activeFileContext?.slice)
+      || scopedAutomaticContext.mentionContents.length > 0
     );
   // Cross-source dedupe (codebase vs active-file): when the active-file block
   // will actually carry the open file's slice, exclude that path from the
@@ -94,8 +128,8 @@ async function assembleContextForChat(service, options) {
   // active file is excluded — @-mentions are out of scope. When active-file
   // context is off there is no double-send, so the exclude stays empty.
   const activeFileExcludePath =
-    shouldIncludeActiveFileContext && activeFileContext && activeFileContext.slice
-      ? String(activeFileContext.path || '').trim()
+    shouldIncludeActiveFileContext && scopedAutomaticContext.activeFileContext?.slice
+      ? String(scopedAutomaticContext.activeFileContext.path || '').trim()
       : '';
   const codebaseExcludePaths = activeFileExcludePath ? [activeFileExcludePath] : [];
   const promptContributions = {};
@@ -126,19 +160,17 @@ async function assembleContextForChat(service, options) {
   ] = await Promise.allSettled([
     timed(() =>
       shouldIncludePersonality
-        ? service.personalityWorkspace.getCompiledContext()
+        ? service.personalityWorkspace.getCompiledContext({ projectId: projectAuthority.project_id })
         : Promise.resolve('')
     ),
     timed(() =>
       shouldIncludeGitContext
-        ? getGitContextForChat(
-            service.configService.get('tools_workspace_root') || ''
-          ).catch(() => null)
+        ? getGitContextForChat(projectRoot).catch(() => null)
         : Promise.resolve(null)
     ),
     timed(() =>
       shouldIncludeCodebaseContext
-        ? getCodebaseContext(codebaseWorkspaceRoot, codebaseQuery, {
+        ? getCodebaseContext(projectRoot, codebaseQuery, {
           excludePaths: codebaseExcludePaths,
         }).catch(() => null)
         : Promise.resolve(null)
@@ -148,10 +180,14 @@ async function assembleContextForChat(service, options) {
     // {value,elapsedMs} shape the splice/timing code below relies on.
     timed(() =>
       shouldIncludeActiveFileContext
-        ? Promise.resolve(buildActiveFileContextBlock(activeFileContext, mentionContents))
+        ? Promise.resolve(buildActiveFileContextBlock(
+          scopedAutomaticContext.activeFileContext,
+          scopedAutomaticContext.mentionContents
+        ))
         : Promise.resolve(null)
     ),
   ]);
+  trustedExecution.assertCurrent();
   // elapsedFor pulls the per-task duration from the timed() wrapper; on
   // rejection we still captured elapsedMs before rethrowing.
   function elapsedFor(settled) {
@@ -374,6 +410,7 @@ async function assembleContextForChat(service, options) {
     memoryPolicy: {
       enabled: shouldIncludeMemory,
       include_response_style: !promptHasExplicitStyleInstruction,
+      project_id: projectAuthority.project_id,
     },
     promptContributions,
     contextAssemblyBreakdown,

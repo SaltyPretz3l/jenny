@@ -342,6 +342,11 @@
         markerBannerMarkup = buildToolMarkerBannerMarkup(resultPayload);
       }
       const statusKey = String(status || '').toLowerCase();
+      // A4: the header says Paused or Withdrawn, muted, when the runtime no
+      // longer waits on the approval (display only; the row keeps its status).
+      const approvalCardState = statusKey === 'awaiting_approval' || statusKey === 'pending_approval'
+        ? readApprovalCardState(row, toolCallId, renderOptions) : null;
+      const headerStatus = { paused: 'paused', inactive: 'withdrawn' }[approvalCardState && approvalCardState.state] || status;
       const statusAutoExpand = toolCallUtils && typeof toolCallUtils.shouldAutoExpandToolDetails === 'function'
         ? toolCallUtils.shouldAutoExpandToolDetails(statusKey)
         : false;
@@ -456,11 +461,12 @@
             displayToolName,
             lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
             summary: rowSummary === displayToolName ? '' : rowSummary,
-            status,
+            status: headerStatus,
             isRunning,
             isFileOperation,
             icon: toolCallUtils.getToolIcon(toolName),
-            statusLabel: getToolStatusLabel(status, normalizeId),
+            statusLabel: headerStatus === 'paused' ? jt('approval.block.paused', 'Paused')
+              : (headerStatus === 'withdrawn' ? jt('chat.toolCall.withdrawn', 'Withdrawn') : getToolStatusLabel(status, normalizeId)),
             // R2-12: a failed row stays collapsed, so its own failure text
             // rides in the header as one bounded line.
             failureSummary: resultBodyIsError && toolCallUtils
@@ -493,6 +499,12 @@
             },
           })
         : `<span class="tool-call-row-summary">${summaryParts.summaryMarkup}</span>`;
+      // CMP-TOOL-0047 (PDF reading add-on missing): one quiet link, a sibling of
+      // the header so it stays visible on the collapsed row. The transcript's
+      // data-inv-error-action delegate opens Settings > Tools at the add-on.
+      const pdfAddonLinkMarkup = resultBodyIsError && detailModel.errorCode === 'CMP-TOOL-0047'
+        ? `<div class="tool-call-row-action"><span class="tool-call-row-link" role="link" tabindex="0" data-inv-error-action="open_pdf_addon_settings">${escapeHtml(jt('chat.toolRow.setUpPdfReading', 'Set up PDF reading'))}</span></div>`
+        : '';
       return `
         ${markerBannerMarkup}
         <div class="tool-call-row tool-call-row--minimal${fileOperationClass}" data-tool-call-id="${escapeHtml(toolCallId)}" data-tool-row-key="${escapeHtml(rowKey)}" data-tool-status="${escapeHtml(status)}" data-is-error="${resultBodyIsError ? 'true' : 'false'}"${severityAttr}${chatPathAttr} data-expanded="${expanded ? 'true' : 'false'}" data-tool-details-materialized="${detailsMaterialized ? 'true' : 'false'}"${ariaBusy}${hasResultAttr}>
@@ -511,7 +523,7 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${taskSpawnChipMarkup}${calendarBlockMarkup}
+          ${pdfAddonLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}
           ${mermaidFallbackMarkup}
           ${artifactTeasersMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
@@ -770,9 +782,17 @@
       `;
     }
 
-    function buildApprovalGapMarkup(row) {
+    // A4: whether the runtime still waits on this approval (live, paused, inactive).
+    function readApprovalCardState(row, toolCallId, options) {
+      return typeof settings.getApprovalCardState === 'function'
+        ? settings.getApprovalCardState({ sessionId: options && options.sessionId, turnId: row && row.turn_id, callId: toolCallId, rowState: row && row.payload && row.payload.state })
+        : null;
+    }
+
+    function buildApprovalGapMarkup(row, _messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const toolCallId = resolveProjectedRowCallId(row);
+      const cardState = readApprovalCardState(row, toolCallId, options) || {};
       const toolName = String(payload.tool_name || '').trim();
       // Same precedence as the tool row this card sits above (F16).
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
@@ -814,12 +834,15 @@
         policyScope: payload.policy_scope,
         policyConsequence: payload.policy_consequence,
         reason: payload.reason,
+        oneOffOnly: payload.one_off_only === true || payload.oneOffOnly === true,
         purpose: approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalPurpose === 'function'
           ? toolCallUtils.getApprovalPurpose(approvalInput) : '',
         facts: approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalFacts === 'function'
           ? toolCallUtils.getApprovalFacts(toolName, approvalInput) : [],
         commandText,
         mode: 'inline',
+        cardState: cardState.state,
+        resumeKey: cardState.resumeKey,
         variant: normalizeId(payload.approval_variant),
       }, { escapeHtml });
     }

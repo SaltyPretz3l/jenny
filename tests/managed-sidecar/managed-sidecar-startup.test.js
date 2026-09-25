@@ -35,6 +35,11 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
+// "Load model at startup" (localEngines.startupModelLoad) defaults on since
+// accbb2641; these lazy-load contracts hold for the setting turned off. The
+// eager default is covered in tests/backend-runtime.test.js.
+const startupModelLoadOff = { getLocalEngines: () => ({ startupModelLoad: false }) };
+
 test('managed sidecar restart reports failure when retry does not reach ready', async () => {
   const logs = [];
   const service = {
@@ -66,6 +71,7 @@ test('managed sidecar startup defers the configured Ollama model and reports rea
 
   const service = createManagedService(userDataPath, {
     defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+    configService: startupModelLoadOff,
   });
   const logs = collectServiceLogs(service);
 
@@ -177,6 +183,7 @@ test('managed sidecar first chat lazy-loads the configured Ollama model', async 
 
   const service = createManagedService(userDataPath, {
     defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+    configService: startupModelLoadOff,
   });
   const logs = collectServiceLogs(service);
 

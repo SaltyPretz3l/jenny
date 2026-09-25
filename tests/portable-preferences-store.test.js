@@ -5,10 +5,17 @@ const os = require('os');
 const path = require('path');
 
 const {
+  PORTABLE_SHELL_CONFIG_VERSION,
   PortablePreferencesStore,
   normalizePortablePreferences,
   projectPortableShellConfig,
 } = require('../services/data-lifecycle/portable-preferences-store');
+const {
+  projectRestoredPreference,
+} = require('../services/data-lifecycle/restore-preferences');
+const {
+  DEFAULT_SESSION_RUNTIME,
+} = require('../services/shell-config-session-runtime');
 
 function withTempDir(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-portable-preferences-'));
@@ -44,6 +51,9 @@ describe('PortablePreferencesStore', () => {
     assert.equal(store.read(), null);
     fs.writeFileSync(store.filePath, JSON.stringify({ schema_version: 99 }), 'utf8');
     assert.equal(store.read(), null);
+    const futureBytes = fs.readFileSync(store.filePath, 'utf8');
+    assert.throws(() => store.sync({ preferredModel: 'do-not-write' }), /version_unsupported/);
+    assert.equal(fs.readFileSync(store.filePath, 'utf8'), futureBytes);
   }));
 
   it('merges partial renderer updates without erasing an archived model preference', () => withTempDir((root) => {
@@ -79,6 +89,8 @@ describe('PortablePreferencesStore', () => {
       secureState: { token: 'never' },
     });
     assert.equal(result.preferredEngineType, 'vllm');
+    assert.equal(result.version, PORTABLE_SHELL_CONFIG_VERSION);
+    assert.deepEqual(result.session_runtime, DEFAULT_SESSION_RUNTIME);
     assert.equal(result.chatUi.zoomPercent, 125);
     assert.deepEqual(result.proactive.reminders[0], {
       id: 'one', label: 'Remember', prompt: 'Call someone', enabled: true,
@@ -88,4 +100,47 @@ describe('PortablePreferencesStore', () => {
     assert.equal(JSON.stringify(result).includes('private'), false);
     assert.equal(JSON.stringify(result).includes('token'), false);
   });
+
+  it('round-trips allowlisted v54 session runtime limits', () => {
+    const projected = projectPortableShellConfig({
+      sessionRuntime: {
+        local: { runnable_turns: 2, inference_requests: 3, descendants: 4, descendant_depth: 1 },
+        cloud: { runnable_turns: 5, inference_requests: 6, descendants: 7, descendant_depth: 2 },
+        resources: { tool_operations: 8, native_processes: 9, tests: 3 },
+      },
+    });
+    assert.deepEqual(projected.session_runtime, {
+      local: { runnable_turns: 2, inference_requests: 3, descendants: 4, descendant_depth: 1 },
+      cloud: { runnable_turns: 5, inference_requests: 6, descendants: 7, descendant_depth: 2 },
+      resources: { tool_operations: 8, native_processes: 9, tests: 3 },
+    });
+    assert.deepEqual(projectPortableShellConfig(projected).session_runtime,
+      projected.session_runtime);
+  });
+
+  it('normalizes malformed portable runtime limits to bounded defaults', () => {
+    const projected = projectPortableShellConfig({
+      session_runtime: {
+        local: { runnable_turns: 0, inference_requests: '4', descendants: -1 },
+        cloud: [],
+        resources: { tests: 99, sandbox_commands: 4 },
+      },
+    });
+    assert.deepEqual(projected.session_runtime, DEFAULT_SESSION_RUNTIME);
+    assert.equal(Object.hasOwn(projected.session_runtime.resources, 'sandbox_commands'), false);
+  });
+
+  it('restore projection refuses future portable and shell preference versions', () => withTempDir((root) => {
+    const portablePath = path.join(root, 'portable.json');
+    const shellPath = path.join(root, 'shell.json');
+    fs.writeFileSync(portablePath, JSON.stringify({ schema_version: 2 }));
+    fs.writeFileSync(shellPath, JSON.stringify({ version: PORTABLE_SHELL_CONFIG_VERSION + 1 }));
+
+    assert.throws(() => projectRestoredPreference({
+      logical_path: 'preferences/portable-preferences.json',
+    }, portablePath), /newer schema version/);
+    assert.throws(() => projectRestoredPreference({
+      logical_path: 'preferences/shell-config.json',
+    }, shellPath), /newer schema version/);
+  }));
 });

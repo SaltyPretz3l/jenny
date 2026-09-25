@@ -79,6 +79,11 @@
 .tool-kv-grid {
   display: grid;
   grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) auto;
+  /* Owner gate 2026-09-20: a failed workspace_present row side-scrolled the
+     narrow IDE chat dock. Every value surface below wraps at any point and the
+     grid never asks for more than its column. */
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-1) var(--space-5);
   font-family: var(--font-family-mono);
   font-size: var(--tl-font-code);
@@ -97,7 +102,8 @@
 
 .tool-kv-value {
   color: var(--text-primary);
-  word-break: break-word;
+  min-width: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -106,6 +112,9 @@
   font-size: var(--tl-font-meta);
   white-space: nowrap;
   text-align: end;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool-kv-row--block .tool-kv-value--block {
@@ -117,7 +126,8 @@
   margin: 0;
   font: inherit;
   color: var(--widget-tool-code-color);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tool-call-output-error {

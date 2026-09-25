@@ -54,6 +54,7 @@
       isCurrentSession = () => false,
       isVisibleChatSession = () => false,
       markHiddenRenderableEvent = () => {},
+      dismissApprovalToast = () => {},
       // Background Effects v3 S5 W1b: complete impulse, fired right where a
       // terminal stream flips the send lifecycle to 'settling'.
       publishCompleteImpulse = () => {},
@@ -264,6 +265,7 @@
         const normalizedSessionId = String(sessionId || '').trim();
         if (normalizedSessionId && !getApprovalPendingSessionIds().includes(normalizedSessionId)) {
           approvalToastSessionIds.delete(normalizedSessionId);
+          dismissApprovalToast(normalizedSessionId);
         }
       });
     }
@@ -305,6 +307,22 @@
         return;
       }
       clearTerminalStreamState(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
+      // A resumed paused turn continues on a fresh stream, and the paused
+      // stream never gets a terminal event of its own: release it here. A late
+      // terminal from an older attempt, while a newer one is live, releases
+      // nothing else.
+      const turnId = String(payload?.turnId || payload?.turn_id || '').trim();
+      const newerAttemptLive = Boolean(multiStreamController?.getStreamIdForSession?.(sessionId));
+      const sessionMessages = turnId && !newerAttemptLive ? state.messagesBySession?.get?.(sessionId) : null;
+      if (Array.isArray(sessionMessages)) {
+        for (const [otherStreamId, messageId] of [...state.pendingStreams]) {
+          if (otherStreamId === streamId) continue;
+          const message = sessionMessages.find((candidate) => candidate?.id === messageId);
+          if (String(message?.turn_id || '').trim() === turnId) {
+            clearTerminalStreamState(approvalToastSessionIds, streamSegmentState, streamPhaseState, otherStreamId);
+          }
+        }
+      }
       setChatSendLifecycle(sessionId, 'settling');
       publishCompleteImpulse({ sessionId, streamId, timeStamp: payload && payload.timeStamp });
       if (options.clearComposerNotice !== false) {

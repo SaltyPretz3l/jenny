@@ -198,7 +198,11 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     runStartupAuditAutoSend,
     signalRendererReadyOnce,
   } = startupAuditRuntime;
-  const uiRuntime = {};
+  // Split view W0-6: the render-memo bag is now pane 0's, and the three
+  // session-keyed projection caches live in a store every pane shares. With one
+  // pane this is an identity change -- same object shape, same lazy writes.
+  const paneSharedStore = window.rendererPaneRuntime.createSharedSessionStore();
+  const uiRuntime = window.rendererPaneRuntime.createPaneRuntime({ paneId: 0, shared: paneSharedStore });
   const spriteRuntime = { frameHandle: 0, targetMessageId: '', visible: false, streaming: false, currentY: 0, targetY: 0 };
   const composerHoloRuntime = {
     active: false, mode: 'idle', angle: 0, frameHandle: 0, lastFrame: 0,
@@ -442,7 +446,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     recordChatTimelineRolloutSignal, refreshDefaultChatTimelineBatch4Preference,
     rollbackChatTimelineRowModel, initializeEagerServices, applyFeatureStatePayload,
     refreshFeatureState, refreshWorkspaceRootState, refreshPhasePercentiles, resetPhasePercentiles,
-    hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose,
+    hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher,
     getPersonalityActiveFileSafe, setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe,
     handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
     handlePersonalityOpenFolderSafe,
@@ -480,7 +484,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     getScrollMetrics, getScrollBehavior, setFollowLatest, syncThreadScrollState, getComposerSafeOffset,
     measureComposerSafeOffset, updateComposerSafeOffset, initializeComposerLayoutObserver, scrollThreadToTop,
     scrollThreadToBottom, scrollMessageIntoView, getCurrentMessageById, isInteractiveRoundRecapExpanded,
-    pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, clearCopyFeedback, showCopyFeedback,
+    pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, toggleContextCompactionDetails, clearCopyFeedback, showCopyFeedback,
     syncRenderedThinkingPanels, syncThinkingBlockNode, scheduleMessageViewportSync, disposeViewportController,
     pinToTopController, buildArtifactsFromMessages, shellArtifactBridge, getArtifactsForSession, selectArtifact,
     invalidateSessionArtifacts, pruneSessionArtifacts, resetArtifactsState,
@@ -574,7 +578,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     saveMemoryContextFileSafe, resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
     showToastMessage, showShellErrorToast, toErrorMessage, reportErrorWhenActive, errorCenterStore, appendClientLog: (...a) => appendClientLog(...a), showSessionActionError,
     getCurrentRuntimePreferences, getRuntimePreferenceSnapshot, runRuntimePreferenceActivity,
-    handleWorkspaceRootChoose, handleRunSetupAgain, showSetupHelpSafe, showFactoryResetSafe,
+    handleWorkspaceRootChoose, clearWorkspaceRoot, handleRunSetupAgain, showSetupHelpSafe, showFactoryResetSafe,
     refreshProactiveStateSafe,
     refreshSkillsStateSafe, bindSkillsShellEventsSafe, updateSkillsSettingsSafe, openSkillsScopeFolderSafe,
     refreshTipsStateSafe, bindTipsShellEventsSafe,
@@ -622,7 +626,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     mergeMessageReasoning, setActivityChangeListener, handleActivityChange,
     pushIncomingLog, syncBackendActivityFromStatus, getRendererElapsedMs,
     resetArtifactsState, resetMemorySuggestionStateSafe, openSetupTileSafe, syncThreadScrollState, renderWorkspaceChrome,
-    toggleInteractiveRoundRecap, syncThinkingBlockNode, dismissToast, resolveActivity,
+    toggleInteractiveRoundRecap, toggleContextCompactionDetails, syncThinkingBlockNode, dismissToast, resolveActivity,
     handleFollowUpMessage,
     handleSaveProactiveSuggestionMessage, handleLaterProactiveSuggestionMessage, handleUseProactiveSuggestionMessageSafe,
     _handleLifecycleProgress, _handleLifecycleBackendStatus, runStartupAuditAutoSend, beginModelSwitch,
@@ -798,7 +802,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       applySetupBackendStatus: (...a) => applySetupBackendStatusSafe(...a),
       applySurfaceEffect: (...a) => applySurfaceEffect(...a),
       bootstrap: (...a) => bootstrap(...a),
-      chooseWorkspaceRoot: (...a) => handleWorkspaceRootChoose(...a),
+      chooseWorkspaceRoot: (...a) => handleWorkspaceRootChoose(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
       closeCommandPopover: (...a) => closeCommandPopover(...a),
       closeComposerPopover: (...a) => closeComposerPopover(...a),
       dismissToast: (...a) => dismissToast(...a),
@@ -868,6 +872,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       setDropActive,
       setSessionMessages: (...a) => setSessionMessages(...a),
       setSidebarCollapsed,
+      showComposerActionError,
       showSessionActionError,
       showShellErrorToast,
       showToastMessage,

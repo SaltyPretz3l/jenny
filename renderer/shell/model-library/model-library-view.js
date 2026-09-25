@@ -203,7 +203,13 @@
       }));
     }
     if (model.selectedEngine === 'llama-server') {
-      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'llama-server' + (mtpOn ? ' \u00b7 MTP' : '') }));
+      // A model on its own llama-server build names it; the bundled build is implied.
+      badges.push(inventoryBadge({
+        tone: 'muted',
+        size: 'sm',
+        text: 'llama-server' + (mtpOn ? ' \u00b7 MTP' : '')
+          + (model.customBuild > 0 ? jt('models.library.buildSuffix', ' \u00b7 build {build}', { build: model.customBuild }) : ''),
+      }));
     }
     if (model.accelerationEligible === true && !mtpOn) {
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.mtpReady', 'MTP ready') }));
@@ -312,6 +318,7 @@
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.ollamaOnly', 'Ollama only') }));
     }
 
+    if (model.libraryGguf === true) meta.push(jt('models.library.localGguf', 'Local GGUF'));
     if (!sourceInstalled && tag) meta.push(tag);
     if (model.params) meta.push(String(model.params));
     if (model.quant) meta.push(String(model.quant));

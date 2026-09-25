@@ -5,7 +5,7 @@ mod transport;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
@@ -15,9 +15,80 @@ use transport::{authenticate_request, response, Request, Response};
 struct SessionEntry {
     process: Mutex<containment::ContainedProcess>,
     termination: containment::TerminationHandle,
+    usable: bool,
 }
 
-type Sessions = Arc<Mutex<HashMap<String, Arc<SessionEntry>>>>;
+#[derive(Default)]
+struct SessionStore {
+    entries: HashMap<String, Arc<SessionEntry>>,
+    launching: HashSet<String>,
+    completed: HashMap<String, process_tree::TerminationProof>,
+    acknowledged: VecDeque<(String, process_tree::TerminationProof)>,
+}
+
+type Sessions = Arc<Mutex<SessionStore>>;
+
+struct LaunchReservation {
+    sessions: Sessions,
+    key: String,
+}
+
+impl Drop for LaunchReservation {
+    fn drop(&mut self) {
+        if let Ok(mut stored) = self.sessions.lock() { stored.launching.remove(&self.key); }
+    }
+}
+
+fn reserve_launch(sessions: &Sessions, key: &str) -> Result<LaunchReservation, String> {
+    let mut stored = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?;
+    if stored.entries.contains_key(key) || stored.completed.contains_key(key)
+        || stored.entries.len() + stored.launching.len() + stored.completed.len() >= 256
+        || !stored.launching.insert(key.to_string()) {
+        return Err("session_already_exists".to_string());
+    }
+    Ok(LaunchReservation { sessions: Arc::clone(sessions), key: key.to_string() })
+}
+
+fn session_key(session_id: &str, session_epoch: u64) -> String {
+    format!("{session_id}\0{session_epoch}")
+}
+
+fn cleanup_complete(proof: &process_tree::TerminationProof) -> bool {
+    proof.known && proof.reaped && proof.tree_empty && proof.output_readers_terminated
+}
+
+fn retained_proof(stored: &SessionStore, key: &str) -> Option<process_tree::TerminationProof> {
+    stored.completed.get(key).cloned().or_else(|| stored.acknowledged.iter()
+        .rev().find(|(completed_key, _)| completed_key == key)
+        .map(|(_, proof)| proof.clone()))
+}
+
+fn acknowledge_completed(stored: &mut SessionStore, key: &str) -> bool {
+    if stored.acknowledged.iter().any(|(completed_key, _)| completed_key == key) {
+        return true;
+    }
+    let Some(proof) = stored.completed.remove(key) else { return false; };
+    stored.acknowledged.push_back((key.to_string(), proof));
+    if stored.acknowledged.len() > 256 { stored.acknowledged.pop_front(); }
+    true
+}
+
+fn retain_completed_if_same(sessions: &Sessions, key: &str, entry: &Arc<SessionEntry>,
+    proof: &process_tree::TerminationProof) {
+    if let Ok(mut stored) = sessions.lock() {
+        if stored.entries.get(key).is_some_and(|current| Arc::ptr_eq(current, entry)) {
+            stored.entries.remove(key);
+            stored.completed.insert(key.to_string(), proof.clone());
+        }
+    }
+}
+
+fn terminate_entry(sessions: &Sessions, key: &str, entry: Arc<SessionEntry>)
+    -> process_tree::TerminationProof {
+    let proof = entry.termination.terminate();
+    if cleanup_complete(&proof) { retain_completed_if_same(sessions, key, &entry, &proof); }
+    proof
+}
 
 #[derive(Serialize)]
 struct Capabilities { capabilities: Vec<&'static str> }
@@ -151,27 +222,48 @@ fn handle(request: &Request, sessions: &Sessions, secret_input: &Arc<Mutex<File>
             .ok_or_else(|| "session_id_missing".to_string())?;
         let session_epoch = request.session_epoch
             .ok_or_else(|| "session_epoch_missing".to_string())?;
-        let removed = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
-            .remove(session_id);
+        let key = session_key(session_id, session_epoch);
+        let (entry, completed) = {
+            let stored = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?;
+            (stored.entries.get(&key).cloned(), retained_proof(&stored, &key))
+        };
         let proof_timeout_ms = request.proof_timeout_ms.unwrap_or(10_000).clamp(1_000, 60_000);
-        let proof = removed.map(|entry| entry.termination.terminate())
+        let proof = completed.unwrap_or_else(|| entry
+            .map(|owned| terminate_entry(sessions, &key, owned))
             .unwrap_or_else(|| containment::terminate_or_prove_absent(
-                session_id, session_epoch, proof_timeout_ms));
+                session_id, session_epoch, proof_timeout_ms)));
         return serde_json::to_value(proof)
             .map_err(|_| "termination_proof_encode_failed".to_string());
     }
+    if request.operation == "acknowledge_termination" {
+        let session_id = request.session_id.as_deref()
+            .ok_or_else(|| "session_id_missing".to_string())?;
+        let session_epoch = request.session_epoch
+            .ok_or_else(|| "session_epoch_missing".to_string())?;
+        let key = session_key(session_id, session_epoch);
+        let acknowledged = {
+            let mut stored = sessions.lock()
+                .map_err(|_| "session_store_unavailable".to_string())?;
+            acknowledge_completed(&mut stored, &key)
+        };
+        return Ok(serde_json::json!({"acknowledged": acknowledged}));
+    }
     if request.operation == "host_call" {
         let session_id = request.session_id.as_deref().ok_or_else(|| "session_id_missing".to_string())?;
+        let session_epoch = request.session_epoch
+            .ok_or_else(|| "session_epoch_missing".to_string())?;
+        let key = session_key(session_id, session_epoch);
         if cancellation_host_call(request) {
-            let removed = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
-                .remove(session_id).ok_or_else(|| "session_not_found".to_string())?;
-            let proof = removed.termination.terminate();
-            if !proof.tree_empty { return Err("host_cancel_unproven".to_string()); }
+            let entry = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
+                .entries.get(&key).cloned().ok_or_else(|| "session_not_found".to_string())?;
+            let proof = terminate_entry(sessions, &key, entry);
+            if !cleanup_complete(&proof) { return Err("host_cancel_unproven".to_string()); }
             return Ok(serde_json::json!({"status":"ok","payload_json":
                 "{\"ok\":true,\"cancelled\":true}"}));
         }
         let entry = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
-            .get(session_id).cloned().ok_or_else(|| "session_not_found".to_string())?;
+            .entries.get(&key).cloned().ok_or_else(|| "session_not_found".to_string())?;
+        if !entry.usable { return Err("session_cleanup_pending".to_string()); }
         let payload = request.payload_json.as_deref().ok_or_else(|| "payload_missing".to_string())?;
         if payload.len() > 65_536 { return Err("payload_too_large".to_string()); }
         return entry.process.lock().map_err(|_| "session_process_unavailable".to_string())?
@@ -180,6 +272,9 @@ fn handle(request: &Request, sessions: &Sessions, secret_input: &Arc<Mutex<File>
     if request.operation == "deliver_secret" {
         let session_id = request.session_id.as_deref()
             .ok_or_else(|| "session_id_missing".to_string())?;
+        let session_epoch = request.session_epoch
+            .ok_or_else(|| "session_epoch_missing".to_string())?;
+        let key = session_key(session_id, session_epoch);
         let secret = {
             let mut input = secret_input.lock()
                 .map_err(|_| "secret_channel_unavailable".to_string())?;
@@ -188,7 +283,8 @@ fn handle(request: &Request, sessions: &Sessions, secret_input: &Arc<Mutex<File>
         let grant_id = request.grant_id.as_deref()
             .ok_or_else(|| "secret_grant_missing".to_string())?;
         let entry = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
-            .get(session_id).cloned().ok_or_else(|| "session_not_found".to_string())?;
+            .entries.get(&key).cloned().ok_or_else(|| "session_not_found".to_string())?;
+        if !entry.usable { return Err("session_cleanup_pending".to_string()); }
         return entry.process.lock().map_err(|_| "session_process_unavailable".to_string())?
             .deliver_secret(grant_id, &secret);
     }
@@ -210,9 +306,10 @@ fn handle(request: &Request, sessions: &Sessions, secret_input: &Arc<Mutex<File>
             }
             let session_id = request.session_id.clone().ok_or_else(|| "session_id_missing".to_string())?;
             let session_epoch = request.session_epoch.ok_or_else(|| "session_epoch_missing".to_string())?;
+            let key = session_key(&session_id, session_epoch);
+            let _reservation = reserve_launch(sessions, &key)?;
             let _identity_lock = locked.file;
             let mut process = containment::launch(path, &session_id, session_epoch, limits)?;
-            process.initialize(&session_id, session_epoch)?;
             let pid = process.pid;
             let peer_identity_digest = process.peer_identity_digest();
             let process_instance_id = hex::encode(Sha256::new()
@@ -223,13 +320,24 @@ fn handle(request: &Request, sessions: &Sessions, secret_input: &Arc<Mutex<File>
                 .chain_update(locked.digest.as_bytes()).chain_update(context.active_generation_id.as_bytes())
                 .chain_update(context.commit_epoch.to_be_bytes()).finalize());
             let termination = process.termination_handle();
-            let entry = Arc::new(SessionEntry { process: Mutex::new(process), termination });
-            let mut stored = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?;
-            if stored.contains_key(&session_id) {
+            let initialization = process.initialize(&session_id, session_epoch);
+            if let Err(error) = initialization {
+                let entry = Arc::new(SessionEntry {
+                    process: Mutex::new(process), termination, usable: false,
+                });
                 let _ = entry.termination.terminate();
-                return Err("session_already_exists".to_string());
+                // Retain even a complete internal verdict until Electron asks
+                // for it. Dropping the only reader owner here would make a
+                // later Job-absence check unable to prove reader termination.
+                sessions.lock().map_err(|_| "session_store_unavailable".to_string())?
+                    .entries.insert(key, entry);
+                return Err(error);
             }
-            stored.insert(session_id.clone(), entry);
+            let entry = Arc::new(SessionEntry {
+                process: Mutex::new(process), termination, usable: true,
+            });
+            let mut stored = sessions.lock().map_err(|_| "session_store_unavailable".to_string())?;
+            stored.entries.insert(key, entry);
             serde_json::to_value(LaunchReceipt { attestation_schema_version: 6, receipt_id,
                 publisher_id: context.publisher_id, plugin_id: context.plugin_id,
                 contribution_id: context.contribution_id, artifact_digest: context.artifact_digest,
@@ -269,7 +377,7 @@ fn open_secret_input() -> Option<File> {
 fn main() {
     let stdin = std::io::stdin();
     let stdout = Arc::new(Mutex::new(std::io::stdout()));
-    let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+    let sessions: Sessions = Arc::new(Mutex::new(SessionStore::default()));
     let Some(secret_input) = open_secret_input() else { return; };
     let secret_input = Arc::new(Mutex::new(secret_input));
     let mut transport_key: Option<Vec<u8>> = None;
@@ -311,6 +419,40 @@ fn main() {
         });
     }
     if let Ok(mut stored) = sessions.lock() {
-        for (_, entry) in stored.drain() { let _ = entry.termination.terminate(); }
+        for (_, entry) in stored.entries.drain() { let _ = entry.termination.terminate(); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{acknowledge_completed, process_tree::TerminationProof, reserve_launch,
+        retained_proof, session_key, SessionStore, Sessions};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn launch_reservations_are_exact_and_release_on_every_return_path() {
+        let sessions: Sessions = Arc::new(Mutex::new(SessionStore::default()));
+        let first_key = session_key("same", 1);
+        let second_key = session_key("same", 2);
+        let first = reserve_launch(&sessions, &first_key).expect("first reservation");
+        assert!(reserve_launch(&sessions, &first_key).is_err());
+        assert!(reserve_launch(&sessions, &second_key).is_ok());
+        drop(first);
+        assert!(reserve_launch(&sessions, &first_key).is_ok());
+    }
+
+    #[test]
+    fn completed_cleanup_blocks_exact_relaunch_until_acknowledged() {
+        let sessions: Sessions = Arc::new(Mutex::new(SessionStore::default()));
+        let key = session_key("completed", 3);
+        sessions.lock().unwrap().completed.insert(key.clone(), TerminationProof {
+            known: true, reaped: true, contained: true, tree_empty: true,
+            output_readers_terminated: true, escalated: false, surviving_process_count: 0,
+        });
+        assert!(reserve_launch(&sessions, &key).is_err());
+        assert!(acknowledge_completed(&mut sessions.lock().unwrap(), &key));
+        assert!(reserve_launch(&sessions, &key).is_ok());
+        assert!(retained_proof(&sessions.lock().unwrap(), &key)
+            .is_some_and(|proof| proof.output_readers_terminated));
     }
 }

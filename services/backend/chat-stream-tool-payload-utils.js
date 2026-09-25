@@ -13,6 +13,7 @@ const {
   sanitizeToolSummary,
   sanitizeToolInputValue,
   buildPersistedToolInputSnapshot,
+  buildModelReplayToolInputJson,
 } = require('./tool-loop-input-sanitization');
 const {
   buildCanonicalTurnEvent,
@@ -290,8 +291,10 @@ function buildToolCallPayload({
   reason = '',
   policyScope = '',
   policyConsequence = '',
+  oneOffOnly = false,
   toolName,
   input,
+  workspaceRoot = '',
   inputSnapshot = null,
   summary,
   status,
@@ -316,6 +319,7 @@ function buildToolCallPayload({
   // inside this builder, and a reason reaching it unbounded from any other
   // caller would be persisted raw.
   const sanitizedReason = sanitizeApprovalReason(reason);
+  const modelInputJson = buildModelReplayToolInputJson(input, workspaceRoot);
   return {
     call_id: String(callId || '').trim(),
     ...(String(approvalId || '').trim() ? { approval_id: String(approvalId || '').trim() } : {}),
@@ -329,9 +333,11 @@ function buildToolCallPayload({
     ...(sanitizedPolicyConsequence
       ? { policy_consequence: sanitizedPolicyConsequence }
       : {}),
+    ...(oneOffOnly === true ? { one_off_only: true } : {}),
     tool_name: String(toolName || '').trim(),
     input: sanitizedInput.input,
     input_json: sanitizedInput.inputJson,
+    ...(modelInputJson ? { model_input_json: modelInputJson } : {}),
     summary: sanitizeToolSummary(summary).trim(),
     status: String(status || '').trim() || 'completed',
     approval_state: String(approvalState || '').trim() || 'auto',
@@ -410,11 +416,23 @@ function approvalTerminalOutput(toolName, approvalState, reason = '') {
   }
 }
 
+// These shared message references are for read-only ID lookup. Store writes
+// replace messages; callers must never mutate the values returned here.
+function peekToolLookupMessages(service, sessionId) {
+  const store = service?.sessionStore;
+  if (typeof store?.peekSessionMessages === 'function') {
+    return store.peekSessionMessages(sessionId);
+  }
+  return typeof store?.getSessionMessages === 'function' ? store.getSessionMessages(sessionId) : [];
+}
+
 function makeNoteTurnEvent(turnEventCollector, streamId) {
   return function noteTurnEvent(kind, buildEvent) {
     if (!turnEventCollector) return null;
     const event = buildEvent();
-    return turnEventCollector.noteEvent(kind === null ? event : { turn_id: streamId, kind, ...event });
+    return turnEventCollector.noteEvent(kind === null
+      ? { ...event, turn_id: turnEventCollector.turnId || event.turn_id || streamId }
+      : { turn_id: turnEventCollector.turnId || streamId, kind, ...event });
   };
 }
 
@@ -445,4 +463,5 @@ module.exports = {
   resolveApprovalCallId,
   approvalTerminalOutput,
   makeNoteTurnEvent,
+  peekToolLookupMessages,
 };

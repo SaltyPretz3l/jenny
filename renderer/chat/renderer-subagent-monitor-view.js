@@ -132,7 +132,7 @@
         : '';
       const title = entry.relative_path
         ? `${entry.relative_path}${lineRange}`
-        : (entry.source_tool || entry.source || 'Evidence');
+        : (entry.source_tool || entry.source || jt('chat.subagentMonitor.sectionEvidence', 'Evidence'));
       const description = entry.summary || entry.quote
         || (entry.fact && entry.value ? `${entry.fact}: ${entry.value}` : '');
       const provenance = entry.provenance === 'tool_observed' ? jt('chat.subagentMonitor.toolObserved', 'Tool observed') : '';
@@ -214,11 +214,11 @@
       + `<h2 id="subagentInspectorTitle">${escapeHtml(child.label)}</h2>`
       + `<div class="subagent-detail-status">${stateDot(child.tone)}${failureBadge || escapeHtml(child.terminalCopy)}</div>`
       + renderTechnicalDetails(child)
-      + section('Summary', `<p>${escapeHtml(child.summary)}</p>`)
-      + section('Evidence', renderEvidence(child))
-      + section('Tools', renderTools(child))
-      + section('Uncertainties', child.uncertainties?.length ? `<p>${escapeHtml(child.uncertainties.join(' · '))}</p>` : '')
-      + section('Usage', renderUsage(child, viewModel.usage, viewModel.elapsedMs), 'subagent-detail-usage')
+      + section(jt('chat.subagentMonitor.sectionSummary', 'Summary'), `<p>${escapeHtml(child.summary)}</p>`)
+      + section(jt('chat.subagentMonitor.sectionEvidence', 'Evidence'), renderEvidence(child))
+      + section(jt('chat.subagentMonitor.sectionTools', 'Tools'), renderTools(child))
+      + section(jt('chat.subagentMonitor.sectionUncertainties', 'Uncertainties'), child.uncertainties?.length ? `<p>${escapeHtml(child.uncertainties.join(' · '))}</p>` : '')
+      + section(jt('chat.subagentMonitor.sectionUsage', 'Usage'), renderUsage(child, viewModel.usage, viewModel.elapsedMs), 'subagent-detail-usage')
       + '</div>';
   }
 

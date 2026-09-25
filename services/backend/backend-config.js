@@ -156,13 +156,16 @@ function resolveLlamaServerSettings({
   repoRoot = process.cwd(),
   fsImpl = fs,
   managed = null,
+  startupModelLoad = true,
 } = {}) {
   const managedSettings = managed && typeof managed === 'object' && !Array.isArray(managed)
     ? managed
     : null;
   const managedLastUsedTag = String(managedSettings?.lastUsedTag || '').trim();
   const autostartRaw = String(env.JENNY_LLAMA_SERVER_AUTOSTART || '').trim();
-  let autostart = managedSettings?.enabled === true && managedLastUsedTag !== '';
+  let autostart = startupModelLoad !== false
+    && managedSettings?.enabled === true
+    && managedLastUsedTag !== '';
   if (autostartRaw) {
     if (isFalseish(autostartRaw)) {
       autostart = false;
@@ -211,6 +214,9 @@ function resolveLlamaServerSettings({
     readinessTimeoutMs,
     binaryOverride,
     modelPathOverride,
+    // 'config' when the path is the last-used model's own file (it belongs to
+    // that model only), 'env' for the deliberate global override.
+    modelPathSource: envModelPath ? 'env' : (modelPathOverride ? 'config' : ''),
     modelTagOverride,
     source,
     profileId,

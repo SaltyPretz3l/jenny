@@ -200,6 +200,18 @@
       return result;
     }
 
+    function hasJsonContainer(text) {
+      const trimmed = String(text == null ? '' : text).trim();
+      if ((!trimmed.startsWith('{') && !trimmed.startsWith('['))
+        || trimmed.length > TOOL_DETAIL_PREVIEW_MAX_CHARS) return false;
+      try {
+        const parsed = JSON.parse(trimmed);
+        return parsed !== null && typeof parsed === 'object';
+      } catch (_error) {
+        return false;
+      }
+    }
+
     function buildShowMoreLabel(lineCount, fullCharCount, previewCharCount) {
       const hiddenLines = Math.max(0, lineCount - TOOL_DETAIL_CLAMP_LINE_FLOOR);
       if (hiddenLines > 0) {
@@ -221,7 +233,11 @@
       const shouldClamp = capped || fullLineCount > TOOL_DETAIL_CLAMP_LINE_FLOOR;
       const moreLabel = buildShowMoreLabel(fullLineCount, raw.length, preview.length);
       const preClass = String(opts.className || 'tool-call-output');
-      const codeClass = opts.language ? ` class="language-${escapeHtml(opts.language)}"` : '';
+      const languageId = String(opts.language || '');
+      const codeClass = languageId ? ` class="language-${escapeHtml(languageId)}"` : '';
+      const highlightAttrs = languageId
+        ? ` data-code-highlight="pending" data-language-id="${escapeHtml(languageId)}"`
+        : '';
       const outcomeAttr = opts.resultOutcome
         ? ` data-tool-result-outcome="${escapeHtml(opts.resultOutcome)}"`
         : '';
@@ -231,7 +247,7 @@
             ? '<div class="tool-detail-more tool-detail-limit-note">' + escapeHtml(jt('chat.toolDetail.previewOnlyLimit', 'Preview only · full payload exceeds the in-memory copy limit.')) + '</div>'
             : '');
       const captionCopyId = capped && !fullTextRegistered ? '' : copyId;
-      return `<div class="tool-call-section${opts.isError ? ' tool-call-section--error' : ''} inv-codeblock-wrap" data-tool-detail-section="true"${outcomeAttr}>${sectionCaption(label, captionCopyId, opts.captionExtra)}<pre class="${escapeHtml(preClass)}"${shouldClamp ? ' data-detail-clamped="true"' : ''}${capped && fullTextRegistered ? ' data-detail-capped="true"' : ''}><code id="${escapeHtml(copyId)}"${codeClass}>${escapeHtml(preview)}</code></pre>${footer}${opts.trailingMarkup || ''}</div>`;
+      return `<div class="tool-call-section${opts.isError ? ' tool-call-section--error' : ''} inv-codeblock-wrap" data-tool-detail-section="true"${outcomeAttr}>${sectionCaption(label, captionCopyId, opts.captionExtra)}<pre class="${escapeHtml(preClass)}"${shouldClamp ? ' data-detail-clamped="true"' : ''}${capped && fullTextRegistered ? ' data-detail-capped="true"' : ''}><code id="${escapeHtml(copyId)}"${codeClass}${highlightAttrs}>${escapeHtml(preview)}</code></pre>${footer}${opts.trailingMarkup || ''}</div>`;
     }
 
     function isSingleLineScalar(value) {
@@ -311,6 +327,7 @@
         return textSection(skip.size ? 'Args' : 'Input', JSON.stringify(filtered, null, 2), {
           copyId: `${domToken}-${skip.size ? 'args' : 'input'}`,
           className: 'tool-call-input',
+          language: 'json',
         });
       }
       if (model.inputExpected === true && model.inputRecorded === false) {
@@ -320,6 +337,7 @@
         return textSection('Input', model.inputJson, {
           copyId: `${domToken}-input`,
           className: 'tool-call-input',
+          language: 'json',
         });
       }
       return '';
@@ -383,12 +401,17 @@
         parts.push(textSection('Command', command, {
           copyId: `${domToken}-command`,
           className: 'tool-call-input bash-command',
+          language: 'shell',
         }));
       }
       if (stdout) parts.push(textSection('Stdout', stdout, { copyId: `${domToken}-stdout`, pretty: true }));
       if (stderr) parts.push(textSection('Stderr', stderr, { copyId: `${domToken}-stderr`, isError: model.isError }));
       if (!stdout && !stderr && model.outputText) {
-        parts.push(textSection('Output', model.outputText, { copyId: `${domToken}-output`, pretty: true }));
+        parts.push(textSection('Output', model.outputText, {
+          copyId: `${domToken}-output`,
+          pretty: true,
+          language: hasJsonContainer(model.outputText) ? 'json' : '',
+        }));
       }
       if (exitCode != null || timedOut) {
       const label = exitCode != null ? (timedOut ? jt('chat.toolDetail.exitTimedOut', 'exit {code} (timed out)', { code: Number(exitCode) }) : jt('chat.toolDetail.exitCode', 'exit {code}', { code: Number(exitCode) })) : jt('chat.toolDetail.timedOut', 'timed out');
@@ -400,9 +423,13 @@
     function genericBody(model) {
       let body = inputSections(model);
       if (model.outputText) {
+        // Only JSON-shaped output is code here: write/edit tools answer with a
+        // prose receipt ("Wrote 120 bytes to src/x.js"), so the file's language
+        // must not be inferred from the path for this section.
         body += textSection('Output', model.outputText, {
           copyId: `${model.domToken || model.callId || 'tool'}-output`,
           pretty: true,
+          language: hasJsonContainer(model.outputText) ? 'json' : '',
         });
       }
       return body;
@@ -463,6 +490,7 @@
         parts.push(textSection('Output', model.outputText, {
           copyId: `${domToken}-output`,
           pretty: true,
+          language: hasJsonContainer(model.outputText) ? 'json' : '',
         }));
       }
       return parts.join('');
@@ -507,7 +535,8 @@
 
     function readBody(model) {
       const parsed = parseInput(model) || {};
-      const filePath = String(parsed.path || parsed.file_path || '');
+      const filePath = String(model.path || parsed.path || parsed.file_path || '');
+      const languageId = codeHighlight?.getLanguageId?.(filePath) || '';
       let lineRange = '';
       if (parsed.offset != null || parsed.limit != null) {
         const start = parsed.offset != null ? Number(parsed.offset) : 0;
@@ -516,7 +545,10 @@
       }
       const meta = filePath ? `<div class="tool-call-output-meta">${escapeHtml(filePath + lineRange)}</div>` : '';
       const output = model.outputText
-        ? textSection('Output', model.outputText, { copyId: `${model.domToken || model.callId}-output` })
+        ? textSection('Output', model.outputText, {
+            copyId: `${model.domToken || model.callId}-output`,
+            language: languageId,
+          })
         : '';
       return `${inputSections(model)}${meta}${output}`;
     }
@@ -582,7 +614,13 @@
     if (expanding && target.getAttribute('data-detail-capped') === 'true') {
       const code = target.querySelector('code');
       const full = getFullText(copyId);
-      if (full != null && code) code.textContent = full;
+      if (full != null && code) {
+        code.textContent = full;
+        // The preview's token spans are gone with the text; drop the settled
+        // marker so the full body is colored again (size guards still apply).
+        code.removeAttribute('data-code-highlighted');
+        if (code.dataset?.languageId) codeHighlight?.decorateCodeNode?.(code, code.dataset.languageId);
+      }
       if (full != null && !code) {
         let parsed = null;
         try { parsed = JSON.parse(full); } catch (_error) { parsed = null; }

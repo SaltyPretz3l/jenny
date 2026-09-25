@@ -54,6 +54,8 @@ function harness(options = {}) {
     },
   };
   const window = new EventEmitter();
+  const powerMonitor = Object.hasOwn(options, 'powerMonitor')
+    ? options.powerMonitor : new EventEmitter();
   let destroyed = false;
   window.isDestroyed = () => destroyed;
   let serviceDeps = null;
@@ -76,12 +78,13 @@ function harness(options = {}) {
     env: {},
     mainLifecycle,
     getMainWindow: () => window,
+    powerMonitor,
     pluginStateSource,
     createService,
   });
   return {
     wiring, serviceDeps, order, denials, shellConfigService, pluginStateSource,
-    shutdownFences, shutdownTasks, window,
+    shutdownFences, shutdownTasks, window, powerMonitor,
     setConfig(next) { config = next; shellConfigService.emit('changed', next); },
     setDestroyed(next) { destroyed = next; },
   };
@@ -166,6 +169,19 @@ test('window liveness is dynamic and its close listener is attached on first ena
   assert.equal(value.window.listenerCount('closed'), 1);
   value.window.emit('closed');
   assert.deepEqual(value.denials, ['window_closed']);
+});
+
+test('system suspend denies admission and resume never restores it automatically', async () => {
+  const value = harness();
+  value.powerMonitor.emit('suspend');
+  assert.deepEqual(value.denials, ['system_suspend']);
+  value.powerMonitor.emit('resume');
+  assert.deepEqual(value.denials, ['system_suspend']);
+  await value.wiring.dispose();
+  assert.equal(value.powerMonitor.listenerCount('suspend'), 0);
+
+  const missing = harness({ powerMonitor: undefined });
+  await missing.wiring.dispose();
 });
 
 test('dispose removes every owned listener and denies admission once', async () => {

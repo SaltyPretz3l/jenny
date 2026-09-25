@@ -21,7 +21,6 @@ function createService(initialize) {
     _managedPendingModel: '',
     _modelLifecycle: { state: 'unloaded' },
     _emitServiceLog() {},
-    _normalizeManagedReasoningEfforts() {},
     sidecarManager: {
       process: processGeneration,
       getStatus: () => ({ phase: 'ready', pid: 42 }),

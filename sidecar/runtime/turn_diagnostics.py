@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from typing import Any, Mapping
@@ -37,6 +38,34 @@ _MAX_HISTOGRAM_KEY_CHARS = 64
 _HISTOGRAM_KEY_EXTRA_CHARS = frozenset("._-")
 _HISTOGRAM_UNSAFE_KEY = "unsafe"
 _HISTOGRAM_OVERFLOW_KEY = "other"
+# One turn may make several provider calls (tool-loop iterations, an internal
+# reasoning summary at a thinking-budget checkpoint, the continuation after
+# it). Each call resets these fields so the dump never shows one call's usage
+# under another call's error (owner turn 2026-09-20: the summary's 9628/78
+# usage and 431 "visible" chars were reported for the continuation that died
+# before its usage trailer). The per-call ledger lives in ``provider_calls``.
+_MAX_PROVIDER_CALLS_RETAINED = 32
+_DEFAULT_PROVIDER_CALL_PURPOSE = "turn"
+# Calls whose text is never shown to the user: their output must not count as
+# the turn's visible output, and their first chunk is not the turn's.
+_INTERNAL_PROVIDER_CALL_PURPOSES = frozenset({"reasoning_summary", "compaction_summary"})
+_PROVIDER_CALL_SCOPED_FIELDS = (
+    "provider_prompt_eval_count",
+    "provider_eval_count",
+    "provider_cached_tokens",
+    "provider_prompt_cache_hit_ratio",
+    "provider_prompt_eval_duration_ns",
+    "provider_prompt_eval_duration_ms",
+    "provider_eval_duration_ns",
+    "provider_eval_duration_ms",
+    "provider_total_duration_ns",
+    "provider_total_duration_ms",
+    "provider_load_duration_ns",
+    "provider_load_duration_ms",
+    "provider_usage_source",
+    "provider_tokens_per_second",
+    "stream_counters",
+)
 
 
 def _safe_histogram_key(value: Any) -> str:
@@ -127,6 +156,7 @@ class TurnDiagnosticsStore:
             "_completed_at": None,
             "_visible_output_chars": 0,
             "_visible_output_tokens_estimate": 0,
+            "_provider_call_count": 0,
             "_updated_at": now,
         }
         with self._lock:
@@ -175,7 +205,16 @@ class TurnDiagnosticsStore:
         ``runtime.latest_turn_diagnostics``. Caller wraps in ``try/except``;
         diagnostic-side failures must not break a turn.
         """
-        self._merge(request_id, {"stream_counters": dict(counters)})
+        now = time.monotonic()
+        with self._lock:
+            turn = self._get_turn_locked(request_id)
+            if turn is None:
+                return
+            turn["stream_counters"] = dict(counters)
+            call = self._current_call_locked(turn)
+            if call is not None:
+                call["stream_counters"] = dict(counters)
+            turn["_updated_at"] = now
 
     def record_provider_completion_shape(
         self,
@@ -299,48 +338,97 @@ class TurnDiagnosticsStore:
         thinking_headroom_tokens: int = 0,
         tool_payload_bytes: int = 0,
         provider_sampler: Mapping[str, Any] | None = None,
+        purpose: str | None = None,
     ) -> None:
+        """Start one provider call of this turn.
+
+        Resets the call-scoped fields (usage, stream counters, the current
+        call's timing) so a call that dies before its usage trailer reports
+        unknown usage instead of inheriting the previous call's; keeps the
+        turn-level first-request timing apart and never overwrites it; and
+        appends a tagged entry (ordinal, ``purpose``) to ``provider_calls``.
+        """
         started_at = time.monotonic()
         normalized_reasoning_effort = str(provider_reasoning_effort or "").strip().lower()
         if normalized_reasoning_effort not in _PROVIDER_REASONING_EFFORTS:
             normalized_reasoning_effort = ""
-        turn_started_at = None
+        normalized_purpose = (
+            str(purpose or "").strip().lower()[:64] or _DEFAULT_PROVIDER_CALL_PURPOSE
+        )
+        updates: dict[str, Any] = {
+            "think_enabled": think_enabled is True,
+            "provider_reasoning_effort": normalized_reasoning_effort or None,
+            "provider_num_predict": None if num_predict is None else max(int(num_predict), 0),
+            "provider_final_output_tokens": (
+                None if final_output_tokens is None else max(int(final_output_tokens), 0)
+            ),
+            "provider_thinking_headroom_tokens": max(
+                int(thinking_headroom_tokens),
+                0,
+            ),
+            "provider_temperature": float(temperature),
+            "provider_message_count": max(int(message_count), 0),
+            "provider_tool_count": max(int(tool_count), 0),
+            "provider_tool_capable": tool_capable is True,
+            "provider_tool_payload_bytes": max(int(tool_payload_bytes), 0),
+            **provider_sampler_diagnostics_payload(provider_sampler),
+            "provider_call_purpose": normalized_purpose,
+            "provider_call_outcome": "started",
+            "_provider_started_at": started_at,
+        }
         with self._lock:
             turn = self._get_turn_locked(request_id)
-            if turn is not None:
-                turn_started_at = turn.get("_turn_started_at")
-        self._merge(
-            request_id,
+            if turn is None:
+                return
+            updates.update(
+                self._begin_provider_call_locked(
+                    turn, started_at=started_at, purpose=normalized_purpose
+                )
+            )
+            turn.update(updates)
+            turn["_updated_at"] = started_at
+
+    @staticmethod
+    def _begin_provider_call_locked(
+        turn: dict[str, Any],
+        *,
+        started_at: float,
+        purpose: str,
+    ) -> dict[str, Any]:
+        """Open a ledger entry for a new provider call; return its public fields."""
+        updates: dict[str, Any] = {}
+        turn_started_at = turn.get("_turn_started_at")
+        start_ms: int | None = None
+        if isinstance(turn_started_at, (int, float)):
+            start_ms = max(int((started_at - turn_started_at) * 1000), 0)
+            updates["provider_call_start_ms"] = start_ms
+            if "time_to_provider_request_start_ms" not in turn:
+                updates["time_to_provider_request_start_ms"] = start_ms
+        ordinal = int(turn.get("_provider_call_count") or 0) + 1
+        turn["_provider_call_count"] = ordinal
+        updates["provider_call_count"] = ordinal
+        updates["provider_call_ordinal"] = ordinal
+        for field in _PROVIDER_CALL_SCOPED_FIELDS:
+            turn.pop(field, None)
+        calls = turn.get("provider_calls")
+        if not isinstance(calls, list):
+            calls = []
+            turn["provider_calls"] = calls
+        calls.append(
             {
-                "think_enabled": think_enabled is True,
-                "provider_reasoning_effort": normalized_reasoning_effort or None,
-                "provider_num_predict": None if num_predict is None else max(int(num_predict), 0),
-                "provider_final_output_tokens": (
-                    None if final_output_tokens is None else max(int(final_output_tokens), 0)
-                ),
-                "provider_thinking_headroom_tokens": max(
-                    int(thinking_headroom_tokens),
-                    0,
-                ),
-                "provider_temperature": float(temperature),
-                "provider_message_count": max(int(message_count), 0),
-                "provider_tool_count": max(int(tool_count), 0),
-                "provider_tool_capable": tool_capable is True,
-                "provider_tool_payload_bytes": max(int(tool_payload_bytes), 0),
-                **provider_sampler_diagnostics_payload(provider_sampler),
-                **(
-                    {
-                        "time_to_provider_request_start_ms": max(
-                            int((started_at - turn_started_at) * 1000),
-                            0,
-                        )
-                    }
-                    if isinstance(turn_started_at, (int, float))
-                    else {}
-                ),
-                "_provider_started_at": started_at,
-            },
+                "ordinal": ordinal,
+                "purpose": purpose,
+                "outcome": "started",
+                "start_ms": start_ms,
+                "time_to_first_chunk_ms": None,
+                "visible_output_chars": 0,
+                "usage": None,
+                "stream_counters": None,
+                "duration_ms": None,
+            }
         )
+        del calls[:-_MAX_PROVIDER_CALLS_RETAINED]
+        return updates
 
     def record_first_chunk(self, *, request_id: str) -> None:
         now = time.monotonic()
@@ -361,6 +449,15 @@ class TurnDiagnosticsStore:
             if turn is None:
                 return
             self._record_first_chunk_locked(turn, now)
+            call = self._current_call_locked(turn)
+            if call is not None:
+                call["visible_output_chars"] = int(call.get("visible_output_chars") or 0) + len(
+                    normalized
+                )
+                if call.get("purpose") in _INTERNAL_PROVIDER_CALL_PURPOSES:
+                    # Never shown to the user: not the turn's visible output.
+                    turn["_updated_at"] = now
+                    return
             if turn.get("_first_visible_at") is None:
                 turn["_first_visible_at"] = now
                 started_at = turn.get("_provider_started_at")
@@ -530,15 +627,60 @@ class TurnDiagnosticsStore:
 
         if not updates:
             return
-        self._merge(request_id, updates)
+        self._merge_usage(
+            request_id,
+            updates,
+            call_usage={
+                key: value
+                for key, value in (
+                    ("prompt_eval_count", normalized_prompt_eval),
+                    ("eval_count", normalized_eval),
+                    ("cached_tokens", normalized_cached),
+                )
+                if value is not None
+            },
+        )
 
-    def complete_provider_request(self, *, request_id: str) -> None:
+    def _merge_usage(
+        self,
+        request_id: str,
+        updates: dict[str, Any],
+        *,
+        call_usage: dict[str, int],
+    ) -> None:
+        """Merge usage into the turn and mirror the token counts onto the call in flight."""
+        now = time.monotonic()
+        with self._lock:
+            turn = self._get_turn_locked(request_id)
+            if turn is None:
+                return
+            turn.update(updates)
+            call = self._current_call_locked(turn)
+            if call is not None and call_usage:
+                call["usage"] = call_usage
+            turn["_updated_at"] = now
+
+    def complete_provider_request(
+        self,
+        *,
+        request_id: str,
+        outcome: str = "completed",
+    ) -> None:
+        """End the provider call in flight; ``outcome`` is ``completed`` or ``failed``."""
+        normalized_outcome = str(outcome or "").strip().lower()[:32] or "completed"
         now = time.monotonic()
         with self._lock:
             turn = self._get_turn_locked(request_id)
             if turn is None:
                 return
             turn["_completed_at"] = now
+            turn["provider_call_outcome"] = normalized_outcome
+            call = self._current_call_locked(turn)
+            if call is not None:
+                call["outcome"] = normalized_outcome
+                started_at = turn.get("_provider_started_at")
+                if isinstance(started_at, (int, float)):
+                    call["duration_ms"] = max(int((now - started_at) * 1000), 0)
             visible_tokens = int(turn.get("_visible_output_tokens_estimate") or 0)
             first_visible_at = turn.get("_first_visible_at")
             if isinstance(first_visible_at, (int, float)) and visible_tokens > 0:
@@ -551,7 +693,14 @@ class TurnDiagnosticsStore:
             turn["_updated_at"] = now
 
     def _build_public_payload(self, source: dict[str, Any]) -> dict[str, Any]:
-        return {key: value for key, value in source.items() if not str(key).startswith("_")}
+        payload = {key: value for key, value in source.items() if not str(key).startswith("_")}
+        # The ledger is the one mutable aggregate in the payload; a snapshot
+        # serialized on another thread must not share it with the engine
+        # thread that keeps appending to it.
+        calls = payload.get("provider_calls")
+        if isinstance(calls, list):
+            payload["provider_calls"] = copy.deepcopy(calls)
+        return payload
 
     def snapshot(self) -> dict[str, Any] | None:
         with self._lock:
@@ -590,11 +739,29 @@ class TurnDiagnosticsStore:
             return None
         return self._turns.get(normalized)
 
+    @staticmethod
+    def _current_call_locked(turn: dict[str, Any]) -> dict[str, Any] | None:
+        """The ledger entry of the provider call in flight (the newest one)."""
+        calls = turn.get("provider_calls")
+        if isinstance(calls, list) and calls and isinstance(calls[-1], dict):
+            return calls[-1]
+        return None
+
     def _record_first_chunk_locked(self, turn: dict[str, Any], now: float) -> None:
+        started_at = turn.get("_provider_started_at")
+        call = self._current_call_locked(turn)
+        if (
+            call is not None
+            and call.get("time_to_first_chunk_ms") is None
+            and isinstance(started_at, (int, float))
+        ):
+            call["time_to_first_chunk_ms"] = max(int((now - started_at) * 1000), 0)
         if turn.get("_first_chunk_at") is not None:
             return
+        if call is not None and call.get("purpose") in _INTERNAL_PROVIDER_CALL_PURPOSES:
+            # An internal call's first chunk is not the turn's first chunk.
+            return
         turn["_first_chunk_at"] = now
-        started_at = turn.get("_provider_started_at")
         if isinstance(started_at, (int, float)):
             turn["time_to_first_chunk_ms"] = max(
                 int((now - started_at) * 1000),

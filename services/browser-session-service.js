@@ -174,6 +174,7 @@ class BrowserSessionService {
       available: probe.available,
       driver: probe.driver,
       active_sessions: this._sessions.size,
+      cleanup_pending_sessions: [...this._sessions.values()].filter(session => session.closing).length,
       max_active_sessions: this._maxActiveSessions,
       disposed: this._disposed,
     };
@@ -200,10 +201,12 @@ class BrowserSessionService {
   releaseSlot(sessionId) {
     const safeSessionId = _normalizeSessionId(sessionId);
     const session = this._sessions.get(safeSessionId);
+    if (session && !session.reserved) return false;
     if (session?.idleTimer) {
       this._clearTimeout(session.idleTimer);
     }
     this._sessions.delete(safeSessionId);
+    return true;
   }
 
   async open({
@@ -489,12 +492,6 @@ class BrowserSessionService {
     session.closing = true;
     await Promise.resolve(session.operationTail).catch(() => null);
     try {
-      this._clearWebContentsSecurity(session);
-      session.webContents?.removeAllListeners?.('console-message');
-      session.webContents?.removeAllListeners?.('will-navigate');
-      session.webContents?.removeAllListeners?.('will-redirect');
-      session.webContents?.removeAllListeners?.('render-process-gone');
-      session.webContents?.removeAllListeners?.('did-fail-load');
       if (session.window && typeof session.window.isDestroyed === 'function') {
         if (!session.window.isDestroyed()) {
           this._destroyWindow(session.window);
@@ -502,11 +499,12 @@ class BrowserSessionService {
       } else {
         this._destroyWindow(session.window);
       }
+      if (!this._windowDestructionConfirmed(session)) throw new Error('Browser window cleanup is unconfirmed.');
     } catch (error) {
       let fallbackCloseAttempted = false;
       let fallbackCloseFailed = false;
-      // A stranded slot is worse than a possibly leaked window.
-      // Best-effort close the window, then always return the slot.
+      // A close request alone is not proof that the native producer stopped.
+      // Keep security handlers and shared capacity until destruction is known.
       if (session.window && typeof session.window.close === 'function') {
         fallbackCloseAttempted = true;
         try {
@@ -515,22 +513,23 @@ class BrowserSessionService {
           fallbackCloseFailed = true;
         }
       }
-      this._sessions.delete(safeSessionId);
+      const confirmed = this._windowDestructionConfirmed(session);
+      if (confirmed) this._releaseClosedSession(safeSessionId, session);
       this._logger('WARN', 'browser.session_close_cleanup_failed', {
         sessionId: safeSessionId,
         message: String(error && error.message || error),
-        slot_released: true,
+        slot_released: confirmed,
         fallback_close_attempted: fallbackCloseAttempted,
         ...(fallbackCloseFailed ? { fallback_close_failed: true } : {}),
       });
       return {
         session_id: safeSessionId,
-        closed: false,
+        closed: confirmed,
         reason: 'cleanup_failed',
-        slot_released: true,
+        slot_released: confirmed,
       };
     }
-    this._sessions.delete(safeSessionId);
+    this._releaseClosedSession(safeSessionId, session);
     this._logger('INFO', 'browser.session_closed', { sessionId: safeSessionId });
     return { session_id: safeSessionId, closed: true };
   }
@@ -547,19 +546,20 @@ class BrowserSessionService {
       }
     }
     await this._closeSessionIds(sessionIds);
-    return { closed: sessionIds.length };
+    return { closed: sessionIds.filter(id => !this._sessions.has(id)).length };
   }
 
   async closeAll(reason = 'close_all') {
     const sessionIds = Array.from(this._sessions.keys());
     await this._closeSessionIds(sessionIds);
+    const closed = sessionIds.filter(id => !this._sessions.has(id)).length;
     if (sessionIds.length) {
       this._logger('INFO', 'browser.sessions_closed', {
         reason: String(reason || 'close_all'),
-        closed: sessionIds.length,
+        closed,
       });
     }
-    return { closed: sessionIds.length };
+    return { closed };
   }
 
   async dispose() {
@@ -569,7 +569,6 @@ class BrowserSessionService {
     this._disposed = true;
     const sessionIds = Array.from(this._sessions.keys());
     await this._closeSessionIds(sessionIds);
-    this._sessions.clear();
     this._logger('INFO', 'browser.disposed', {});
   }
 
@@ -592,7 +591,10 @@ class BrowserSessionService {
         });
       }
     }
-    this._sessions.clear();
+    for (const [id, session] of this._sessions) {
+      if (this._windowDestructionConfirmed(session)) this._releaseClosedSession(id, session);
+      else session.closing = true;
+    }
     this._logger('INFO', 'browser.disposed', { sync: true });
   }
 
@@ -930,6 +932,21 @@ class BrowserSessionService {
 
   async _closeSessionIds(sessionIds) {
     await Promise.all(sessionIds.map((id) => this.close(id).catch(() => null)));
+  }
+
+  _windowDestructionConfirmed(session) {
+    if (!session.window) return session.reserved === true;
+    try { return session.window.isDestroyed?.() === true; } catch { return false; }
+  }
+
+  _releaseClosedSession(id, session) {
+    try {
+      this._clearWebContentsSecurity(session);
+      for (const event of ['console-message', 'will-navigate', 'will-redirect', 'render-process-gone', 'did-fail-load']) {
+        session.webContents?.removeAllListeners?.(event);
+      }
+    } catch { /* Native producer is gone; listener teardown is best effort. */ }
+    this._sessions.delete(id);
   }
 
   _destroyWindow(window) {

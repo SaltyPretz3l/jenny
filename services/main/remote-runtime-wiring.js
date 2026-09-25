@@ -23,6 +23,7 @@ function createRemoteRuntimeWiring({
   env = process.env,
   mainLifecycle,
   getMainWindow = () => null,
+  powerMonitor,
   pluginStateSource,
   log = () => {},
   createService = createRemoteControlService,
@@ -41,6 +42,20 @@ function createRemoteRuntimeWiring({
   let pluginAuthority = 'inactive';
   let readVersion = 0;
   let windowBinding = null;
+  const authorityWithdrawalListeners = new Set();
+  function isPluginActive() {
+    return pluginAuthority === 'active';
+  }
+  isPluginActive.onAuthorityWithdrawn = (listener) => {
+    if (typeof listener !== 'function') return () => {};
+    authorityWithdrawalListeners.add(listener);
+    return () => authorityWithdrawalListeners.delete(listener);
+  };
+  function cancelPendingStarts() {
+    for (const listener of [...authorityWithdrawalListeners]) {
+      try { listener(); } catch (_error) { /* cancellation is best effort */ }
+    }
+  }
   const featureFlags = () => buildFeatureFlags(
     env,
     shellConfigService.getState().featureOverrides || {},
@@ -49,7 +64,7 @@ function createRemoteRuntimeWiring({
     backendService,
     secureStore,
     featureFlags,
-    isPluginActive: () => pluginAuthority === 'active',
+    isPluginActive,
     isWindowAlive: () => {
       const window = getMainWindow();
       return !!window && !window.isDestroyed();
@@ -70,6 +85,7 @@ function createRemoteRuntimeWiring({
   );
 
   function denyAdmission(reason) {
+    cancelPendingStarts();
     return service.denyAdmission(reason);
   }
 
@@ -102,6 +118,7 @@ function createRemoteRuntimeWiring({
       return;
     }
     pluginAuthority = 'uncertain';
+    cancelPendingStarts();
     let pending;
     try { pending = pluginStateSource.getState?.(); }
     catch (_error) { rejectPluginRead(version); return; }
@@ -124,6 +141,8 @@ function createRemoteRuntimeWiring({
   shellConfigService.on('changed', onConfigChanged);
   const unsubscribePluginState = pluginStateSource.subscribe(refreshPluginState);
   refreshPluginState();
+  const onSuspend = () => { void denyAdmission('system_suspend'); };
+  powerMonitor?.on?.('suspend', onSuspend);
 
   function detachWindow() {
     if (!windowBinding) return;
@@ -164,9 +183,11 @@ function createRemoteRuntimeWiring({
     unregisterFence?.();
     unregisterShutdown?.();
     shellConfigService.removeListener?.('changed', onConfigChanged);
+    powerMonitor?.removeListener?.('suspend', onSuspend);
     try { unsubscribePluginState?.(); } catch (_error) { /* teardown is best effort */ }
     detachWindow();
     await denyAdmission('dispose');
+    authorityWithdrawalListeners.clear();
   }
 
   return Object.freeze({ facade, denyAdmission, dispose });

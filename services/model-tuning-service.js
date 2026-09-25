@@ -205,13 +205,20 @@ class ModelTuningService {
         requestedContextLength: contextLength,
       });
     }
-    let nativeContext = matchesModel(modelId, this.backendService?.currentModel)
+    const servesModel = matchesModel(modelId, this.backendService?.currentModel);
+    let nativeContext = servesModel
       ? Number(status.native_context_length || status.nativeContextLength) || 0
       : 0;
     let inspectionReason = '';
     if (!nativeContext) {
+      // The managed llama-server reports its model's trained window itself;
+      // Ollama has never heard of a local GGUF it serves.
+      const inspectEngine = servesModel
+        && String(this.backendService?.currentEngineType || '').trim().toLowerCase() === 'openai-compatible'
+        ? 'openai-compatible'
+        : 'ollama';
       try {
-        const inspectedModels = await this.backendService?.listModelsForEngine?.('ollama', {
+        const inspectedModels = await this.backendService?.listModelsForEngine?.(inspectEngine, {
           inspectModelId: modelId,
         });
         const inspection = inspectedModels?.modelInspection;

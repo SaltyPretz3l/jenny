@@ -7,6 +7,11 @@
 /* The former workbench row's transcript utilities now share the timeline's
    first grid cell. They float in the upper-right gutter without reserving
    height, so chat and artifact surfaces keep the same top edge. */
+#chatThreadStage {
+  container-type: inline-size;
+  container-name: chatstage;
+}
+
 .chat-timeline-utility-cluster {
   grid-column: 1;
   grid-row: 1;
@@ -14,6 +19,12 @@
   justify-self: end;
   z-index: calc(var(--z-raised) + 1);
   display: inline-flex;
+  /* Always a column: the cluster floats in the reading measure's end gutter,
+     which is one button wide well before the stage is narrow enough for the
+     container rule below to reserve it. A horizontal row of up to four
+     buttons ran over the first transcript line whenever the right panel was
+     open. The cluster is the stage's sibling, so it cannot be queried here. */
+  flex-direction: column;
   align-items: center;
   gap: var(--space-2);
   margin-block: var(--space-4) 0;
@@ -170,6 +181,15 @@
   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* 880px = 760px reading measure + 2 × (28px utility button + 32px margins):
+   below it the gutter no longer holds the button column, so the transcript
+   reserves it. */
+@container chatstage (max-width: 880px) {
+  .chat-thread-column {
+    padding-inline-end: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

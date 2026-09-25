@@ -17,6 +17,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING,
 )
 from sidecar.ai.tools.argument_coercion import bounded_int as _bounded_int
+from sidecar.ai.tools.builtins.file_state import open_regular_file
 from sidecar.ai.tools.builtins.filesystem import is_binary_file
 from sidecar.ai.tools.builtins.knowledge.roots import (
     KnowledgeRoot,
@@ -106,7 +107,14 @@ def _view_text(
     has_more = False
     scanned_to_eof = True
     try:
-        with resolved.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+        with open_regular_file(
+            resolved,
+            "r",
+            authorized_root=root.guard.require_root(),
+            encoding="utf-8",
+            errors="replace",
+            newline="",
+        ) as handle:
             for line_number, line in enumerate(handle, start=1):
                 total_lines = line_number
                 if line_number <= offset:

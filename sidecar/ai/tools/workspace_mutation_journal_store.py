@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterator, Mapping, cast
 from filelock import FileLock, Timeout
 
 from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_OUTSIDE_WORKSPACE
+from sidecar.ai.tools import workspace_mutation_checkpoint as checkpoints
 from sidecar.ai.tools.workspace_mutation_journal_contract import (
     MAX_JOURNAL_BYTES,
     ContractFailure,
@@ -212,6 +213,10 @@ class WorkspaceMutationJournalStore:
             notify_commit = False
             with self._lock(workspace_id), self._lock(workspace_id, change_set_id):
                 previous = self.load(workspace_id, change_set_id)
+                if (previous.ok and previous.record
+                        and checkpoints.checkpoint_update_forbidden(previous.record, sealed)):
+                    return _store_failure("journal_checkpoint_pinned",
+                                          "Workspace checkpoint must be claimed or released first.")
                 if retention_only and (
                     not previous.ok
                     or previous.record is None
@@ -321,6 +326,9 @@ class WorkspaceMutationJournalStore:
                             continue
                         if not _record_matches_identity(loaded.record, identity.fingerprint):
                             results.append(_identity_failure())
+                            continue
+                        if checkpoints.has_runtime_checkpoint(loaded.record, allow_preparing=True):
+                            results.append(loaded)
                             continue
                         reconciled = self._reconcile_record(loaded.record, Path(workspace_root))
                         results.append(self._write_mapping_locked(reconciled, Path(workspace_root)))

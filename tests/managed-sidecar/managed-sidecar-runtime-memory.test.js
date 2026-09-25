@@ -324,6 +324,10 @@ test('managed sidecar runtime lists, updates, and deletes approved memories', as
 test('memory save forwards only allowlisted candidate fields and bounds their serialized bytes', async () => {
   const requests = [];
   const service = {
+    projectAuthority: { captureSession: (id) => {
+      assert.equal(id, 'session-1');
+      return { project_id: 'project_alpha' };
+    } },
     sidecarClient: {
       async request(method, params) {
         requests.push({ method, params });
@@ -345,6 +349,7 @@ test('memory save forwards only allowlisted candidate fields and bounds their se
   await saveMemoryForSession(service, 'session-1', candidate);
 
   assert.equal(requests[0].method, 'memory.save');
+  assert.equal(requests[0].params.project_id, 'project_alpha');
   assert.deepEqual(requests[0].params.candidate, {
     title: 'Title',
     lesson_text: 'Lesson',

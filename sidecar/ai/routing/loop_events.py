@@ -207,6 +207,19 @@ class StopEvent(LoopEvent):
 
 
 @dataclass
+class ContextCompactionStartedEvent(LoopEvent):
+    """Context compaction is about to begin.
+
+    EPHEMERAL: forwarded as a JSON-RPC notification only — never journaled and
+    never part of the canonical turn record (``_turn_event_parts`` returns ``None``).
+    """
+
+    phase: str  # "preflight" | "tool_loop"
+    tokens_before: int
+    message_count: int
+
+
+@dataclass
 class ContextCompactedEvent(LoopEvent):
     """Emitted when context compaction runs before a model call.
 

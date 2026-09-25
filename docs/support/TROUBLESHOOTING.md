@@ -273,7 +273,7 @@ choosing a model, and chat is blocked.
 `llama-server` could not start it (an unsupported GGUF, or a projector
 file missing for a vision model).
 
-**Recovery.** Open **Settings → Model library**. The fit estimate on each
+**Recovery.** Open **Settings → Models**. The fit estimate on each
 row says whether it fits your hardware; pick a smaller quantization or a
 smaller model. For a `llama-server` model, press **Restart llama-server**
 in the tune drawer after adjusting the context window. If the restart
@@ -406,6 +406,35 @@ runtime lives under `~/.config/jenny/python-runtime`.
 reports a specific reason on repeat failures. Make sure the capability is on
 under **Settings → Tools → Optional capabilities**. On macOS, use the shell
 tools instead.
+
+### Jenny can't read a PDF ("PDF reading add-on not installed")
+
+**Symptom.** A `read_file` or `pdf_inspect` row fails with "PDF reading
+add-on not installed" (error `CMP-TOOL-0047`) and offers **Set up PDF
+reading**. The Workspace PDF viewer and editor still work.
+
+**Common cause.** Since 1.2.0, PDF text, table and scanned-page reading needs
+PyMuPDF. PyMuPDF is licensed under the AGPL-3.0, so it is an optional add-on
+that is not included in the installer.
+
+**Recovery.** Open **Settings → Tools → PDF reading add-on** (or click **Set
+up PDF reading** on the row). Press **Set up…**, read the licence note, then
+press **Accept and install**. Jenny downloads the pinned wheel from pypi.org
+and checks its fingerprint. It starts using the add-on once the current chat
+finishes. Then ask again.
+
+- **"pypi.org could not be reached."** Retry when you are online. On an
+  offline computer, download `pymupdf-1.27.2.2-cp310-abi3-win_amd64.whl` from
+  [pypi.org/project/PyMuPDF/1.27.2.2](https://pypi.org/project/PyMuPDF/1.27.2.2/#files)
+  on another machine and use **Install from a file…**. On Linux the file is
+  `…-manylinux_2_28_x86_64.whl`. Jenny accepts only that exact file.
+- **"Installed, but Jenny could not load it."** Press **Remove**, then set it
+  up again.
+- **The add-on files.** They live under `addons/pdf/` in Jenny's user data
+  folder (`%APPDATA%\jenny` on Windows). **Remove** deletes them. If a file is
+  locked, Jenny deletes it on the next start.
+- **Development checkout.** Settings shows whether the dev environment provides
+  PyMuPDF. If it does not, install the media extra into the venv.
 
 ### Chat stream stuck / spinner won't go away
 

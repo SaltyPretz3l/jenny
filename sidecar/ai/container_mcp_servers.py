@@ -26,6 +26,12 @@ from sidecar.ai.feature_flags import (
 )
 from sidecar.ai.host_policy import host_policy_is_enforced
 
+# Job-object ceilings for the builtin tool server when an execution policy
+# applies. The media budget covers RapidOCR (measured 1253 MiB peak commit for
+# two scanned pages) with headroom for a three-page request.
+BUILTIN_MEMORY_LIMIT_MB = 512
+BUILTIN_MEDIA_MEMORY_LIMIT_MB = 2048
+
 
 def _argv_safe_url(raw_url: str | None) -> str:
     """Strip userinfo from argv URLs; malformed credentialed URLs become empty."""
@@ -287,13 +293,19 @@ def _default_mcp_servers(
             # for its documented nested-process topology.
             max_processes=16,
             # Native coding commands inherit this outer job. A server-sized
-            # 512 MiB budget also caps compilers/editors and their children.
+            # 512 MiB budget also caps compilers/editors and their children;
+            # rich-file reads need the media budget because a RapidOCR page
+            # read peaks above 1.2 GiB of committed memory (onnxruntime plus
+            # the 300 dpi render) and would otherwise degrade to Tesseract.
             # Use OS memory availability for native desktop execution only;
             # managed Python retains its own inner resource limits.
             memory_limit_mb=(
                 None if config.host_mode == "desktop"
                 and config.desktop_execution_policy_version is None
-                and config.host_execution_policy_version is None else 512
+                and config.host_execution_policy_version is None
+                else BUILTIN_MEDIA_MEMORY_LIMIT_MB
+                if config.tools_rich_files_enabled or config.tools_image_read_enabled
+                else BUILTIN_MEMORY_LIMIT_MB
             ),
             # First-party server honors notifications/cancelled by aborting the
             # in-flight tool's owned subprocess tree, so Stop cancels the

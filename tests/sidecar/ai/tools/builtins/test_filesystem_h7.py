@@ -8,6 +8,7 @@ import hashlib
 import importlib
 import json
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,16 +17,18 @@ import pytest
 from sidecar.ai.error_codes import (
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_IO_FAILED,
+    CMP_TOOL_OUTSIDE_WORKSPACE,
     CMP_TOOL_STALE_READ_SNAPSHOT,
 )
 from sidecar.ai.tools import workspace as workspace_module
 from sidecar.ai.tools.builtins import file_state as file_state_module
 from sidecar.ai.tools.builtins import filesystem as filesystem_module
-from sidecar.ai.tools.builtins import filesystem_content
+from sidecar.ai.tools.builtins import filesystem_content, pdf_text
 from sidecar.ai.tools.builtins.file_state import (
     READ_SNAPSHOT_SCOPE_FULL,
     ReadSnapshot,
     encode_utf8_text_bounded,
+    read_capped_bytes,
     validate_current_snapshot,
 )
 from sidecar.ai.tools.builtins.filesystem import (
@@ -46,6 +49,21 @@ def _snapshot(result: ToolHandlerResult) -> dict[str, object]:
     snapshot = result.metadata.get("read_snapshot")
     assert isinstance(snapshot, dict)
     return snapshot
+
+
+def _assert_swapped_path_is_rejected(resolved: Path, root: Path, marker: bytes) -> None:
+    captured: bytes | None = None
+    try:
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            _, captured = read_capped_bytes(
+                resolved,
+                max_bytes=1024,
+                relative_path="sub/file.txt",
+                authorized_root=root,
+            )
+    finally:
+        assert captured != marker
+    assert excinfo.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +105,82 @@ def test_read_file_preserves_lf_line_endings(tmp_path: Path) -> None:
     assert isinstance(result, ToolHandlerResult)
     assert result.output == "line1\nline2\n"
     assert "\r" not in result.output
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+def test_read_capped_bytes_rejects_swapped_directory_junction(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    sub = workspace / "sub"
+    sub.mkdir(parents=True)
+    inside = sub / "file.txt"
+    inside.write_bytes(b"inside")
+    resolved = WorkspaceGuard(str(workspace)).resolve_read_path("sub/file.txt")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = b"outside-marker"
+    (outside / "file.txt").write_bytes(marker)
+    inside.unlink()
+    sub.rmdir()
+    junction = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(sub), str(outside)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if junction.returncode != 0:
+        pytest.skip(f"mklink /J not permitted: {junction.stderr.strip()}")
+
+    _assert_swapped_path_is_rejected(resolved, workspace, marker)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks only")
+def test_read_capped_bytes_rejects_swapped_directory_symlink(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    sub = workspace / "sub"
+    sub.mkdir(parents=True)
+    inside = sub / "file.txt"
+    inside.write_bytes(b"inside")
+    resolved = WorkspaceGuard(str(workspace)).resolve_read_path("sub/file.txt")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = b"outside-marker"
+    (outside / "file.txt").write_bytes(marker)
+    inside.unlink()
+    sub.rmdir()
+    try:
+        os.symlink(outside, sub, target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlink creation not permitted: {error}")
+
+    _assert_swapped_path_is_rejected(resolved, workspace, marker)
+
+
+def test_open_regular_file_checks_ordinary_in_workspace_handle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "ordinary.txt"
+    target.write_bytes(b"ordinary")
+    calls: list[tuple[int, Path, Path]] = []
+    original = file_state_module._verify_authorized_handle
+
+    def _spy(handle: object, resolved: Path, authorized_root: Path) -> None:
+        calls.append((handle.fileno(), resolved, authorized_root))
+        original(handle, resolved, authorized_root)
+
+    monkeypatch.setattr(file_state_module, "_verify_authorized_handle", _spy)
+
+    with file_state_module.open_regular_file(
+        target,
+        "rb",
+        authorized_root=tmp_path,
+    ) as handle:
+        assert handle.read() == b"ordinary"
+
+    assert len(calls) == 1
+    assert calls[0][1:] == (target, tmp_path)
 
 
 def test_read_file_preserves_cr_line_endings(tmp_path: Path) -> None:
@@ -411,9 +505,10 @@ def test_read_file_refuses_when_file_grows_during_read(
     def _fake_fstat(fd: int):
         real = real_fstat(fd)
         call_count["n"] += 1
-        # First fstat call is right after opening (baseline); the second is the
-        # post-read check -- simulate growth happening in between the two.
-        return _FakeStat(real, size_delta=0 if call_count["n"] == 1 else 64)
+        # The authorized opener fstats once to bind the handle. The capped read
+        # then takes its open baseline and post-read stat; simulate growth only
+        # for that final observation.
+        return _FakeStat(real, size_delta=64 if call_count["n"] == 3 else 0)
 
     monkeypatch.setattr(filesystem_module.os, "fstat", _fake_fstat)
 
@@ -950,7 +1045,7 @@ def test_read_file_rejects_invalid_pdf_page_ranges(tmp_path: Path) -> None:
         read_file_tool({"path": "sample.pdf", "pages": "2"}, _guard(tmp_path))
 
 
-def test_read_file_rejects_pdf_page_ranges_over_batch_limit(tmp_path: Path) -> None:
+def test_read_file_reads_first_pages_of_an_over_limit_range(tmp_path: Path) -> None:
     pytest.importorskip("fitz")
     import fitz
 
@@ -964,13 +1059,25 @@ def test_read_file_rejects_pdf_page_ranges_over_batch_limit(tmp_path: Path) -> N
     document.save(target)
     document.close()
 
-    with pytest.raises(ToolExecutionFailure, match="exceeds maximum of 3 pages per request"):
-        read_file_tool({"path": "sample.pdf", "pages": "1-4"}, _guard(tmp_path))
+    # A model copying a user's "pages 1-4" gets pages 1-3 and a pointer to page 4,
+    # not an error and a wasted round trip.
+    payload = json.loads(
+        read_file_tool({"path": "sample.pdf", "pages": "1-4"}, _guard(tmp_path)).output
+    )
+
+    assert payload["selected_pages"] == [1, 2, 3]
+    assert payload["unread_pages"] == "4"
+    assert payload["note"].startswith(
+        "Only 3 pages are read per call; page 4 was not read. Read it with pages: '4'."
+    )
 
 
-def test_parse_pages_argument_rejects_huge_ranges_without_expanding() -> None:
-    with pytest.raises(ToolExecutionFailure, match="exceeds maximum of 3 pages per request"):
-        filesystem_content._parse_pages_argument("1-100000000", page_count=100000000)
+def test_parse_pages_argument_caps_huge_ranges_without_expanding() -> None:
+    assert filesystem_content._parse_pages_argument("1-100000000", page_count=100000000) == [
+        1,
+        2,
+        3,
+    ]
 
 
 def test_read_file_pdf_payload_stays_within_tool_output_budget(tmp_path: Path) -> None:
@@ -1019,6 +1126,39 @@ def test_read_file_image_support_fails_cleanly_without_pillow(
         read_file_tool({"path": "image.png"}, _guard(tmp_path))
 
 
+def test_read_media_routes_decode_through_authorized_opener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    configure_filesystem_tools(
+        {"tools_max_edit_file_bytes": 2_097_152, "tools_image_read_enabled": True}
+    )
+    target = tmp_path / "image.png"
+    Image.new("RGB", (2, 2), color="navy").save(target, format="PNG")
+    authorized_roots: list[Path | None] = []
+    original = file_state_module.open_regular_file
+
+    def _spy(
+        path: Path,
+        mode: str = "rb",
+        *,
+        authorized_root: Path | None = None,
+        **kwargs,
+    ):
+        authorized_roots.append(authorized_root)
+        return original(path, mode, authorized_root=authorized_root, **kwargs)
+
+    monkeypatch.setattr(filesystem_content, "open_regular_file", _spy)
+
+    result = read_file_tool({"path": "image.png"}, _guard(tmp_path))
+
+    assert result.success is True
+    assert authorized_roots == [tmp_path.resolve()]
+
+
 def test_read_file_image_support_rejects_pillow_pixel_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1054,3 +1194,145 @@ def test_read_file_directory_error_points_at_list_dir(tmp_path: Path) -> None:
 
     assert "path is a directory, not a file: somedir" in exc_info.value.message
     assert "list_dir" in exc_info.value.message
+
+
+def _write_scanned_pdf(fitz, target: Path, *, pages: int = 1) -> None:
+    """A PDF whose pages are raster images only (no text layer)."""
+    source = fitz.open()
+    page = source.new_page(width=300, height=150)
+    page.insert_text((30, 80), "SCANNED 77", fontsize=24)
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+    scanned = fitz.open()
+    for _ in range(pages):
+        image_page = scanned.new_page(width=300, height=150)
+        image_page.insert_image(image_page.rect, pixmap=pixmap)
+    scanned.save(target)
+    scanned.close()
+
+
+def test_read_file_pdf_without_text_layer_uses_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz")
+    import fitz
+
+    from sidecar.ai.tools.builtins import pdf_ocr
+
+    configure_filesystem_tools(
+        {"tools_max_edit_file_bytes": 2_097_152, "tools_image_read_enabled": True}
+    )
+    _write_scanned_pdf(fitz, tmp_path / "scan.pdf", pages=2)
+    monkeypatch.delenv("JENNY_ENABLE_PDF_OCR", raising=False)
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR_RAPID", "0")
+    monkeypatch.setattr(
+        pdf_ocr, "resolve_tessdata",
+        lambda **_k: pdf_ocr.TessdataResolution(tmp_path, "override"),
+    )
+    ocr_source = fitz.open()
+    ocr_page = ocr_source.new_page()
+    ocr_page.insert_text((72, 72), "Total liabilities 9,876")
+    ocr_page.insert_text((72, 90), "Net income 4,521")
+    ocr_textpage = ocr_page.get_textpage()
+
+    class _BorrowedTextPage:
+        """PyMuPDF only accepts a textpage whose parent is the page being read."""
+
+        def __init__(self, parent: object) -> None:
+            self.parent = parent
+
+        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+            return ocr_textpage.extractWORDS(*args, **kwargs)
+
+    def _stub_ocr(page: object, *, tessdata_dir: Path) -> _BorrowedTextPage:
+        return _BorrowedTextPage(page)
+
+    monkeypatch.setattr(pdf_ocr, "ocr_page_textpage", _stub_ocr)
+
+    result = read_file_tool({"path": "scan.pdf"}, _guard(tmp_path))
+
+    payload = json.loads(result.output)
+    for page in payload["pages"]:
+        assert page["text_layer"] is False
+        assert page["ocr"] is True
+        assert "Net income 4,521" in page["text_excerpt"]
+    assert "recovered with OCR" in payload["note"]
+    assert result.metadata["text_less_pages"] == [1, 2]
+    assert result.metadata["ocr_pages"] == [1, 2]
+    # The page renders still ride the typed side channel for the UI.
+    assert len(result.trusted_attachments) == 2
+
+
+def test_read_file_pdf_without_text_layer_reports_ocr_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz")
+    import fitz
+
+    configure_filesystem_tools(
+        {"tools_max_edit_file_bytes": 2_097_152, "tools_image_read_enabled": True}
+    )
+    _write_scanned_pdf(fitz, tmp_path / "scan.pdf")
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR", "0")
+
+    result = read_file_tool({"path": "scan.pdf"}, _guard(tmp_path))
+
+    payload = json.loads(result.output)
+    page = payload["pages"][0]
+    assert page["text_layer"] is False
+    assert page["text_excerpt"] == ""
+    assert "ocr" not in page
+    assert "JENNY_ENABLE_PDF_OCR=0" in page["ocr_unavailable"]
+    assert "no text layer" in payload["note"] and "OCR is unavailable" in payload["note"]
+    assert result.metadata["ocr_pages"] == []
+
+
+def test_read_file_pdf_with_text_layer_never_calls_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz")
+    import fitz
+
+    from sidecar.ai.tools.builtins import pdf_ocr
+
+    configure_filesystem_tools(
+        {"tools_max_edit_file_bytes": 2_097_152, "tools_image_read_enabled": True}
+    )
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "Real text layer")
+    document.save(tmp_path / "text.pdf")
+    document.close()
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("OCR must not run on pages with a text layer")
+
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", _forbidden)
+    monkeypatch.setattr(pdf_ocr, "ocr_page_text", _forbidden)
+    monkeypatch.setattr(pdf_ocr, "ocr_page_textpage", _forbidden)
+
+    result = read_file_tool({"path": "text.pdf"}, _guard(tmp_path))
+
+    payload = json.loads(result.output)
+    assert payload["pages"][0]["text_layer"] is True
+    assert "Real text layer" in payload["pages"][0]["text_excerpt"]
+    # A text-layer-only read still carries the Sources instruction, and nothing else.
+    assert payload["note"] == pdf_text.SOURCES_NOTE
+    assert result.metadata["text_less_pages"] == []
+
+
+def test_read_file_pdf_three_dense_pages_fit_one_mcp_stdout_line() -> None:
+    """Regression for 2026-09-20: three ~290KB page renders killed the MCP
+    transport. The inline attachment budget must fit under the reader cap."""
+    import base64 as _b64
+    import math
+
+    from sidecar.ai.mcp import transport_stdio
+    from sidecar.ai.routing import harness_helpers
+    from sidecar.ai.tools.trusted_attachments import TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES
+
+    encoded_budget = 4 * math.ceil(TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES / 3)
+    assert transport_stdio.MCP_MAX_STDOUT_LINE_CHARS > (
+        encoded_budget + harness_helpers.MAX_RESPONSE_CHARS + 64 * 1024
+    )
+    # And a worst-case single payload really does serialize under the cap.
+    blob = _b64.b64encode(b"\xff" * TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES).decode()
+    assert len(json.dumps({"data_base64": blob})) < transport_stdio.MCP_MAX_STDOUT_LINE_CHARS

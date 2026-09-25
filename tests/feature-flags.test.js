@@ -11,6 +11,14 @@ const {
   normalizeFeatureOverrides,
 } = require('../services/feature-flags');
 
+test('session runtime defaults on and environment OFF cannot be overridden by stored preferences', () => {
+  assert.equal(buildFeatureFlags({}).session_runtime, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_SESSION_RUNTIME: '0' }, { session_runtime: true }).session_runtime, false);
+  assert.equal(FORCE_DENY_ENV_KEYS.session_runtime, 'JENNY_ENABLE_SESSION_RUNTIME');
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('session_runtime'));
+  assert.deepEqual(normalizeFeatureOverrides({ session_runtime: true }), {});
+});
+
 test('isFeatureEnabledByDefault falls back to the provided default for empty values', () => {
   assert.equal(isFeatureEnabledByDefault('', true), true);
   assert.equal(isFeatureEnabledByDefault('', false), false);
@@ -238,7 +246,7 @@ test('stream_envelope_v2 is an internal default-off rollout flag enabled only by
   );
 });
 
-test('canonical_bridge is an internal default-off rollout flag enabled only by env', () => {
+test('canonical_bridge is an internal default-on rollout flag that rolls back by env', () => {
   const defaults = buildFeatureFlags({});
   const enabled = buildFeatureFlags({
     JENNY_ENABLE_CANONICAL_BRIDGE: '1',
@@ -247,7 +255,7 @@ test('canonical_bridge is an internal default-off rollout flag enabled only by e
     JENNY_ENABLE_CANONICAL_BRIDGE: '0',
   });
 
-  assert.equal(defaults.canonical_bridge, false);
+  assert.equal(defaults.canonical_bridge, true);
   assert.equal(enabled.canonical_bridge, true);
   assert.equal(disabled.canonical_bridge, false);
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('canonical_bridge'));
@@ -278,19 +286,43 @@ test('canonical_renderer_projection is internal, default-ON, and rolls back by e
   );
 });
 
-test('canonical_m3_rollout enables the canonical stack as a grouped canary', () => {
-  const flags = buildFeatureFlags({
-    JENNY_ENABLE_CANONICAL_M3_ROLLOUT: '1',
+test('canonical_m3_rollout defaults the canonical stack on with one env rollback', () => {
+  const flags = buildFeatureFlags({});
+  const rolledBack = buildFeatureFlags({
+    JENNY_ENABLE_CANONICAL_M3_ROLLOUT: '0',
   });
 
   assert.equal(flags.canonical_m3_rollout, true);
   assert.equal(flags.canonical_turn_events, true);
   assert.equal(flags.canonical_bridge, true);
   assert.equal(flags.canonical_renderer_projection, true);
+  assert.equal(rolledBack.canonical_m3_rollout, false);
+  assert.equal(rolledBack.canonical_turn_events, false);
+  assert.equal(rolledBack.canonical_bridge, false);
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('canonical_m3_rollout'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('canonical_m3_rollout'));
   assert.deepEqual(
     normalizeFeatureOverrides({ canonical_m3_rollout: true }),
+    {}
+  );
+});
+
+test('canonical_text_primary is an internal default-off opt-in flag', () => {
+  const defaults = buildFeatureFlags({});
+  const enabled = buildFeatureFlags({
+    JENNY_ENABLE_CANONICAL_TEXT_PRIMARY: '1',
+  });
+  const disabled = buildFeatureFlags({
+    JENNY_ENABLE_CANONICAL_TEXT_PRIMARY: '0',
+  });
+
+  assert.equal(Object.hasOwn(defaults, 'canonical_text_primary'), false);
+  assert.equal(enabled.canonical_text_primary, true);
+  assert.equal(Object.hasOwn(disabled, 'canonical_text_primary'), false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('canonical_text_primary'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('canonical_text_primary'));
+  assert.deepEqual(
+    normalizeFeatureOverrides({ canonical_text_primary: true }),
     {}
   );
 });
@@ -473,14 +505,6 @@ test('model_management_ui and workspace_root_nudge are DEFAULT-ON with env rollb
   assert.equal(modelMgmtOff.model_management_ui, false);
   assert.equal(defaults.workspace_root_nudge, true);
   assert.equal(nudgeOff.workspace_root_nudge, false);
-});
-
-test('model_library_section is DEFAULT-ON with an env rollback', () => {
-  const defaults = buildFeatureFlags({});
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_MODEL_LIBRARY_SECTION: '0' });
-
-  assert.equal(defaults.model_library_section, true);
-  assert.equal(disabled.model_library_section, false);
 });
 
 test('setup_hub is DEFAULT-ON with an env rollback', () => {
@@ -732,8 +756,8 @@ test('strict_auto_run is a user-overridable DEFAULT-OFF flag with an env opt-in'
   );
 });
 
-test('remote_control is DEFAULT-ON with a stored override and emergency env deny', () => {
-  assert.equal(buildFeatureFlags({}).remote_control, true);
+test('remote_control is DEFAULT-OFF with a stored override and emergency env deny', () => {
+  assert.equal(buildFeatureFlags({}).remote_control, false);
   assert.equal(buildFeatureFlags({}, { remote_control: true }).remote_control, true);
   assert.equal(
     buildFeatureFlags(
@@ -753,6 +777,7 @@ test('remote_control is DEFAULT-ON with a stored override and emergency env deny
   assert.ok(FEATURE_OVERRIDE_KEYS.includes('remote_control'));
   assert.deepEqual(FORCE_DENY_ENV_KEYS, {
     remote_control: 'JENNY_ENABLE_REMOTE_CONTROL',
+    session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME',
   });
 });
 

@@ -11,7 +11,8 @@ Fail-closed contract (never raises across the sidecar boundary):
 - ``compaction_manual`` flag off  -> ``{"status": "error", "reason": "feature_disabled"}``
 - circuit breaker open            -> ``{"status": "error", "reason": "circuit_breaker_open"}``
 - no messages to compact          -> ``{"status": "error", "reason": "no_active_turn"}``
-- compaction raised / insufficient -> ``{"status": "error", "reason": "compaction_failed"}``
+- compaction raised / insufficient / no summary
+  -> ``{"status": "error", "reason": "compaction_failed"}``
 
 The manual circuit breaker is a module-level singleton shared across requests
 and resets after its five-minute cooldown. The auto path instead uses its
@@ -23,7 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.container import BrainContainer
@@ -38,15 +39,21 @@ from sidecar.ai.context.token_budget import (
     check_budget,
     estimate_messages_tokens,
 )
+from sidecar.ai.engines.admitted import InferenceAdmissionError
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
 from sidecar.ai.feature_flags import (
     FEATURE_COMPACTION_MANUAL,
     FEATURE_PROMPT_CACHE,
     is_feature_flag_enabled,
 )
+from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.protocol import CHAT_COMPACT_METHOD, CONTEXT_COMPACTED_METHOD
 from sidecar.runtime.chat_helpers import notification_context
-from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.diagnostics import log_event, sanitize_diagnostic_text
+from sidecar.runtime.inference_admission import (
+    build_auxiliary_inference_admission_callback,
+    inference_context_from_params,
+)
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.rpc import (
     error_response,
@@ -75,6 +82,7 @@ class _CompactRequestContext:
     logger: logging.Logger
     session_id: str | None
     request_id: str
+    inference_admission: Any | None
 
 
 def _emit_log_event(logger: logging.Logger, level: int, **kwargs: Any) -> None:
@@ -119,13 +127,16 @@ def _compactable_messages(params: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry for entry in raw if isinstance(entry, dict)]
 
 
-def process_compact_method(  # noqa: PLR0913 -- uniform request-dispatch hook contract
+def process_compact_method(  # noqa: PLR0911, PLR0913, PLR0917 -- uniform dispatch hook contract
     method: str,
     message_id: Any,
     params: Any,
     initialized: bool,
     brain_container: BrainContainer,
     logger: logging.Logger,
+    *,
+    write_message: Callable[[dict[str, Any]], None] | None = None,
+    response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None = None,
 ) -> ProcessOutcome | None:
     """Dispatch the manual ``chat.compact`` JSON-RPC method.
 
@@ -158,9 +169,42 @@ def process_compact_method(  # noqa: PLR0913 -- uniform request-dispatch hook co
         )
 
     safe_params = params if isinstance(params, dict) else {}
-    session_id = str(safe_params.get("session_id") or "").strip() or None
+    try:
+        inference_context = inference_context_from_params(safe_params)
+    except ValueError as error:
+        return _outcome(
+            initialized,
+            error_response(
+                message_id,
+                code=INVALID_PARAMS_CODE,
+                message="invalid inference_context",
+                data={"detail": str(error)},
+            ),
+        )
+    legacy_session_id = str(safe_params.get("session_id") or "").strip() or None
+    legacy_request_id = str(safe_params.get("request_id") or "").strip() or None
+    if inference_context is not None and (
+        inference_context.session_id != legacy_session_id
+        or inference_context.request_id != legacy_request_id
+    ):
+        return _outcome(
+            initialized,
+            error_response(
+                message_id,
+                code=INVALID_PARAMS_CODE,
+                message="invalid inference_context",
+                data={"detail": "inference_context must match compact request identity"},
+            ),
+        )
+    session_id = (
+        inference_context.session_id
+        if inference_context is not None
+        else legacy_session_id
+    )
     request_id = (
-        str(safe_params.get("request_id") or "").strip()
+        inference_context.request_id
+        if inference_context is not None
+        else legacy_request_id
         or f"manual_compact_{session_id or 'unknown'}"
     )
 
@@ -173,6 +217,11 @@ def process_compact_method(  # noqa: PLR0913 -- uniform request-dispatch hook co
             logger=logger,
             session_id=session_id,
             request_id=request_id,
+            inference_admission=build_auxiliary_inference_admission_callback(
+                context=inference_context,
+                write_message=write_message,
+                response_reader_factory=response_reader_factory,
+            ),
         )
     )
 
@@ -327,6 +376,11 @@ def _run_manual_compaction(
                 feature_flags,
                 FEATURE_PROMPT_CACHE,
             ),
+            runtime=LoopRuntime(
+                request_id=context.request_id,
+                session_id=str(context.session_id or ""),
+                inference_admission=context.inference_admission,
+            ),
         )
         # Manual requests carry no live system preamble, so tokens_after runs
         # slightly lower than an automatic compaction of the same turn. The
@@ -359,13 +413,16 @@ def _run_manual_compaction(
                         f"budget error threshold {budget.error_threshold(0)}"
                     ),
                 )
+    except InferenceAdmissionError:
+        raise
     except Exception as error:  # noqa: BLE001 -- never raise across the boundary
         context.logger.exception("manual chat.compact failed")
         return _error_result(
             context.initialized,
             context.message_id,
             "compaction_failed",
-            detail=str(error)[:_ERROR_DETAIL_MAX_CHARS],
+            # result_response does not sanitize; redact before the wire.
+            detail=sanitize_diagnostic_text(str(error), limit=_ERROR_DETAIL_MAX_CHARS),
         )
 
     if result.error is not None:
@@ -373,6 +430,27 @@ def _run_manual_compaction(
             context.initialized,
             context.message_id,
             "compaction_failed",
-            detail=str(result.error)[:_ERROR_DETAIL_MAX_CHARS],
+            detail=sanitize_diagnostic_text(str(result.error), limit=_ERROR_DETAIL_MAX_CHARS),
+        )
+    if result.strategy == "micro":
+        _emit_log_event(
+            context.logger,
+            logging.WARNING,
+            component="runtime.request_dispatch_compact",
+            event="sidecar.runtime.chat_compact",
+            message="Manual chat.compact produced no summary",
+            status="failure",
+            data={
+                "summary_failure_code": result.summary_failure_code,
+                "tokens_before": result.tokens_before,
+                "tokens_after": result.tokens_after,
+            },
+            request_id=context.request_id,
+        )
+        return _error_result(
+            context.initialized,
+            context.message_id,
+            "compaction_failed",
+            detail=result.summary_failure_code or "summary_not_created",
         )
     return result

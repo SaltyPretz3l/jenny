@@ -90,7 +90,8 @@ class ExecutionBroker {
     return { enabled: true, available: this.ready && !this.blocked && !this.closing,
       busy: Boolean(this.active), workspace: 'disposable_copy', network: 'none' };
   }
-  execute(input, { signal = null, sessionId = '', streamId = '', jobId = null, expectedIncarnation = null } = {}) {
+  execute(input, { signal = null, sessionId = '', streamId = '', jobId = null, expectedIncarnation = null,
+    beforeAdmission = null } = {}) {
     const args = validateCommand(input);
     if ((jobId !== null && !UUID.test(jobId)) || (expectedIncarnation !== null && !UUID.test(expectedIncarnation))) {
       return Promise.reject(workerError('sandbox_identity_invalid'));
@@ -98,7 +99,7 @@ class ExecutionBroker {
     if (this.closing || this.blocked || !this.ready) return Promise.reject(workerError('sandbox_unavailable'));
     if (this.active) return Promise.reject(workerError('sandbox_busy', HOST_ERROR_CODES.CONFLICT));
     if (signal?.aborted) return Promise.reject(workerError('sandbox_cancelled_before_admission'));
-    const operation = { streamId, sessionId, jobId, expectedIncarnation, promise: null, pending: null };
+    const operation = { streamId, sessionId, jobId, expectedIncarnation, beforeAdmission, promise: null, pending: null };
     this.active = operation;
     operation.promise = this._execute(args, signal, operation).finally(() => {
       if (this.active === operation) this.active = null;
@@ -116,6 +117,8 @@ class ExecutionBroker {
       const status = await this._statusUntil((value) => value.phase === 'ready' && value.job_id === null ? value : null, this.cleanupTimeoutMs, signal);
       if (signal?.aborted || this.closing) throw workerError('sandbox_cancelled_before_admission');
       if (operation.expectedIncarnation && operation.expectedIncarnation !== status.incarnation) throw workerError('sandbox_stale_incarnation');
+      await operation.beforeAdmission?.();
+      if (signal?.aborted || this.closing) throw workerError('sandbox_cancelled_before_admission');
       const pending = { job_id: operation.jobId || randomUUID(), incarnation: status.incarnation };
       operation.pending = pending;
       this._persist(pending);

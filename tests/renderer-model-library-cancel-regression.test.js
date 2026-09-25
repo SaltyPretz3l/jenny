@@ -4,13 +4,25 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const { createModelLibraryController } = require('../renderer/shell/renderer-model-library');
+const {
+  createModelLibrarySectionController,
+} = require('../renderer/shell/renderer-settings-model-library-section');
+
+async function flush() {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
 
 test('structured pull-cancellation failure keeps progress subscribed and reports failure', async (t) => {
-  const dom = new JSDOM('<!doctype html><body><section class="settings-card" data-settings-section="models"></section></body>', {
-    pretendToBeVisual: true,
-    url: 'http://localhost/',
-  });
+  const dom = new JSDOM(`<!doctype html><body>
+    <nav class="settings-nav"><button data-settings-section="models">Models</button></nav>
+    <section class="settings-card" data-settings-section="models">
+      <div id="modelLibrarySectionToolbarHost"></div>
+      <div class="settings-note model-library-section-status" aria-live="polite"></div>
+      <div id="modelLibrarySectionHost"></div>
+    </section>
+  </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
   let progressListener = null;
   let unsubscribeCalls = 0;
   const setupService = {
@@ -21,14 +33,32 @@ test('structured pull-cancellation failure keeps progress subscribed and reports
       return () => { unsubscribeCalls += 1; progressListener = null; };
     },
   };
-  const state = {
-    features: { featureFlags: { model_management_ui: true } },
-    status: { model: '' },
-    modelList: { data: [] },
-    offline: { preferredLocalModel: '' },
+  dom.window.jennyShell = {
+    models: {
+      list: async () => ({ data: [] }),
+      listOllamaTags: async () => ({ data: [] }),
+    },
+    offline: {
+      getDiagnostics: async () => ({
+        hardwareProfile: {},
+        memory: {},
+        modelRecommendations: [{
+          pullTag: 'qwen2.5:3b',
+          displayName: 'Qwen 2.5 3B',
+          recommended: true,
+          fitsInVram: true,
+        }],
+      }),
+    },
+    features: { onChanged: () => () => {} },
   };
-  const controller = createModelLibraryController({
-    state,
+  const controller = createModelLibrarySectionController({
+    state: {
+      features: { featureFlags: { model_management_ui: true } },
+      status: { model: '' },
+      offline: { preferredLocalModel: '' },
+      ui: { activeSettingsSection: 'models' },
+    },
     windowRef: dom.window,
     documentRef: dom.window.document,
     appendClientLog: () => {},
@@ -39,22 +69,22 @@ test('structured pull-cancellation failure keeps progress subscribed and reports
     controller.dispose();
     dom.window.close();
   });
+
   controller.bind();
-  controller.render();
-  const input = dom.window.document.getElementById('modelLibraryPullInput');
-  input.value = 'qwen2.5:3b';
-  dom.window.document.querySelector('[data-model-library-action="pull"]')
+  await flush();
+  dom.window.document.querySelector('[data-model-key="qwen2.5:3b"] [data-model-card-action="pull"]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await flush();
   assert.equal(typeof progressListener, 'function');
 
-  dom.window.document.querySelector('[data-model-library-action="cancel-pull"]')
+  dom.window.document.querySelector('[data-model-key="qwen2.5:3b"] [data-model-card-action="cancel"]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await flush();
 
-  assert.equal(controller._view.pullStatus, 'running', 'failed cancellation must not claim the pull stopped');
-  assert.match(controller._view.statusMessage, /could not cancel/i);
-  assert.doesNotMatch(controller._view.statusMessage, /termination_failed/);
+  const status = dom.window.document.querySelector('.model-library-section-status').textContent;
+  assert.match(status, /could not cancel/i);
+  assert.doesNotMatch(status, /termination_failed/);
   assert.equal(unsubscribeCalls, 0, 'progress monitoring remains active while the pull continues');
   assert.equal(typeof progressListener, 'function');
+  assert.ok(dom.window.document.querySelector('[data-model-card-action="cancel"]'));
 });

@@ -116,10 +116,20 @@
       return '';
     }
 
+    function resolvePayloadTurnId(payload) {
+      return normalizeId(payload?.turnId) || normalizeId(payload?.turn_id)
+        || normalizeId(payload?.streamId || payload?.requestId || payload?.request_id);
+    }
+
+    function resolvePayloadStreamId(payload) {
+      return normalizeId(payload?.streamId) || normalizeId(payload?.stream_id)
+        || normalizeId(payload?.requestId || payload?.request_id);
+    }
+
     function buildReducerContext(payload, callOptions = {}) {
       const segState = streamSegmentState.get(payload.streamId) || { segmentIndex: 0 };
       const sessionLiveState = getSessionLiveTurnState(payload.sessionId, { create: true });
-      const turnId = normalizeId(payload.streamId || payload.requestId || payload.request_id);
+      const turnId = resolvePayloadTurnId(payload);
       const turn = sessionLiveState?.turns_by_id?.[turnId] || null;
       const messageIndex = turn?.rows?.length || 0;
       const intraOrder = turn?.next_sort_ordinal || 0;
@@ -155,7 +165,7 @@
       if (payloadType !== 'phase_started' && payloadType !== 'phase_completed') {
         return;
       }
-      const turnId = normalizeId(payload.streamId || payload.requestId || payload.request_id);
+      const turnId = resolvePayloadTurnId(payload);
       const turn = sessionLiveState?.turns_by_id?.[turnId];
       if (!turn) {
         return;
@@ -177,7 +187,21 @@
         return null;
       }
       const sessionLiveState = getSessionLiveTurnState(payload.sessionId, { create: true });
-      const turnId = normalizeId(payload.streamId || payload.requestId || payload.request_id);
+      const turnId = resolvePayloadTurnId(payload);
+      const attemptStreamId = resolvePayloadStreamId(payload);
+      const priorTurn = sessionLiveState?.turns_by_id?.[turnId] || null;
+      const priorAttemptStreamId = normalizeId(priorTurn?.stream_id);
+      if (priorAttemptStreamId && attemptStreamId && priorAttemptStreamId !== attemptStreamId
+        && normalizeId(payload.type) !== 'started') {
+        if (typeof appendClientLog === 'function') {
+          appendClientLog('INFO', 'stream.stale_attempt_event_ignored', {
+            sessionId: normalizeId(payload.sessionId).slice(0, 30),
+            streamId: attemptStreamId.slice(0, 30),
+            turnId: turnId.slice(0, 30),
+          });
+        }
+        return sessionLiveState;
+      }
       const ignoredBefore = sessionLiveState?.turns_by_id?.[turnId]?.ignored_terminal_event_count || 0;
       const reducerContext = buildReducerContext(payload, callOptions);
       const nextEvents = buildTurnEventFromStreamPayload(payload, reducerContext);
@@ -192,6 +216,9 @@
       // two payloads receive the same synthetic event id and the reducer
       // correctly discards the second as a duplicate.
       if (turn) {
+        if (attemptStreamId) {
+          turn.stream_id = attemptStreamId;
+        }
         turn.next_sort_ordinal = Math.max(
           Number(turn.next_sort_ordinal) || 0,
           (Number(reducerContext.intra_message_order) || 0) + 1
@@ -208,15 +235,37 @@
       return sessionLiveState;
     }
 
+    // F18 (gate A4): a resumed turn's carried log holds only the resumed
+    // stream's events; the paused leg's events live in the persisted store
+    // alone. Keep this turn's events from earlier streams (persisted order,
+    // before the carried log), or the reconcile deletes the paused leg's rows
+    // (its first Thought) as stale. A cold reopen folds the same events.
+    function withEarlierAttemptEvents(carriedEvents, persistedEvents, turnId, attemptStreamId) {
+      if (!attemptStreamId) {
+        return carriedEvents;
+      }
+      const carriedEventIds = new Set(carriedEvents.map((event) => normalizeId(event?.event_id)).filter(Boolean));
+      const namesAttempt = (event) => [
+        event?.event_id,
+        event?.primary_message_id,
+        ...(Array.isArray(event?.source_message_ids) ? event.source_message_ids : []),
+      ].some((id) => normalizeId(id).includes(attemptStreamId));
+      const earlierEvents = persistedEvents.filter((event) => normalizeId(event?.turn_id || event?.turnId) === turnId
+        && !carriedEventIds.has(normalizeId(event?.event_id))
+        && !namesAttempt(event));
+      return earlierEvents.length ? [...earlierEvents, ...carriedEvents] : carriedEvents;
+    }
+
     function reconcileLiveTurnWithHydratedRows(
       sessionId,
-      streamId,
+      turnId,
       messages,
       turnEventState = null,
-      canonicalTurnEvents = undefined
+      canonicalTurnEvents = undefined,
+      attemptStreamId = ''
     ) {
       const normalizedSessionId = normalizeId(sessionId);
-      const normalizedTurnId = normalizeId(streamId);
+      const normalizedTurnId = normalizeId(turnId);
       if (!normalizedSessionId
         || !normalizedTurnId
         || typeof turnTreeProjectorUtils?.projectTurnTree !== 'function'
@@ -226,6 +275,12 @@
       const sessionLiveState = getSessionLiveTurnState(normalizedSessionId);
       const provisionalTurn = sessionLiveState?.turns_by_id?.[normalizedTurnId] || null;
       if (!provisionalTurn) {
+        return null;
+      }
+      const normalizedAttemptStreamId = normalizeId(attemptStreamId);
+      const provisionalAttemptStreamId = normalizeId(provisionalTurn.stream_id);
+      if (normalizedAttemptStreamId && provisionalAttemptStreamId
+        && normalizedAttemptStreamId !== provisionalAttemptStreamId) {
         return null;
       }
       // DC1 flicker cure: when the session opted in, the hydrated projection
@@ -259,7 +314,7 @@
         && canonicalTurnEvents.length > 0
         && persistedLogVersion >= 1;
       const projectionTurnEvents = useFinalizedTurnEvents
-        ? canonicalTurnEvents
+        ? withEarlierAttemptEvents(canonicalTurnEvents, persistedTurnEvents, normalizedTurnId, normalizedAttemptStreamId)
         : persistedTurnEvents;
       if (projectionTurnEvents.length) {
         projectionInput.turnEventLogVersion = persistedLogVersion;

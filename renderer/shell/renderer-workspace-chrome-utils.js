@@ -57,6 +57,14 @@
       ? attention === 'approval' || attention === 'plan_review'
       : approvalSet.has(id);
     const linkedCount = getLinkedCount(source.linkedCounts || source.linkedMap, id);
+    const outcome = source.outcomeBySession instanceof Map
+      ? source.outcomeBySession.get(id)
+      : (
+        source.outcomeBySession && typeof source.outcomeBySession === 'object' && Object.prototype.hasOwnProperty.call(source.outcomeBySession, id)
+          ? source.outcomeBySession[id]
+          : ''
+      );
+    const lastOutcome = outcome === 'failed' ? 'failed' : (outcome === 'completed' || outcome === 'cancelled' ? 'completed' : '');
     const waitingState = ['approval', 'plan_review', 'input_needed'].includes(attention) ? attention : '';
     const dominantState = waitingState || (isApproval ? 'approval' : (isStreaming ? 'streaming' : (isOpen ? 'open' : 'idle')));
     const statusLabel = sessionStatusLabel(dominantState);
@@ -68,6 +76,7 @@
       isStreaming,
       isApproval,
       linkedCount,
+      lastOutcome,
       dominantState,
       statusLabel,
       railIndicatorLabel: dominantState === 'open' || dominantState === 'idle' ? '' : statusLabel,
@@ -473,7 +482,7 @@
       scheduleOverflowArrowUpdate();
     }
 
-    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts, attentionStates) {
+    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts, attentionStates, outcomeBySession) {
       const openSet = toIdSet(openIds);
       const streamingSet = toIdSet(streamingIds);
       const approvalSet = toIdSet(approvalIds);
@@ -488,6 +497,7 @@
           approvalIds: approvalSet,
           linkedCounts: linkedMap,
           attentionStates,
+          outcomeBySession,
         });
         const openTarget = element.querySelector('[data-session-open]') || element;
         const titleText = element.querySelector('.session-row__title-text')?.textContent
@@ -508,6 +518,7 @@
           ? jt('shell.workspaceChrome.pluginSessionType', '{provider} session', { provider: providerName || jt('shell.workspaceChrome.pluginFallback', 'plugin') }) : jt('shell.workspaceChrome.sessionType', 'session');
         const signature = JSON.stringify({
           dominantState: presentation.dominantState,
+          lastOutcome: presentation.lastOutcome,
           linkedCount: presentation.linkedCount,
           badges: presentation.badgeLabels,
           title,
@@ -519,6 +530,8 @@
         visibleBadges.forEach((node) => node.remove());
         const previous = sidebarBadgeState.get(element);
         if (previous?.signature === signature && previous?.titleRow === titleRow && !visibleBadges.length) return;
+        if (presentation.lastOutcome) element.dataset.sessionLastOutcome = presentation.lastOutcome;
+        else delete element.dataset.sessionLastOutcome;
         element.dataset.sessionDominantState = presentation.dominantState;
         element.dataset.sessionLinkedCount = String(presentation.linkedCount);
         const dot = element.querySelector('.session-row__dot');

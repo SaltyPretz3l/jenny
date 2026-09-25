@@ -150,7 +150,10 @@ def test_chat_checkpoint_kill_switch_preserves_incomplete_error(
 
 
 def test_chat_checkpoint_stops_when_reasoning_makes_no_progress() -> None:
-    repeated_reasoning = "same detailed reasoning remains " * 500
+    # Short enough to stay inside the turn's thinking budget (max_tokens 256),
+    # so the checkpoint is driven by the provider's own ``thinking_budget``
+    # terminal and the carry survives for the no-progress comparison.
+    repeated_reasoning = "same detailed reasoning remains " * 10
     engine = _SequenceEngine(
         [
             [_thinking(repeated_reasoning), _done("thinking_budget")],
@@ -165,3 +168,58 @@ def test_chat_checkpoint_stops_when_reasoning_makes_no_progress() -> None:
     assert response.result["status"] == "runtime_error"
     assert response.result["terminal_subcode"] == "thinking_budget"
     assert len(engine.calls) == 2
+
+
+def test_chat_checkpoint_continues_after_length_without_visible_text() -> None:
+    engine = _SequenceEngine(
+        [
+            [_thinking("reasoning pass one"), _done("length")],
+            [_content("Finished answer."), _done("stop")],
+        ]
+    )
+
+    response = _response_for(engine)
+
+    assert response.result["status"] == "completed"
+    assert not _notifications(response, CHAT_ERROR_METHOD)
+    assert len(_notifications(response, CHAT_DONE_METHOD)) == 1
+    assert len(engine.calls) == 2
+    reasoning_phases = [
+        item
+        for item in _notifications(response, CHAT_PHASE_STARTED_METHOD)
+        if item["params"]["phase_kind"] == "reasoning"
+    ]
+    assert reasoning_phases[1]["params"]["summary"] == (
+        "Continuing after thinking-budget checkpoint 1"
+    )
+
+
+def test_chat_length_with_visible_text_never_checkpoints() -> None:
+    engine = _SequenceEngine(
+        [
+            [_thinking("reasoning pass one"), _content("Partial answer."), _done("length")],
+            [_content("never requested"), _done("stop")],
+        ]
+    )
+
+    response = _response_for(engine)
+
+    assert response.result["status"] == "completed"
+    assert not _notifications(response, CHAT_ERROR_METHOD)
+    assert len(engine.calls) == 1
+
+
+def test_chat_length_without_any_reasoning_reports_the_output_budget() -> None:
+    engine = _SequenceEngine([[_done("length")], [_content("never requested"), _done("stop")]])
+
+    response = _response_for(engine)
+
+    errors = _notifications(response, CHAT_ERROR_METHOD)
+    assert len(errors) == 1
+    assert errors[0]["params"]["code"] == "CMP-STREAM-INCOMPLETE"
+    assert errors[0]["params"]["message"] == (
+        "The model used its entire output budget before producing an answer. "
+        "Retry, or lower the reasoning effort."
+    )
+    assert not _notifications(response, CHAT_DONE_METHOD)
+    assert len(engine.calls) == 1

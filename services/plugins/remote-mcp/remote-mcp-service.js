@@ -20,6 +20,10 @@ function fail(reason, code = PLUGIN_ERROR_CODES.REMOTE_TRANSPORT_FAILED) {
   return { ok: false, code, reason, retryable: false };
 }
 
+function noInvocation(result) {
+  return { ...result, execution_settlement: { cleanup: 'confirmed', producer_started: false } };
+}
+
 function callShape(contribution, target, args) {
   if (contribution.kind === 'tool') {
     return { method: 'tools/call', params: { name: contribution.remote_name, arguments: args } };
@@ -82,40 +86,52 @@ class RemoteMcpService {
   }
 
   async invoke({ binding, invocation, current, policy, arguments: args = {}, context,
-    signal = null, authAuthority = null } = {}) {
-    if (this._disposed) return fail('remote_service_disposed');
+    signal = null, authAuthority = null, requireCurrent = null } = {}) {
+    if (this._disposed) return noInvocation(fail('remote_service_disposed'));
     const descriptor = this._descriptors.get(binding?.binding_digest);
-    if (!descriptor) return fail('remote_descriptor_rediscovery_required');
+    if (!descriptor) return noInvocation(fail('remote_descriptor_rediscovery_required'));
     const contribution = descriptor.runtime_binding.contributions
       .find((item) => item.namespaced_name === invocation?.namespaced_name);
     const authority = evaluateInvocationAuthority({ binding,
       runtimeBinding: descriptor.runtime_binding, contribution, invocation, current, policy });
-    if (!authority.ok) return authority;
+    if (!authority.ok) return noInvocation(authority);
     const compiledSchema = descriptor.compiled_schemas.get(contribution.namespaced_name);
     const validated = validateSchemaInstance(compiledSchema, args);
-    if (!validated.ok) return fail(validated.reason, PLUGIN_ERROR_CODES.POLICY_BLOCKED);
+    if (!validated.ok) {
+      return noInvocation(fail(validated.reason, PLUGIN_ERROR_CODES.POLICY_BLOCKED));
+    }
     const headers = extractMcpHeaders(compiledSchema, args);
-    if (!headers.ok) return fail(headers.reason, PLUGIN_ERROR_CODES.POLICY_BLOCKED);
+    if (!headers.ok) return noInvocation(fail(headers.reason, PLUGIN_ERROR_CODES.POLICY_BLOCKED));
     const target = descriptor.targets.get(contribution.namespaced_name);
     const shaped = callShape(contribution, target, args);
     if (!shaped || (contribution.kind === 'resource' && !target?.uri)) {
-      return fail('remote_contribution_invalid');
+      return noInvocation(fail('remote_contribution_invalid'));
     }
-    return this._scheduler.submit(binding.binding_digest, async (operationSignal) => {
+    let transportAttempted = false;
+    const result = await this._scheduler.submit(binding.binding_digest, async (operationSignal) => {
       let credential = null;
       if (policy.authorization === 'required' && (!authAuthority || !this._credentialBroker)) {
-        return fail('remote_authorization_required', PLUGIN_ERROR_CODES.REMOTE_AUTH_REQUIRED);
+        return noInvocation(fail(
+          'remote_authorization_required',
+          PLUGIN_ERROR_CODES.REMOTE_AUTH_REQUIRED
+        ));
       }
       if (policy.authorization === 'required') {
         const loaded = await this._credentialBroker.get(authAuthority, {
           revoked: policy.revoked_descriptor_digests?.has(binding.descriptor_digest) === true,
         });
-        if (!loaded.ok) return loaded;
+        if (!loaded.ok) return noInvocation(loaded);
         credential = loaded.credential;
+      }
+      try {
+        await requireCurrent?.();
+      } catch (_error) {
+        return noInvocation(fail('remote_tool_authority_stale', PLUGIN_ERROR_CODES.POLICY_BLOCKED));
       }
       const transport = this._transportFactory({ networkBroker: this._networkBroker,
         binding, consent: descriptor.consent, credential,
         context: { ...descriptor.context, ...context, signal: operationSignal } });
+      transportAttempted = true;
       const result = await transport.call(shaped.method, shaped.params, { extraHeaders: headers.headers });
       if (!result.ok) {
         this._diagnostics.emit('WARN', 'plugins.remote_mcp.call_failed', {
@@ -125,10 +141,12 @@ class RemoteMcpService {
         return redactedResult;
       }
       return { ok: true, result: result.result, notifications: result.notifications,
+        execution_settlement: result.execution_settlement,
         provenance: { publisher_id: binding.publisher_id, plugin_id: binding.plugin_id,
           contribution_id: binding.contribution_id, descriptor_digest: binding.descriptor_digest,
           binding_digest: binding.binding_digest, response_digest: digest(stableStringify(result.result)) } };
     }, { signal });
+    return !transportAttempted && !result?.execution_settlement ? noInvocation(result) : result;
   }
 
   descriptorForBinding(bindingDigest) {

@@ -31,6 +31,10 @@
   const projectionCacheRefreshUtils = (typeof globalThis !== 'undefined' && globalThis.rendererRenderPipelineProjectionCacheUtils)
     || (typeof require === 'function' ? require('./renderer-render-pipeline-projection-cache') : null)
     || {};
+  // Split view W0-5: which sessions the projection-cache prune must keep. Same
+  // module as above; absent, it collapses to the single current session.
+  const resolveRetainedSessionIds = projectionCacheRefreshUtils.resolveRetainedSessionIds
+    || function singleRetainedSession(state) { return [String((state && state.currentSessionId) || '').trim()]; };
   function noop() {}
   function noopFalse() { return false; }
   function noopEmptyString() { return ''; }
@@ -129,6 +133,7 @@
           String(message.timestamp || ''),
           String(message.model_used || ''),
           String(message.terminal_status || ''),
+          String(message.runtime_status || ''),
           String(message.streamId || ''),
           String(message.parent_stream_id || ''),
           Array.isArray(message.phases) ? message.phases.length : 0,
@@ -281,8 +286,13 @@
 
     function renderMessages(options = {}) {
       const timeFormat = globalThis.jennyI18n?.timeOptions?.().hourCycle || '';
+      // A4: an approval card's state (live, paused, inactive) moves without any
+      // message changing, so neither the no-op guard, the settled-root memo nor
+      // a streaming patch would repaint it. Committed only by a full render.
+      const approvalCardKey = globalThis.rendererApprovalBlock?.approvalCardStateKey?.(state, state.currentSessionId) || '';
       const forceFullRender = options?.forceFullRender === true || options?.forceLegacyRowModelFallback === true
-        || (uiRuntime.timeFormat || '') !== timeFormat;
+        || (uiRuntime.timeFormat || '') !== timeFormat
+        || (uiRuntime.approvalCardKey || '') !== approvalCardKey;
       uiRuntime.timeFormat = timeFormat;
       if (!chatTimeline || !chatThreadScroll) {
         return;
@@ -334,7 +344,9 @@
           delete document.documentElement.dataset.chatContentVisibility;
         }
       }
-      pruneToolRowProjectionSessionCaches(state.currentSessionId);
+      // Split view W0-5: the prune keeps the RETAINED set, which with one pane
+      // is exactly `[state.currentSessionId]` -- the argument this passed before.
+      pruneToolRowProjectionSessionCaches(resolveRetainedSessionIds(state));
       function resolveFollowUpDisabledReason() {
         if (state.ui?.branchCommitting === true) {
       return jt('chat.messageRenderer.waitForBranch', 'Wait for the branch to finish before trying that.');
@@ -438,6 +450,10 @@
       const messageRenderSignature = tokenMessageSignature
         + '\u001eF7I:' + buildTimelineDividerInputSignature(messages)
         + 'AUI:' + buildAmbientUiSignature()
+        // F27: the follow-up gate (Resume, Edit, Branch, Regenerate) is baked
+        // into the markup but lives on no message, so a render that ran while
+        // terminal postwork held the session busy latched them disabled.
+        + 'FU:' + followUpDisabledReason
         // PSR: the projection-state revision (renderer-render-pipeline-
         // projection-context.js) folds the live/reconciled row overlay into
         // this one transcript render signature. A projection-row-only change
@@ -615,6 +631,7 @@
         // An emptied timeline is a whole-timeline commit: nothing the current
         // projection revision covers can be stale in an empty DOM.
         uiRuntime.projectionCommittedRevisionKey = projectionRevisionKey;
+        uiRuntime.approvalCardKey = approvalCardKey;
         // An empty transcript invalidates cached root markup so a later session cannot reuse stale HTML.
         uiRuntime.threadRootMarkupCache?.clear();
         chatTimeline.innerHTML = '';
@@ -820,6 +837,7 @@
           uiRuntime.recapExpansionSignature = recapExpansionSignature;
           uiRuntime.threadBranchSignature = threadExpansionSignature;
           uiRuntime.projectionCommittedRevisionKey = projectionRevisionKey;
+          uiRuntime.approvalCardKey = approvalCardKey;
           runPostTimelineRenderEffects(messages, {
             decorateFollowUps: true,
             syncViewport: true,
@@ -915,6 +933,7 @@
       uiRuntime.recapExpansionSignature = recapExpansionSignature;
       uiRuntime.threadBranchSignature = threadExpansionSignature;
       uiRuntime.projectionCommittedRevisionKey = projectionRevisionKey;
+      uiRuntime.approvalCardKey = approvalCardKey;
 
       if (shouldAnimateActivation) {
         scheduleThreadTransitionCleanup();

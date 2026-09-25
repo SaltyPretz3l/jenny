@@ -121,7 +121,7 @@
 
     function buildTile(source) {
       const id = String((source && source.id) || '');
-      const name = String((source && source.name) || 'Untitled');
+      const name = String((source && source.name) || jt('attachments.capture.untitledSource', 'Untitled'));
       const thumb = isValidThumbnail(source && source.thumbnailDataUrl) ? source.thumbnailDataUrl : '';
       const media = thumb
         ? `<img class="capture-source-thumb" src="${escapeHtml(thumb)}" alt="" />`

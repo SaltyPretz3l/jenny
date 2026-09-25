@@ -30,6 +30,7 @@ const { trackDirectory, trackProcess } = require('../../tests/helpers/resource-c
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_OUTPUT_DIR = path.join(REPO_ROOT, 'artifacts', 'demo');
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
+const FRESH_CHAT_ASSIGN_TIMEOUT_MS = 15_000;
 let preloadBuildPromise = null;
 
 function scrubbedJennyEnv() {
@@ -59,6 +60,67 @@ function currentCommit() {
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
+async function assignFreshChatProject(page, {
+  previousSessionId,
+  projectId,
+  timeoutMs = FRESH_CHAT_ASSIGN_TIMEOUT_MS,
+} = {}) {
+  const priorId = String(previousSessionId || '').trim();
+  const targetProjectId = String(projectId || '').trim();
+  if (!targetProjectId) throw new TypeError('Fresh demo chat assignment requires a project id.');
+  const requestedTimeoutMs = Number(timeoutMs);
+  const boundedTimeoutMs = Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+    ? Math.min(requestedTimeoutMs, FRESH_CHAT_ASSIGN_TIMEOUT_MS)
+    : FRESH_CHAT_ASSIGN_TIMEOUT_MS;
+  await page.waitForFunction(({ previousId }) => {
+    const snapshot = window.__jennyAgent?.getStateSnapshot?.();
+    return Boolean(snapshot?.currentSessionId)
+      && snapshot.currentSessionId !== previousId
+      && snapshot.messageCount === 0
+      && snapshot.activeTurn?.phase === 'idle'
+      && snapshot.activeTurn?.streaming === false
+      && snapshot.pendingStreamIds?.length === 0
+      && snapshot.bufferedStreamCount === 0;
+  }, { previousId: priorId }, { timeout: boundedTimeoutMs });
+
+  const assignment = await page.evaluate(async (requestedProjectId) => {
+    const snapshot = window.__jennyAgent.getStateSnapshot();
+    const sessionId = String(snapshot.currentSessionId || '').trim();
+    const result = await window.jennyShell?.projects?.assignSession?.({
+      session_id: sessionId,
+      project_id: requestedProjectId,
+    });
+    const selectedSessionId = String(
+      window.__jennyAgent.getStateSnapshot().currentSessionId || ''
+    ).trim();
+    return { sessionId, selectedSessionId, result };
+  }, targetProjectId);
+  if (assignment?.selectedSessionId !== assignment?.sessionId
+    || assignment?.result?.ok !== true
+    || assignment.result.session?.id !== assignment.sessionId
+    || assignment.result.session?.project_id !== targetProjectId) {
+    throw new Error(`fresh demo chat project assignment failed: ${JSON.stringify(assignment?.result || null)}`);
+  }
+
+  const opened = await page.evaluate(
+    (sessionId) => window.__jennyAgent.openSession(sessionId),
+    assignment.sessionId
+  );
+  if (opened?.ok !== true || opened.sessionId !== assignment.sessionId) {
+    throw new Error(`fresh demo chat refresh failed: ${JSON.stringify(opened || null)}`);
+  }
+  const refreshed = await page.evaluate(() => window.__jennyAgent.getStateSnapshot());
+  if (refreshed?.currentSessionId !== assignment.sessionId
+    || refreshed.messageCount !== 0
+    || refreshed.activeTurn?.phase !== 'idle'
+    || refreshed.activeTurn?.streaming !== false
+    || refreshed.pendingStreamIds?.length !== 0
+    || refreshed.bufferedStreamCount !== 0) {
+    throw new Error(`fresh demo chat refresh returned an unexpected session: ${JSON.stringify(refreshed || null)}`);
+  }
+  return assignment.sessionId;
+}
+
 async function runScene(scene, {
   outputDir = DEFAULT_OUTPUT_DIR,
   readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS,
@@ -67,7 +129,7 @@ async function runScene(scene, {
   // One clock for the profile's seeded history and every date token in the
   // scene's text, so "Thursday" in the prompt is the Thursday on the calendar.
   const seeded = seedDemoProfile(scene);
-  const { base, profile, replayScriptPath, now } = seeded;
+  const { base, profile, replayScriptPath, projectId, now } = seeded;
   const withDates = (text) => resolveDateTokens(text, now);
   let app = null;
   let failureSnapshot = null;
@@ -261,9 +323,20 @@ async function runScene(scene, {
         case 'move':
           await glideTo(step.selector, step.ms);
           break;
-        case 'dom-click':
+        case 'dom-click': {
+          const previousSessionId = step.selector === '#newChatButton'
+            ? await page.evaluate(() => window.__jennyAgent.getStateSnapshot().currentSessionId)
+            : '';
           await page.click(step.selector);
+          if (step.selector === '#newChatButton') {
+            await assignFreshChatProject(page, {
+              previousSessionId,
+              projectId,
+              timeoutMs: Math.min(readyTimeoutMs, FRESH_CHAT_ASSIGN_TIMEOUT_MS),
+            });
+          }
           break;
+        }
         case 'click': {
           if (step.optional === true && !(await page.$(step.selector))) {
             break;
@@ -399,7 +472,13 @@ async function main() {
   return failures.length === 0 ? 0 : 1;
 }
 
-module.exports = { runScene, DEFAULT_OUTPUT_DIR, scrubbedJennyEnv };
+module.exports = {
+  runScene,
+  assignFreshChatProject,
+  DEFAULT_OUTPUT_DIR,
+  FRESH_CHAT_ASSIGN_TIMEOUT_MS,
+  scrubbedJennyEnv,
+};
 
 if (require.main === module) {
   main().then(

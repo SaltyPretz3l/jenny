@@ -55,6 +55,9 @@
     const onChooseWorkspaceRoot = typeof deps?.onChooseWorkspaceRoot === 'function'
       ? deps.onChooseWorkspaceRoot
       : null;
+    // Projects v2 header switcher (both optional; absent = static "Explorer").
+    const getProjectTitle = typeof deps?.getProjectTitle === 'function' ? deps.getProjectTitle : null;
+    const onOpenProjectMenu = typeof deps?.onOpenProjectMenu === 'function' ? deps.onOpenProjectMenu : noop;
     // Controller-owned extras appended to file rows' menus (Open Preview,
     // path/OS utilities, Send to Jenny).
     const buildFileContextMenuItems = typeof deps?.buildFileContextMenuItems === 'function'
@@ -107,6 +110,7 @@
       hasChooseRoot: () => Boolean(onChooseWorkspaceRoot), onLazyLoad: loadDirectory,
       isQolEnabled, isSelected: (path) => selection.has(path),
       isCut: (path) => clipboard?.isCut(path) === true,
+      getProjectTitle,
     });
     const editSession = treeEdit.createIdeTreeEditSession?.({
       getPendingEdit: () => pendingEdit,
@@ -286,6 +290,16 @@
       const currentIndex = EXPLORER_SORT_MODES.indexOf(ide.explorerSortMode);
       ide.explorerSortMode = EXPLORER_SORT_MODES[(currentIndex + 1) % EXPLORER_SORT_MODES.length];
       schedulePersist();
+      render();
+    }
+
+    function repaintHeader() {
+      const panel = getMountEl() || null;
+      const label = panel && getProjectTitle ? panel.querySelector('.ide-tree-header-project-name') : null;
+      if (label) {
+        label.textContent = getProjectTitle();
+        return;
+      }
       render();
     }
 
@@ -489,6 +503,8 @@
           toggleGeneratedDirectories();
         } else if (isQolEnabled() && action === 'cycle-sort') {
           cycleSortMode();
+        } else if (action === 'project-menu') {
+          onOpenProjectMenu(headerAction);
         }
         return;
       }
@@ -851,6 +867,10 @@
       schedulePersistExpansion: schedulePersist,
       selection,
       syncSelection: render,
+      // Projects v2: repaint the header title after the project list changes.
+      // In place when possible: a full render would detach the title button
+      // while the project menu may be anchored to it.
+      repaintHeader: repaintHeader,
     };
   }
 

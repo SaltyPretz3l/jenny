@@ -30,6 +30,22 @@ test('normalizeState fills default localEngines.vllm on fresh state', () => {
   assert.equal(normalized.localEngines.vllm.toolCallParser, 'qwen3_coder');
   assert.equal(normalized.localEngines.vllm.enableAutoToolChoice, true);
   assert.deepEqual(normalized.localEngines.vllm.extraArgs, []);
+  assert.equal(normalized.localEngines.startupModelLoad, true);
+});
+
+test('startup model loading defaults on, persists updates, and backfills older state', () => {
+  assert.equal(normalizeState({ localEngines: {} }).localEngines.startupModelLoad, true);
+
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-startup-model-load-'));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath, env: {} });
+
+  assert.equal(service.getLocalEngines().startupModelLoad, true);
+  const updated = service.updateStartupModelLoad(false);
+  assert.equal(updated.startupModelLoad, false);
+  assert.equal(service.getLocalEngines().startupModelLoad, false);
+  const persisted = JSON.parse(fs.readFileSync(service.store.filePath, 'utf8'));
+  assert.equal(persisted.localEngines.startupModelLoad, false);
 });
 
 test('normalizeState migrates v12 config missing localEngines into defaults', () => {
@@ -251,4 +267,53 @@ test('normalizeState rejects credentials in OpenAI-compatible apiUrl', () => {
     },
   });
   assert.equal(normalized.localEngines.openaiCompatible.apiUrl, '');
+});
+
+test('managed perModel keeps a valid llama-server runtime with its build and drops anything else', () => {
+  const runtime = process.platform === 'win32'
+    ? 'G:\\llmmodels\\runtimes\\llama-prism-b10683-cuda13.3\\llama-server.exe'
+    : '/opt/llama-prism/llama-server';
+  const notServer = process.platform === 'win32' ? 'C:\\Windows\\System32\\calc.exe' : '/usr/bin/calc';
+  const managed = normalizeState({ localEngines: { openaiCompatible: { managed: { perModel: {
+    'bonsai-a': { engine: 'llama-server', runtimePath: runtime, runtimeBuild: 10683 },
+    'bonsai-b': { engine: 'llama-server', runtimePath: runtime, runtimeBuild: 0 },
+    'bonsai-c': { engine: 'llama-server', runtimePath: notServer, runtimeBuild: 5 },
+    'bonsai-d': { engine: 'llama-server', runtimeBuild: 10683 },
+    'bonsai-e': { engine: 'llama-server', runtimePath: 'relative/llama-server', runtimeBuild: 1 },
+    plain: { engine: 'llama-server' },
+  } } } } }).localEngines.openaiCompatible.managed;
+  assert.equal(managed.perModel['bonsai-a'].runtimePath, runtime);
+  assert.equal(managed.perModel['bonsai-a'].runtimeBuild, 10683);
+  assert.equal(managed.perModel['bonsai-b'].runtimePath, runtime);
+  assert.equal('runtimeBuild' in managed.perModel['bonsai-b'], false, 'a bogus build is dropped, the path kept');
+  for (const key of ['bonsai-c', 'bonsai-d', 'bonsai-e']) {
+    assert.equal('runtimePath' in managed.perModel[key], false, key);
+    assert.equal('runtimeBuild' in managed.perModel[key], false, key);
+  }
+  assert.deepEqual(Object.keys(managed.perModel.plain), ['engine', 'modelPath', 'tag', 'mtp'],
+    'entries without a runtime keep their existing shape');
+});
+
+test('lastUsedTag must name an existing entry so a removed model never stays the autostart target', () => {
+  const orphan = normalizeState({ localEngines: { openaiCompatible: { managed: {
+    lastUsedTag: 'gone-model', perModel: { 'kept-model': { engine: 'llama-server' } },
+  } } } }).localEngines.openaiCompatible.managed;
+  assert.equal(orphan.lastUsedTag, '');
+
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-last-used-'));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath, env: {} });
+  const managed = () => service.getLocalEngines().openaiCompatible.managed;
+  service.updateManagedLlamaServer({
+    enabled: true,
+    lastUsedTag: 'model-a',
+    perModel: { 'model-a': { engine: 'llama-server' }, 'model-b': { engine: 'llama-server' } },
+  });
+  assert.equal(managed().lastUsedTag, 'model-a', 'the combined tag + entry write from a Use survives');
+  service.updateManagedLlamaServer({ perModel: { 'model-b': null } });
+  assert.equal(managed().lastUsedTag, 'model-a', 'removing another model keeps the target');
+  service.updateManagedLlamaServer({ perModel: { 'model-a': null } });
+  assert.equal(managed().lastUsedTag, '', 'removing the target clears it');
+  const persisted = JSON.parse(fs.readFileSync(service.store.filePath, 'utf8'));
+  assert.equal(persisted.localEngines.openaiCompatible.managed.lastUsedTag, '');
 });

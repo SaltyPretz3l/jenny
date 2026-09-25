@@ -34,8 +34,20 @@ def _engine_stall_message(
     stall_phase: str,
     inactivity_seconds: int,
     model_load_grace_seconds: float,
+    engine_was_active: bool = False,
 ) -> str:
     engine_type = str(getattr(config, "engine_type", "") or "").strip().lower()
+    if engine_was_active and stall_phase != "model_load":
+        # The engine kept reporting activity through the silence, so the
+        # machine is not the suspect: something between the engine and this
+        # stream stopped delivering chunks, or the window is simply too short
+        # for this turn's output.
+        return (
+            f"The turn timed out after {inactivity_seconds}s without new streamed output, "
+            "even though the model engine was still reporting activity. Retry the turn, "
+            "or raise the stream inactivity timeout in Settings > Models > Model Library "
+            "> Advanced."
+        )
     if engine_type in _CLOUD_PROVIDER_ENGINE_TYPES:
         if stall_phase == "model_load":
             grace_seconds = int(max(float(inactivity_seconds), model_load_grace_seconds))
@@ -218,14 +230,11 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.wind_down_injected = False
         self.feature_flags = kernel._config.feature_flags or {}
 
-        self.quota_registry = None
-        if _tl_hub.is_resource_discipline_enabled(self.feature_flags):
-            from sidecar.ai.routing.tool_quotas import ToolQuotaRegistry, policy_from_config
+        from sidecar.ai.routing.quota_runtime import initialize_runtime_quota
 
-            self.quota_registry = ToolQuotaRegistry(
-                policy_from_config(kernel._config),
-                session_tool_call_count=getattr(request_context, "session_tool_call_count", 0),
-            )
+        self.quota_registry = initialize_runtime_quota(runtime, kernel._config,
+            enabled=_tl_hub.is_resource_discipline_enabled(self.feature_flags),
+            request_context=request_context)
 
     # -- Bound helpers (were closures 863-908) ----------------------------
 
@@ -328,338 +337,380 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
     # -- Main loop --------------------------------------------------------
 
     def execute(self) -> Any:  # noqa: C901, PLR0911, PLR0912, PLR0915
-        import sidecar.ai.routing.tool_loop as _tl_hub
-        from sidecar.ai.routing.iteration_limits import (
-            append_sub_agent_finalization_message,
-            append_wind_down_system_message,
-            is_sub_agent_final_iteration,
-            should_emit_wind_down,
-            sub_agent_report_response_format,
-            wind_down_enabled,
+        mutation_lifecycle = __import__(
+            "sidecar.ai.routing.mutation_change_set_lifecycle",
+            fromlist=["finish_run_change_set", "release_run_context"],
         )
-
-        runtime = self.runtime
-        kernel = self.kernel
-
-        # A while loop, not `for ... in range(...)`: range() materializes the
-        # bound once, so the verification gate's carve-out grant (which raises
-        # self.max_iterations mid-run) would silently have no effect. Behaviour is
-        # identical to the range form whenever max_iterations does not change.
-        _local_iteration = 0
-        while _local_iteration < self.max_iterations:
-            _local_iteration += 1
-            _iteration = self.iteration_base + _local_iteration
-            runtime.current_iteration = _iteration
-            runtime.phase_events_enabled = _tl_hub.is_feature_flag_enabled(
-                kernel._config.feature_flags or {}, _tl_hub.FEATURE_PHASE_EVENTS
+        try:
+            import sidecar.ai.routing.tool_loop as _tl_hub
+            from sidecar.ai.routing.iteration_limits import (
+                append_sub_agent_finalization_message,
+                append_wind_down_system_message,
+                is_sub_agent_final_iteration,
+                should_emit_wind_down,
+                sub_agent_report_response_format,
+                wind_down_enabled,
             )
-            runtime.raise_if_cancelled()
-            if wind_down_enabled(kernel._config) and should_emit_wind_down(
-                iteration=_iteration,
-                max_iterations=self.iteration_total,
-                already_emitted=self.wind_down_injected,
-            ):
-                append_wind_down_system_message(self.working_messages)
-                self.wind_down_injected = True
-                _tl_hub.log_event(
-                    logger,
-                    logging.INFO,
-                    component="ai.router",
-                    event="ai.router.iteration_wind_down_injected",
-                    message="Injected iteration wind-down system message.",
-                    status="active",
-                    data={"iteration": _iteration, "max_iterations": self.iteration_total},
-                    request_id=self.request_id,
-                    session_id=self.session_id,
+
+            runtime = self.runtime
+            kernel = self.kernel
+
+            # A while loop, not `for ... in range(...)`: range() materializes the
+            # bound once, so the verification gate's carve-out grant (which raises
+            # self.max_iterations mid-run) would silently have no effect. Behaviour is
+            # identical to the range form whenever max_iterations does not change.
+            # F26: a resumed leg starts with the approved tools' results appended,
+            # so it runs the post-tool compaction check before its first call.
+            if self.budget_tracker is not None and self.iteration_base > 0:
+                _tl_hub.tool_loop_compaction.compact_tool_loop_context(
+                    self, num_tools=self.budget_tracker.num_tools,
                 )
-            # -- Emit iteration-start *before* model call -----------------
-            runtime.emit(
-                _tl_hub.IterationStartEvent(
+            _local_iteration = 0
+            while _local_iteration < self.max_iterations:
+                _local_iteration += 1
+                _iteration = self.iteration_base + _local_iteration
+                runtime.current_iteration = _iteration
+                runtime.phase_events_enabled = _tl_hub.is_feature_flag_enabled(
+                    kernel._config.feature_flags or {}, _tl_hub.FEATURE_PHASE_EVENTS
+                )
+                runtime.raise_if_cancelled()
+                if wind_down_enabled(kernel._config) and should_emit_wind_down(
                     iteration=_iteration,
                     max_iterations=self.iteration_total,
-                )
-            )
-            if runtime.streaming:
-                self.streamed_event_types.add("chat.thinking")
-
-            # -- Stop-policy check ----------------------------------------
-            last_error_output: str | None = None
-            if self.outcomes:
-                last_outcome = self.outcomes[-1]
-                if not last_outcome.success:
-                    last_error_output = last_outcome.output
-
-            stop_reason = self.stop_controller.evaluate(
-                self._build_loop_state(
-                    _iteration,
-                    phase="preflight",
-                    last_error_output=last_error_output,
-                )
-            )
-            if (
-                stop_reason is not None
-                and stop_reason.decision == _tl_hub.StopDecision.DEGRADE
-                and stop_reason.user_hint
-                and not self.cycle_hint_attempted
-            ):
-                # Recoverable cycle detection: pause tools, inject the
-                # summarize-and-stop hint, and let this iteration generate a
-                # graceful final answer instead of killing the turn with the
-                # raw guardrail message.
-                self._apply_cycle_hint(
-                    stop_reason,
-                    _iteration,
-                    reset_visible_text=False,
-                )
-                stop_reason = None
-            if stop_reason is not None and stop_reason.decision == _tl_hub.StopDecision.STOP:
-                return self._finish(
-                    _tl_hub._build_stopped_tool_loop_result(
-                        runtime=runtime,
-                        kernel=kernel,
-                        stop_reason=stop_reason,
-                        streamed_event_types=self.streamed_event_types,
-                        outcomes=self.outcomes,
-                        usage_totals=self.usage_totals,
-                    ),
-                    reason="stop_policy",
-                )
-
-            _tl_hub.log_event(
-                logger,
-                logging.DEBUG,
-                component="ai.router",
-                event="ai.router.loop_iteration",
-                message=f"Agent loop iteration {_iteration}/{self.iteration_total}",
-                status="start",
-                data={"iteration": _iteration, "max_iterations": self.iteration_total},
-            )
-
-            if not self.current_info_context_injected and not self.outcomes:
-                context_message = _tl_hub._current_info_unavailability_context(
-                    latest_user_content=self.latest_user_content,
-                    tool_statuses=self.tool_statuses,
-                )
-                if context_message:
-                    self.current_info_context_injected = True
-                    self.working_messages.append({"role": "system", "content": context_message})
-
-            sub_agent_final_iteration = is_sub_agent_final_iteration(
-                iteration=_iteration,
-                max_iterations=self.iteration_total,
-                request_context=self.request_context,
-            ) or self.sub_agent_report_finalization_requested
-            generation_tool_payload = self._cycle_recovery_generation_payload()
-            generation_response_format = self.pending_retry_response_format
-            if sub_agent_final_iteration:
-                append_sub_agent_finalization_message(
-                    self.working_messages,
-                    self.request_context,
-                )
-                generation_tool_payload = []
-                generation_response_format = sub_agent_report_response_format(
-                    self.request_context
-                )
-                _tl_hub.log_event(
-                    logger,
-                    logging.INFO,
-                    component="ai.router",
-                    event="ai.router.subagent_finalization_injected",
-                    message="Reserved final sub-agent iteration for report synthesis.",
-                    status="active",
-                    data={"iteration": _iteration, "max_iterations": self.iteration_total},
-                    request_id=self.request_id,
-                    session_id=self.session_id,
-                )
-
-            try:
-                result, streamed_generation_types = kernel._generate_step(
-                    latest_user_content=self.latest_user_content,
-                    working_messages=_tl_hub.build_generation_messages(self.working_messages),
-                    reasoning_effort=self.reasoning_effort,
-                    prompt_cache_enabled=self.prompt_cache_enabled,
-                    source_key=self.cache_source_key,
-                    system_prompt=self.system_prompt,
-                    tool_schemas=generation_tool_payload,
-                    cache_break_detector=self.cache_break_detector,
-                    runtime=runtime,
-                    response_format=generation_response_format,
-                )
-            except _tl_hub.TerminalChatStateError:
-                raise
-            except Exception as error:
-                if not (
-                    sub_agent_final_iteration
-                    and self.sub_agent_budget_finalization_requested
+                    already_emitted=self.wind_down_injected,
                 ):
-                    raise
-                _tl_hub.log_event(
-                    logger,
-                    logging.WARNING,
-                    component="ai.router",
-                    event="ai.router.subagent_budget_finalization_failed",
-                    message="Constrained sub-agent budget finalization failed.",
-                    status="failed",
-                    data={"exception_type": type(error).__name__},
-                    request_id=self.request_id,
-                    session_id=self.session_id,
-                )
-                return self._finish_invalid_sub_agent_report(
-                    SimpleNamespace(content="")
-                )
-            self.pending_retry_response_format = None
-            self.streamed_event_types.update(streamed_generation_types)
-            try:
-                runtime.raise_if_cancelled()
-            except _tl_hub.TerminalChatStateError:
-                self._settle_unfinished_tool_results("cancelled_after_generation")
-                raise
-            self.usage_totals = _tl_hub._merge_generation_usage(self.usage_totals, result.usage)
-            self.completed_generations += 1
-
-            if sub_agent_final_iteration and result.tool_calls:
-                _tl_hub.log_event(
-                    logger,
-                    logging.WARNING,
-                    component="ai.router",
-                    event="ai.router.subagent_finalization_tool_calls_suppressed",
-                    message=(
-                        "Suppressed tool calls returned during the reserved child report "
-                        "iteration."
-                    ),
-                    status="degraded",
-                    data={
-                        "iteration": _iteration,
-                        "max_iterations": self.iteration_total,
-                        "tool_call_count": len(result.tool_calls),
-                    },
-                    request_id=self.request_id,
-                    session_id=self.session_id,
-                )
-                result = replace(result, tool_calls=())
-
-            if (
-                getattr(result, "degraded_tool_transport", False)
-                and not self.degraded_transport_notified
-            ):
-                self.degraded_transport_notified = True
-                _tl_hub.tool_loop_recovery.emit_degradation_status(
-                    self,
-                    text=(
-                        "The model server rejected native tool calling for this "
-                        "request; falling back to text-only output."
-                    ),
-                    event="ai.router.tool_transport_degraded",
-                    data={"iteration": _iteration},
-                )
-
-            if str(getattr(result, "finish_reason", "") or "") == "timeout":
-                # Engine stall: generation_runtime already emitted the
-                # CMP_LOOP_ENGINE_STALLED StopEvent and a synthetic timeout
-                # sentence. Terminate the turn instead of promoting that
-                # sentence to assistant content -- another iteration would just
-                # stall again until the Electron idle watchdog kills the stream
-                # with a misleading transport error.
-                self._settle_unfinished_tool_results("engine_stalled")
-                inactivity_seconds = int(getattr(runtime, "chunk_inactivity_seconds", 120.0))
-                message = _engine_stall_message(
-                    config=kernel._config,
-                    stall_phase=str(getattr(runtime, "stall_phase", "") or ""),
-                    inactivity_seconds=inactivity_seconds,
-                    model_load_grace_seconds=float(
-                        getattr(runtime, "model_load_grace_seconds", 300.0)
-                    ),
-                )
-                raise _tl_hub.ToolExecutionFailure(
-                    code=_tl_hub.CMP_LOOP_ENGINE_STALLED,
-                    message=message,
-                    retryable=True,
-                )
-
-            post_generation_stop_reason = self.stop_controller.evaluate(
-                self._build_loop_state(
-                    _iteration,
-                    phase="post_generation",
-                    last_error_output=last_error_output,
-                )
-            )
-            if (
-                post_generation_stop_reason is not None
-                and post_generation_stop_reason.decision == _tl_hub.StopDecision.STOP
-            ):
-                if post_generation_stop_reason.user_hint and not self.cycle_hint_attempted:
-                    self._apply_cycle_hint(
-                        post_generation_stop_reason,
-                        _iteration,
-                        reset_visible_text=True,
+                    append_wind_down_system_message(self.working_messages)
+                    self.wind_down_injected = True
+                    _tl_hub.log_event(
+                        logger,
+                        logging.INFO,
+                        component="ai.router",
+                        event="ai.router.iteration_wind_down_injected",
+                        message="Injected iteration wind-down system message.",
+                        status="active",
+                        data={"iteration": _iteration, "max_iterations": self.iteration_total},
+                        request_id=self.request_id,
+                        session_id=self.session_id,
                     )
-                    continue
-                # Stop-policy cancellation happens before normal dispatch; emit
-                # paired cancellation events so backend pending-tool state remains
-                # terminal.
-                return self._finish(
-                    _tl_hub._build_stopped_tool_loop_result(
+                # -- Emit iteration-start *before* model call -----------------
+                runtime.emit(
+                    _tl_hub.IterationStartEvent(
+                        iteration=_iteration,
+                        max_iterations=self.iteration_total,
+                    )
+                )
+                if runtime.streaming:
+                    self.streamed_event_types.add("chat.thinking")
+
+                # -- Stop-policy check ----------------------------------------
+                last_error_output: str | None = None
+                if self.outcomes:
+                    last_outcome = self.outcomes[-1]
+                    if not last_outcome.success:
+                        last_error_output = last_outcome.output
+
+                stop_reason = self.stop_controller.evaluate(
+                    self._build_loop_state(
+                        _iteration,
+                        phase="preflight",
+                        last_error_output=last_error_output,
+                    )
+                )
+                if (
+                    stop_reason is not None
+                    and stop_reason.decision == _tl_hub.StopDecision.DEGRADE
+                    and stop_reason.user_hint
+                    and not self.cycle_hint_attempted
+                ):
+                    # Recoverable cycle detection: pause tools, inject the
+                    # summarize-and-stop hint, and let this iteration generate a
+                    # graceful final answer instead of killing the turn with the
+                    # raw guardrail message.
+                    self._apply_cycle_hint(
+                        stop_reason,
+                        _iteration,
+                        reset_visible_text=False,
+                    )
+                    stop_reason = None
+                if stop_reason is not None and stop_reason.decision == _tl_hub.StopDecision.STOP:
+                    return self._finish(
+                        _tl_hub._build_stopped_tool_loop_result(
+                            runtime=runtime,
+                            kernel=kernel,
+                            stop_reason=stop_reason,
+                            streamed_event_types=self.streamed_event_types,
+                            outcomes=self.outcomes,
+                            usage_totals=self.usage_totals,
+                        ),
+                        reason="stop_policy",
+                    )
+
+                _tl_hub.log_event(
+                    logger,
+                    logging.DEBUG,
+                    component="ai.router",
+                    event="ai.router.loop_iteration",
+                    message=f"Agent loop iteration {_iteration}/{self.iteration_total}",
+                    status="start",
+                    data={"iteration": _iteration, "max_iterations": self.iteration_total},
+                )
+
+                if not self.current_info_context_injected and not self.outcomes:
+                    context_message = _tl_hub._current_info_unavailability_context(
+                        latest_user_content=self.latest_user_content,
+                        tool_statuses=self.tool_statuses,
+                    )
+                    if context_message:
+                        self.current_info_context_injected = True
+                        self.working_messages.append({"role": "system", "content": context_message})
+
+                sub_agent_final_iteration = is_sub_agent_final_iteration(
+                    iteration=_iteration,
+                    max_iterations=self.iteration_total,
+                    request_context=self.request_context,
+                ) or self.sub_agent_report_finalization_requested
+                generation_tool_payload = self._cycle_recovery_generation_payload()
+                generation_response_format = self.pending_retry_response_format
+                # Accepted-not-built plan: the one remaining generation gets no tools.
+                accepted_plan_reply = bool(
+                    getattr(self.request_context, "final_toolless_reply", False)
+                )
+                if accepted_plan_reply:
+                    generation_tool_payload = []
+                if sub_agent_final_iteration:
+                    append_sub_agent_finalization_message(
+                        self.working_messages,
+                        self.request_context,
+                    )
+                    generation_tool_payload = []
+                    generation_response_format = sub_agent_report_response_format(
+                        self.request_context
+                    )
+                    _tl_hub.log_event(
+                        logger,
+                        logging.INFO,
+                        component="ai.router",
+                        event="ai.router.subagent_finalization_injected",
+                        message="Reserved final sub-agent iteration for report synthesis.",
+                        status="active",
+                        data={"iteration": _iteration, "max_iterations": self.iteration_total},
+                        request_id=self.request_id,
+                        session_id=self.session_id,
+                    )
+
+                try:
+                    result, streamed_generation_types = kernel._generate_step(
+                        latest_user_content=self.latest_user_content,
+                        working_messages=_tl_hub.build_generation_messages(self.working_messages),
+                        reasoning_effort=self.reasoning_effort,
+                        prompt_cache_enabled=self.prompt_cache_enabled,
+                        source_key=self.cache_source_key,
+                        system_prompt=self.system_prompt,
+                        tool_schemas=generation_tool_payload,
+                        cache_break_detector=self.cache_break_detector,
                         runtime=runtime,
-                        kernel=kernel,
-                        stop_reason=post_generation_stop_reason,
-                        streamed_event_types=self.streamed_event_types,
-                        outcomes=self.outcomes,
-                        usage_totals=self.usage_totals,
-                        pending_tool_calls=tuple(result.tool_calls or ()),
-                        generated_response_text=str(result.content or ""),
-                    ),
-                    reason="post_generation_stop",
-                )
+                        response_format=generation_response_format,
+                    )
+                except _tl_hub.TerminalChatStateError:
+                    raise
+                except Exception as error:
+                    if not (
+                        sub_agent_final_iteration
+                        and self.sub_agent_budget_finalization_requested
+                    ):
+                        raise
+                    _tl_hub.log_event(
+                        logger,
+                        logging.WARNING,
+                        component="ai.router",
+                        event="ai.router.subagent_budget_finalization_failed",
+                        message="Constrained sub-agent budget finalization failed.",
+                        status="failed",
+                        data={"exception_type": type(error).__name__},
+                        request_id=self.request_id,
+                        session_id=self.session_id,
+                    )
+                    return self._finish_invalid_sub_agent_report(
+                        SimpleNamespace(content="")
+                    )
+                self.pending_retry_response_format = None
+                self.streamed_event_types.update(streamed_generation_types)
+                try:
+                    runtime.raise_if_cancelled()
+                except _tl_hub.TerminalChatStateError:
+                    self._settle_unfinished_tool_results("cancelled_after_generation")
+                    raise
+                self.usage_totals = _tl_hub._merge_generation_usage(self.usage_totals, result.usage)
+                self.completed_generations += 1
 
-            if not result.tool_calls:
-                report_disposition = self._sub_agent_report_disposition(
-                    result,
-                    _iteration,
-                    already_finalizing=sub_agent_final_iteration,
+                if sub_agent_final_iteration and result.tool_calls:
+                    _tl_hub.log_event(
+                        logger,
+                        logging.WARNING,
+                        component="ai.router",
+                        event="ai.router.subagent_finalization_tool_calls_suppressed",
+                        message=(
+                            "Suppressed tool calls returned during the reserved child report "
+                            "iteration."
+                        ),
+                        status="degraded",
+                        data={
+                            "iteration": _iteration,
+                            "max_iterations": self.iteration_total,
+                            "tool_call_count": len(result.tool_calls),
+                        },
+                        request_id=self.request_id,
+                        session_id=self.session_id,
+                    )
+                    result = replace(result, tool_calls=())
+
+                if (
+                    getattr(result, "degraded_tool_transport", False)
+                    and not self.degraded_transport_notified
+                ):
+                    self.degraded_transport_notified = True
+                    _tl_hub.tool_loop_recovery.emit_degradation_status(
+                        self,
+                        text=(
+                            "The model server rejected native tool calling for this "
+                            "request; falling back to text-only output."
+                        ),
+                        event="ai.router.tool_transport_degraded",
+                        data={"iteration": _iteration},
+                    )
+
+                if str(getattr(result, "finish_reason", "") or "") == "timeout":
+                    # Engine stall: generation_runtime already emitted the
+                    # CMP_LOOP_ENGINE_STALLED StopEvent and a synthetic timeout
+                    # sentence. Terminate the turn instead of promoting that
+                    # sentence to assistant content -- another iteration would just
+                    # stall again until the Electron idle watchdog kills the stream
+                    # with a misleading transport error.
+                    self._settle_unfinished_tool_results("engine_stalled")
+                    inactivity_seconds = int(getattr(runtime, "chunk_inactivity_seconds", 120.0))
+                    message = _engine_stall_message(
+                        config=kernel._config,
+                        stall_phase=str(getattr(runtime, "stall_phase", "") or ""),
+                        inactivity_seconds=inactivity_seconds,
+                        model_load_grace_seconds=float(
+                            getattr(runtime, "model_load_grace_seconds", 300.0)
+                        ),
+                        engine_was_active=bool(
+                            getattr(runtime, "stall_engine_was_active", False)
+                        ),
+                    )
+                    raise _tl_hub.ToolExecutionFailure(
+                        code=_tl_hub.CMP_LOOP_ENGINE_STALLED,
+                        message=message,
+                        retryable=True,
+                    )
+
+                post_generation_stop_reason = self.stop_controller.evaluate(
+                    self._build_loop_state(
+                        _iteration,
+                        phase="post_generation",
+                        last_error_output=last_error_output,
+                    )
                 )
-                if report_disposition == "retry":
+                if (
+                    post_generation_stop_reason is not None
+                    and post_generation_stop_reason.decision == _tl_hub.StopDecision.STOP
+                ):
+                    if post_generation_stop_reason.user_hint and not self.cycle_hint_attempted:
+                        self._apply_cycle_hint(
+                            post_generation_stop_reason,
+                            _iteration,
+                            reset_visible_text=True,
+                        )
+                        continue
+                    # Stop-policy cancellation happens before normal dispatch; emit
+                    # paired cancellation events so backend pending-tool state remains
+                    # terminal.
+                    return self._finish(
+                        _tl_hub._build_stopped_tool_loop_result(
+                            runtime=runtime,
+                            kernel=kernel,
+                            stop_reason=post_generation_stop_reason,
+                            streamed_event_types=self.streamed_event_types,
+                            outcomes=self.outcomes,
+                            usage_totals=self.usage_totals,
+                            pending_tool_calls=tuple(result.tool_calls or ()),
+                            generated_response_text=str(result.content or ""),
+                        ),
+                        reason="post_generation_stop",
+                    )
+
+                if accepted_plan_reply:
+                    return self._finish_accepted_plan_reply(result, _iteration)
+
+                if not result.tool_calls:
+                    report_disposition = self._sub_agent_report_disposition(
+                        result,
+                        _iteration,
+                        already_finalizing=sub_agent_final_iteration,
+                    )
+                    if report_disposition == "retry":
+                        continue
+                    if report_disposition == "invalid_final":
+                        return self._finish_invalid_sub_agent_report(result)
+                    if report_disposition == "valid":
+                        return self._finish_valid_sub_agent_report(result)
+
+                finish_reason = str(
+                    getattr(result, "finish_reason", "") or ""
+                ).strip().lower()
+                if (
+                    not result.content
+                    and not result.tool_calls
+                    and not self.outcomes
+                    # A truncated/aborted stream must reach the finalize fence
+                    # instead of settling as a canned success.
+                    and finish_reason not in ("incomplete", "error", "thinking_budget", "length")
+                ):
+                    return self._finish(
+                        _tl_hub.ToolLoopResult(
+                            thinking_text=self.thinking_text,
+                            thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
+                            persist_thinking=False,
+                            response_text="I could not produce a valid response for that request.",
+                            approval_request=None,
+                            approval_plan=None,
+                            outcomes=self.outcomes,
+                            usage_totals=self.usage_totals,
+                            streamed_event_types=self.streamed_event_types,
+                            completion_source="deterministic_tool_fallback",
+                        ),
+                        reason="empty_generation",
+                    )
+
+                # A batch parsed from a stream that ended early or in error is not
+                # a verdict to act on; the finalize fence turns it into a retry.
+                if result.tool_calls and finish_reason not in ("incomplete", "error"):
+                    outcome = self._handle_tool_calls(result, _iteration, last_error_output)
+                    if outcome is not None:
+                        return outcome
                     continue
-                if report_disposition == "invalid_final":
-                    return self._finish_invalid_sub_agent_report(result)
-                if report_disposition == "valid":
-                    return self._finish_valid_sub_agent_report(result)
 
-            finish_reason = str(
-                getattr(result, "finish_reason", "") or ""
-            ).strip().lower()
-            if (
-                not result.content
-                and not result.tool_calls
-                and not self.outcomes
-                # A truncated/aborted stream must reach the finalize fence
-                # instead of settling as a canned success.
-                and finish_reason not in ("incomplete", "error", "thinking_budget", "length")
-            ):
-                return self._finish(
-                    _tl_hub.ToolLoopResult(
-                        thinking_text=self.thinking_text,
-                        thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                        persist_thinking=False,
-                        response_text="I could not produce a valid response for that request.",
-                        approval_request=None,
-                        approval_plan=None,
-                        outcomes=self.outcomes,
-                        usage_totals=self.usage_totals,
-                        streamed_event_types=self.streamed_event_types,
-                        completion_source="deterministic_tool_fallback",
-                    ),
-                    reason="empty_generation",
-                )
-
-            if result.tool_calls:
-                outcome = self._handle_tool_calls(result, _iteration, last_error_output)
+                outcome = self._handle_final_response(result, _iteration)
                 if outcome is not None:
                     return outcome
                 continue
 
-            outcome = self._handle_final_response(result, _iteration)
-            if outcome is not None:
-                return outcome
-            continue
+            return _tl_hub.tool_loop_recovery.max_iterations_summary(self)
+        except Exception as error:
+            from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 
-        return _tl_hub.tool_loop_recovery.max_iterations_summary(self)
+            try:
+                mutation_lifecycle.finish_run_change_set(
+                    self,
+                    approval_paused=isinstance(error, ToolLoopSuspended),
+                    reason=f"exception:{type(error).__name__}",
+                )
+            except Exception as settle_error:  # noqa: BLE001 - preserve original error.
+                logger.warning(
+                    "workspace_change_set_exception_settlement_failed",
+                    extra={"reason": type(settle_error).__name__},
+                )
+            raise
+        finally:
+            mutation_lifecycle.release_run_context(self)

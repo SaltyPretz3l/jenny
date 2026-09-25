@@ -4,6 +4,32 @@ const {
   SIDECAR_TERMINAL_SUBCODES,
 } = require('./error-codes');
 const { managedModelKey } = require('../shell-config-engines');
+const { createCancellationError } = require('./chat-stream-terminal-utils');
+
+async function waitForManagedInitialization(service, signal) {
+  while (service._managedInitializeFlight) {
+    if (signal?.aborted) throw createCancellationError(signal.reason);
+    const flight = service._managedInitializeFlight;
+    let onAbort;
+    const cancelled = new Promise((_, reject) => {
+      onAbort = () => reject(createCancellationError(signal.reason));
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+    try {
+      // Join the existing bounded flight; cancellation belongs to this send
+      // and must not abort initialization shared by other conversations.
+      await Promise.race([flight.promise, cancelled]);
+    } finally {
+      signal?.removeEventListener?.('abort', onAbort);
+    }
+    if (service._disposed || service._stopping
+      || flight.process !== service.sidecarManager?.process) {
+      throw createReconnectError('Managed sidecar changed while preparing chat.');
+    }
+    if (service._managedInitializeFlight === flight) break;
+  }
+  if (signal?.aborted) throw createCancellationError(signal.reason);
+}
 
 const PREFLIGHT_RECONNECT_TERMINAL_SUBCODES = new Set([
   SIDECAR_TERMINAL_SUBCODES.RECONNECT_FAILED,
@@ -340,6 +366,7 @@ function scheduleManagedSidecarReconnectAfterFailure(
 }
 
 module.exports = {
+  waitForManagedInitialization,
   describeOllamaFailure,
   ensureManagedEngineNotFallbackForChat,
   ensureManagedLlamaServerReadyForChat,

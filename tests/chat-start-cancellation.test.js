@@ -83,14 +83,17 @@ test('cancel before start rejects before reserving a turn', async () => {
   assert.equal(reservations, 0);
 });
 
-test('cancel during offline preflight releases the reserved lease', async () => {
+test('cancel during offline preflight allocates no actor lease or managed stream', async () => {
   const gate = deferred();
   const backend = service({
     offlineIntelligenceService: { getState: () => gate.promise },
   });
   const registry = new SessionTurnActorRegistry();
+  let reservations = 0;
   let releases = 0;
   let managedStarts = 0;
+  const reserve = registry.reserveStart.bind(registry);
+  registry.reserveStart = (input) => { reservations += 1; return reserve(input); };
   const release = registry.release.bind(registry);
   registry.release = (lease, options) => {
     releases += 1;
@@ -106,7 +109,8 @@ test('cancel during offline preflight releases the reserved lease', async () => 
   gate.resolve({ mode: 'online' });
 
   await assert.rejects(starting, (error) => error?.code === 'chat_start_cancelled');
-  assert.equal(releases, 1);
+  assert.equal(reservations, 0);
+  assert.equal(releases, 0);
   assert.equal(managedStarts, 0);
   assert.equal(backend.sessionStore.getActiveTurn('session_1'), null);
 });

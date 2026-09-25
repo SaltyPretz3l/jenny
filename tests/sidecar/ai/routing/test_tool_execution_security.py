@@ -64,6 +64,60 @@ def test_paranoid_safety_mode_requires_approval_for_read_only_tool() -> None:
     assert "paranoid safety mode" in approval.reason.lower()
 
 
+def test_request_policy_snapshot_overrides_interleaved_kernel_policy() -> None:
+    descriptor = SimpleNamespace(
+        name="read_file",
+        side_effecting=False,
+        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        source_kind="builtin",
+        tool_family="filesystem",
+        server_name="jenny_builtin",
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(tool_policy_snapshot=ToolPolicySnapshot(
+            version=10,
+            legacy_policies=(("read_file", "deny"),),
+        )),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="read_file",
+        arguments={"path": "README.md"},
+        call_id="call-scoped-policy",
+    )
+
+    allowed = filter_tool_calls_by_policy(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        policy_snapshot=ToolPolicySnapshot(
+            version=11,
+            legacy_policies=(("read_file", "auto"),),
+        ),
+    )
+    denied = filter_tool_calls_by_policy(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        policy_snapshot=ToolPolicySnapshot(
+            version=12,
+            legacy_policies=(("read_file", "deny"),),
+        ),
+    )
+
+    assert allowed.allowed == (call,)
+    assert allowed.decisions_by_call[call.call_id].snapshot_version == 11
+    assert denied.denied[0].call is call
+    assert denied.decisions_by_call[call.call_id].snapshot_version == 12
+
+
 def test_policy_ask_forces_approval_for_read_only_tool() -> None:
     descriptor = SimpleNamespace(
         name="read_file",
@@ -355,6 +409,164 @@ def test_one_send_auto_run_skips_ordinary_write_approval() -> None:
     assert approval is None
 
 
+def _auto_run_approval(
+    *, cap: int, state: turn_state.LiveRunModeState | None
+) -> object | None:
+    descriptor = _write_file_descriptor()
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal", auto_approve_streak_cap=cap),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="write_file",
+        arguments={"path": "notes.md"},
+        call_id="auto-run-streak",
+    )
+    if state is None:
+        return approval_if_needed(
+            kernel,
+            (call,),
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=False,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            approval_mode="auto_run",
+        )
+    with turn_state.bind_live_run_mode_state(state):
+        return approval_if_needed(
+            kernel,
+            (call,),
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=False,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            approval_mode="auto_run",
+        )
+
+
+def test_auto_run_streak_cap_requests_one_off_approval() -> None:
+    state = turn_state.LiveRunModeState(approval_mode="auto_run", auto_approvals=2)
+
+    approval = _auto_run_approval(cap=2, state=state)
+
+    assert approval is not None
+    assert approval.reason == (
+        "2 consecutive automatic approvals in this turn. Approve to continue."
+    )
+    assert approval.policy_decision_id is None
+    assert approval.one_off_only is True
+    assert approval.to_payload()["one_off_only"] is True
+    assert state.auto_approvals == 2
+
+
+def test_auto_run_below_streak_cap_records_approval() -> None:
+    state = turn_state.LiveRunModeState(approval_mode="auto_run", auto_approvals=1)
+
+    assert _auto_run_approval(cap=2, state=state) is None
+    assert state.auto_approvals == 2
+
+
+def test_auto_run_zero_streak_cap_never_prompts() -> None:
+    state = turn_state.LiveRunModeState(approval_mode="auto_run", auto_approvals=500)
+
+    assert _auto_run_approval(cap=0, state=state) is None
+    assert state.auto_approvals == 501
+
+
+def test_auto_run_streak_cap_is_ignored_without_live_state() -> None:
+    assert _auto_run_approval(cap=1, state=None) is None
+
+
+def test_policy_auto_approval_records_the_turn_streak() -> None:
+    descriptor = _write_file_descriptor()
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(tool_policy_snapshot=_blanket_snapshot()),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="write_file", arguments={"path": "notes.md"}, call_id="policy-auto"
+    )
+    policy_filter = filter_tool_calls_by_policy(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+    )
+    state = turn_state.LiveRunModeState()
+
+    with turn_state.bind_live_run_mode_state(state):
+        approval = approval_if_needed(
+            kernel,
+            policy_filter.allowed,
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=False,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            policy_decisions_by_call=policy_filter.decisions_by_call,
+        )
+
+    assert approval is None
+    assert state.auto_approvals == 1
+
+
+def test_unattended_pause_prompts_for_pregranted_policy_auto_call() -> None:
+    descriptor = _write_file_descriptor()
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(tool_policy_snapshot=_blanket_snapshot()),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="write_file", arguments={"path": "notes.md"}, call_id="paused-auto"
+    )
+    policy_filter = filter_tool_calls_by_policy(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+    )
+    state = turn_state.LiveRunModeState(
+        approval_mode="prompt", paused_unattended=True
+    )
+
+    with turn_state.bind_live_run_mode_state(state):
+        approval = approval_if_needed(
+            kernel,
+            policy_filter.allowed,
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=True,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            policy_decisions_by_call=policy_filter.decisions_by_call,
+            approval_mode="auto_run",
+        )
+
+    assert approval is not None
+    assert approval.reason == "The model requested a side-effecting MCP tool call."
+
+
+def test_live_run_mode_auto_approval_streak_resets() -> None:
+    state = turn_state.LiveRunModeState(auto_approvals=4)
+
+    state.reset_auto_approvals()
+
+    assert state.auto_approvals == 0
+
+
 def test_live_run_mode_updates_apply_to_the_next_approval_scan() -> None:
     descriptor = _write_file_descriptor()
     kernel = SimpleNamespace(
@@ -514,6 +726,59 @@ def test_pre_granted_shell_call_skips_needs_approval_prompt(
     )
 
     assert approval is None
+
+
+def _auto_run_shell_approval(command: str, *, strict: bool) -> object | None:
+    descriptor = SimpleNamespace(
+        name="run_command",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="mcp",
+        tool_family="shell",
+        server_name="tools",
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(
+            tools_shell_enabled=True,
+            tools_confirm_side_effects=True,
+            feature_flags={"shell_security": True, "strict_auto_run": strict},
+            safety_mode="normal",
+        ),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    return approval_if_needed(
+        kernel,
+        (
+            ToolCallRequest(
+                tool_id="run_command",
+                arguments={"command": command},
+                call_id="shell-auto-run",
+            ),
+        ),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        approval_mode="auto_run",
+    )
+
+
+def test_strict_auto_run_does_not_run_append_redirect_unattended() -> None:
+    approval = _auto_run_shell_approval("echo harmless >> audit.txt", strict=True)
+    assert approval is not None
+    assert "output overwrite redirect" in approval.reason
+
+
+def test_auto_run_always_asks_for_destructive_start_wrapper() -> None:
+    approval = _auto_run_shell_approval(
+        'start "" /b cmd /c "del audit.txt"',
+        strict=False,
+    )
+    assert approval is not None
+    assert "(del)" in approval.reason
 
 
 def test_python_approval_is_mandatory_during_one_send_auto_run() -> None:
@@ -697,7 +962,9 @@ def test_bounded_plan_artifact_converts_only_builtin_default_ask_to_auto() -> No
 
     decision = policy_filter.decisions_by_call["call-plan-artifact"]
     assert decision.decision == "auto"
-    assert decision.stage == "plan_mode_artifact_default"
+    # Inert documents default to auto in every mode since 2026-09-22, so the
+    # built-in default no longer needs the Plan Mode conversion.
+    assert decision.stage == "tool_default"
     assert approval_if_needed(
         kernel,
         policy_filter.allowed,

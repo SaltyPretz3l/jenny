@@ -99,7 +99,9 @@ class ToolLifecycleTracker:
         started: bool,
     ) -> MCPError:
         status = "unknown"
-        if self.started_supported:
+        # A timed-out request on a server left running for other callers may
+        # still start or finish: its outcome is unknown, never "lost".
+        if self.started_supported and error.transport_terminated is not False:
             status = "started_response_lost" if started else "not_started"
         return MCPError(
             code=error.code,
@@ -108,6 +110,7 @@ class ToolLifecycleTracker:
             operation_id=operation_id,
             generation_id=self.generation_id,
             completion_status=status,
+            transport_terminated=error.transport_terminated,
         )
 
 

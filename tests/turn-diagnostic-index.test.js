@@ -211,3 +211,38 @@ test('turn diagnostic index applies scan cap after per-day mtime ordering', asyn
     ['stream-z-newest']
   );
 });
+
+test('turn diagnostic index surfaces the provider call count of a multi-call turn', async () => {
+  // A three-call turn (answer, internal reasoning summary, continuation) is
+  // indistinguishable from a single call in the index unless the per-call
+  // count rides the display-safe timing block.
+  const userDataPath = createTrackedUserDataPath('jenny-turn-diagnostic-index-calls-');
+  writeTurnDiagnostic(userDataPath, '2026-09-20', 'stream-calls', {
+    schema_version: 1,
+    written_at: '2026-09-20T20:30:06.823Z',
+    request_id: 'request-calls',
+    stream_id: 'stream-calls',
+    session_id: 'session-calls',
+    terminal_status: 'runtime_error',
+    provider_diagnostics: {
+      time_to_provider_request_start_ms: 1000,
+      time_to_first_chunk_ms: 11000,
+      provider_call_count: 3,
+      provider_call_purpose: 'checkpoint_continuation',
+      provider_calls: [{ ordinal: 1, purpose: 'turn', usage: null }],
+    },
+  });
+
+  const index = await buildTurnDiagnosticIndex({
+    userDataPath,
+    sessionId: 'session-calls',
+    limit: 5,
+  });
+
+  assert.equal(index.count, 1);
+  const recent = index.recent[0];
+  assert.equal(recent.provider_timing.provider_call_count, 3);
+  assert.equal(recent.provider_timing.time_to_provider_request_start_ms, 1000);
+  assert.equal(recent.provider_timing.provider_calls, undefined);
+  assert.equal(recent.provider_timing.provider_call_purpose, undefined);
+});

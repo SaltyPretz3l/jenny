@@ -11,10 +11,7 @@ const {
   resolveAccelerationArgs,
 } = require('../backend/llama-server-acceleration');
 const { probeCapabilities } = require('../backend/llama-server-capabilities');
-const {
-  resolveBinaryPath,
-  resolveGgufPath,
-} = require('../llama-server-lifecycle');
+const { resolveGgufPath } = require('../llama-server-lifecycle');
 
 function offResult(reason) {
   return {
@@ -40,16 +37,18 @@ function normalizeResult(result) {
 
 function resolveLaunchAcceleration({
   settings = {},
+  // The executable this launch spawns, resolved once by the manager
+  // (llama-server-runtime.js), so the probe and the spawn can never disagree.
+  // Empty means none was found: the probe fails and acceleration stays off.
+  binaryPath = '',
   profile = null,
   featureFlags = {},
   shellAcceleration = null,
   repoRoot = process.cwd(),
-  resourcesPath = '',
   userDataPath = '',
   probeCapabilitiesImpl = probeCapabilities,
   loadAccelerationCatalogImpl = loadAccelerationCatalog,
   resolveAccelerationArgsImpl = resolveAccelerationArgs,
-  resolveBinaryPathImpl = resolveBinaryPath,
   resolveGgufPathImpl = resolveGgufPath,
   fsImpl = fs,
 } = {}) {
@@ -65,8 +64,6 @@ function resolveLaunchAcceleration({
     }
 
     const modelTag = profile ? profile.modelTag : DEFAULT_MANAGED_SHELL_MODEL;
-    const binaryPath = settings.binaryOverride
-      || resolveBinaryPathImpl({ repoRoot, resourcesPath });
     const capabilities = probeCapabilitiesImpl({ binaryPath });
     const loadedCatalog = loadAccelerationCatalogImpl({ repoRoot });
     const catalog = loadedCatalog && !loadedCatalog.error ? loadedCatalog.catalog : null;
@@ -101,7 +98,8 @@ function shouldRetryWithoutAcceleration({ error, accelExtraArgs, aborted } = {})
   // Deterministic pre-spawn failures (missing binary / missing model) cannot be
   // caused by the acceleration args, so retrying without them just doubles the
   // failure. Child-exit and readiness-timeout failures stay retryable — bad
-  // accel args ARE a plausible cause of those.
+  // accel args ARE a plausible cause of those. So does model_unsupported: the
+  // file the build cannot read may be the MTP drafter, which the retry leaves out.
   const deterministic = message.startsWith('llama_server_binary_not_found')
     || message.startsWith('llama_server_model_not_found:');
   return Array.isArray(accelExtraArgs)

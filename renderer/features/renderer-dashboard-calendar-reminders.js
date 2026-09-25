@@ -1,7 +1,7 @@
 /* Reminder -> agenda pseudo-instance projection for the Home Daybook calendar.
  *
- * Reminders are display-only in the Daybook: nothing in the app FIRES them, and
- * this module never mutates them. It maps the persisted reminder records
+ * This module only projects reminders into the Daybook; the main process fires
+ * them while Jenny is running. It maps the persisted reminder records
  * (services/shell-config-followups-schema.js normalizeReminder) onto the days
  * the agenda is rendering so a reminder sits in the timeline next to real
  * events instead of in a separate widget.

@@ -52,8 +52,15 @@ function applyAuthoritativeTerminalText(
     return false;
   }
   const priorText = String(ctx.assistantText || '');
+  // The terminal text covers the current generation only. After a
+  // tool-boundary persist that no stream_reset followed (the approval-resume
+  // path) assistantText still carries the persisted segments -- the
+  // renderer's aggregate cursor needs it cumulative -- so the comparison
+  // basis is the live slice: the unpersisted tail in currentSegmentText,
+  // identical to assistantText on every other path.
+  const streamedTail = String(ctx.currentSegmentText || '');
   const normalizedCompletionSource = String(completionSource || '').trim();
-  const textChanged = priorText !== authoritativeText;
+  const textChanged = streamedTail !== authoritativeText;
   if (
     priorText
     && textChanged
@@ -65,6 +72,7 @@ function applyAuthoritativeTerminalText(
       model: ctx.model,
       authoritySource: normalizedAuthority,
       priorTextLength: priorText.length,
+      streamedTailLength: streamedTail.length,
       responseTextLength: authoritativeText.length,
       completionSource: normalizedCompletionSource,
     });

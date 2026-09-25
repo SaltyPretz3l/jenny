@@ -4,6 +4,8 @@ const {
 const { normalizeRunMode } = require('./backend/session-preferences-patch');
 const { normalizeFeatureOverrides } = require('./feature-flags');
 const {
+  AUTO_APPROVE_STREAK_CAP_DEFAULT,
+  AUTO_APPROVE_STREAK_CAP_MAX,
   DEFAULT_COMPANION,
   DEFAULT_FEATURE_OVERRIDES,
   DEFAULT_MEMORY,
@@ -18,6 +20,7 @@ const {
   UNATTENDED_GUARD_MINUTES_MAX,
   cloneFeatureOverrides,
   isToolsWorktreeEnabled,
+  normalizeAutoApproveStreakCap,
   normalizeCompanion,
   normalizeMaxBudgetUsd,
   normalizeMemorySettings,
@@ -114,7 +117,8 @@ const {
   sortReminders,
 } = require('./shell-config-followups-schema');
 const { normalizeCommandSandbox } = require('./shell-config-command-sandbox');
-const CONFIG_VERSION = 53;
+const { normalizeSessionRuntime } = require('./shell-config-session-runtime');
+const CONFIG_VERSION = 55;
 const WORKSPACE_WRITE_DELAY_MS = 500;
 const DEFAULT_CHAT_UI = Object.freeze({
   zoomPercent: CHAT_UI_ZOOM_DEFAULT,
@@ -497,6 +501,10 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
       source.unattendedGuardMinutes
     );
   }
+  if (version < 54) migrated.sessionRuntime = normalizeSessionRuntime(source.session_runtime || source.sessionRuntime);
+  if (version < 55) {
+    migrated.autoApproveStreakCap = normalizeAutoApproveStreakCap(source.autoApproveStreakCap);
+  }
   migrated.version = CONFIG_VERSION;
   return migrated;
 }
@@ -535,6 +543,7 @@ function normalizeState(value = {}, options = {}) {
   return {
     version: CONFIG_VERSION,
     commandSandbox: normalizeCommandSandbox(source.commandSandbox),
+    sessionRuntime: normalizeSessionRuntime(source.sessionRuntime || source.session_runtime),
     toolsWorkspaceRoot: normalizeWorkspaceRoot(source.toolsWorkspaceRoot || source.tools_workspace_root),
     // maxBudgetUsd is stored in the owned engineTuning block like every other
     // tuning knob, but stays readable at the top level because callers (and the
@@ -567,6 +576,7 @@ function normalizeState(value = {}, options = {}) {
     uiLanguage: normalizeUiLanguage(source.uiLanguage),
     use24HourTime: source.use24HourTime === true,
     safetyMode: normalizeSafetyMode(source.safetyMode),
+    autoApproveStreakCap: normalizeAutoApproveStreakCap(source.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(source.unattendedGuardMinutes),
     codexCli,
     companion: normalizeCompanion(source.companion),
@@ -591,6 +601,7 @@ function normalizeState(value = {}, options = {}) {
 function cloneState(state) {
   return {
     ...state,
+    sessionRuntime: normalizeSessionRuntime(state.sessionRuntime),
     maxBudgetUsd: normalizeMaxBudgetUsd(state.maxBudgetUsd ?? state.max_budget_usd),
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),
@@ -626,6 +637,7 @@ function cloneState(state) {
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
     safetyMode: normalizeSafetyMode(state.safetyMode),
+    autoApproveStreakCap: normalizeAutoApproveStreakCap(state.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(state.unattendedGuardMinutes),
     codexCli: normalizeCodexCliSettings(state.codexCli || state.codex_cli),
     companion: {
@@ -666,6 +678,7 @@ function serializeState(state) {
   return {
     version: CONFIG_VERSION,
     commandSandbox: normalizeCommandSandbox(state.commandSandbox),
+    session_runtime: normalizeSessionRuntime(state.sessionRuntime),
     toolsWorkspaceRoot: state.toolsWorkspaceRoot,
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),
@@ -687,6 +700,7 @@ function serializeState(state) {
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
     safetyMode: normalizeSafetyMode(state.safetyMode),
+    autoApproveStreakCap: normalizeAutoApproveStreakCap(state.autoApproveStreakCap),
     unattendedGuardMinutes: normalizeUnattendedGuardMinutes(state.unattendedGuardMinutes),
     codexCli: normalizeCodexCliSettings(state.codexCli || state.codex_cli),
     companion: {
@@ -723,6 +737,8 @@ function serializeState(state) {
   };
 }
 module.exports = {
+  AUTO_APPROVE_STREAK_CAP_DEFAULT,
+  AUTO_APPROVE_STREAK_CAP_MAX,
   CONFIG_VERSION,
   CHAT_UI_ZOOM_DEFAULT,
   CHAT_UI_ZOOM_MAX,
@@ -808,6 +824,7 @@ module.exports = {
   normalizeState,
   normalizeTipsSettings,
   normalizeToolsSettings,
+  normalizeAutoApproveStreakCap,
   normalizeSafetyMode,
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,

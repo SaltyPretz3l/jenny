@@ -60,6 +60,23 @@ test('browser bridge keeps auth and client tokens in memory and builds closed co
     params: { prompt: 'test' } }), 'control_generation'), false, 'the bridge never invents authority');
   assert.equal(bridge.buildCommand('chat.send', { sessionId: 'session_a',
     controlGeneration: 7, params: { prompt: 'test' } }).control_generation, 7);
+  assert.equal(Object.hasOwn(bridge.buildCommand('projects.list', { params: {} }), 'session_id'), false);
+  const projectAssignment = bridge.buildCommand('projects.assignSession', {
+    sessionId: 'session_a', controlGeneration: 7, expectedRevision: 'boot_a:2',
+    params: { project_id: 'project_alpha' },
+  });
+  assert.match(projectAssignment.request_id, /^request_/u);
+  assert.deepEqual({ ...projectAssignment, request_id: 'request_test' }, {
+    api_version: 1,
+    operation: 'projects.assignSession',
+    request_id: 'request_test',
+    client_id: 'client_a',
+    boot_epoch: 'boot_a',
+    session_id: 'session_a',
+    control_generation: 7,
+    expected_revision: 'boot_a:2',
+    params: { project_id: 'project_alpha' },
+  });
   assert.equal(command.options.headers['X-Client-Token'], 'client-secret');
   assert.equal(command.options.headers['X-CSRF-Token'], 'csrf-token');
   assert.ok(!command.url?.includes('client-secret'));

@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable
 
 from sidecar.ai.error_codes import CMP_APPROVAL_REJECTED, CMP_CHAT_INVALID_PARAMS
+from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
 from sidecar.ai.mode_policy import normalize_mode
 from sidecar.ai.routing.loop_events import StopEvent
 from sidecar.ai.routing.tool_observation import (
@@ -275,21 +276,27 @@ def attach_compact_threshold(
     *,
     num_tools: int = 0,
     threshold_tokens: int | None = None,
-) -> None:
+    tool_overhead_tokens: int | None = None,
+) -> int:
     """Forward the auto-compaction trigger threshold to the renderer meter.
 
-    The renderer renders the context ring against ``effective_context x
-    auto_compact_ratio`` — the same quantity the sidecar's compaction trigger
-    uses — so the ring cannot read green while compaction is imminent. When
-    the caller holds the real per-request budget (the routed lane's
-    ``BudgetTracker``), it passes the exact ``threshold_tokens``; otherwise
+    The renderer renders the context ring against the point compaction fires
+    at, in whole-prompt tokens (``TokenBudget.meter_compact_threshold``: the
+    trigger plus the tool-schema reserve it set aside), so the ring cannot
+    read green while compaction is imminent. When the caller holds the real
+    per-request budget (the routed lane's ``BudgetTracker``), it passes the
+    exact ``threshold_tokens`` and its ``tool_overhead_tokens``; otherwise
     this mirrors ``TokenBudget`` construction from engine/config best-effort.
     A missing/unavailable threshold leaves the key unset (the renderer falls
     back to a mirrored default ratio); never fail a turn over a meter hint.
+
+    Returns the tool reserve inside the published threshold (0 when none), so
+    the caller counts the same reserve on the meter's used side.
     """
     if not isinstance(usage_payload, dict):
-        return
+        return 0
     threshold = max(int(threshold_tokens or 0), 0)
+    tool_overhead = max(int(tool_overhead_tokens or 0), 0) if threshold > 0 else 0
     if threshold <= 0 and engine is not None:
         try:
             from sidecar.ai.context.token_budget import (
@@ -315,17 +322,23 @@ def attach_compact_threshold(
                         model_id=str(getattr(config, "model", "") or ""),
                     ),
                 )
-                threshold = budget.auto_compact_threshold(max(int(num_tools or 0), 0))
+                tool_count = max(int(num_tools or 0), 0)
+                threshold = budget.meter_compact_threshold(tool_count)
+                tool_overhead = budget.tool_overhead(tool_count) if threshold > 0 else 0
         except Exception:  # noqa: BLE001 — meter hint must never break a turn
             threshold = 0
+            tool_overhead = 0
     if threshold > 0:
         usage_payload["compact_threshold_tokens"] = threshold
+        return tool_overhead
+    return 0
 
 
 def attach_context_used_tokens(
     usage_payload: dict[str, Any],
     *,
     context_tokens_estimate: int | None,
+    tool_overhead_tokens: int = 0,
 ) -> None:
     """Publish the single authoritative "context used" figure for the meter.
 
@@ -336,10 +349,16 @@ def attach_context_used_tokens(
     computed here, once, rather than re-derived by a renderer guard. The keys
     are omitted when neither figure is positive so a present-but-zero record
     never reads as an authoritative 0.
+
+    The estimate counts messages only; ``tool_overhead_tokens`` adds the
+    tool-schema reserve the provider count already includes, so both readings
+    are whole-prompt figures (matching ``compact_threshold_tokens``).
     """
     if not isinstance(usage_payload, dict):
         return
     estimate = max(int(context_tokens_estimate or 0), 0)
+    if estimate > 0:
+        estimate += max(int(tool_overhead_tokens or 0), 0)
     provider_tokens = max(
         int(usage_payload.get("last_request_input_tokens", 0) or 0), 0
     )
@@ -484,3 +503,7 @@ class DebouncedNotificationWriter:
             self._writer(item)
         self._pending.clear()
         self._last_emit_time = time.monotonic()
+
+
+def _executor_runtime_enabled(feature_flags: dict[str, bool] | None) -> bool:
+    return is_feature_flag_enabled(feature_flags or {}, FEATURE_AGENT_EXECUTOR)

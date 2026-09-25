@@ -27,12 +27,13 @@ function findPendingApproval(pendingToolApprovals, { callId = '', streamId = '' 
   return null;
 }
 
-function createPlanHarness(t, { streamId, sessionId = `session-${streamId}` }) {
+function createPlanHarness(t, { streamId, sessionId = `session-${streamId}`, turnId = streamId }) {
   const service = createManagedChatServiceStub();
   const preferencePatches = [];
   const controller = new AbortController();
   const turnEventCollector = new CanonicalTurnEventCollector({
-    turnId: streamId,
+    turnId,
+    attemptId: streamId,
     sessionId,
   });
   service.sessionStore.createSessionWithId(sessionId, { preferences: { plan_mode: true } });
@@ -101,6 +102,25 @@ function recordPlanToolResult(harness, { callId, decision, feedback = '', planMo
 function planMessages(service) {
   return service.sessionMessages.filter((message) => message.kind === 'plan_document');
 }
+
+test('approval emission keeps logical identity while message IDs retain the physical attempt', async (t) => {
+  const harness = createPlanHarness(t, { streamId: 'stream-identity', turnId: 'turn-identity' });
+  const pending = requestPlanApproval(harness, {
+    callId: 'call-identity', input: { title: 'Test', steps: ['Read a file'] },
+  });
+  const events = harness.service.emittedEvents.filter(({ payload }) =>
+    ['tool_use', 'tool_approval_needed'].includes(payload?.type));
+  assert.equal(events.length, 2);
+  assert.ok(events.every(({ payload }) => payload.turnId === 'turn-identity'));
+  const approval = findPendingApproval(harness.service.pendingToolApprovals, { callId: 'call-identity' });
+  approval.resolve(true, 'approved');
+  await pending;
+  const resolved = harness.service.emittedEvents.filter(({ payload }) => payload?.type === 'tool_use').at(-1);
+  assert.equal(resolved.payload.turnId, 'turn-identity');
+  assert.ok(harness.turnEventCollector.capturedEvents
+    .filter(event => ['approval_requested', 'approval_resolved'].includes(event.kind))
+    .every(event => event.primary_message_id === 'tool_use_stream-identity_call-identity'));
+});
 
 function planEvents(turnEventCollector) {
   return turnEventCollector.capturedEvents.filter((event) => event.kind === 'plan_document');

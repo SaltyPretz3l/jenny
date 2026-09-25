@@ -512,11 +512,11 @@ test('tools card keeps authority and internal guardrail controls out of Settings
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="tools"]');
 
-  // Tools exposes workspace status, optional capabilities, command isolation,
-  // and saved approval rules through accessible groups.
+  // Tools exposes workspace status, optional capabilities, the opt-in PDF
+  // add-on, command isolation, and saved approval rules through accessible groups.
   const groups = card.querySelectorAll(':scope > .settings-group');
   assert.deepEqual(Array.from(groups, (group) => group.getAttribute('aria-labelledby')), [
-    'toolsWorkspaceHeading', 'toolsCapabilitiesHeading',
+    'toolsWorkspaceHeading', 'toolsCapabilitiesHeading', 'toolsPdfAddonHeading',
     'toolsCommandSandboxHeading', 'toolsApprovalRulesHeading',
   ]);
   for (const group of groups) {

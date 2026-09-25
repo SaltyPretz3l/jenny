@@ -23,7 +23,7 @@
       "delta": "I should explain this carefully.",
       "kind": "reasoning",
       "persist": false,
-      "thinking_budget_chars": 65536
+      "thinking_budget_chars": 265
     },
     {
       "_class": "ThinkingEvent",
@@ -31,7 +31,7 @@
       "delta": "Actually, I am not sure what to do.",
       "kind": "reasoning",
       "persist": true,
-      "thinking_budget_chars": 65536
+      "thinking_budget_chars": 265
     },
     {
       "_class": "StopEvent",

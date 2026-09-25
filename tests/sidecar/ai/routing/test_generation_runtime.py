@@ -800,6 +800,7 @@ def test_stream_generate_with_tools_stalls_when_engine_activity_is_stale(
 
     assert result.finish_reason == "timeout"
     assert runtime.stall_phase == "inactivity"
+    assert runtime.stall_engine_was_active is False
     assert engine.stream.closed.is_set()
 
 
@@ -838,6 +839,9 @@ def test_stream_generate_with_tools_liveness_deferral_respects_silence_ceiling(
     stop_events = [event for event in events if isinstance(event, StopEvent)]
     assert stop_events and stop_events[-1].code == CMP_LOOP_ENGINE_STALLED
     assert "engine-liveness deferrals" in stop_events[-1].reason
+    # ...and the turn records that the engine was demonstrably working, so the
+    # user-facing message does not blame the machine (see _engine_stall_message).
+    assert runtime.stall_engine_was_active is True
     assert engine.stream.closed.is_set()
 
 
@@ -1436,6 +1440,7 @@ def test_attempt_fallback_succeeds_and_emits_fallback_triggered_event(monkeypatc
 )
 def test_attempt_fallback_resolves_endpoint_by_engine_identity(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
     primary_engine: str,
     fallback_engine: str,
     expected_api_url: str | None,
@@ -1483,6 +1488,16 @@ def test_attempt_fallback_resolves_endpoint_by_engine_identity(
         _system_prompt_for_engine=lambda value: str(value),
     )
 
+    from sidecar.runtime.inference_admission import build_inference_admission_callback
+    from tests.sidecar.runtime.test_inference_admission import _bridge, _execution_context
+
+    sent, _kwargs, _readers, factory = _bridge(["granted", "settled"])
+    admission = build_inference_admission_callback(
+        request_id="request_1", session_id="session_1", engine_type=primary_engine,
+        execution_context=_execution_context(tmp_path), write_message=sent.append,
+        response_reader_factory=factory, cancel_handle=None,
+    )
+    runtime = LoopRuntime(request_id="request_1", session_id="session_1", inference_admission=admission)
     result = attempt_fallback_generation(
         kernel,
         original_error=ConnectionError("primary failed"),
@@ -1492,11 +1507,13 @@ def test_attempt_fallback_resolves_endpoint_by_engine_identity(
         prompt_cache_enabled=False,
         system_prompt="system",
         tool_schemas=[],
-        runtime=None,
+        runtime=runtime,
     )
 
     assert result is not None
     assert captured_configs[0].api_url == expected_api_url
+    assert sent[0]["params"]["engine_type"] == fallback_engine
+    assert [item["params"]["phase"] for item in sent] == ["admit", "settle"]
 
 
 def test_attempt_fallback_continues_when_fallback_engine_raises(monkeypatch) -> None:

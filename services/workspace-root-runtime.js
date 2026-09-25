@@ -84,8 +84,12 @@ function registerRuntimeParticipants(coordinator, {
     unregister.push(coordinator.registerParticipant(participant({
       id: 'workspace_test_runner',
       reason: 'test_run_active',
-      isActive: () => Boolean(testRunnerService.getState?.()?.activeRun),
+      isActive: () => typeof testRunnerService.hasWorkspaceRun === 'function'
+        ? testRunnerService.hasWorkspaceRun() : Boolean(testRunnerService.getState?.()?.activeRun),
       terminate: async () => {
+        if (typeof testRunnerService.hasWorkspaceRun === 'function' && !testRunnerService.hasWorkspaceRun()) {
+          return { aborted: false };
+        }
         if (typeof testRunnerService.abortAndWait === 'function') {
           return testRunnerService.abortAndWait();
         }
@@ -126,6 +130,7 @@ function createWorkspaceRootRuntime({
     throw new TypeError('createWorkspaceRootRuntime requires configService');
   }
   let watcherShouldRun = false;
+  let pendingRefresh = Promise.resolve();
   const coordinator = new WorkspaceRootCoordinator({
     ...coordinatorOptions,
     initialRootPath: currentConfiguredRoot(configService),
@@ -154,7 +159,30 @@ function createWorkspaceRootRuntime({
     },
     refreshManagedRoot: async (context) => {
       if (typeof backendService?.refreshManagedConfig === 'function') {
-        await backendService.refreshManagedConfig(`workspace_root_${context.reason}`);
+        // A commit re-targets the managed sidecar in the background: the
+        // re-initialize takes seconds (measured 4.7 s on 2026-09-20) and the
+        // root is already persisted, so the switch must not wait for it. The
+        // sidecar already skips this refresh while streams are active, so it
+        // tolerates lagging the root. Refreshes are chained so two quick
+        // switches never re-initialize concurrently; rollback stays awaited.
+        const refresh = () => backendService.refreshManagedConfig(`workspace_root_${context.reason}`);
+        if (context.reason === 'commit') {
+          pendingRefresh = pendingRefresh.then(refresh, refresh).catch(() => null);
+        } else {
+          await pendingRefresh.catch(() => null);
+          await refresh();
+        }
+      }
+      // The chosen folder is the project: provision (or find) the project bound
+      // to it so new chats land there. A provisioning failure is logged by the
+      // provisioner and never rolls the root transition back.
+      if (context.reason === 'commit' && context.rootPath
+        && typeof backendService?.ensureWorkspaceProject === 'function') {
+        try {
+          await backendService.ensureWorkspaceProject(context.rootPath, 'workspace_root_commit');
+        } catch (_error) {
+          // The root is already persisted; chats fall back to General until a retry.
+        }
       }
     },
     stopRootServices: async (context) => {

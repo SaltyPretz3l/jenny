@@ -291,59 +291,35 @@ _MAX_INTERPRETER_UNWRAP_DEPTH = 2
 _MIN_QUOTED_TOKEN_CHARS = 2
 _MIN_POWERSHELL_SWITCH_CHARS = 2
 _MIN_BASE64_TOKEN_CHARS = 4
+_MIN_GIT_CONFIG_GET_ARGS = 2
 
-# git subcommands considered read-only
-_GIT_READ_SUBCOMMANDS: frozenset[str] = frozenset(
-    {
-        "status",
-        "log",
-        "diff",
-        "show",
-        "remote",
-        "tag",
-        "describe",
-        "shortlog",
-        "blame",
-        "bisect",
-        "ls-files",
-        "ls-tree",
-        "rev-parse",
-        "rev-list",
-        "reflog",
-    }
+_GIT_READ_SUBCOMMANDS = frozenset({
+    "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree",
+    "blame", "describe", "cat-file", "shortlog",
+})
+_GIT_READ_ARGUMENTS = {
+    "branch": frozenset({"--list", "-a", "-r", "-v"}),
+    "remote": frozenset({"-v"}),
+    "tag": frozenset({"-l", "--list"}),
+}
+# Git verbs known to mutate the repository. Every verb outside the read-only
+# allowlist above needs approval; this set only sharpens the reason text.
+_GIT_WRITE_SUBCOMMANDS = frozenset({
+    "commit", "push", "branch", "merge", "rebase", "reset", "checkout", "switch",
+    "pull", "fetch", "cherry-pick", "revert", "clean", "rm", "mv", "add", "restore",
+    "stash", "config", "submodule", "worktree", "gc", "prune", "am", "apply",
+    "format-patch", "tag", "remote", "init", "clone",
+})
+_FIND_EXECUTION_ARGUMENTS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete"})
+_CMD_CARET_WORD_ESCAPE_RE = re.compile(r"\^[A-Za-z]")
+_START_COMMAND_RE = re.compile(r'^\s*start(?:\.exe)?(?:\s|$)', re.IGNORECASE)
+_POWERSHELL_OPAQUE_SYNTAX_RE = re.compile(
+    r"&\s*\(|(?:^|[\s;|&])\.\s+\(|\[scriptblock\]\s*::\s*create\b",
+    re.IGNORECASE,
 )
-
-# git subcommands that mutate the repo
-_GIT_WRITE_SUBCOMMANDS: frozenset[str] = frozenset(
-    {
-        "commit",
-        "push",
-        "branch",
-        "merge",
-        "rebase",
-        "reset",
-        "checkout",
-        "switch",
-        "pull",
-        "fetch",
-        "cherry-pick",
-        "revert",
-        "clean",
-        "rm",
-        "mv",
-        "add",
-        "restore",
-        "stash",
-        "config",
-        "submodule",
-        "worktree",
-        "gc",
-        "prune",
-        "am",
-        "apply",
-        "format-patch",
-    }
-)
+_OPAQUE_CARET = "opaque:caret-escape"
+_OPAQUE_START = "opaque:start"
+_OPAQUE_POWERSHELL = "opaque:powershell-eval"
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -418,8 +394,8 @@ def shell_command_uses_powershell(
     )
 
 
-def _skip_git_global_options(argv: list[str]) -> str | None:
-    """Return the git subcommand from *argv*, skipping global options.
+def _skip_git_global_options(argv: list[str]) -> tuple[str, int] | None:
+    """Return the git subcommand and index from *argv*, skipping global options.
 
     Global options: ``-c key=val``, ``-C path``, ``--git-dir=X``,
     ``--work-tree=X``, ``--namespace=X``, ``--no-pager``, ``--bare``.
@@ -441,7 +417,7 @@ def _skip_git_global_options(argv: list[str]) -> str | None:
             # single-char flag clusters we don't recognise — skip
             i += 1
             continue
-        return token.lower()
+        return token.lower(), i
     return None
 
 
@@ -450,31 +426,41 @@ def _classify_git_command(
     raw_command: str,
 ) -> ClassificationResult:
     """Classify a git command by its subcommand."""
-    subcmd = _skip_git_global_options(argv)
-    if subcmd is None:
+    resolved = _skip_git_global_options(argv)
+    if resolved is None:
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
             "no git subcommand found",
             "git",
             raw_command,
         )
-    if subcmd in _GIT_READ_SUBCOMMANDS:
+    subcmd, index = resolved
+    args = [_strip_surrounding_quotes(token).lower() for token in argv[index + 1 :]]
+    read_only = subcmd in _GIT_READ_SUBCOMMANDS
+    read_only = read_only or (
+        subcmd in _GIT_READ_ARGUMENTS
+        and all(arg in _GIT_READ_ARGUMENTS[subcmd] for arg in args)
+    )
+    read_only = read_only or (subcmd == "stash" and args == ["list"])
+    read_only = read_only or (
+        subcmd == "config"
+        and bool(args)
+        and (
+            (args[0] in {"--get", "--get-all"} and len(args) >= _MIN_GIT_CONFIG_GET_ARGS)
+            or (args[0] in {"--list", "-l"} and len(args) == 1)
+        )
+    )
+    if read_only:
         return ClassificationResult(
             CommandVerdict.ALLOWED,
             f"git read subcommand: {subcmd}",
             "git",
             raw_command,
         )
-    if subcmd in _GIT_WRITE_SUBCOMMANDS:
-        return ClassificationResult(
-            CommandVerdict.NEEDS_APPROVAL,
-            f"git write subcommand: {subcmd}",
-            "git",
-            raw_command,
-        )
+    known_write = subcmd in _GIT_WRITE_SUBCOMMANDS
     return ClassificationResult(
         CommandVerdict.NEEDS_APPROVAL,
-        f"unknown git subcommand: {subcmd}",
+        f"{'git write' if known_write else 'unknown git'} subcommand: {subcmd}",
         "git",
         raw_command,
     )
@@ -517,6 +503,15 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
             f"executable requires approval: {exe}",
+            exe,
+            command,
+        )
+    if exe == "find" and _FIND_EXECUTION_ARGUMENTS.intersection(
+        _strip_surrounding_quotes(token).lower() for token in argv[1:]
+    ):
+        return ClassificationResult(
+            CommandVerdict.NEEDS_APPROVAL,
+            "find argument can execute or delete",
             exe,
             command,
         )
@@ -623,11 +618,7 @@ def _has_truncating_redirect(
         elif ch == '"' and not in_single and not escaped:
             in_double = not in_double
         elif ch == ">" and not in_single and not in_double and not escaped:
-            if i + 1 < len(command) and command[i + 1] == ">":
-                escape_run = 0
-                i += 2
-                continue
-            target_index = i + 1
+            target_index = i + 2 if command[i : i + 2] == ">>" else i + 1
             while target_index < len(command) and command[target_index].isspace():
                 target_index += 1
             if target_index < len(command) and command[target_index] == "&":
@@ -699,13 +690,10 @@ def _interpreter_payload(
 
 
 def _destructive_git_use(argv: list[str], lowered: list[str]) -> str | None:
-    subcommand = _skip_git_global_options(argv)
-    if subcommand is None:
+    resolved = _skip_git_global_options(argv)
+    if resolved is None:
         return None
-    try:
-        subcommand_index = lowered.index(subcommand, 1)
-    except ValueError:
-        return None
+    subcommand, subcommand_index = resolved
     args = lowered[subcommand_index + 1 :]
     if subcommand == "clean" and not {"--help", "-n", "--dry-run"}.intersection(args):
         return "git clean"
@@ -771,14 +759,27 @@ def _script_argument_token(executable: str, argv: list[str]) -> str | None:
     return None
 
 
-def _start_payload(argv: list[str]) -> str | None:
+def _start_payload(argv: list[str]) -> tuple[str | None, bool]:
     index = 1
-    if index < len(argv) and _strip_surrounding_quotes(argv[index]).lower() == "/wait":
-        index += 1
-    if index < len(argv) and argv[index].strip().startswith('"'):
-        index += 1
+    title_seen = False
+    while index < len(argv):
+        token = argv[index].strip()
+        lowered = _strip_surrounding_quotes(token).lower()
+        if not title_seen and token.startswith('"'):
+            title_seen = True
+            index += 1
+        elif lowered in {"/b", "/wait", "/min", "/max"}:
+            index += 1
+        elif lowered == "/d":
+            if index + 1 >= len(argv):
+                return None, True
+            index += 2
+        elif lowered.startswith("/"):
+            return None, True
+        else:
+            break
     remainder = _strip_surrounding_quotes(" ".join(argv[index:]).strip())
-    return remainder or None
+    return (remainder or None, bool(remainder and not _command_argv(remainder)))
 
 
 def _xargs_destructive_payload(
@@ -821,6 +822,10 @@ def _interpreter_match(executable: str, argv: list[str], *, depth: int) -> str |
     if payload is None:
         return None
     switch, remainder, decode_failed = payload
+    if executable in {"powershell", "pwsh"} and switch == "-EncodedCommand":
+        return _OPAQUE_POWERSHELL
+    if executable == "cmd" and _CMD_CARET_WORD_ESCAPE_RE.search(remainder):
+        return _OPAQUE_CARET
     if decode_failed:
         return f"{executable} -EncodedCommand"
     if depth >= _MAX_INTERPRETER_UNWRAP_DEPTH:
@@ -837,7 +842,9 @@ def _launcher_match(executable: str, argv: list[str], *, depth: int) -> str | No
         return _xargs_destructive_payload(argv, depth=depth)
     if executable != "start":
         return None
-    remainder = _start_payload(argv)
+    remainder, opaque = _start_payload(argv)
+    if opaque:
+        return _OPAQUE_START
     if remainder is None:
         return None
     if depth >= _MAX_INTERPRETER_UNWRAP_DEPTH:
@@ -848,11 +855,19 @@ def _launcher_match(executable: str, argv: list[str], *, depth: int) -> str | No
 def _find_destructive_segment(segment: str, *, depth: int, powershell: bool) -> str | None:
     argv = _command_argv(segment)
     if not argv:
-        return None
+        return _OPAQUE_START if _START_COMMAND_RE.match(segment) else None
     environment_match = _environment_interpreter_match(argv, depth=depth)
     if environment_match is not None:
         return environment_match
     executable = _executable_name(argv[0])
+    if powershell and (
+        executable in {"invoke-expression", "iex"}
+        or (
+            executable == "invoke-command"
+            and re.search(r"\s-scriptblock\s+(?!\{)\S", segment, re.IGNORECASE)
+        )
+    ):
+        return _OPAQUE_POWERSHELL
     if powershell and executable in _POWERSHELL_DESTRUCTIVE_COMMANDS:
         return _POWERSHELL_DESTRUCTIVE_COMMANDS[executable]
     if executable in DESTRUCTIVE_EXECUTABLES:
@@ -878,6 +893,8 @@ def _find_destructive(
     depth: int,
     powershell: bool,
 ) -> str | None:
+    if powershell and _POWERSHELL_OPAQUE_SYNTAX_RE.search(command):
+        return _OPAQUE_POWERSHELL
     segments = (
         _split_powershell_commands(command)
         if powershell

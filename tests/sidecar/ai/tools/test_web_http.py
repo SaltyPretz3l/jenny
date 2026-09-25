@@ -326,9 +326,9 @@ class TestReadUrlResponse:
         calls: list[str] = []
 
         def fake_open_once(
-            validated: ValidatedUrl, *, timeout_s: int, max_bytes: int
+            validated: ValidatedUrl, **kwargs: object
         ) -> _SingleFetchResult:
-            _ = (timeout_s, max_bytes)
+            _ = kwargs
             calls.append(validated.url)
             if validated.url == "https://start.example.com":
                 return _SingleFetchResult(
@@ -348,7 +348,7 @@ class TestReadUrlResponse:
         monkeypatch.setattr("sidecar.ai.tools.builtins.web_http._open_url_once", fake_open_once)
         monkeypatch.setattr(
             "sidecar.ai.tools.builtins.web_http.validate_public_url",
-            lambda raw_url, allow_private=False: ValidatedUrl(url=raw_url, pinned_ip=""),
+            lambda raw_url, **_kwargs: ValidatedUrl(url=raw_url, pinned_ip=""),
         )
 
         result = read_url_response(ValidatedUrl(url="https://start.example.com", pinned_ip=""))
@@ -445,7 +445,7 @@ class TestReadUrlResponse:
         )
         monkeypatch.setattr(
             "sidecar.ai.tools.builtins.web_http.validate_public_url",
-            lambda raw_url, allow_private=False: ValidatedUrl(url=raw_url, pinned_ip=""),
+            lambda raw_url, **_kwargs: ValidatedUrl(url=raw_url, pinned_ip=""),
         )
 
         with pytest.raises(RedirectBlockedError, match="loop"):
@@ -455,9 +455,9 @@ class TestReadUrlResponse:
         counter = {"count": 0}
 
         def fake_open_once(
-            validated: ValidatedUrl, *, timeout_s: int, max_bytes: int
+            validated: ValidatedUrl, **kwargs: object
         ) -> _SingleFetchResult:
-            _ = (validated, timeout_s, max_bytes)
+            _ = (validated, kwargs)
             counter["count"] += 1
             return _SingleFetchResult(
                 payload=b"",
@@ -470,7 +470,7 @@ class TestReadUrlResponse:
         monkeypatch.setattr("sidecar.ai.tools.builtins.web_http._open_url_once", fake_open_once)
         monkeypatch.setattr(
             "sidecar.ai.tools.builtins.web_http.validate_public_url",
-            lambda raw_url, allow_private=False: ValidatedUrl(url=raw_url, pinned_ip=""),
+            lambda raw_url, **_kwargs: ValidatedUrl(url=raw_url, pinned_ip=""),
         )
 
         with pytest.raises(RedirectBlockedError, match="Too many redirects"):
@@ -518,6 +518,7 @@ class TestOpenUrlOnceHeaders:
             ValidatedUrl(url="https://example.com", pinned_ip="93.184.216.34"),
             timeout_s=10,
             max_bytes=1024,
+            deadline=float("inf"),
         )
 
         request = captured["request"]

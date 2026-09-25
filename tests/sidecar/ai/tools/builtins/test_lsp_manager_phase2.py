@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import pytest
+
 from sidecar.ai.tools.builtins.lsp import LSPProtocolError
+from sidecar.ai.tools.builtins.lsp.limits import LSP_MAX_DOCUMENT_BYTES
 from sidecar.ai.tools.builtins.lsp.manager import LSPManager
 
 
@@ -289,3 +293,72 @@ def test_manager_falls_back_to_published_diagnostics_when_pull_is_unsupported(
         "diagnostics": [{"severity": 1, "message": "broken"}],
         "source": "publishDiagnostics",
     }
+
+
+def test_manager_refuses_oversized_document_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(
+        language="python",
+        workspace_root=tmp_path,
+        command=("python-server",),
+    )
+    target = tmp_path / "module.py"
+    target.write_bytes(b"x" * (LSP_MAX_DOCUMENT_BYTES + 1))
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: pytest.fail("file was read"))
+
+    result = manager.sync_document(session=session, language="python", file_path=target)
+
+    assert result.too_large is True
+    assert result.size == LSP_MAX_DOCUMENT_BYTES + 1
+    assert result.cap == LSP_MAX_DOCUMENT_BYTES
+    assert result.stale_content is True
+    assert session.notifications == []
+
+
+def test_manager_refuses_document_that_grows_past_cap_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(
+        language="python",
+        workspace_root=tmp_path,
+        command=("python-server",),
+    )
+    target = tmp_path / "module.py"
+    target.write_text("small\n", encoding="utf-8")
+    monkeypatch.setattr(
+        Path,
+        "open",
+        lambda *_args, **_kwargs: io.BytesIO(b"x" * (LSP_MAX_DOCUMENT_BYTES + 1)),
+    )
+
+    result = manager.sync_document(session=session, language="python", file_path=target)
+
+    assert result.too_large is True
+    assert result.size == LSP_MAX_DOCUMENT_BYTES + 1
+    assert result.cap == LSP_MAX_DOCUMENT_BYTES
+    assert result.stale_content is True
+    assert session.notifications == []
+
+
+def test_manager_syncs_small_document_with_document_bound_metadata(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(
+        language="python",
+        workspace_root=tmp_path,
+        command=("python-server",),
+    )
+    target = tmp_path / "module.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    result = manager.sync_document(session=session, language="python", file_path=target)
+
+    assert result.too_large is False
+    assert result.size is None
+    assert result.cap is None
+    assert result.stale_content is False
+    assert session.notifications[0][0] == "textDocument/didOpen"

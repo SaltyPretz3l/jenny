@@ -37,6 +37,25 @@ test('a failure retry keeps the failed attempt in messages and turn events', () 
   const { store } = freshStore();
   const { id: sessionId } = store.createSession({ title: 'T' });
   seedConversation(store, sessionId);
+  store.updateMessage(sessionId, 'msg_ai_2', {
+    status: 'runtime_error',
+    terminal_status: 'runtime_error',
+    parent_stream_id: 'turn_2',
+    reasoning: {
+      source: 'provider',
+      entries: [{
+        id: 'reasoning_turn_2',
+        text: 'preserve this independent retry snapshot',
+        thinkingId: 'thinking_turn_2',
+        timestamp: '2026-05-11T10:00:02.500Z',
+      }],
+    },
+  });
+  assert.equal(
+    store.captureFailureRetryReasoning(sessionId, 'msg_user_2').captured,
+    true,
+    'the preservation-half snapshot must be durable before re-anchoring'
+  );
 
   // msg_user_2 is the prompt whose turn failed; msg_ai_2 / turn_2 are the
   // attempt the owner lost. The prompt is UNCHANGED -- a retry, not an edit.
@@ -62,6 +81,11 @@ test('a failure retry keeps the failed attempt in messages and turn events', () 
   assert.ok(
     JSON.stringify(session.turn_events).includes('second reply'),
     'the failed attempt payload is what the owner wanted back'
+  );
+  assert.equal(
+    session.failure_retry_reasoning_snapshots.msg_user_2.reasoning_entries[0].text,
+    'preserve this independent retry snapshot',
+    'failed-attempt preservation and the independent replay snapshot must coexist'
   );
 });
 

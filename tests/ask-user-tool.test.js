@@ -93,6 +93,7 @@ test('execute blocks until answerUserQuestions resolves it and returns clamped a
   assert.equal(events.length, 1);
   assert.equal(events[0].name, 'chat-stream');
   assert.equal(events[0].payload.type, 'user_questions_requested');
+  assert.equal(events[0].payload.turnId, context.streamId, 'legacy callers retain their stream identity');
   assert.equal(events[0].payload.resultKind, 'user_questions');
   assert.equal(events[0].payload.status, 'pending_user_input');
   assert.deepEqual(events[0].payload.input.questions, events[0].payload.questions);

@@ -137,6 +137,17 @@
         if (sourceEvent.payload && typeof sourceEvent.payload === 'object' && !Array.isArray(sourceEvent.payload)) {
           try { payloadValue = deepCloneJsonValue(sourceEvent.payload); } catch (_error) { payloadValue = {}; }
         }
+        // Runtime-owned results retain their wire vocabulary in the journal.
+        // Translate on the cloned view payload, never by rewriting history.
+        if (kind === 'tool_use' && payloadValue.canonical_event_type === 'tool_call_requested') {
+          payloadValue.input = payloadValue.tool_input ?? payloadValue.input ?? {};
+        }
+        if (kind === 'tool_result' && (payloadValue.canonical_event_type === 'tool_execution_completed'
+          || payloadValue.canonical_event_type === 'tool_execution_failed')) {
+          payloadValue.is_error = payloadValue.canonical_event_type === 'tool_execution_failed'
+            || payloadValue.success === false;
+          payloadValue.output_text = String(payloadValue.tool_output_summary ?? payloadValue.output_text ?? '');
+        }
         const eventId = normalizeId(sourceEvent.event_id || sourceEvent.eventId) || `${turnId}:${kind}:${index}`;
         const anchorMessageId = normalizedSourceEvent.anchorMessageId;
         const messageIndex = messageIndexById.has(anchorMessageId)

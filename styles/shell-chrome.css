@@ -157,7 +157,8 @@
   position: relative;
 }
 
-.sidebar {
+/* Keep the shell host distinct from PDF.js's lazily loaded .sidebar rules. */
+.view-panel {
   display: flex;
   width: 100%;
   flex-direction: column;

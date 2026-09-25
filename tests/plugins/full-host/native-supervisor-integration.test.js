@@ -12,6 +12,10 @@ const { NativeSupervisorClient } = require(
 const { FullHostProcessSupervisor } = require(
   '../../../services/plugins/full-host/process-supervisor'
 );
+const { createHostResourceAdmission } = require(
+  '../../../services/plugins/full-host/host-resource-admission'
+);
+const { ResourceBroker } = require('../../../services/session-runtime/resource-broker');
 const { HostSessionManager } = require(
   '../../../services/plugins/full-host/host-session-manager'
 );
@@ -31,9 +35,14 @@ test('real Windows supervisor launches, invokes, delivers on the secret pipe, an
     const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage8-content-'));
     const storedHostPath = path.join(contentDir, 'blob');
     fs.copyFileSync(hostPath, storedHostPath);
-    const client = new NativeSupervisorClient({ executablePath: supervisorPath, timeoutMs: 10_000 });
+    const broker = new ResourceBroker({ limits: { native_processes: 2 } });
+    const hostResources = createHostResourceAdmission({
+      resourceAdmissionProvider: () => ({ broker }),
+    });
+    const client = new NativeSupervisorClient({ executablePath: supervisorPath,
+      timeoutMs: 10_000, hostResources });
     const supervisor = new FullHostProcessSupervisor({ nativeClient: client, platform: 'win32',
-      now: () => '2026-08-09T00:00:00Z' });
+      now: () => '2026-08-09T00:00:00Z', hostResources });
     const authority = { registry_revision: 4, dependency_graph_hash: 'a'.repeat(64),
       commit_epoch: 5, active_generation_id: 'generation-native-smoke' };
     const identity = { publisher_id: 'jenny-official', plugin_id: 'stage8-conformance',
@@ -41,8 +50,10 @@ test('real Windows supervisor launches, invokes, delivers on the secret pipe, an
     try {
       const launched = await supervisor.start({ authority, identity,
         executable: { path: storedHostPath, digest: executableDigest },
-        sessionId: 'session-native-smoke', sessionEpoch: 1 });
+        sessionId: 'session-native-smoke', sessionEpoch: 1,
+        validateResourceAuthority: () => true });
       assert.equal(launched.ok, true, launched.reason);
+      assert.equal(broker.snapshot().lease_count, 2);
       const described = await launched.channel.request('describe', {
         kind: 'engine_adapter', authority, identity,
       });
@@ -51,9 +62,23 @@ test('real Windows supervisor launches, invokes, delivers on the secret pipe, an
       const secretReceipt = await client.deliverSecret({ session_id: 'session-native-smoke',
         session_epoch: 1, grant_id: 'synthetic-grant', secret: 'synthetic-stage8-secret' });
       assert.equal(secretReceipt.ok, true);
+      const firstProof = await client.terminate({ session_id: 'session-native-smoke', session_epoch: 1,
+        reason: 'integration_complete' });
+      assert.equal(firstProof.output_readers_terminated, true);
+      assert.equal(broker.snapshot().lease_count, 2,
+        'proof alone does not settle the durable host owner');
       const terminated = await supervisor.terminate({ session_id: 'session-native-smoke', session_epoch: 1,
         reason: 'integration_complete' });
       assert.equal(terminated.ok, true); assert.equal(terminated.tree_empty, true);
+      assert.equal(terminated.output_readers_terminated, true);
+      assert.equal(terminated.resource_cleanup.cleanup, 'confirmed');
+      assert.equal(broker.snapshot().lease_count, 1, 'the idle helper keeps its native slot');
+      const acknowledged = await supervisor.acknowledgeTermination({
+        session_id: 'session-native-smoke', session_epoch: 1,
+      });
+      assert.deepEqual(acknowledged, { ok: true, acknowledged: true });
+      await supervisor.dispose();
+      assert.equal(broker.snapshot().lease_count, 0);
     } finally {
       await supervisor.dispose();
       fs.rmSync(contentDir, { recursive: true, force: true });
@@ -104,8 +129,14 @@ test('a restarted Windows supervisor proves the prior named Job is absent',
     const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage8-restart-'));
     const storedHostPath = path.join(contentDir, 'blob');
     fs.copyFileSync(hostPath, storedHostPath);
-    const first = new NativeSupervisorClient({ executablePath: supervisorPath, timeoutMs: 10_000 });
-    const firstSupervisor = new FullHostProcessSupervisor({ nativeClient: first, platform: 'win32' });
+    const broker = new ResourceBroker({ limits: { native_processes: 2 } });
+    const hostResources = createHostResourceAdmission({
+      resourceAdmissionProvider: () => ({ broker }),
+    });
+    const first = new NativeSupervisorClient({ executablePath: supervisorPath,
+      timeoutMs: 10_000, hostResources });
+    const firstSupervisor = new FullHostProcessSupervisor({ nativeClient: first,
+      platform: 'win32', hostResources });
     const authority = { registry_revision: 4, dependency_graph_hash: 'a'.repeat(64),
       commit_epoch: 5, active_generation_id: 'generation-native-restart' };
     const identity = { publisher_id: 'jenny-official', plugin_id: 'stage8-conformance',
@@ -116,16 +147,21 @@ test('a restarted Windows supervisor proves the prior named Job is absent',
         executable: { path: storedHostPath, digest: executableDigest },
         sessionId: 'session-native-restart', sessionEpoch: 9 });
       assert.equal(launched.ok, true, launched.reason);
-      const exited = new Promise((resolve) => first._child.once('exit', resolve));
+      const exited = new Promise((resolve) => first._child.once('close', resolve));
       first._child.kill();
       await exited;
-      second = new NativeSupervisorClient({ executablePath: supervisorPath, timeoutMs: 10_000 });
-      const proof = await second.terminate({ session_id: 'session-native-restart',
+      second = new NativeSupervisorClient({ executablePath: supervisorPath,
+        timeoutMs: 10_000, hostResources });
+      const secondSupervisor = new FullHostProcessSupervisor({ nativeClient: second,
+        platform: 'win32', hostResources });
+      const proof = await secondSupervisor.terminate({ session_id: 'session-native-restart',
         session_epoch: 9, reason: 'startup_cleanup_reconciliation' });
       assert.equal(proof.ok, true);
       assert.equal(proof.known, true);
       assert.equal(proof.tree_empty, true);
+      assert.equal(proof.output_readers_terminated, true);
       assert.equal(proof.surviving_process_count, 0);
+      assert.equal(proof.resource_cleanup.cleanup, 'confirmed');
     } finally {
       await firstSupervisor.dispose();
       await second?.dispose();

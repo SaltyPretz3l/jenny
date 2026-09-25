@@ -1,20 +1,29 @@
 /* Isolated Model Library bridge reads plus request-scoped Ollama pull state. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../renderer-model-library-format-utils'));
+    module.exports = factory(
+      require('../renderer-model-library-format-utils'),
+      require('./model-library-merge')
+    );
     return;
   }
-  root.modelLibrarySources = factory(root.rendererModelLibraryFormatUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils) {
+  root.modelLibrarySources = factory(root.rendererModelLibraryFormatUtils, root.modelLibraryMerge);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (formatUtils, mergeUtils) {
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var canonicalOllamaTag = formatUtils && formatUtils.canonicalOllamaTag;
   var boundedErrorMessage = formatUtils && formatUtils.boundedErrorMessage;
   var formatBytesShort = formatUtils && formatUtils.formatBytesShort;
+  var managedModelKey = mergeUtils && mergeUtils.managedModelKey;
+  var joinModelPath = mergeUtils && mergeUtils.joinModelPath;
+  var entryTag = mergeUtils && mergeUtils.entryTag;
   if (typeof canonicalOllamaTag !== 'function'
     || typeof boundedErrorMessage !== 'function'
-    || typeof formatBytesShort !== 'function') {
+    || typeof formatBytesShort !== 'function'
+    || typeof managedModelKey !== 'function'
+    || typeof joinModelPath !== 'function'
+    || typeof entryTag !== 'function') {
     throw new Error('model-library-sources: missing required dependency');
   }
 
@@ -90,6 +99,144 @@
       accelerationMode: String(source.accelerationMode || '').trim().toLowerCase(),
       reused: source.reused === true,
     };
+  }
+
+  // Library GGUFs: a managed.perModel llama-server entry added from a file on
+  // disk. The helpers below name it, recognise its file and project it into
+  // the installed list the merge builds cards from.
+  var SHARD_SUFFIX = /-\d{5}-of-\d{5}$/i;
+  var OLLAMA_BLOB = /^sha256-[0-9a-f]{64}$/i;
+
+  function pathSegments(filePath) {
+    return String(filePath == null ? '' : filePath).split(/[\\/]+/).filter(Boolean);
+  }
+
+  function fileNameOf(filePath) {
+    var segments = pathSegments(filePath);
+    return segments.length ? segments[segments.length - 1] : '';
+  }
+
+  function tagFromName(name) {
+    return String(name || '')
+      .replace(/\.gguf$/i, '')
+      .replace(SHARD_SUFFIX, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '-')
+      .replace(/^[-._]+|[-._]+$/g, '');
+  }
+
+  // Ids main's inferEngineTypeFromModel anchors to another engine (the test
+  // engines, ChatGPT): that verdict overrides the llama-server pin, so a file
+  // named like one could never run on llama-server. A parity test reads main's.
+  var ENGINE_ANCHORED_TAG = /^(?:mock|replay|gpt-5(?:[.:-]|$)|gpt-6-astra$)/;
+
+  // "Ternary-Bonsai-2-27B-PQ2_0.gguf" -> "ternary-bonsai-2-27b-pq2_0". A name
+  // with nothing usable borrows its folder's name (a drive root names nothing).
+  // Main keeps tags of 128 characters at most.
+  function libraryTagFromPath(filePath) {
+    var segments = pathSegments(filePath);
+    var tag = tagFromName(segments[segments.length - 1]);
+    var parent = segments.length > 1 ? segments[segments.length - 2] : '';
+    if (!tag && !/^[a-z]:$/i.test(parent)) tag = tagFromName(parent);
+    return !tag || ENGINE_ANCHORED_TAG.test(tag) || tag.length > 128 ? '' : tag;
+  }
+
+  // The shape libraryTagFromPath gives a library GGUF's tag. An Ollama tag
+  // carries ":" and a vLLM or Hugging Face id "/", so neither is ever one.
+  function isLibraryTag(tag) {
+    return typeof tag === 'string' && /^[a-z0-9][a-z0-9._-]*$/.test(tag);
+  }
+
+  // Mirrors services/llama-server-gguf-files.js::splitGgufFiles (a shared
+  // corpus test pins the two): drafters are "mtp-*"; projectors lead with
+  // "mmproj" or carry it as a whole token, split by "-", "_", "." or
+  // whitespace, in the file name without its extension.
+  function isAuxiliaryGguf(name) {
+    var fileName = fileNameOf(name);
+    if (/^mtp-/i.test(fileName)) return true;
+    var dot = fileName.lastIndexOf('.');
+    var stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+    return /^mmproj/i.test(stem) || /[-_.\s]mmproj(?=[-_.\s]|$)/i.test(stem);
+  }
+
+  // Either separator names the same file; drive paths ignore case.
+  function sameModelPath(a, b) {
+    var left = String(a == null ? '' : a).replace(/\\/g, '/');
+    var right = String(b == null ? '' : b).replace(/\\/g, '/');
+    if (!left || !right) return false;
+    return /^[a-z]:/i.test(left) ? left.toLowerCase() === right.toLowerCase() : left === right;
+  }
+
+  // Two tags name one model when they share a perModel key ("qwen3:8b" and
+  // "qwen3-8b") or a card ("mistral" and "mistral:latest").
+  function sharesModelName(a, b) {
+    var left = String(a == null ? '' : a).trim();
+    var right = String(b == null ? '' : b).trim();
+    if (!left || !right) return false;
+    var key = managedModelKey(left);
+    return Boolean(key && key === managedModelKey(right))
+      || canonicalOllamaTag(left) === canonicalOllamaTag(right);
+  }
+
+  // Only a twin under both keys is the same card: the served alias of this
+  // very entry. Any other related row keeps the card, and its perModel key.
+  function isTwinTag(a, b) {
+    return managedModelKey(a) === managedModelKey(b) && canonicalOllamaTag(a) === canonicalOllamaTag(b);
+  }
+
+  function isOllamaRow(entry) {
+    var source = objectOrEmpty(entry);
+    return String(source.engine_type || source.engineType || '').trim().toLowerCase() === 'ollama';
+  }
+
+  function scannedSize(localGgufs, modelPath) {
+    var entries = Array.isArray(localGgufs) ? localGgufs : [];
+    for (var i = 0; i < entries.length; i += 1) {
+      var entry = objectOrEmpty(entries[i]);
+      var size = Number(entry.sizeBytes);
+      if (entry.mainGguf && Number.isFinite(size) && size > 0
+        && sameModelPath(joinModelPath(entry.dir, entry.mainGguf), modelPath)) {
+        return size;
+      }
+    }
+    return 0;
+  }
+
+  // Library GGUFs as models.list rows, so a served alias and its projection
+  // fold into one card. Only a library-shaped tag projects: an Ollama model's
+  // engine setting never does, even while Ollama is not listing, and neither
+  // does a file in Ollama's blob store. An entry another model answers to
+  // under its perModel key stays that model's engine setting. One that would
+  // only share another model's card ("mistral" beside Ollama's
+  // "mistral:latest") keeps a card of its own, keyed by its tag (ownCardKey).
+  function projectLibraryGgufs(input) {
+    var source = objectOrEmpty(input);
+    var perModel = objectOrEmpty(objectOrEmpty(source.managed).perModel);
+    var ollamaTags = Array.isArray(source.ollamaTags) ? source.ollamaTags : [];
+    var installed = Array.isArray(source.installed) ? source.installed : [];
+    var catalog = Array.isArray(source.recommendations) ? source.recommendations : [];
+    var rows = [];
+    Object.keys(perModel).forEach(function (storedKey) {
+      var entry = objectOrEmpty(perModel[storedKey]);
+      var tag = typeof entry.tag === 'string' ? entry.tag.trim() : '';
+      var modelPath = typeof entry.modelPath === 'string' ? entry.modelPath.trim() : '';
+      if (entry.engine !== 'llama-server' || !isLibraryTag(tag) || !modelPath) return;
+      if (OLLAMA_BLOB.test(fileNameOf(modelPath))) return;
+      var key = managedModelKey(tag);
+      var owned = ollamaTags.some(function (item) { return managedModelKey(entryTag(item)) === key; })
+        || installed.some(function (item) {
+          var other = entryTag(item);
+          return managedModelKey(other) === key && (isOllamaRow(item) || !isTwinTag(other, tag));
+        });
+      if (owned) return;
+      var row = { id: tag, size: scannedSize(source.localGgufs, modelPath), engine_type: 'openai-compatible', available: true, libraryGguf: true };
+      if (ollamaTags.concat(installed, catalog).some(function (item) {
+        var other = entryTag(item);
+        return canonicalOllamaTag(other) === canonicalOllamaTag(tag) && managedModelKey(other) !== key;
+      })) row.ownCardKey = tag;
+      rows.push(row);
+    });
+    return rows;
   }
 
   function createModelLibrarySource(options) {
@@ -434,5 +581,11 @@
   return {
     createModelLibrarySource: createModelLibrarySource,
     createPullController: createPullController,
+    libraryTagFromPath: libraryTagFromPath,
+    isLibraryTag: isLibraryTag,
+    isAuxiliaryGguf: isAuxiliaryGguf,
+    sameModelPath: sameModelPath,
+    sharesModelName: sharesModelName,
+    projectLibraryGgufs: projectLibraryGgufs,
   };
 });

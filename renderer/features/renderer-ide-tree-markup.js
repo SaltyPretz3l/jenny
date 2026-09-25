@@ -98,6 +98,9 @@
     const isQolEnabled = deps.isQolEnabled;
     const isSelected = deps.isSelected;
     const isCut = typeof deps.isCut === 'function' ? deps.isCut : () => false;
+    // Projects v2: when a switcher is wired the header title is the current
+    // project's name and opens the project menu; otherwise the static label.
+    const getProjectTitle = typeof deps.getProjectTitle === 'function' ? deps.getProjectTitle : null;
     const textField = resolveModule('inventoryTextField', '../inventory/text-field');
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const ideIcons = resolveModule('rendererIdeIcons', './renderer-ide-icons');
@@ -249,8 +252,20 @@
       const buttonMarkup = buttons
         .map((options) => actionButton({ plain: true, className: 'ide-tree-header-button', ...options }))
         .join('');
+      const chevronSvg = `${svgOpen}<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>`;
+      const titleMarkup = getProjectTitle
+        ? actionButton({
+          plain: true,
+          className: 'ide-tree-header-title ide-tree-header-project',
+          ariaHaspopup: 'listbox',
+          ariaLabel: jt('ide.tree.switchProject', 'Switch project'),
+          title: jt('ide.tree.switchProject', 'Switch project'),
+          dataset: { 'ide-tree-action': 'project-menu' },
+          trustedHtml: `<span class="ide-tree-header-project-name">${escapeHtml(getProjectTitle())}</span>${chevronSvg}`,
+        })
+        : `<span class="ide-tree-header-title">${escapeHtml(jt('ide.tree.explorer', 'Explorer'))}</span>`;
       return '<div class="ide-tree-header">'
-        + '<span class="ide-tree-header-title">Explorer</span>'
+        + titleMarkup
         + `<span class="ide-tree-header-actions">${buttonMarkup}</span></div>`;
     }
 

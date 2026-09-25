@@ -151,15 +151,15 @@ test('chat_stream_paint_v2 ON: summary-only delta morphs the reasoning header in
   assert.equal(
     mainAfter,
     mainBefore,
-    'flag ON must update the header text in place â€” the .reasoning-row-main element identity must survive a summary-only delta'
+    'flag ON must update the header text in place — the .reasoning-row-main element identity must survive a summary-only delta'
   );
   assert.equal(timeline.querySelector('.reasoning-row-header'), headerBefore);
 });
 
-test('chat_stream_paint_v2 ON: morph reconciles the full header shape â€” meta appears, status tone flips', () => {
+test('chat_stream_paint_v2 ON: morph reconciles the full header shape — meta appears, status tone flips', () => {
   // Mirrors the real renderPhase header (kicker + main + status cluster with
   // optional meta): the meta span APPEARS between deltas and the status-dot
-  // tone changes â€” the structural cases the simple text-only pin skips.
+  // tone changes — the structural cases the simple text-only pin skips.
   const fullHeaderStack = (text, { meta = '', tone = 'active' } = {}) => `
     <div class="reasoning-row-stack" data-reasoning-row-version="2">
       <div class="reasoning-row-block expanded" data-thinking-id="think_1" data-phase-key="think_1">
@@ -268,7 +268,7 @@ test('chat_stream_paint_v2 OFF: header patch keeps the historical innerHTML-rewr
     'flag OFF pins the pre-Ht-C behavior: the header children are rebuilt via innerHTML replacement'
   );
   assert.equal(timeline.querySelector('.reasoning-row-header'), headerBefore,
-    'the header button itself was always preserved â€” only its children were rewritten');
+    'the header button itself was always preserved — only its children were rewritten');
 });
 
 test('client_timing counters prove the header repaint reduction ON vs OFF (Ht-C acceptance)', () => {

@@ -16,9 +16,11 @@ scope roots, never against the tools workspace root or an arbitrary path.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from sidecar.ai.context.context_io import discover_skill_files, read_bounded_context_text
 from sidecar.ai.error_codes import (
@@ -60,6 +62,44 @@ class _SkillScopeRoot:
 
 _scope_roots: tuple[_SkillScopeRoot, ...] = ()
 _disabled_skill_ids: frozenset[str] = frozenset()
+_operation_skill_state: ContextVar[
+    tuple[tuple[_SkillScopeRoot, ...], frozenset[str]] | None
+] = ContextVar("operation_skill_state", default=None)
+
+
+def _active_skill_state() -> tuple[tuple[_SkillScopeRoot, ...], frozenset[str]]:
+    return _operation_skill_state.get() or (_scope_roots, _disabled_skill_ids)
+
+
+@contextmanager
+def scoped_skill_tool(config: Any | None) -> Iterator[None]:
+    """Bind trusted request-local skill roots without changing startup globals."""
+
+    if config is None:
+        roots = tuple(root for root in _scope_roots if root.scope != "project")
+        disabled = _disabled_skill_ids
+    else:
+        roots_list: list[_SkillScopeRoot] = []
+        for scope_name in SCOPE_PRECEDENCE:
+            raw_root = config_value(config, f"skills_{scope_name}_root")
+            if not isinstance(raw_root, str) or not raw_root.strip():
+                continue
+            roots_list.append(_SkillScopeRoot(
+                scope=scope_name,
+                root=Path(raw_root).expanduser(),
+                enabled=config_value(config, f"skills_{scope_name}_enabled", True) is True,
+            ))
+        roots = tuple(roots_list)
+        raw_disabled = config_value(config, "skills_disabled_ids", ())
+        disabled = frozenset(
+            item.strip() for item in raw_disabled
+            if isinstance(item, str) and item.strip()
+        ) if isinstance(raw_disabled, (list, tuple)) else frozenset()
+    token = _operation_skill_state.set((roots, disabled))
+    try:
+        yield
+    finally:
+        _operation_skill_state.reset(token)
 
 
 def configure_skill_tool(config: Any | None) -> None:
@@ -100,9 +140,10 @@ def _reset_skill_tool_state() -> None:
 
 
 def _candidate_scopes(requested_scope: str | None) -> tuple[_SkillScopeRoot, ...]:
+    scope_roots, _disabled = _active_skill_state()
     if requested_scope is None:
-        return _scope_roots
-    return tuple(scope_root for scope_root in _scope_roots if scope_root.scope == requested_scope)
+        return scope_roots
+    return tuple(scope_root for scope_root in scope_roots if scope_root.scope == requested_scope)
 
 
 def _skill_dir_names(scope_root: _SkillScopeRoot) -> list[str]:
@@ -116,23 +157,25 @@ def _skill_dir_names(scope_root: _SkillScopeRoot) -> list[str]:
         max_seconds=MAX_SKILL_DISCOVERY_SECONDS,
     )
     names: list[str] = []
+    _roots, disabled_ids = _active_skill_state()
     for skill_path in discovery.files:
         try:
             relative = skill_path.relative_to(scope_root.root.resolve(strict=True))
         except (OSError, ValueError):
             continue
         name = relative.parent.as_posix()
-        if f"{scope_root.scope}/{name}" not in _disabled_skill_ids:
+        if f"{scope_root.scope}/{name}" not in disabled_ids:
             names.append(name)
     return names
 
 
 def _available_skill_labels() -> list[str]:
+    scope_roots, disabled_ids = _active_skill_state()
     labels: list[str] = []
-    for scope_root in _scope_roots:
+    for scope_root in scope_roots:
         for name in _skill_dir_names(scope_root):
             label = f"{scope_root.scope}/{name}"
-            if label not in labels:
+            if label not in disabled_ids and label not in labels:
                 labels.append(label)
             if len(labels) >= MAX_AVAILABLE_SKILL_HINTS:
                 return labels
@@ -192,8 +235,9 @@ def load_skill_tool(
             retryable=False,
         )
 
+    _scope_roots_for_call, disabled_ids = _active_skill_state()
     for scope_root in _candidate_scopes(requested_scope):
-        if f"{scope_root.scope}/{name}" in _disabled_skill_ids:
+        if f"{scope_root.scope}/{name}" in disabled_ids:
             continue
         skill_path = _resolve_skill_path(scope_root, name)
         if skill_path is None:

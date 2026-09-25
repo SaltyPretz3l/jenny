@@ -8,7 +8,11 @@ from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.container import BrainContainer
-from sidecar.ai.context.builder import ContextBuilder, normalize_learned_lessons
+from sidecar.ai.context.builder import (
+    ContextBuilder,
+    normalize_learned_lessons,
+    request_workspace_root_kwargs,
+)
 from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
@@ -29,6 +33,7 @@ from sidecar.ai.routing.plan_mode_transition import (
     transition_after_exit_outcome,
 )
 from sidecar.ai.routing.router import ChatDecision
+from sidecar.ai.routing.tool_resource_deferral import DecisionSuspensionError, ToolLoopSuspended
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.plan_artifact_policy import PLAN_ARTIFACT_WRITE_ARG
 from sidecar.ai.tools.tool_actions import effective_side_effecting
@@ -53,6 +58,7 @@ from sidecar.runtime.chat_response_builders import (
     _terminal_chat_response,
     _tool_failure_error_data,
 )
+from sidecar.runtime.chat_resume_budget import resume_budget_tracker
 from sidecar.runtime.chat_resume_prefix import (  # noqa: F401 - re-exported by chat.py
     _build_live_approval_working_messages,
     _is_live_dynamic_system_message,
@@ -283,39 +289,27 @@ def _build_live_approval_system_prompt(
     pinned_current_date = str(
         plan.request_context.current_date or resolve_current_date()
     ).strip()
-    if plan.prompt_cache_enabled:
-        return stack.router._context_builder.build_system_prompt(
-            stack.config.system_prompt,
-            learned_lessons=learned_lessons,
-            cache_aware=True,
-            session_start_date=session_start_date,
-            current_date=pinned_current_date,
-            tool_statuses=list(tool_statuses),
-            latest_user_content=plan.latest_user_content,
-            engine_type=stack.config.engine_type,
-            include_skills=False,
-            workspace_manifest_enabled=getattr(
-                stack.config, "tools_workspace_manifest_enabled", False
-            ),
-            task_capsule_enabled=getattr(
-                stack.config, "tools_task_capsule_enabled", False
-            ),
-        )
-    return stack.router._context_builder.build_system_prompt(
-        stack.config.system_prompt,
-        learned_lessons=learned_lessons,
-        session_start_date=session_start_date,
-        current_date=pinned_current_date,
-        tool_statuses=list(tool_statuses),
-        latest_user_content=plan.latest_user_content,
-        engine_type=stack.config.engine_type,
-        include_skills=False,
-        workspace_manifest_enabled=getattr(
+    kwargs: dict[str, Any] = {
+        "learned_lessons": learned_lessons,
+        "session_start_date": session_start_date,
+        "current_date": pinned_current_date,
+        "tool_statuses": list(tool_statuses),
+        "latest_user_content": plan.latest_user_content,
+        "engine_type": stack.config.engine_type,
+        "include_skills": False,
+        "workspace_manifest_enabled": getattr(
             stack.config, "tools_workspace_manifest_enabled", False
         ),
-        task_capsule_enabled=getattr(
-            stack.config, "tools_task_capsule_enabled", False
-        ),
+        "task_capsule_enabled": getattr(stack.config, "tools_task_capsule_enabled", False),
+    }
+    # Resume keeps the original request authority's root (None = unbound).
+    kwargs.update(request_workspace_root_kwargs(
+        stack.config, getattr(plan.request_context, "execution_context", None),
+    ))
+    if plan.prompt_cache_enabled:
+        kwargs["cache_aware"] = True
+    return stack.router._context_builder.build_system_prompt(
+        stack.config.system_prompt, **kwargs
     )
 
 
@@ -355,26 +349,6 @@ def _build_live_dynamic_system_messages(
     return messages
 
 
-def _rebuild_approval_resume_read_snapshot_cache(
-    plan: ApprovalPlan,
-    *,
-    kernel: Any,
-    canonical_session_messages: Any,
-) -> dict[str, dict[str, object]]:
-    cache = kernel._rebuild_read_snapshot_cache(
-        canonical_session_messages if isinstance(canonical_session_messages, list) else None
-    )
-    for outcome in plan.outcomes:
-        metadata = getattr(outcome, "metadata", None)
-        kernel._update_read_snapshot_cache(
-            cache,
-            tool_name=str(getattr(outcome, "tool_name", "") or "").strip(),
-            success=bool(getattr(outcome, "success", False)),
-            metadata=metadata if isinstance(metadata, dict) else {},
-        )
-    return cache
-
-
 def _validate_approval_plan_live_context(
     plan: ApprovalPlan,
     *,
@@ -390,7 +364,8 @@ def _validate_approval_plan_live_context(
         request_context=plan.request_context,
         resolution_context=plan.tool_resolution_context,
     )
-    live_read_snapshot_cache = _rebuild_approval_resume_read_snapshot_cache(
+    from sidecar.runtime import chat_resume_snapshots  # noqa: PLC0415
+    live_read_snapshot_cache = chat_resume_snapshots.rebuild_approval_resume_read_snapshot_cache(
         plan,
         kernel=kernel,
         canonical_session_messages=canonical_session_messages,
@@ -419,6 +394,8 @@ def _validate_approval_plan_live_context(
             plan_mode=plan.request_context.plan_mode,
             read_only=plan.request_context.read_only,
             trusted_plan_artifact_write=_frozen_plan_artifact_write(call),
+            execution_context=plan.request_context.execution_context,
+            turn_id=plan.request_context.logical_turn_id or plan.request_id,
         )
         for call in resume_tool_calls
     )
@@ -656,6 +633,11 @@ def resume_chat_send_response_from_approval_plan(
         # sequence across the approval pause instead of restarting at zero,
         # which duplicated seq values (and derived event ids) within one turn.
         seq_state = canonical_seq_state if canonical_seq_state is not None else {"seq": 0}
+        from sidecar.runtime import chat_resume_admission  # noqa: PLC0415
+        admission = chat_resume_admission.build_resume_admission(
+            plan=plan, engine_type=stack.config.engine_type, write_message=electron_tool_writer,
+            response_reader_factory=electron_tool_reader_factory, cancel_handle=cancel_handle,
+        )
         if stream_notifications and callable(notification_writer):
             canonical_turn_events_enabled = is_feature_flag_enabled(
                 stack.config.feature_flags or {},
@@ -679,6 +661,7 @@ def resume_chat_send_response_from_approval_plan(
                         plan.request_id,
                         trace_id=plan.trace_id,
                         session_id=plan.session_id,
+                        turn_id=plan.request_context.logical_turn_id or plan.request_id,
                         seq=next_seq,
                     )
                     if canonical_msg is not None:
@@ -686,14 +669,15 @@ def resume_chat_send_response_from_approval_plan(
                         notification_writer(canonical_msg)
 
             effective_runtime = LoopRuntime(
+                logical_turn_id=plan.request_context.logical_turn_id or plan.request_id,
                 emit=_serialize_and_write,
-                request_id=plan.request_id,
-                trace_id=plan.trace_id or "",
+                request_id=plan.request_id, trace_id=plan.trace_id or "",
                 session_id=plan.session_id or "",
                 notification_writer=notification_writer,
                 electron_tool_writer=electron_tool_writer,
                 electron_tool_reader=electron_tool_reader,
                 electron_tool_reader_factory=electron_tool_reader_factory,
+                **admission,
                 max_iterations=remaining_iterations,
                 iteration_base=resume_iteration_base,
                 current_iteration=resume_iteration_base,
@@ -710,12 +694,13 @@ def resume_chat_send_response_from_approval_plan(
             )
         else:
             effective_runtime = LoopRuntime(
-                request_id=plan.request_id,
-                trace_id=plan.trace_id or "",
+                logical_turn_id=plan.request_context.logical_turn_id or plan.request_id,
+                request_id=plan.request_id, trace_id=plan.trace_id or "",
                 session_id=plan.session_id or "",
                 electron_tool_writer=electron_tool_writer,
                 electron_tool_reader=electron_tool_reader,
                 electron_tool_reader_factory=electron_tool_reader_factory,
+                **admission,
                 max_iterations=remaining_iterations,
                 iteration_base=resume_iteration_base,
                 current_iteration=resume_iteration_base,
@@ -730,8 +715,11 @@ def resume_chat_send_response_from_approval_plan(
                 tool_calls_consumed=consumed_tool_calls,
             )
 
-        # Continue the paused turn's tool-call id namespace: the resumed loop
-        # must not re-mint an id the pre-approval iterations already used.
+        from sidecar.ai.routing.quota_runtime import restore_runtime_quota, settle_quota_outcomes
+        if getattr(plan, "quota_state_json", None) is not None:
+            restore_runtime_quota(effective_runtime, stack.config, plan.quota_state_json)
+
+        # Preserve the paused turn's tool-call namespace across approval resume.
         for _plan_call in plan.tool_calls:
             _plan_call_id = str(getattr(_plan_call, "call_id", "") or "").strip()
             if _plan_call_id:
@@ -757,6 +745,9 @@ def resume_chat_send_response_from_approval_plan(
             kernel=kernel,
             tool_contract=tool_contract,
         )
+        if effective_runtime.quota_registry is not None:
+            effective_runtime.quota_registry.validate_pending_admissions(
+                plan.tool_calls, tool_contract=tool_contract)
         settle_dropped_tool_calls(
             kernel=kernel,
             runtime=effective_runtime,
@@ -829,10 +820,10 @@ def resume_chat_send_response_from_approval_plan(
                         ),
                         audit_metadata_by_call=audit_metadata_by_call,
                     )
+                except (ToolLoopSuspended, DecisionSuspensionError):
+                    raise
                 except Exception:  # noqa: BLE001 - pair pre-dispatch rows first
-                    # Mirrors the live loop's orphan settler: any emitted
-                    # ``tool.executing`` without a ``tool.result`` gets an
-                    # explicit interrupted outcome before the error propagates.
+                    # Ordinary failures settle orphan executions; suspended questions do not.
                     emit_interrupted_results_for_pending_calls(
                         runtime=effective_runtime,
                         outcomes=outcomes,
@@ -841,6 +832,7 @@ def resume_chat_send_response_from_approval_plan(
                     )
                     raise
 
+            settle_quota_outcomes(effective_runtime, outcomes, tool_contract=tool_contract)
             was_plan_mode = resumed_request_context.plan_mode
             resumed_request_context = transition_after_exit_outcome(
                 request_context=resumed_request_context,
@@ -852,22 +844,31 @@ def resume_chat_send_response_from_approval_plan(
                 request_context=resumed_request_context,
                 resolution_context=plan.tool_resolution_context,
             )
+            resumed_system_prompt = plan.system_prompt
             if was_plan_mode and not resumed_request_context.plan_mode:
+                resumed_system_prompt = _chat_hub._build_live_approval_system_prompt(
+                    plan,
+                    brain_container=brain_container,
+                    live_params=_attempt_live_params,
+                    tool_statuses=refreshed_tool_contract.status_entries,
+                )
+                working_messages[0] = {"role": "system", "content": str(resumed_system_prompt)}
                 apply_restored_tool_contract(
                     working_messages=working_messages,
                     tool_statuses=refreshed_tool_contract.status_entries,
                 )
+            resume_tool_payload = (
+                list(refreshed_tool_contract.prompt_schemas)
+                if effective_runtime.remaining_tool_calls > 0
+                else []
+            )
             resumed = run_tool_loop(
                 runtime=effective_runtime,
                 kernel=kernel,
                 request_context=resumed_request_context,
                 working_messages=working_messages,
                 tool_contract=refreshed_tool_contract,
-                tool_payload=(
-                    list(refreshed_tool_contract.prompt_schemas)
-                    if effective_runtime.remaining_tool_calls > 0
-                    else []
-                ),
+                tool_payload=resume_tool_payload,
                 tool_resolution_context=plan.tool_resolution_context,
                 tool_preferences=resumed_request_context.tool_preferences,
                 mode_policy=policy_for_mode(resumed_request_context.mode),
@@ -880,11 +881,15 @@ def resume_chat_send_response_from_approval_plan(
                 reasoning_effort=resumed_request_context.reasoning_effort,
                 prompt_cache_enabled=plan.prompt_cache_enabled,
                 cache_source_key=plan.cache_source_key,
-                system_prompt=plan.system_prompt,
+                system_prompt=resumed_system_prompt,
                 cache_break_detector=kernel._cache_break_detector
                 if plan.prompt_cache_enabled
                 else None,
-                budget_tracker=None,
+                # F26: without it the resumed leg never compacts or recovers a full window.
+                budget_tracker=resume_budget_tracker(
+                    stack.config, stack.engine, working_messages, resume_tool_payload,
+                    reasoning_effort=resumed_request_context.reasoning_effort,
+                ),
                 read_snapshot_cache=plan.read_snapshot_cache,
                 tool_statuses=refreshed_tool_contract.status_entries,
                 initial_thinking_text=None,
@@ -998,15 +1003,9 @@ def resume_chat_send_response_from_approval_plan(
             session_id=plan.request_context.session_id,
         )
         return execute_with_inner_turn_retry(
-            params=(
-                live_params
-                if isinstance(live_params, dict)
-                else {
-                    "messages": [
-                        dict(item) for item in getattr(plan, "request_messages", [])
-                    ]
-                }
-            ),
+            params=live_params if isinstance(live_params, dict) else {
+                "messages": [dict(item) for item in getattr(plan, "request_messages", [])]
+            },
             execute_attempt=_execute_resume,
             max_inner_retries=MAX_INNER_TURN_RETRIES,
             exhausted_factory=_approval_resume_exhausted_factory(plan),

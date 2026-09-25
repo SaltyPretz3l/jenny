@@ -23,10 +23,11 @@ from sidecar.ai.memory.contracts import (
     normalize_spaces,
     require_finite_confidence,
 )
+from sidecar.ai.memory.store_project_migration import migrate_v7_to_v8, v8_schema_script
 from sidecar.ai.memory.store_shared import _transaction
 from sidecar.exceptions import MemoryStoreError
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # ---------------------------------------------------------------------------
 # Public entry points
@@ -87,6 +88,7 @@ def run_migrations(connection: sqlite3.Connection) -> bool:
         4: _migrate_v4_to_v5,
         5: _migrate_v5_to_v6,
         6: _migrate_v6_to_v7,
+        7: _migrate_v7_to_v8,
     }
     try:
         with _transaction(connection):
@@ -369,13 +371,21 @@ def migrate_v2_family_key(
 
 def _migrate_from_empty(connection: sqlite3.Connection) -> None:
     try:
-        _execute_schema_script(connection, v7_schema_script(), version=SCHEMA_VERSION)
+        _execute_schema_script(connection, v8_schema_script(), version=SCHEMA_VERSION)
     except sqlite3.DatabaseError as error:
         raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to migrate memory database") from error
 
 
 def _migration_checkpoint(_stage: str) -> None:
     """Fault-injection seam for proving v7's transaction is all-or-nothing."""
+
+
+def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+    migrate_v7_to_v8(
+        connection,
+        checkpoint=_migration_checkpoint,
+        execute_schema_script=_execute_schema_script,
+    )
 
 
 def _migrate_v1_to_v3(connection: sqlite3.Connection) -> None:

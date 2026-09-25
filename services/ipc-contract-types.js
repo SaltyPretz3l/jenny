@@ -11,6 +11,15 @@
 
 /** @typedef {'session'|'recent'|'fresh'} HistoryScope */
 
+/** @typedef {import('./ipc-contract-project-types').ProjectRecord} ProjectRecord */
+/** @typedef {import('./ipc-contract-project-types').ProjectRootBindingPayload} ProjectRootBindingPayload */
+/** @typedef {import('./ipc-contract-project-types').PermissionReviewResolutionPayload} PermissionReviewResolutionPayload */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeSnapshotRequest} RuntimeSnapshotRequest */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeWorkRequest} RuntimeWorkRequest */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeStartRequest} RuntimeStartRequest */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeSubmissionRequest} RuntimeSubmissionRequest */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeSubmissionResult} RuntimeSubmissionResult */
+/** @typedef {import('./ipc-contract-runtime-types').RuntimeResumeRequest} RuntimeResumeRequest */
 /**
  * @typedef {Object} DataLifecycleResult
  * @property {boolean} ok
@@ -179,6 +188,7 @@
  * @property {string} approval_state
  * @property {string} [policy_scope]
  * @property {string} [policy_consequence]
+ * @property {boolean} [one_off_only]
  * @property {string} [reason]
  * @property {number} duration_ms
  * @property {string} parent_stream_id
@@ -478,6 +488,7 @@
  * @property {string} tool_name
  * @property {string} [policy_scope]
  * @property {string} [policy_consequence]
+ * @property {boolean} [one_off_only]
  * @property {string} [reason]
  * @property {string} summary
  */
@@ -585,6 +596,5 @@
  * @property {string[]} linked_session_ids
  * @property {string} created_at
  */
-
 
 module.exports = {};

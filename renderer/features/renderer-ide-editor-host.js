@@ -55,19 +55,13 @@
       || globalRef.rendererMonacoEditorUtils
       || (typeof require === 'function' ? require('./renderer-monaco-editor-utils') : null)
       || {};
-    const imageHostUtils = deps?.imageHostUtils
-      || globalRef.rendererIdeImageHost
+    // Image / preview / binary-document kinds live in the panes sibling.
+    const panesUtils = deps?.panesUtils
+      || globalRef.rendererIdeEditorHostPanes
       || (typeof require === 'function' ? (() => {
-        try { return require('./renderer-ide-image-host'); } catch (_error) { return null; }
+        try { return require('./renderer-ide-editor-host-panes'); } catch (_error) { return null; }
       })() : null)
       || {};
-    const previewHostUtils = deps?.previewHostUtils
-      || globalRef.rendererIdePreviewHost
-      || (typeof require === 'function' ? (() => {
-        try { return require('./renderer-ide-preview-host'); } catch (_error) { return null; }
-      })() : null)
-      || {};
-    const imageMemory = (deps?.imageMemoryUtils || globalRef.rendererIdeImageMemory || (typeof require === 'function' ? (() => { try { return require('./renderer-ide-image-memory'); } catch (_error) { return null; } })() : null) || {}).createImageMemory?.({ getWindow: () => getDom().ideEditorHost?.ownerDocument?.defaultView || null, ...deps?.imageMemoryOptions }) || null; // UIUX-034
     // Pure selection/cursor/diagnostics read accessors (extracted for the
     // file-size ceiling); the host wraps them with its live state below.
     const editorReads = deps?.editorReads
@@ -88,6 +82,7 @@
     // Buffer edits (Monaco + fallback). The preview controller debounces
     // live preview re-renders off this.
     const onModelChange = typeof deps?.onModelChange === 'function' ? deps.onModelChange : () => {};
+    const onDocumentEdit = typeof deps?.onDocumentEdit === 'function' ? deps.onDocumentEdit : () => {};
     // A click in the editor's glyph-margin lane (1-based line). The controller
     // routes it to the bookmark toggle; no-op on the textarea fallback path.
     const onGlyphMarginClick = typeof deps?.onGlyphMarginClick === 'function'
@@ -125,20 +120,19 @@
     // is unchanged is pure redundancy. Reset whenever the editor is (re)created or
     // detached so a fresh editor always re-applies.
     let lastAppliedLargeFile = null;
-    // Image preview pane (W7): overlays the editor like the diff pane; the
-    // pane module owns its DOM, this host owns the image documents.
-    const imagePane = imageHostUtils.createIdeImagePane?.({
-      getHost: () => getDom().ideEditorHost || null,
-    }) || null;
-    // Markdown/Mermaid preview pane (W8): same overlay technique.
-    const previewPane = previewHostUtils.createIdePreviewPane?.({
-      getHost: () => getDom().ideEditorHost || null,
-      postRender: (containerEl) => onPreviewDomInjected(containerEl),
-    }) || null;
     // Per-open-file bookkeeping. Monaco mode: docs hold models + view states.
     // Fallback mode: docs hold plain string buffers. Diff docs (kind 'diff')
     // hold original/modified text plus their own pair of Monaco models.
     const docs = new Map(); // path -> { kind, model, viewState, savedAltVersionId, buffer, savedBuffer, mtimeMs, eol, dirty, ... }
+    // Overlay panes (image W7, preview W8, PDF/DOCX documents) share `docs`;
+    // the panes module owns their DOM and per-format pane instances.
+    const panes = panesUtils.createEditorHostPanes?.({
+      docs, getDom, log, onDirtyChange, onDocumentEdit, onSaveRequest, onPreviewDomInjected,
+      hideEditorSurfaces: () => { setDiffPaneVisible(false); setFallbackVisible(false); },
+      imageHostUtils: deps?.imageHostUtils, previewHostUtils: deps?.previewHostUtils,
+      imageMemoryUtils: deps?.imageMemoryUtils, imageMemoryOptions: deps?.imageMemoryOptions,
+      documentPaneFactories: deps?.documentPaneFactories,
+    }) || null;
 
     function getDoc(path) {
       return docs.get(String(path || '')) || null;
@@ -300,8 +294,8 @@
 
     function syncDirty(path) {
       const doc = getDoc(path);
-      if (!doc) {
-        return;
+      if (!doc || doc.kind === 'document') {
+        return; // document panes report dirty through the panes module
       }
       const dirty = doc.model
         ? doc.model.getAlternativeVersionId() !== doc.savedAltVersionId
@@ -418,71 +412,20 @@
       return doc;
     }
 
-    // Loads (or refreshes after an external change) an image document from a
-    // workspaceFs.readFileBase64 payload. Never touches Monaco models.
-    function openImageDocument({ path, base64, mime, size, mtimeMs } = {}) {
-      const normalizedPath = String(path || '');
-      if (!normalizedPath) {
-        return null;
-      }
-      let doc = getDoc(normalizedPath);
-      if (!doc) {
-        doc = { kind: 'image', model: null, viewState: null, dirty: false };
-        docs.set(normalizedPath, doc);
-      }
-      imageMemory?.applyPayload(doc, { base64, mime }); imageMemory?.registerOpen(normalizedPath, closeDocument);
-      doc.size = Number(size) || 0;
-      doc.mtimeMs = Number(mtimeMs) || 0;
-      doc.naturalWidth = 0;
-      doc.naturalHeight = 0;
-      return doc;
+    // Image / preview / binary documents: the panes module owns the surfaces.
+    function openImageDocument(payload) {
+      return panes?.openImageDocument(payload, closeDocument) || null;
     }
-
-    function activateImageDocument(normalizedPath, doc) {
-      activePath = normalizedPath; imageMemory?.touch(normalizedPath);
-      setDiffPaneVisible(false); previewPane?.hide();
-      // The pane lives inside #ideEditorHost, so that element must stay
-      // visible even on the fallback (no-Monaco) path.
-      setFallbackVisible(false);
-      imagePane?.show(doc);
-      return true;
+    function openPreviewDocument(payload) { return panes?.openPreviewDocument(payload) || null; }
+    function updatePreview(id, html) { return panes?.updatePreview(id, html) === true; }
+    // Binary documents (PDF / DOCX): async pane parse with the same
+    // shouldApply/onApplied fences as openDocument. Rejects with a coded error.
+    async function openBinaryDocument(payload) {
+      if (!panes || disposalFence.isDisposed()) return null;
+      return panes.openBinaryDocument(payload);
     }
-
-    // ── Markdown/Mermaid preview documents (W8) ──
-
-    function openPreviewDocument({ id, label = '', sourcePath = '' } = {}) {
-      const normalizedId = String(id || '');
-      if (!normalizedId) {
-        return null;
-      }
-      let doc = getDoc(normalizedId);
-      if (!doc) {
-        doc = { kind: 'preview', model: null, viewState: null, dirty: false, html: '' };
-        docs.set(normalizedId, doc);
-      }
-      doc.id = normalizedId;
-      doc.label = String(label || doc.label || 'Preview');
-      doc.sourcePath = String(sourcePath || doc.sourcePath || '');
-      return doc;
-    }
-
-    // Stores sanitized HTML; re-injects live when this preview is visible.
-    function updatePreview(id, html) {
-      const doc = getDoc(id);
-      if (!doc || doc.kind !== 'preview') {
-        return false;
-      }
-      doc.html = String(html || '');
-      previewPane?.update(doc);
-      return true;
-    }
-
-    function activatePreviewDocument(normalizedId, doc) {
-      activePath = normalizedId;
-      setDiffPaneVisible(false); imagePane?.hide(); setFallbackVisible(false);
-      previewPane?.show(doc);
-      return true;
-    }
+    function getDocumentBytes(path) { return panes ? panes.getDocumentBytes(path) : Promise.resolve(null); }
+    function getDocumentFormat(path) { return panes?.getDocumentFormat(path) || ''; }
 
     function activateDiffDocument(normalizedId, doc) {
       activePath = normalizedId;
@@ -522,7 +465,7 @@
 
     // Install the active-file accessor and dispatch only after activePath updates; dispatchEvent is optional in bare Node tests.
     function dispatchActiveFileChanged(path) {
-      globalRef.rendererIdeActiveEditorReader = { getActivePath, getCursorInfo, getValue, getActiveLanguageId, getDocumentKind, isLargeFile: () => getDoc(activePath)?.largeFile === true };
+      globalRef.rendererIdeActiveEditorReader = { getActivePath, getCursorInfo, getValue, getActiveLanguageId, getDocumentKind, getWorkspaceId: () => deps?.getDocumentWorkspaceId?.(activePath) || '', isLargeFile: () => getDoc(activePath)?.largeFile === true };
       globalRef.dispatchEvent?.(new globalRef.CustomEvent('ide:active-file-changed', { detail: { path: String(path || '') } }));
       return true;
     }
@@ -540,13 +483,14 @@
           previous.viewState = monacoEditor.saveViewState();
         }
       }
-      if (doc.kind === 'image') {
-        return activateImageDocument(normalizedPath, doc) && dispatchActiveFileChanged(normalizedPath);
+      if (doc.kind === 'image' || doc.kind === 'preview' || doc.kind === 'document') {
+        activePath = normalizedPath;
+        const shown = doc.kind === 'image' ? panes?.activateImageDocument(normalizedPath, doc)
+          : doc.kind === 'preview' ? panes?.activatePreviewDocument(normalizedPath, doc)
+            : panes?.activateBinaryDocument(normalizedPath, doc);
+        return shown === true && dispatchActiveFileChanged(normalizedPath);
       }
-      if (doc.kind === 'preview') {
-        return activatePreviewDocument(normalizedPath, doc) && dispatchActiveFileChanged(normalizedPath);
-      }
-      imagePane?.hide(); previewPane?.hide();
+      panes?.hideAll();
       if (doc.kind === 'diff') {
         return activateDiffDocument(normalizedPath, doc) && dispatchActiveFileChanged(normalizedPath);
       }
@@ -744,6 +688,7 @@
       if (!doc) {
         return;
       }
+      if (doc.kind === 'document') { panes?.markDocumentSaved(path, { mtimeMs }); return; }
       if (doc.model) {
         doc.savedAltVersionId = savedVersionId != null
           ? savedVersionId
@@ -761,8 +706,7 @@
       if (!doc) return;
       if (activePath === normalizedPath) {
         if (doc.kind === 'diff') setDiffPaneVisible(false);
-        else if (doc.kind === 'image') imagePane?.hide();
-        else if (doc.kind === 'preview') previewPane?.hide();
+        else if (doc.kind !== 'file') panes?.hideForClose(doc);
         else if (monacoEditor) monacoEditor.setModel(null);
       }
       // Monaco 0.52 asserts when a TextModel still attached to the DiffEditorWidget
@@ -775,7 +719,7 @@
       doc.model?.dispose?.();
       doc.originalModel?.dispose?.();
       doc.modifiedModel?.dispose?.();
-      if (doc.kind === 'image') imageMemory?.discard(normalizedPath, doc); docs.delete(normalizedPath);
+      panes?.release(normalizedPath, doc); docs.delete(normalizedPath);
       if (activePath === normalizedPath) activePath = '';
     }
 
@@ -788,7 +732,7 @@
       if (!doc) {
         return '';
       }
-      return doc.kind === 'diff' || doc.kind === 'image' || doc.kind === 'preview'
+      return doc.kind === 'diff' || doc.kind === 'image' || doc.kind === 'preview' || doc.kind === 'document'
         ? doc.kind
         : 'file';
     }
@@ -804,7 +748,7 @@
         monacoEditor.setModel(null);
       }
       setDiffPaneVisible(false);
-      imagePane?.hide(); previewPane?.hide();
+      panes?.hideAll();
       const textarea = getDom().ideEditorFallback || null;
       if (textarea) {
         textarea.value = '';
@@ -941,11 +885,10 @@
       for (const doc of docs.values()) {
         doc.model?.dispose?.();
         doc.originalModel?.dispose?.();
-        doc.modifiedModel?.dispose?.(); if (doc.kind === 'image') imageMemory?.release(doc);
+        doc.modifiedModel?.dispose?.();
       }
+      panes?.dispose();
       docs.clear();
-      imagePane?.dispose();
-      previewPane?.dispose();
       monacoEditor?.dispose?.();
       monacoEditor = null; markerSubscription?.dispose?.(); markerSubscription = null;
       diffEditor?.dispose?.();
@@ -969,6 +912,8 @@
       getActivePath,
       getAltVersionId,
       getCursorInfo,
+      getDocumentBytes,
+      getDocumentFormat,
       getDocumentKind,
       getEol,
       getMarkers,
@@ -990,6 +935,7 @@
       layout,
       markSaved,
       onMarkersChanged,
+      openBinaryDocument,
       openDiffDocument,
       openDocument,
       openImageDocument,

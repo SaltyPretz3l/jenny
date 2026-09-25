@@ -34,7 +34,9 @@ NPM_COMMAND = "npm.cmd" if sys.platform.startswith("win") else "npm"
 # early under contention even though the same 12-worker lane passed standalone.
 _PYTEST_WORKERS = "8"
 _NODE_WORKERS = "10"
-DEFAULT_GLOBAL_TIMEOUT_SECONDS = 900
+# Covers policy + wave 1, the Node lane's 20 minutes and the 8-minute packaged
+# smoke tail; the old 900 s could not hold the 1.2.0 suite (owner, 2026-09-24).
+DEFAULT_GLOBAL_TIMEOUT_SECONDS = 1800
 HEARTBEAT_INTERVAL_SECONDS = 15
 FAILURE_TAIL_LINES = 200
 
@@ -61,10 +63,11 @@ _PYTEST_CMD = [
 # --include-load runs the *.load.test.js perf suites (excluded from the
 # fast/stable lanes) exactly once, here on the heavy lane. Budget is a hang
 # backstop, not a pacing target: per-file timeouts catch real hangs, and this
-# lane includes the load files but runs at the proven 10-worker width. Keep the
-# whole lock-wait + execution budget at 10 minutes: a test lane must never
-# consume the old 15-minute lock allowance before execution even begins.
-_NODE_TEST_CMD = [NPM_COMMAND, "run", "test:safe", "--", "--timeout-ms=600000", "--include-load"]
+# lane includes the load files but runs at the proven 10-worker width. The
+# whole lock-wait + execution budget is 20 minutes: at 1.2.0 (2041 files) the
+# lane took 470 s standalone and 702 s beside the pytest wave, past the old
+# 10-minute cap.
+_NODE_TEST_CMD = [NPM_COMMAND, "run", "test:safe", "--", "--timeout-ms=1200000", "--include-load"]
 
 STAGES: list[Stage] = [
     Stage("policy", [sys.executable, "scripts/checks/run_all.py"], wave=0),
@@ -364,7 +367,7 @@ def main() -> int:
         "--timeout-seconds",
         type=int,
         default=DEFAULT_GLOBAL_TIMEOUT_SECONDS,
-        help="Hard global gate budget including every stage and lock wait (default: 900).",
+        help="Hard global gate budget including every stage and lock wait (default: 1800).",
     )
     args = parser.parse_args()
 

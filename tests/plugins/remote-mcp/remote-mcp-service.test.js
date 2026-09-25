@@ -15,7 +15,8 @@ function fakeTransportFactory(calls) {
         inputSchema: { type: 'object', properties: {
           q: { type: 'string' }, region: { type: 'string', 'x-mcp-header': 'Region' },
         }, required: ['q'], additionalProperties: false } }] } };
-      return { ok: true, result: { content: [{ type: 'text', text: 'ok' }] }, notifications: [] };
+      return { ok: true, result: { content: [{ type: 'text', text: 'ok' }] }, notifications: [],
+        execution_settlement: { cleanup: 'confirmed', producer_started: true } };
     },
   });
 }
@@ -52,6 +53,7 @@ test('service discovers active contributions and revalidates authority and argum
   assert.equal(calls[1].method, 'tools/call');
   assert.equal(calls[1].options.extraHeaders['Mcp-Param-Region'], 'us-east1');
   assert.equal(invoked.provenance.binding_digest, discovered.binding.binding_digest);
+  assert.equal(invoked.execution_settlement.cleanup, 'confirmed');
   assert.match(invoked.provenance.response_digest, /^[0-9a-f]{64}$/);
 
   input.arguments.extra = true;
@@ -61,6 +63,24 @@ test('service discovers active contributions and revalidates authority and argum
   assert.equal((await service.invoke(input)).reason, 'remote_generation_stale');
   service.dispose();
   assert.equal((await service.invoke(input)).reason, 'remote_service_disposed');
+});
+
+test('request authority is revalidated immediately before remote transport dispatch', async () => {
+  const calls = [];
+  const service = new RemoteMcpService({ facade: createMemoryFsFacade(),
+    transportFactory: fakeTransportFactory(calls) });
+  const discovered = await service.discover({
+    bindingDraft: remoteBinding({ binding_digest: '0'.repeat(64), schema_digest: '0'.repeat(64) }),
+    consent: {}, context: transportContext(),
+  });
+  const result = await service.invoke({
+    ...invocationContext(discovered.binding, discovered.contributions[0]),
+    requireCurrent: () => { throw new Error('generation changed'); },
+  });
+  assert.equal(result.reason, 'remote_tool_authority_stale');
+  assert.deepEqual(result.execution_settlement,
+    { cleanup: 'confirmed', producer_started: false });
+  assert.equal(calls.length, 1, 'only discovery may reach transport');
 });
 
 test('restart requires rediscovery and never trusts persisted binding alone', async () => {

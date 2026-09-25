@@ -165,13 +165,78 @@ def test_prompt_flip_keeps_read_only_second_call_executing() -> None:
     assert all(outcome.success for outcome in outcomes)
 
 
-def test_pre_granted_approvals_bypass_pause() -> None:
-    state = turn_state.LiveRunModeState(approval_mode="prompt")
+def test_plain_prompt_flip_keeps_pre_granted_bypass() -> None:
+    state = turn_state.LiveRunModeState(approval_mode="auto_run")
 
-    kernel, outcomes = _run_batch(state=state, approvals_pre_granted=True, after_first=None)
+    kernel, outcomes = _run_batch(state=state, approvals_pre_granted=True)
 
     assert kernel.executed == ["first", "second"]
     assert all(outcome.success for outcome in outcomes)
+
+
+def test_unattended_pause_overrides_pre_granted_approvals() -> None:
+    state = turn_state.LiveRunModeState(approval_mode="auto_run")
+
+    kernel, outcomes = _run_batch(
+        state=state,
+        approvals_pre_granted=True,
+        after_first=lambda live_state: live_state.update(
+            approval_mode="prompt",
+            read_only=False,
+            paused_unattended=True,
+        ),
+    )
+
+    assert kernel.executed == ["first"]
+    assert outcomes[0].success is True
+    assert outcomes[1].error_code == CMP_TOOL_PAUSED_UNATTENDED
+
+    read_only_state = turn_state.LiveRunModeState(approval_mode="auto_run")
+    read_only_kernel, read_only_outcomes = _run_batch(
+        state=read_only_state,
+        second_side_effecting=False,
+        approvals_pre_granted=True,
+        after_first=lambda live_state: live_state.update(
+            approval_mode="prompt",
+            read_only=False,
+            paused_unattended=True,
+        ),
+    )
+
+    assert read_only_kernel.executed == ["first", "second"]
+    assert all(outcome.success for outcome in read_only_outcomes)
+
+
+def test_unattended_pause_holds_pre_granted_batch_scanned_after_pause() -> None:
+    state = turn_state.LiveRunModeState(
+        approval_mode="prompt",
+        paused_unattended=True,
+    )
+
+    kernel, outcomes = _run_batch(
+        state=state,
+        approvals_pre_granted=True,
+        scan_approval_mode="prompt",
+        after_first=None,
+    )
+
+    assert kernel.executed == []
+    assert outcomes[0].error_code == CMP_TOOL_PAUSED_UNATTENDED
+
+    state.update(
+        approval_mode="prompt",
+        read_only=False,
+        paused_unattended=False,
+    )
+    resumed_kernel, resumed_outcomes = _run_batch(
+        state=state,
+        approvals_pre_granted=True,
+        scan_approval_mode="prompt",
+        after_first=None,
+    )
+
+    assert resumed_kernel.executed == ["first", "second"]
+    assert all(outcome.success for outcome in resumed_outcomes)
 
 
 def test_batch_scanned_in_prompt_mode_bypasses_pause() -> None:

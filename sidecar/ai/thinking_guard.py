@@ -8,39 +8,70 @@ from typing import Callable
 
 from sidecar.ai.config import read_environment_value
 
-from sidecar.ai.config import read_environment_value
-
 _WORD_RE = re.compile(r"\b\w+\b")
 
-THINKING_BUDGET_CHARS_PER_TOKEN = 4
+# Measured on local GGUF reasoning streams (Bonsai 2 27B: 51,969 reasoning
+# chars for 16,384 tokens). The old value of 4 overstated the budget by a
+# quarter, which is how a chars x 4 guard sized at max_tokens x 4 could never
+# be reached before the provider's own token cap.
+THINKING_BUDGET_CHARS_PER_TOKEN = 3.2
 THINKING_BUDGET_CHARS_FLOOR = 65_536
 THINKING_BUDGET_ENGINE_CHARS_FLOOR = 16_384
+# Share of a request's num_predict a model may spend thinking when thinking and
+# the answer draw on one pool. The remainder is what is left to answer with, so
+# the checkpoint fires while the model can still act on it.
+THINKING_BUDGET_NUM_PREDICT_FRACTION = 0.65
 
 
-def resolve_thinking_budget_chars(engine: object | None, max_tokens: int) -> int:
-    """Resolve the shared character budget for a thinking guard."""
+def _budget_chars(tokens: int) -> int:
+    return max(int(tokens * THINKING_BUDGET_CHARS_PER_TOKEN), 1)
+
+
+def resolve_thinking_budget_tokens(engine: object | None, max_tokens: int) -> int | None:
+    """Thinking tokens this request may spend before the guard trips.
+
+    Engines that reserve thinking headroom *on top of* the answer budget report
+    it directly. Engines that do not (llama-server and every other plain
+    OpenAI-compatible server: thinking and answer share one ``num_predict``)
+    get a fraction of that shared pool, so the guard is reachable instead of
+    sitting above the hard cap. ``None`` means no token budget is resolvable.
+    """
     budget_tokens = getattr(engine, "_thinking_budget_tokens", None)
     if callable(budget_tokens):
         tokens = int(budget_tokens(max_tokens) or 0)
         if tokens > 0:
-            return max(
-                tokens * THINKING_BUDGET_CHARS_PER_TOKEN,
-                THINKING_BUDGET_ENGINE_CHARS_FLOOR,
-            )
+            return tokens
 
     token_headroom = getattr(engine, "_thinking_token_headroom", None)
     if callable(token_headroom):
         tokens = int(token_headroom() or 0)
         if tokens > 0:
-            return max(
-                tokens * THINKING_BUDGET_CHARS_PER_TOKEN,
-                THINKING_BUDGET_ENGINE_CHARS_FLOOR,
-            )
+            return tokens
 
-    return max(
-        max(int(max_tokens or 0), 1) * THINKING_BUDGET_CHARS_PER_TOKEN,
-        THINKING_BUDGET_CHARS_FLOOR,
-    )
+    num_predict = max(int(max_tokens or 0), 0)
+    if num_predict > 0:
+        return max(int(num_predict * THINKING_BUDGET_NUM_PREDICT_FRACTION), 1)
+    return None
+
+
+def resolve_thinking_budget_chars(engine: object | None, max_tokens: int) -> int:
+    """Resolve the shared character budget for a thinking guard.
+
+    The budget is decided in tokens (:py:func:`resolve_thinking_budget_tokens`)
+    and converted for the char-counting guard; the char floor applies only to
+    engine-reported headroom, never to the shared-pool fraction, which would
+    otherwise be raised back above the cap it exists to stay under.
+    """
+    engine_tokens = getattr(engine, "_thinking_budget_tokens", None)
+    headroom = getattr(engine, "_thinking_token_headroom", None)
+    engine_reported = callable(engine_tokens) or callable(headroom)
+    tokens = resolve_thinking_budget_tokens(engine, max_tokens)
+    if tokens is None:
+        return THINKING_BUDGET_CHARS_FLOOR
+    chars = _budget_chars(tokens)
+    if engine_reported:
+        return max(chars, THINKING_BUDGET_ENGINE_CHARS_FLOOR)
+    return chars
 
 
 def thinking_budget_abort_enabled() -> bool:
@@ -85,17 +116,24 @@ class ThinkingRepetitionGuard:
         self._consecutive_repetitive_windows = 0
 
     def feed(self, text: str) -> bool:
-        """Return True when the incoming delta should be suppressed."""
-        if self.should_stop:
-            return True
+        """Return True when the incoming delta should be suppressed.
 
+        Counting never stops. A repetition trip suppresses output, but the
+        char budget stays reachable afterwards: a latched guard that stopped
+        counting could never report ``char_limit``, so the engine kept
+        generating hidden reasoning to the provider's hard cap (owner turn
+        2026-09-20). A ``char_limit`` verdict is never downgraded.
+        """
         delta = str(text or "")
         if not delta:
-            return False
+            return self.should_stop
 
         self._total_chars += len(delta)
         if self._total_chars > self.max_chars:
-            self._trip("char_limit")
+            if self.stop_reason != "char_limit":
+                self._trip("char_limit")
+            return True
+        if self.should_stop:
             return True
 
         self._recent_chunks.append(delta)
@@ -118,6 +156,11 @@ class ThinkingRepetitionGuard:
 
     def tripped_on_budget(self) -> bool:
         return self.should_stop and self.stop_reason == "char_limit"
+
+    @property
+    def total_chars(self) -> int:
+        """Reasoning chars fed so far, counted through any suppression."""
+        return self._total_chars
 
     @staticmethod
     def _jaccard_similarity(left: str, right: str) -> float:

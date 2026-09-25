@@ -113,34 +113,47 @@ test('a failed head auto-retries on a scheduled backoff and drains the queue beh
   assert.equal(outbox.peek('s1'), null);
 });
 
-test('auto-retry budget is bounded; an exhausted head stays failed until manual retry resets it', async () => {
-  const { outbox, dispatch, scheduled, logs } = makeHarness({
-    sendResults: [false, false, false, false],
-    maxAutoRetries: 2,
+test('an exhausted head is parked as needs_review and the next ready entry dispatches', async () => {
+  const { outbox, dispatch, scheduled, logs, sendCalls } = makeHarness({
+    sendResults: [false, false, false, false, true],
   });
   outbox.enqueue('s1', { prompt: 'stuck', status: 'ready' });
+  outbox.enqueue('s1', { prompt: 'next', status: 'ready' });
 
   assert.equal(await dispatch('s1'), false);
   scheduled[0].callback();
   await new Promise((resolve) => setImmediate(resolve));
   scheduled[1].callback();
   await new Promise((resolve) => setImmediate(resolve));
+  scheduled[2].callback();
+  await new Promise((resolve) => setImmediate(resolve));
 
-  // Third failure exceeds maxAutoRetries=2: no further timer, exhaustion logged.
-  assert.equal(scheduled.length, 2);
-  assert.equal(outbox.peek('s1').status, 'failed');
-  assert.equal(outbox.peek('s1').failure.autoRetryCount, 3);
-  assert.ok(logs.some((entry) => entry.event === 'send.outbox_auto_retry_exhausted'));
+  assert.equal(scheduled.length, 3);
+  assert.deepEqual(sendCalls, ['stuck', 'stuck', 'stuck', 'stuck', 'next']);
+  assert.equal(outbox.list('s1').length, 1);
+  assert.equal(outbox.peek('s1').prompt, 'stuck');
+  assert.equal(outbox.peek('s1').status, 'needs_review');
+  assert.equal(outbox.peek('s1').failure.reason, 'dispatch_failed');
+  assert.equal(outbox.peek('s1').failure.autoRetryCount, 4);
+  const exhaustedLog = logs.find((entry) => entry.event === 'send.outbox_auto_retry_exhausted');
+  assert.equal(exhaustedLog?.details.reason, 'auto_retry_exhausted');
+});
 
-  // A drain trigger (turn terminal) no longer touches the exhausted head.
-  assert.equal(await dispatch('s1'), null);
-  assert.equal(outbox.peek('s1').failure.autoRetryCount, 3);
+test('retrying a parked entry puts it back in FIFO order', async () => {
+  const { outbox, dispatch, sendCalls } = makeHarness();
+  outbox.enqueue('s1', { prompt: 'ahead', status: 'ready' });
+  const parked = outbox.enqueue('s1', { prompt: 'parked', status: 'needs_review' });
+  outbox.enqueue('s1', { prompt: 'behind', status: 'ready' });
 
-  // Manual retry clears the failure record, restoring the auto-retry budget.
-  const readyEntry = outbox.retry(outbox.peek('s1'));
+  const readyEntry = outbox.retry(parked);
+  assert.equal(readyEntry.status, 'ready');
   assert.equal(readyEntry.failure, null);
-  assert.equal(await dispatch('s1'), false);
-  assert.equal(outbox.peek('s1').failure.autoRetryCount, 1);
+  assert.equal(await dispatch('s1'), true);
+  assert.deepEqual(sendCalls, ['ahead']);
+  assert.equal(await dispatch('s1'), true);
+  assert.deepEqual(sendCalls, ['ahead', 'parked']);
+  assert.equal(await dispatch('s1'), true);
+  assert.deepEqual(sendCalls, ['ahead', 'parked', 'behind']);
 });
 
 test('a drain trigger re-dispatches a failed head with remaining budget directly', async () => {

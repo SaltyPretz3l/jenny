@@ -145,6 +145,7 @@ test('backend service forwards sidecar-owned recall and response-style policy', 
   assert.deepEqual(chatSendRequest.params.memory_policy, {
     enabled: true,
     include_response_style: true,
+    project_id: 'project_general',
   });
   assert.equal(chatSendRequest.params.learning_context, undefined);
 });

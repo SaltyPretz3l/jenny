@@ -44,6 +44,10 @@ function registerWorkspaceIpcHandlers(
     };
   };
   registerIpcInvokeHandlers(ipcMainLike, {
+    'reminders.snooze': (_, id, minutes = 10) => (
+      configService.reminderNotifier?.snooze(id, minutes)
+      || { id: String(id || ''), minutes, untilMs: null }
+    ),
     'workspace.getState': () => configService.getWorkspaceState(),
     'workspace.updateState': (_, patch) => configService.updateWorkspaceState(patch),
     'workspaceIde.getState': () => statePayload({ touch: true }),
@@ -137,8 +141,14 @@ function registerWorkspaceFsIpcHandlers(
     'workspaceFs.readImage': (_, payload) => (
       invokeVersionedWorkspaceFile(versionedFileService, 'readImage', payload)
     ),
+    'workspaceFs.readDocument': (_, payload) => (
+      invokeVersionedWorkspaceFile(versionedFileService, 'readDocument', payload)
+    ),
     'workspaceFs.writeText': (_, payload) => (
       invokeVersionedWorkspaceFile(versionedFileService, 'writeText', payload)
+    ),
+    'workspaceFs.writeDocument': (_, payload) => (
+      invokeVersionedWorkspaceFile(versionedFileService, 'writeDocument', payload)
     ),
     'workspaceFs.listDirectory': (_, payload) => workspaceIdeService.listDirectory(payload),
     'workspaceFs.listAllFiles': (_, payload) => workspaceIdeService.listAllFiles(payload),
@@ -167,6 +177,7 @@ function registerWorkspaceRootIpcHandlers(ipcMainLike, {
   captureContext,
   prepareChoose,
   prepareClear,
+  prepareProject,
   commit,
   cancel,
   respondExternalTransition,
@@ -177,6 +188,7 @@ function registerWorkspaceRootIpcHandlers(ipcMainLike, {
     captureContext,
     prepareChoose,
     prepareClear,
+    ...(prepareProject ? { prepareProject } : {}),
     commit,
     cancel,
     respondExternalTransition,

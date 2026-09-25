@@ -459,6 +459,7 @@ test('_stopOwnedPid continues without throwing when second waitForProcessExit th
   const killCalls = [];
 
   const manager = makeManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     killProcessTreeImpl: async (pid, options = {}) => {
       killCalls.push({ pid, force: Boolean(options.force) });
     },
@@ -501,6 +502,7 @@ test('_cleanupFailedStartup logs warning and clears state when stopOwnedPid thro
   };
 
   const manager = makeManager({
+    platform: 'linux', // graceful-then-force contract; win32 force-kills directly
     stateStore: fakeStore,
     logger: (level, event, details) => logs.push({ level, event, details }),
     // Process is alive → _cleanupFailedStartup will call _stopOwnedPid
@@ -982,4 +984,22 @@ test('resolveOllamaOutputLevel returns defaultLevel unchanged for stdout stream'
     defaultLevel: 'DEBUG',
   });
   assert.equal(result, 'DEBUG', 'stdout stream must not downgrade to INFO');
+});
+
+test('_stopOwnedPid force-kills directly on Windows instead of waiting out a WM_CLOSE grace', async () => {
+  const killCalls = [];
+  let waitCallCount = 0;
+  const manager = makeManager({
+    platform: 'win32',
+    killProcessTreeImpl: async (pid, options = {}) => {
+      killCalls.push({ pid, force: Boolean(options.force) });
+    },
+    waitForProcessExitImpl: async () => {
+      waitCallCount += 1;
+      return true;
+    },
+  });
+  await manager._stopOwnedPid(55050);
+  assert.deepEqual(killCalls, [{ pid: 55050, force: true }]);
+  assert.equal(waitCallCount, 1, 'only the post-force exit wait runs');
 });

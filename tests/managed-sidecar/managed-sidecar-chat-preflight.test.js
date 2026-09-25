@@ -8,6 +8,9 @@ const {
   validateImageAttachmentsForManagedSend,
 } = require('../../services/backend/managed-sidecar-attachments');
 const {
+  prepareManagedSession,
+} = require('../../services/backend/managed-sidecar-session-preflight');
+const {
   AI_ERROR_CODES,
   SIDECAR_ERROR_CODES,
 } = require('../../services/backend/error-codes');
@@ -67,6 +70,39 @@ test('managed sidecar reconnects a stale client before sending a new chat turn',
     ),
     true
   );
+});
+
+test('managed session preflight uses bounded summary metadata without loading messages', () => {
+  const summary = {
+    id: 'session_summary_preflight',
+    title: 'New Chat',
+    message_count: 0,
+    created_at: '2026-09-10T10:00:00.000Z',
+    session_start_date: '2026-09-10',
+  };
+  const service = {
+    sessionStore: {
+      getSessionSummary(sessionId) {
+        assert.equal(sessionId, summary.id);
+        return summary;
+      },
+      getSession() {
+        throw new Error('preflight must not hydrate the transcript');
+      },
+    },
+  };
+
+  const prepared = prepareManagedSession(service, {
+    sessionId: summary.id,
+    prompt: 'Summarize the workspace',
+    attachments: [],
+    normalizedInteractiveResponse: null,
+    normalizedPreferences: {},
+  });
+
+  assert.equal(prepared.existingSession, summary);
+  assert.equal(prepared.sessionStartDate, '2026-09-10');
+  assert.equal(prepared.exchangeTitle, 'Summarize the workspace');
 });
 
 test('managed sidecar preflights Ollama before sending an Ollama-backed chat turn', async () => {
@@ -457,7 +493,7 @@ test('managed sidecar rejects the send when auto-created session storage refuses
       sessionId: '',
       prompt: 'No session to write into',
     })),
-    /session could not be created/i
+    /session storage rejected the write/i
   );
 
   assert.equal(chatSendCount, 0);

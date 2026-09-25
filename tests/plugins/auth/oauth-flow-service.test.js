@@ -93,19 +93,105 @@ test('OAuth flow rejects state/issuer mix-up and scope escalation', async () => 
     callback_url: callback })).reason, 'oauth_token_response_invalid');
 });
 
+test('OAuth flow keeps a wrong-state callback pending for the legitimate callback', async () => {
+  const network = broker();
+  const credentialBroker = credentials();
+  let consumed = 0;
+  const service = new OAuthFlowService({ networkBroker: network, credentialBroker,
+    now: () => NOW, randomBytes: (size) => Buffer.alloc(size, 10) });
+  const begun = await service.beginAuthorization(input());
+  const authorization = new URL(begun.authorization_url);
+  const invalid = new URL(input().redirect_uri);
+  invalid.searchParams.set('code', 'attacker-code');
+  invalid.searchParams.set('state', 'wrong');
+  invalid.searchParams.set('iss', 'https://auth.test');
+  assert.equal((await service.completeAuthorization({ flow_id: begun.flow_id,
+    callback_url: invalid.href, on_consumed: () => { consumed += 1; } })).reason,
+  'oauth_state_mismatch');
+  assert.equal(consumed, 0);
+
+  const legitimate = new URL(input().redirect_uri);
+  legitimate.searchParams.set('code', 'authorization-code');
+  legitimate.searchParams.set('state', authorization.searchParams.get('state'));
+  legitimate.searchParams.set('iss', 'https://auth.test');
+  assert.equal((await service.completeAuthorization({ flow_id: begun.flow_id,
+    callback_url: legitimate.href, on_consumed: () => { consumed += 1; } })).ok, true);
+  assert.equal(consumed, 1);
+  assert.equal(credentialBroker.stored.length, 1);
+});
+
+test('OAuth flow ignores every callback binding failure before consuming the flow', async () => {
+  const credentialBroker = credentials();
+  const service = new OAuthFlowService({ networkBroker: broker(), credentialBroker,
+    now: () => NOW, randomBytes: (size) => Buffer.alloc(size, 11) });
+  const begun = await service.beginAuthorization(input());
+  const state = new URL(begun.authorization_url).searchParams.get('state');
+  const query = `code=x&state=${encodeURIComponent(state)}&iss=https%3A%2F%2Fauth.test`;
+  const invalidCallbacks = [
+    ['http://127.0.0.1:49153/callback?' + query, 'oauth_state_mismatch'],
+    ['http://127.0.0.1:49152/not-the-callback?' + query, 'oauth_state_mismatch'],
+    [`http://127.0.0.1:49152/callback?code=x&state=${state}&state=${state}`,
+      'oauth_callback_invalid'],
+    [`http://127.0.0.1:49152/callback?code=x&code=y&state=${state}`,
+      'oauth_callback_invalid'],
+    [`http://127.0.0.1:49152/callback?state=${state}&iss=https%3A%2F%2Fauth.test`,
+      'oauth_code_invalid'],
+    [`http://127.0.0.1:49152/callback?code=${'x'.repeat(4097)}&state=${state}`,
+      'oauth_code_invalid'],
+    [`http://127.0.0.1:49152/callback?code=x&state=${state}`, 'oauth_issuer_mismatch'],
+    [`http://127.0.0.1:49152/callback?code=x&state=${state}&iss=https%3A%2F%2Fevil.test`,
+      'oauth_issuer_mismatch'],
+  ];
+  for (const [callbackUrl, reason] of invalidCallbacks) {
+    assert.equal((await service.completeAuthorization({ flow_id: begun.flow_id,
+      callback_url: callbackUrl })).reason, reason);
+  }
+  assert.equal((await service.completeAuthorization({ flow_id: begun.flow_id,
+    callback_url: `http://127.0.0.1:49152/callback?${query}` })).ok, true);
+  assert.equal(credentialBroker.stored.length, 1);
+});
+
+test('OAuth flow completes once when invalid and valid callbacks race in either order', async () => {
+  for (const invalidFirst of [true, false]) {
+    const credentialBroker = credentials();
+    const service = new OAuthFlowService({ networkBroker: broker(), credentialBroker,
+      now: () => NOW, randomBytes: cryptoRandom });
+    const begun = await service.beginAuthorization(input());
+    const state = new URL(begun.authorization_url).searchParams.get('state');
+    const invalidInput = { flow_id: begun.flow_id,
+      callback_url: 'http://127.0.0.1:49152/callback?code=x&state=wrong' };
+    const validInput = { flow_id: begun.flow_id,
+      callback_url: `http://127.0.0.1:49152/callback?code=x&state=${state}`
+        + '&iss=https%3A%2F%2Fauth.test' };
+    const ordered = invalidFirst ? [invalidInput, validInput] : [validInput, invalidInput];
+    const [first, second] = await Promise.all(ordered.map((callback) => (
+      service.completeAuthorization(callback)
+    )));
+    const validResult = invalidFirst ? second : first;
+    const invalidResult = invalidFirst ? first : second;
+    assert.equal(validResult.ok, true, `valid callback must win when invalidFirst=${invalidFirst}`);
+    assert.equal(invalidResult.reason, invalidFirst ? 'oauth_state_mismatch' : 'oauth_flow_not_found');
+    assert.equal(credentialBroker.stored.length, 1);
+  }
+});
+
 test('OAuth flow enforces one resource flow, global bounds, step-up cap, and restart loss', async () => {
   const service = new OAuthFlowService({ networkBroker: broker(), credentialBroker: credentials(),
     now: () => NOW, randomBytes: cryptoRandom });
   const first = await service.beginAuthorization(input());
   assert.equal((await service.beginAuthorization(input())).reason, 'oauth_resource_flow_in_progress');
+  const firstState = new URL(first.authorization_url).searchParams.get('state');
   await service.completeAuthorization({ flow_id: first.flow_id,
-    callback_url: 'http://127.0.0.1:49152/callback?state=wrong' });
+    callback_url: `http://127.0.0.1:49152/callback?error=access_denied&state=${firstState}`
+      + '&iss=https%3A%2F%2Fauth.test' });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const stepped = await service.beginAuthorization(input({ previous_scopes: ['tools.read'],
       challenge_header: 'Bearer scope="admin"' }));
     assert.equal(stepped.ok, true);
+    const steppedState = new URL(stepped.authorization_url).searchParams.get('state');
     await service.completeAuthorization({ flow_id: stepped.flow_id,
-      callback_url: 'http://127.0.0.1:49152/callback?state=wrong' });
+      callback_url: `http://127.0.0.1:49152/callback?error=access_denied&state=${steppedState}`
+        + '&iss=https%3A%2F%2Fauth.test' });
   }
   assert.equal((await service.beginAuthorization(input({ previous_scopes: ['tools.read'],
     challenge_header: 'Bearer scope="admin"' }))).reason, 'oauth_step_up_limit_exceeded');

@@ -8,11 +8,26 @@ const { flushSessionStoresAsync } = require('./session-store-drain');
 const {
   abortManagedSidecarInitialization,
   buildObservedBackendStatus,
+  initializeNeedsOllama,
   setModelLifecycle,
 } = require('./local-engine-status');
-const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
+const { AI_ERROR_CODES, SIDECAR_ERROR_CODES, RUNTIME_ERROR_CODES } = require('./error-codes');
+const { t } = require('../i18n-main');
 const { SHUTDOWN_TIMEOUT_MS } = require('./sidecar-request-timeouts');
 const { abortAndDrainActiveStreams } = require('./active-stream-shutdown-drain');
+const {
+  awaitBackendRuntimeShutdown,
+  beginBackendRuntimeShutdown,
+  reopenBackendRuntimeAfterStart,
+} = require('./backend-runtime-lifecycle');
+const pendingBackendStops = new WeakMap();
+
+function assertNoBackendStop(service) {
+  if (!pendingBackendStops.has(service)) return;
+  throw Object.assign(new Error(t('healthPill.stopping', 'Stopping')), {
+    code: RUNTIME_ERROR_CODES.UNAVAILABLE, reason: 'backend_stop_in_progress', retryable: true,
+  });
+}
 
 function handleSidecarStatus(service, status) {
   const currentStatus = status && typeof status === 'object' && !Array.isArray(status)
@@ -153,7 +168,27 @@ function ownsLocalEngineLifecycle(service) {
   return service?.hostPorts?.posture?.ownsEngineLifecycle !== false;
 }
 
+function beginLifecycleGeneration(service) {
+  const current = Number.isSafeInteger(service._backendLifecycleGeneration)
+    ? service._backendLifecycleGeneration : 0;
+  const generation = current === Number.MAX_SAFE_INTEGER ? 1 : current + 1;
+  service._backendLifecycleGeneration = generation;
+  return generation;
+}
+
+function isCurrentStart(service, generation) {
+  return service._backendLifecycleGeneration === generation
+    && !service._disposed && !service._stopping;
+}
+
+function reopenRuntimeAfterStart(service, generation) {
+  if (!isCurrentStart(service, generation)) return;
+  reopenBackendRuntimeAfterStart(service);
+}
+
 async function startBackendService(service, options) {
+  assertNoBackendStop(service);
+  const lifecycleGeneration = beginLifecycleGeneration(service);
   service._autoReconnectAttempted = false;
   service._autoReconnectPending = false;
   service._managedReadyOnce = false;
@@ -236,13 +271,20 @@ async function startBackendService(service, options) {
   // needs it. emit ollama_ready here (after sidecar_ready) so progress stays
   // monotonic; see STARTUP_STEP_INDEX ordering in runtime-shutdown.js.
   const joinLocalEngineReady = async () => {
-    const reportOllamaReady = engineUsesOllamaDaemon && Boolean(localEngineReadyPromise);
-    const [result] = await Promise.all([
-      localEngineReadyPromise,
-      localServerReadyPromise,
-    ]);
+    const ollamaReadyPromise = localEngineReadyPromise;
+    const reportOllamaReady = engineUsesOllamaDaemon && Boolean(ollamaReadyPromise);
     localEngineReadyPromise = null;
+    await localServerReadyPromise;
     localServerReadyPromise = null;
+    if (reportOllamaReady && !initializeNeedsOllama(service)) {
+      // Ollama keeps starting in the background for its own models and blob
+      // discovery; its start already logs its own failure.
+      service._emitServiceLog('INFO', 'ollama.startup_join_skipped', {
+        engine: service.currentEngineType,
+      });
+      return;
+    }
+    const result = await ollamaReadyPromise;
     if (reportOllamaReady) {
       // Report Ollama ready only after a successful, already-running, or
       // intentionally skipped result.
@@ -265,7 +307,7 @@ async function startBackendService(service, options) {
       // that window must not resume into _initializeManagedSidecar against a
       // torn-down client, nor let a late-resolving join fire a sidecar
       // respawn after shutdown.
-      if (service._disposed || service._stopping) {
+      if (!isCurrentStart(service, lifecycleGeneration)) {
         return buildObservedBackendStatus(service, status);
       }
       onProgress('sidecar_spawned', 'Sidecar process spawned');
@@ -302,6 +344,10 @@ async function startBackendService(service, options) {
         service.refreshStatusSnapshot().catch(() => null),
       ]);
       await reconcileManagedSidecarActiveTurns(service);
+      if (!isCurrentStart(service, lifecycleGeneration)) {
+        return buildObservedBackendStatus(service, status);
+      }
+      reopenRuntimeAfterStart(service, lifecycleGeneration);
     }
     if (!modelUnavailable) {
       onProgress('ready', 'Jenny is ready');
@@ -336,7 +382,7 @@ async function startBackendService(service, options) {
     onProgress('sidecar_spawned', 'Sidecar process spawned');
     return await finalizeStart(status);
   } catch (error) {
-    if (service._disposed || service._stopping || service.sidecarManager.isStopping) {
+    if (!isCurrentStart(service, lifecycleGeneration) || service.sidecarManager.isStopping) {
       throw error;
     }
     service._emitServiceLog('WARN', 'backend.start_retrying', {
@@ -356,7 +402,25 @@ async function startBackendService(service, options) {
   }
 }
 
-async function stopBackendService(service, options) {
+function stopBackendService(service, options) {
+  if (pendingBackendStops.has(service)) return pendingBackendStops.get(service);
+  let resolve;
+  let reject;
+  const completion = new Promise((done, fail) => { resolve = done; reject = fail; });
+  pendingBackendStops.set(service, completion);
+  void stopBackendServiceOnce(service, options).then(result => {
+    pendingBackendStops.delete(service);
+    resolve(result);
+  }, error => {
+    pendingBackendStops.delete(service);
+    reject(error);
+  });
+  return completion;
+}
+
+async function stopBackendServiceOnce(service, options) {
+  beginLifecycleGeneration(service);
+  const runtimeShutdown = beginBackendRuntimeShutdown(service);
   service._stopping = true;
   const initializationWasActive = abortManagedSidecarInitialization(
     service,
@@ -369,6 +433,7 @@ async function stopBackendService(service, options) {
       ? 'any_local'
       : 'app_owned';
   onProgress('streams_abort', 'Cancelling active streams...');
+  await awaitBackendRuntimeShutdown(service, runtimeShutdown);
   await abortAndDrainActiveStreams(service, {
     reason: CANCEL_REASON_SERVICE_STOP,
     timeoutMs: Math.min(1500, Math.max(SHUTDOWN_TIMEOUT_MS - 500, 1)),
@@ -476,6 +541,8 @@ async function stopBackendService(service, options) {
 }
 
 async function retryStartBackendService(service) {
+  assertNoBackendStop(service);
+  const lifecycleGeneration = beginLifecycleGeneration(service);
   service._autoReconnectAttempted = false;
   service._stopping = false;
   service.currentStatus = null;
@@ -499,13 +566,16 @@ async function retryStartBackendService(service) {
         throw error;
       }
       markManagedSidecarInitialized(service);
-      return buildObservedBackendStatus(service, status);
     }
   }
   if (status.phase === 'ready') {
     await service.restoreAuthState();
     await service.refreshStatusSnapshot().catch(() => null);
     await reconcileManagedSidecarActiveTurns(service, { emitChatStream: true });
+    if (!isCurrentStart(service, lifecycleGeneration)) {
+      return buildObservedBackendStatus(service, status);
+    }
+    reopenRuntimeAfterStart(service, lifecycleGeneration);
   }
   return status.phase === 'ready'
     ? buildObservedBackendStatus(service, status)

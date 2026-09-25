@@ -7,12 +7,16 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 
-test('Memory Settings styles use flat hairline rows and remain last in settings order', () => {
+test('Memory Settings styles use flat hairline rows and load after the shared settings layers', () => {
   const imports = fs.readFileSync(path.join(root, 'styles', 'settings.css'), 'utf8').trim().split(/\r?\n/);
   const css = fs.readFileSync(path.join(root, 'styles', 'settings-memory.css'), 'utf8');
   const baseRecord = /\.memory-record\s*\{([\s\S]*?)\}/.exec(css)?.[1] || '';
 
-  assert.equal(imports.at(-1), '@import url("./settings-memory.css");');
+  // Memory loads after every shared settings layer; only per-section sheets
+  // (Projects v2, 2026-09-20) may follow it.
+  const memoryIndex = imports.indexOf('@import url("./settings-memory.css");');
+  assert.ok(memoryIndex > imports.indexOf('@import url("./settings-affordances.css");'));
+  assert.deepEqual(imports.slice(memoryIndex + 1), ['@import url("./settings-projects.css");']);
   assert.doesNotMatch(baseRecord, /\bborder(?:-radius)?\s*:/);
   assert.doesNotMatch(baseRecord, /\bbackground(?:-color)?\s*:/);
   assert.match(css, /\.memory-record \+ \.memory-record\s*\{\s*border-top:/);

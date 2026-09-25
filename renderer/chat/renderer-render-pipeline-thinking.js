@@ -328,11 +328,22 @@
     }
 
     function renderLiveThinkingChip(thinkingState = null, activeMessageId = '') {
+      if (disposed) return;
       const { activeStreamId, thinkingText, thinkingId } = thinkingState
         || getActiveThinkingStreamState();
-      chatThinkingUtils.syncLiveReasoningStatusLabel?.(chatTimeline, {
+      const labelOptions = {
         thinkingText, thinkingId, activeMessageId, escapeSelectorValue,
-      });
+      };
+      chatThinkingUtils.syncLiveReasoningStatusLabel?.(chatTimeline, labelOptions);
+      if (state?.features?.featureFlags?.reasoning_status_v2 === true) {
+        const promoted = chatTimeline?.querySelectorAll?.('.reasoning-row-main--live-status') || [];
+        for (const label of promoted) label.classList.remove('reasoning-row-main--live-status');
+        const activeRow = chatThinkingUtils.resolveLiveReasoningStatusRow?.(chatTimeline, labelOptions);
+        const activeLabel = activeRow?.querySelector?.('.reasoning-row-main');
+        if (activeLabel && String(thinkingText || '').trim()) {
+          activeLabel.classList.add('reasoning-row-main--live-status');
+        }
+      }
 
       const indicatorState = thinkingIndicator ? thinkingIndicator.getDisplayState() : null;
       if (

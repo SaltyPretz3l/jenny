@@ -6,7 +6,6 @@ import threading
 from typing import Any
 
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
-from sidecar.ai.mcp.inspection import inspect_server
 from sidecar.protocol import MCP_INSPECT_METHOD
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.outcomes import ProcessOutcome
@@ -15,6 +14,13 @@ from sidecar.runtime.rpc import result_response, validate_method_version
 _INSPECTION_LOCK = threading.Lock()
 _INSPECTION_CANCEL_HANDLES: dict[Any, TurnCancellationHandle] = {}
 JSONRPC_CANCEL_REQUEST_METHOD = "$/cancelRequest"
+
+
+def inspect_server(params: Any, **kwargs: Any) -> dict[str, Any]:
+    # Keep the replaceable dispatch seam without loading transports at startup.
+    from sidecar.ai.mcp.inspection import inspect_server as inspect  # noqa: PLC0415
+
+    return inspect(params, **kwargs)
 
 
 def prepare_mcp_inspection(message_id: Any) -> tuple[TurnCancellationHandle, bool]:
@@ -54,7 +60,7 @@ def process_mcp_cancel_notification(message: dict[str, Any]) -> bool:
     return True
 
 
-def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
+def process_mcp_method(  # noqa: PLR0913, PLR0917 - matches the shared dispatcher seam
     method: str,
     message_id: Any,
     params: Any,

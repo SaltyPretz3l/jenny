@@ -138,8 +138,6 @@ const {
 } = require('./backend-active-turn-state');
 const {
   getManagedReasoningSupportForModel: _getManagedReasoningSupportForModel,
-  normalizeManagedSessionPreferencePatch: _normalizeManagedSessionPreferencePatch,
-  normalizeManagedReasoningEfforts: _normalizeManagedReasoningEfforts,
 } = require('./backend-managed-reasoning');
 const { drainSessionStoresSync } = require('./session-store-drain');
 const { OllamaProcessManager, runOllamaDisposeForceKillSweep } = require('./ollama-process-manager');
@@ -294,6 +292,7 @@ class BackendService extends EventEmitter {
       packagedLaunchDetail: options.packagedLaunchDetail,
       packagedSidecarLaunch: options.packagedSidecarLaunch,
       resolvePackagedLaunch: options.resolvePackagedLaunch,
+      resolveExtraEnv: options.resolveSidecarExtraEnv,
       killProcessTreeImpl: options.killProcessTreeImpl,
       startupSoftTimeoutMs: options.startupSoftTimeoutMs,
       logger: emitLog,
@@ -309,6 +308,8 @@ class BackendService extends EventEmitter {
     this.offlineIntelligenceService = options.offlineIntelligenceService || null;
     this.toolExecutor = options.toolExecutor || null;
     this.toolPermissionStore = options.toolPermissionStore || null;
+    require('../projects/application-execution-composition').initializeSessionExecutionAuthority(this);
+    require('../session-runtime/composition').initializeSessionRuntimeComposition(this);
     this._electronToolGeneratedArtifactsByCall = new Map();
     // Dismissed memory suggestion fingerprints persist across renderer reloads
     // but not across app restarts.  Keyed by normalized fingerprint string.
@@ -479,6 +480,7 @@ class BackendService extends EventEmitter {
     if (this.skillsService && typeof this.skillsService.setFeatureEnabled === 'function') {
       this.skillsService.setFeatureEnabled(this.featureFlags.skills_system === true);
     }
+    this.sessionRuntime?.setEnabled?.(this.featureFlags.session_runtime === true);
     return { ...this.featureFlags };
   }
 
@@ -529,14 +531,6 @@ class BackendService extends EventEmitter {
 
   _getManagedReasoningSupportForModel(preferredModel = '') {
     return _getManagedReasoningSupportForModel(this, preferredModel);
-  }
-
-  _normalizeManagedSessionPreferencePatch(preferences = {}, sessionId = '') {
-    return _normalizeManagedSessionPreferencePatch(this, preferences, sessionId);
-  }
-
-  _normalizeManagedReasoningEfforts() {
-    return _normalizeManagedReasoningEfforts(this);
   }
 
   async refreshStatusSnapshot() {
@@ -591,8 +585,10 @@ class BackendService extends EventEmitter {
     return path.join(this.options.userDataPath, 'background-memory');
   }
 
-  async createSession({ title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId } = {}) {
-    return _createSession(this, { title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId });
+  async createSession({ title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments } = {}) {
+    return _createSession(this, {
+      title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
+    });
   }
 
   async renameSession(sessionId, title) {
@@ -640,12 +636,12 @@ class BackendService extends EventEmitter {
     );
   }
 
-  dismissMemorySuggestion(fingerprint) {
-    return _dismissMemorySuggestion(this, fingerprint);
+  dismissMemorySuggestion(sessionIdOrFingerprint, fingerprint) {
+    return _dismissMemorySuggestion(this, sessionIdOrFingerprint, fingerprint);
   }
 
-  isMemorySuggestionDismissed(fingerprint) {
-    return _isMemorySuggestionDismissed(this, fingerprint);
+  isMemorySuggestionDismissed(sessionIdOrFingerprint, fingerprint) {
+    return _isMemorySuggestionDismissed(this, sessionIdOrFingerprint, fingerprint);
   }
 
   async runBackgroundTask(task, params = {}) {
@@ -682,24 +678,24 @@ class BackendService extends EventEmitter {
     return _listPendingMemories(this);
   }
 
-  async updateApprovedMemory(memoryId, patch) {
-    return _updateApprovedMemory(this, memoryId, patch);
+  async updateApprovedMemory(memoryId, patch, projectId) {
+    return _updateApprovedMemory(this, memoryId, patch, projectId);
   }
 
-  async deleteApprovedMemory(memoryId) {
-    return _deleteApprovedMemory(this, memoryId);
+  async deleteApprovedMemory(memoryId, projectId) {
+    return _deleteApprovedMemory(this, memoryId, projectId);
   }
 
   async deletePendingMemory(sessionId, contentFingerprint) {
     return _deletePendingMemory(this, sessionId, contentFingerprint);
   }
 
-  async recallApprovedMemories(query, limit = 3) {
-    return _recallApprovedMemories(this, query, limit);
+  async recallApprovedMemories(query, limit = 3, options = {}) {
+    return _recallApprovedMemories(this, query, limit, options);
   }
 
-  async recallRecentApprovedMemories(lessonKind, limit = 2) {
-    return _recallRecentApprovedMemories(this, lessonKind, limit);
+  async recallRecentApprovedMemories(lessonKind, limit = 2, options = {}) {
+    return _recallRecentApprovedMemories(this, lessonKind, limit, options);
   }
 
   async inspectHarness(options = {}) {
@@ -759,8 +755,9 @@ class BackendService extends EventEmitter {
     debugOptions,
     clientTiming, pluginCommandInvocation, skillInvocation, editedMessageId, failureRetry,
     } = payload || {};
-    // IMG-D01/C3 + C2 admission (gpu_busy_image / session_type_mismatch).
-    assertChatTurnAdmissible(this, sessionId);
+    // Runtime admission owns routed GPU/provider checks when composed. Minimal
+    // embedded hosts retain the legacy entry check.
+    if (!this.sessionRuntime) assertChatTurnAdmissible(this, sessionId);
     return _startLocalEngineChatStream(this, {
       sessionId,
       prompt,

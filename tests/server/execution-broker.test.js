@@ -88,6 +88,27 @@ test('lost submit response is fenced by cancellation, never replayed', async (t)
   assert.equal(result.success, false);
   assert.equal(readReceipt(broker.filePath).pending, null);
 });
+
+test('runtime admission is reasserted after worker readiness and before the durable command claim', async (t) => {
+  let state = ready();
+  const calls = [];
+  const broker = new ExecutionBroker({ userDataPath: fixture(t), request: async (operation, fields) => {
+    calls.push(operation);
+    if (operation === 'submit') state = ready(NEXT, terminal(fields.job_id));
+    return state;
+  } });
+  await broker.prepare();
+  const count = calls.length;
+  await assert.rejects(broker.execute({ command: 'true' }, { beforeAdmission: () => {
+    assert.equal(calls.at(-1), 'status');
+    assert.equal(readReceipt(broker.filePath).pending, null);
+    throw new Error('resource_waiting');
+  } }), /resource_waiting/);
+  assert.ok(calls.length > count);
+  assert.equal(calls.includes('submit'), false);
+  assert.equal(readReceipt(broker.filePath).pending, null);
+  assert.equal(broker.status().available, true);
+});
 test('recovery consumes an idle old incarnation instead of forgetting ambiguous admission', async (t) => {
   const root = fixture(t);
   fs.writeFileSync(path.join(root, 'sandbox-admission.json'),

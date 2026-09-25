@@ -135,8 +135,10 @@ function scoreUnits(units, queryText) {
     ));
 }
 function buildLinkedSessionContext(sessionStore, activeSessionId, prompt, recentUserTurns) {
-  const activeSession = sessionStore?.getSession?.(activeSessionId);
-  const linkedSessionIds = Array.isArray(activeSession?.linked_session_ids) ? activeSession.linked_session_ids : [];
+  const activeSession = sessionStore?.getSessionSummary?.(activeSessionId);
+  const linkedSessionIds = Array.isArray(activeSession?.linked_session_ids)
+    ? activeSession.linked_session_ids
+    : [];
   if (!linkedSessionIds.length) {
     return null;
   }
@@ -145,8 +147,8 @@ function buildLinkedSessionContext(sessionStore, activeSessionId, prompt, recent
     ...(Array.isArray(recentUserTurns) ? recentUserTurns : []).map((turn) => String(turn?.content || turn || '').trim()),
   ].filter(Boolean).slice(0, 3).join('\n');
   const linkedSessions = linkedSessionIds
-    .map((sessionId) => sessionStore.getSession(sessionId))
-    .filter(Boolean)
+    .map((sessionId) => sessionStore.getSessionSummary(sessionId))
+    .filter((session) => session?.project_id === activeSession.project_id)
     .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')))
     .slice(0, MAX_LINKED_SESSIONS);
   const sections = linkedSessions.map((session) => ({

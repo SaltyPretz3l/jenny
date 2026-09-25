@@ -6,6 +6,8 @@ const { JSDOM } = require('jsdom');
 
 const { syncDisabledReason } = require('../renderer/chat/renderer-render-pipeline-chrome');
 const visionGateModule = require('../renderer/chat/renderer-composer-vision-gate');
+const { mountTurnPauseButton } = require('../renderer/chat/renderer-turn-pause-interaction');
+const inventoryActionButton = require('../renderer/inventory/action-button');
 
 test('natively disabled and aria-disabled composer controls expose and clear programmatic reason text', () => {
   const dom = new JSDOM('<button id="control"></button><span id="reason"></span>');
@@ -27,6 +29,7 @@ test('natively disabled and aria-disabled composer controls expose and clear pro
 });
 
 const chromeModulePath = require.resolve('../renderer/chat/renderer-render-pipeline-chrome');
+const harnessExtras = new WeakMap();
 
 function createComposerRenderHarness(t, {
   sendBusy = false,
@@ -36,6 +39,10 @@ function createComposerRenderHarness(t, {
   backendComposerUsable = true,
   reasoningEffortSupported = true,
   busyActivityScopes = [],
+  sessionRuntime = false,
+  runtimeSendController = null,
+  mountPause = true,
+  activeStreamId = 'stream-1',
 } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div id="composerWrap"></div>
@@ -73,6 +80,10 @@ function createComposerRenderHarness(t, {
 
   const document = dom.window.document;
   const byId = (id) => document.getElementById(id);
+  // Pause is not in the markup: the shell builds it beside Stop through the
+  // inventory primitive at boot, so the harness does the same.
+  const mountPauseButton = () => mountTurnPauseButton({ anchor: byId('stopStreamButton'), actionButton: inventoryActionButton });
+  if (mountPause) mountPauseButton();
   const activityScopes = {
     composerPreferredModel: 'composerPreferredModel',
     composerReasoningEffort: 'composerReasoningEffort',
@@ -86,6 +97,9 @@ function createComposerRenderHarness(t, {
       ...(pluginSessionReadOnly ? { session_type: 'plugin' } : {}),
     }],
     backend: { phase: backendComposerUsable ? 'ready' : 'offline' },
+    features: { featureFlags: { session_runtime: sessionRuntime === true } },
+    runtimeSendController,
+    activeStreamId: ownsActiveStream ? activeStreamId : '',
     auth: { authenticated },
     attachments: { queued: [] },
     queuedSendBySession: new Map(),
@@ -122,6 +136,7 @@ function createComposerRenderHarness(t, {
       },
     },
   });
+  harnessExtras.set(pipeline, { mountPauseButton });
 
   t.after(() => {
     dom.window.close();
@@ -258,4 +273,125 @@ test('composer vision gate disables and clears Send as model capability and imag
   pipeline.renderComposerState();
   assert.equal(document.getElementById('sendButton').disabled, true);
   assert.equal(document.getElementById('composerSendDisabledReason').textContent, 'Remove 1 image to send.');
+});
+
+/* ── Runtime UX A2 (JEN-044): the composer Pause control ── */
+
+function pauseController({ pause = null, closing = false, reads = [], owned = ['stream-1'] } = {}) {
+  return {
+    pauseSession() {},
+    ownsStream: (streamId) => owned.includes(streamId),
+    listPending: () => [],
+    getSessionRuntimeState: () => ({ closing, pause }),
+    refreshSessionRows: (sessionId) => { reads.push(sessionId); return Promise.resolve(true); },
+  };
+}
+
+const streaming = { sendBusy: true, ownsActiveStream: true };
+
+test('Pause appears beside Stop only while the runtime owns a reply in progress', (t) => {
+  const idle = createComposerRenderHarness(t, { sessionRuntime: true, runtimeSendController: pauseController() });
+  idle.pipeline.renderComposerState();
+  assert.equal(idle.document.getElementById('pauseTurnButton').classList.contains('hidden'), true);
+  assert.equal(idle.document.getElementById('stopStreamButton').classList.contains('hidden'), true);
+
+  const live = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true, runtimeSendController: pauseController() });
+  live.pipeline.renderComposerState();
+  const button = live.document.getElementById('pauseTurnButton');
+  assert.equal(button.classList.contains('hidden'), false);
+  assert.equal(button.disabled, false);
+  assert.equal(button.title, 'Pause at the next approval');
+  assert.equal(button.getAttribute('aria-label'), 'Pause this reply');
+  assert.equal(Object.hasOwn(button.dataset, 'pauseState'), false);
+});
+
+test('the chrome finds a Pause control mounted after its first render, beside Stop, with no markup of its own', (t) => {
+  const { document, pipeline } = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    runtimeSendController: pauseController(), mountPause: false });
+  pipeline.renderComposerState();
+  assert.equal(document.getElementById('pauseTurnButton'), null, 'nothing is invented before the shell mounts it');
+  const button = harnessExtras.get(pipeline).mountPauseButton();
+  assert.equal(button.nextElementSibling, document.getElementById('stopStreamButton'), 'Pause sits directly before Stop');
+  assert.equal(button.classList.contains('hidden'), true, 'mounted hidden until the chrome shows it');
+  pipeline.renderComposerState();
+  assert.equal(button.classList.contains('hidden'), false);
+  assert.equal(button.getAttribute('aria-label'), 'Pause this reply');
+  assert.ok(button.querySelector('svg'), 'the glyph rides in through the primitive');
+});
+
+test('Pause stays hidden without the session runtime flag, without a controller, and in a plugin transcript', (t) => {
+  const off = createComposerRenderHarness(t, { ...streaming, runtimeSendController: pauseController() });
+  off.pipeline.renderComposerState();
+  assert.equal(off.document.getElementById('pauseTurnButton').classList.contains('hidden'), true);
+
+  const noController = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true });
+  noController.pipeline.renderComposerState();
+  assert.equal(noController.document.getElementById('pauseTurnButton').classList.contains('hidden'), true);
+
+  const plugin = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    pluginSessionReadOnly: true, runtimeSendController: pauseController() });
+  plugin.pipeline.renderComposerState();
+  assert.equal(plugin.document.getElementById('pauseTurnButton').classList.contains('hidden'), true);
+});
+
+test('Pause stays hidden for a reply the runtime did not admit, even while Stop shows', (t) => {
+  const legacy = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    activeStreamId: 'stream-legacy', runtimeSendController: pauseController() });
+  legacy.pipeline.renderComposerState();
+  assert.equal(legacy.document.getElementById('stopStreamButton').classList.contains('hidden'), false);
+  assert.equal(legacy.document.getElementById('pauseTurnButton').classList.contains('hidden'), true,
+    'an edit, a retry or a legacy stream has no running work to pause');
+
+  const owned = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    activeStreamId: 'stream-legacy', runtimeSendController: pauseController({ owned: ['stream-legacy'] }) });
+  owned.pipeline.renderComposerState();
+  assert.equal(owned.document.getElementById('pauseTurnButton').classList.contains('hidden'), false);
+});
+
+test('a requested pause disables the control and claims only that it was requested', (t) => {
+  const { document, pipeline } = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    runtimeSendController: pauseController({ pause: { workId: 'work_1', status: 'requested' } }) });
+  pipeline.renderComposerState();
+  const button = document.getElementById('pauseTurnButton');
+  assert.equal(button.classList.contains('hidden'), false);
+  assert.equal(button.disabled, true);
+  assert.equal(button.dataset.pauseState, 'requested');
+  assert.equal(button.title, 'Pause requested…');
+  assert.equal(button.getAttribute('aria-label'), 'Pause requested…');
+  assert.equal(/\bpaused\b/i.test(button.title), false, 'a request never reads as a pause');
+});
+
+test('the composer reads session work rows once per conversation activation, never per render', (t) => {
+  const reads = [];
+  const { pipeline, state } = createComposerRenderHarness(t, { sessionRuntime: true,
+    runtimeSendController: pauseController({ reads }) });
+  for (let i = 0; i < 12; i += 1) pipeline.renderComposerState();
+  assert.deepEqual(reads, ['session-1'], 'an idle conversation with no runtime work is read once, not on every keystroke');
+  state.currentSessionId = 'session-2';
+  state.sessions.push({ id: 'session-2' });
+  pipeline.renderComposerState();
+  pipeline.renderComposerState();
+  assert.deepEqual(reads, ['session-1', 'session-2']);
+  state.currentSessionId = 'session-1';
+  pipeline.renderComposerState();
+  assert.deepEqual(reads, ['session-1', 'session-2', 'session-1'], 'coming back re-reads, so a reply paused meanwhile shows');
+});
+
+/* ── Runtime queue strip: only rows that wait behind other work reach it ── */
+
+test('the runtime queue strip receives queued and recovery rows only; a direct Send stays out', (t) => {
+  const rows = [
+    { key: 'direct', workId: '', turnId: '', prompt: 'direct', position: null, status: 'pending', admitted: false, queued: false },
+    { key: 'waiting', workId: 'work_2', turnId: '', prompt: 'waiting', position: 2, status: 'pending', admitted: false, queued: true },
+    // An older producer without the field is still shown; only an explicit false is filtered.
+    { key: 'paused', workId: 'work_3', turnId: '', prompt: 'paused', position: null, status: 'paused', admitted: true },
+  ];
+  const captured = [];
+  const previous = global.rendererRuntimeQueueView;
+  global.rendererRuntimeQueueView = { renderRuntimeQueue: (options) => { captured.push(options.rows); return options.rows.length; } };
+  t.after(() => { if (previous === undefined) delete global.rendererRuntimeQueueView; else global.rendererRuntimeQueueView = previous; });
+  const h = createComposerRenderHarness(t, { sessionRuntime: true,
+    runtimeSendController: { ...pauseController(), listPending: () => rows } });
+  h.pipeline.renderComposerState();
+  assert.deepEqual(captured.at(-1).map((row) => row.key), ['waiting', 'paused']);
 });

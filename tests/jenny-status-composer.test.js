@@ -126,19 +126,19 @@ test('runtime llama_server exposes only coerced snake_case redacted status field
         getStatus: () => ({
           state: 'READY', pid: '123', port: '8080', alias: 42, profileId: 7,
           modelPath: `${userDataPath}\\models\\secret.gguf`, accelerationMode: 'cuda', accelerationReason: 'drafter_missing', accelerationDrafter: 'mtp-secret.gguf', reused: 'true',
-          lastError: `failed under ${userDataPath}`, changedAt: '456', apiKey: 'secret',
+          lastError: `failed under ${userDataPath}`, changedAt: '456', apiKey: 'secret', runtimeLabel: 'build 10683', binaryPath: `${userDataPath}\\fork\\llama-server.exe`,
         }),
       }),
     },
   });
   const status = await getJennyStatus(service);
   assert.deepEqual(Object.keys(status.runtime.llama_server), [
-    'state', 'pid', 'port', 'alias', 'model_path', 'profile_id', 'acceleration_mode', 'acceleration_reason', 'reused', 'last_error', 'changed_at',
+    'state', 'pid', 'port', 'alias', 'model_path', 'profile_id', 'acceleration_mode', 'acceleration_reason', 'reused', 'last_error', 'runtime_label', 'changed_at',
   ]);
   assert.deepEqual(status.runtime.llama_server, {
     state: 'ready', pid: 123, port: 8080, alias: '42', profile_id: '7', reused: false,
     model_path: '[redacted:path]\\models\\secret.gguf', acceleration_mode: 'cuda', acceleration_reason: 'drafter_missing',
-    last_error: 'failed under [redacted:path]', changed_at: 456,
+    last_error: 'failed under [redacted:path]', runtime_label: 'build 10683', changed_at: 456,
   });
   assert.equal('apiKey' in status.runtime.llama_server, false);
 });

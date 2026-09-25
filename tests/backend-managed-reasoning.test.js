@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  normalizeManagedSessionPreferencePatch,
+  resolveRequestReasoningEffort,
 } = require('../services/backend/backend-managed-reasoning');
 const {
   handleNotification,
@@ -35,14 +35,10 @@ function createService(overrides = {}) {
   };
 }
 
-test('explicit effort uses the active model when the conversation has no model override', () => {
-  const patch = normalizeManagedSessionPreferencePatch(createService(), {
-    preferred_model: '',
-    reasoning_effort: 'high',
-  }, 'session-active-model');
+test('explicit effort uses the active model when the request has no model override', () => {
+  const effort = resolveRequestReasoningEffort(createService(), 'high', '');
 
-  assert.equal(patch.preferred_model, '');
-  assert.equal(patch.reasoning_effort, 'high');
+  assert.equal(effort, 'high');
 });
 
 test('active model still rejects an effort that model does not support', () => {
@@ -58,24 +54,18 @@ test('active model still rejects an effort that model does not support', () => {
       active_model_capabilities: {},
     },
   });
-  const patch = normalizeManagedSessionPreferencePatch(service, {
-    preferred_model: '',
-    reasoning_effort: 'max',
-  }, 'session-active-model');
+  const effort = resolveRequestReasoningEffort(service, 'max', '');
 
-  assert.equal(patch.reasoning_effort, 'default');
+  assert.equal(effort, 'default');
 });
 
-test('conversation model override remains the normalization authority', () => {
-  const patch = normalizeManagedSessionPreferencePatch(createService(), {
-    preferred_model: 'gpt-5.5',
-    reasoning_effort: 'max',
-  }, 'session-model-override');
+test('request model override remains the normalization authority', () => {
+  const effort = resolveRequestReasoningEffort(createService(), 'max', 'gpt-5.5');
 
-  assert.equal(patch.reasoning_effort, 'default');
+  assert.equal(effort, 'default');
 });
 
-test('partial Ollama status preserves Qwen3.8 session effort', () => {
+test('partial Ollama status preserves Qwen3.8 request effort', () => {
   const service = createService({
     currentModel: '',
     defaultModel: '',
@@ -87,12 +77,99 @@ test('partial Ollama status preserves Qwen3.8 session effort', () => {
       active_model_capabilities: {},
     },
   });
-  const patch = normalizeManagedSessionPreferencePatch(service, {
-    preferred_model: 'qwen3.8:27b-q3-k-s',
-    reasoning_effort: 'high',
-  }, 'session-qwen38-partial-status');
+  const effort = resolveRequestReasoningEffort(service, 'high', 'qwen3.8:27b-q3-k-s');
 
-  assert.equal(patch.reasoning_effort, 'high');
+  assert.equal(effort, 'high');
+});
+
+// 2026-09-18: a bare llama-server alias inferred as Ollama, whose non-qwen3.8
+// rule reset every graded effort to Automatic on each write.
+const BONSAI = 'ternary-bonsai-2-27b-pq2_0';
+
+function llamaServerService(overrides = {}) {
+  return createService({
+    currentModel: BONSAI,
+    defaultModel: BONSAI,
+    currentEngineType: 'openai-compatible',
+    currentStatus: {
+      engine: 'openai-compatible',
+      model: BONSAI,
+      provider_capabilities: {
+        'openai-compatible': { reasoning_effort_support: 'supported' },
+        ollama: { reasoning_effort_support: 'supported' },
+      },
+      active_model_capabilities: {},
+    },
+    ...overrides,
+  });
+}
+
+test('a llama-server alias keeps its effort while that server serves it', () => {
+  const effort = resolveRequestReasoningEffort(llamaServerService(), 'xhigh', BONSAI);
+
+  assert.equal(effort, 'xhigh');
+});
+
+test('a llama-server alias keeps its effort through its catalog engine hint', () => {
+  const service = llamaServerService({
+    currentModel: 'qwen3.5:9b',
+    currentEngineType: 'ollama',
+    currentStatus: {
+      engine: 'ollama',
+      model: 'qwen3.5:9b',
+      provider_capabilities: {
+        'openai-compatible': { reasoning_effort_support: 'supported' },
+        ollama: { reasoning_effort_support: 'supported' },
+      },
+      active_model_capabilities: {},
+    },
+    _modelEngineHints: new Map([[BONSAI, 'openai-compatible']]),
+  });
+  const effort = resolveRequestReasoningEffort(service, 'medium', BONSAI);
+
+  assert.equal(effort, 'medium');
+});
+
+// Gate C4 F5 review: with the picker no longer saving its clamp, the request
+// must run what the picker shows. Bonsai's llama template treats `low` as
+// thinking off, while the picker shows Automatic (medium).
+test('a stored effort outside the catalog-declared ladder runs as Automatic on the request', () => {
+  const service = llamaServerService({
+    _modelListLastResult: {
+      value: {
+        data: [{
+          id: BONSAI,
+          engine_type: 'openai-compatible',
+          capabilities: { reasoning_efforts: ['none', 'medium', 'xhigh'], default_reasoning_effort: 'medium' },
+        }],
+      },
+    },
+  });
+
+  assert.equal(resolveRequestReasoningEffort(service, 'low', ''), 'default');
+  assert.equal(resolveRequestReasoningEffort(service, 'xhigh', ''), 'xhigh');
+  assert.equal(resolveRequestReasoningEffort(service, 'none', BONSAI), 'none');
+});
+
+test('a forced engine outranks a stale catalog hint for the request clamp', () => {
+  const service = llamaServerService({
+    currentModel: 'qwen3.5:9b',
+    currentEngineType: 'vllm',
+    currentStatus: {
+      engine: 'vllm',
+      model: 'qwen3.5:9b',
+      provider_capabilities: {
+        vllm: { reasoning_effort_support: 'supported' },
+        ollama: { reasoning_effort_support: 'supported' },
+      },
+      active_model_capabilities: {},
+    },
+    _modelEngineHints: new Map([['qwen3.5:9b', 'ollama']]),
+  });
+
+  assert.equal(resolveRequestReasoningEffort(service, 'high', 'qwen3.5:9b'), 'default',
+    'without the engine the stale Ollama hint clamps (the pre-fix request behavior)');
+  assert.equal(resolveRequestReasoningEffort(service, 'high', 'qwen3.5:9b', 'vllm'), 'high');
 });
 
 test('chat.thinking budget raises the persisted reasoning cap while absent signal keeps 48,000', () => {

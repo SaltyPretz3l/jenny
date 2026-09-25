@@ -41,6 +41,8 @@ function makeDom() {
 
 function makeState(overrides) {
   return {
+    currentSessionId: 'session_alpha',
+    sessions: [{ id: 'session_alpha', project_id: 'project_alpha' }],
     features: { featureFlags: { knowledge_layer: true } },
     ...overrides,
   };
@@ -55,7 +57,13 @@ function makeRoots() {
 
 function makeKnowledgeBridgeStub(overrides) {
   return {
-    getState: async () => ({ schemaVersion: 1, roots: makeRoots(), enabled: true }),
+    getState: async (payload) => ({
+      schemaVersion: 1,
+      revision: 1,
+      roots: makeRoots(),
+      enabled: true,
+      projectId: payload.project_id,
+    }),
     addFolder: async () => ({ ok: false, reason: 'invalid_path' }),
     removeFolder: async () => ({ ok: true }),
     onChanged: () => () => {},
@@ -95,7 +103,7 @@ test('flag OFF renders nothing (the surface does not exist in the DOM)', async (
   let getStateCalls = 0;
   let subscribeCalls = 0;
   const knowledge = makeKnowledgeBridgeStub({
-    getState: async () => { getStateCalls += 1; return { schemaVersion: 1, roots: [], enabled: false }; },
+    getState: async (payload) => { getStateCalls += 1; return { schemaVersion: 1, revision: 0, roots: [], enabled: false, projectId: payload.project_id }; },
     onChanged: () => { subscribeCalls += 1; return () => {}; },
   });
   const { dom, controller } = createHarness(t, { state, knowledge });
@@ -129,7 +137,7 @@ test('flag ON renders the group with rows from knowledge.getState', async (t) =>
 
 test('empty registry shows the searchable-folders explainer line', async (t) => {
   const knowledge = makeKnowledgeBridgeStub({
-    getState: async () => ({ schemaVersion: 1, roots: [], enabled: true }),
+    getState: async (payload) => ({ schemaVersion: 1, revision: 0, roots: [], enabled: true, projectId: payload.project_id }),
   });
   const { dom, controller } = createHarness(t, { knowledge });
   controller.bind();
@@ -144,10 +152,13 @@ test('empty registry shows the searchable-folders explainer line', async (t) => 
 test('addFolder rejection reason renders inline; success clears the line', async (t) => {
   let addCalls = 0;
   const knowledge = makeKnowledgeBridgeStub({
-    getState: async () => ({ schemaVersion: 1, roots: [], enabled: true }),
+    getState: async (payload) => ({ schemaVersion: 1, revision: 0, roots: [], enabled: true, projectId: payload.project_id }),
     addFolder: async (payload) => {
       addCalls += 1;
       assert.equal(typeof payload.path, 'string');
+      assert.equal(payload.session_id, 'session_alpha');
+      assert.equal(payload.project_id, 'project_alpha');
+      assert.equal(payload.expected_revision, 0);
       if (addCalls === 1) {
         return { ok: false, reason: 'sensitive_path' };
       }
@@ -198,8 +209,10 @@ test('remove flows through confirm -> knowledge.removeFolder -> list refresh', a
       getStateCalls += 1;
       return {
         schemaVersion: 1,
+        revision: removeCalledWith ? 2 : 1,
         roots: removeCalledWith ? [] : makeRoots().slice(0, 1),
         enabled: true,
+        projectId: 'project_alpha',
       };
     },
     removeFolder: async (payload) => {
@@ -220,7 +233,12 @@ test('remove flows through confirm -> knowledge.removeFolder -> list refresh', a
   confirmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   await settle();
 
-  assert.deepEqual(removeCalledWith, { id: 'kbroot_1' });
+  assert.deepEqual(removeCalledWith, {
+    session_id: 'session_alpha',
+    project_id: 'project_alpha',
+    id: 'kbroot_1',
+    expected_revision: 1,
+  });
   // Two getState calls: the bind()-time initial load + the post-remove refresh.
   assert.equal(getStateCalls, 2);
   assert.equal(doc.querySelector('[data-root-id="kbroot_1"]'), null, 'removed row leaves the list');
@@ -231,7 +249,7 @@ test('resolved remove rejection stays visible and does not refresh the folder li
   const knowledge = makeKnowledgeBridgeStub({
     getState: async () => {
       getStateCalls += 1;
-      return { schemaVersion: 1, roots: makeRoots().slice(0, 1), enabled: true };
+      return { schemaVersion: 1, revision: 1, roots: makeRoots().slice(0, 1), enabled: true, projectId: 'project_alpha' };
     },
     removeFolder: async () => ({ ok: false, reason: 'not_found' }),
   });
@@ -258,7 +276,7 @@ test('a pending add cannot mutate or remount the controller after dispose', asyn
   const knowledge = makeKnowledgeBridgeStub({
     getState: async () => {
       getStateCalls += 1;
-      return { schemaVersion: 1, roots: [], enabled: true };
+      return { schemaVersion: 1, revision: 0, roots: [], enabled: true, projectId: 'project_alpha' };
     },
     addFolder: () => addRequest.promise,
   });
@@ -311,7 +329,7 @@ test('knowledge.onChanged refreshes the list and dispose unsubscribes', async (t
   let capturedListener = null;
   let unsubscribed = false;
   const knowledge = makeKnowledgeBridgeStub({
-    getState: async () => ({ schemaVersion: 1, roots: [], enabled: true }),
+    getState: async (payload) => ({ schemaVersion: 1, revision: 0, roots: [], enabled: true, projectId: payload.project_id }),
     onChanged: (listener) => {
       capturedListener = listener;
       return () => { unsubscribed = true; };
@@ -325,12 +343,172 @@ test('knowledge.onChanged refreshes the list and dispose unsubscribes', async (t
   assert.equal(doc.querySelector('.knowledge-folders-row'), null);
   assert.equal(typeof capturedListener, 'function', 'controller subscribes to knowledge.onChanged');
 
-  capturedListener({ schemaVersion: 1, roots: makeRoots(), enabled: true });
+  capturedListener({ schemaVersion: 1, revision: 1, roots: makeRoots(), enabled: true, projectId: 'project_alpha' });
   await settle();
   assert.ok(doc.querySelector('[data-root-id="kbroot_1"]'), 'changed-event snapshot re-renders the rows');
 
   controller.dispose();
   assert.equal(unsubscribed, true, 'dispose tears the subscription down');
+});
+
+test('knowledge.onChanged ignores snapshots from another project', async (t) => {
+  let capturedListener = null;
+  let revision = 3;
+  let getStateCalls = 0;
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: async (payload) => {
+      getStateCalls += 1;
+      return { schemaVersion: 1, revision, roots: [], enabled: true, projectId: payload.project_id };
+    },
+    onChanged: (listener) => {
+      capturedListener = listener;
+      return () => {};
+    },
+  });
+  const { dom, controller } = createHarness(t, { knowledge });
+  controller.bind();
+  await settle();
+
+  revision = 4;
+  capturedListener({ schemaVersion: 1, revision: 4, roots: makeRoots(), enabled: true, projectId: 'project_beta' });
+  await settle();
+
+  assert.equal(dom.window.document.querySelector('.knowledge-folders-row'), null);
+  assert.equal(getStateCalls, 2, 'a global revision advance refreshes the selected project');
+  assert.equal(controller._view.revision, 4, 'the selected project receives the current document revision');
+});
+
+test('a foreign-project change queues a scoped refresh behind an older in-flight read', async (t) => {
+  const firstRequest = deferred();
+  let capturedListener = null;
+  let getStateCalls = 0;
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: async (payload) => {
+      getStateCalls += 1;
+      if (getStateCalls === 1) return firstRequest.promise;
+      return { schemaVersion: 1, revision: 4, roots: [], enabled: true, projectId: payload.project_id };
+    },
+    onChanged: (listener) => {
+      capturedListener = listener;
+      return () => {};
+    },
+  });
+  const { controller } = createHarness(t, { knowledge });
+  controller.bind();
+  await settle();
+
+  capturedListener({ schemaVersion: 1, revision: 4, roots: makeRoots(), enabled: true, projectId: 'project_beta' });
+  firstRequest.resolve({ schemaVersion: 1, revision: 3, roots: [], enabled: true, projectId: 'project_alpha' });
+  await settle();
+
+  assert.equal(getStateCalls, 2, 'the foreign revision is reconciled after the older read settles');
+  assert.equal(controller._view.projectId, 'project_alpha');
+  assert.equal(controller._view.revision, 4);
+});
+
+test('an older scoped read cannot overwrite a newer same-project change snapshot', async (t) => {
+  const firstRequest = deferred();
+  let capturedListener = null;
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: () => firstRequest.promise,
+    onChanged: (listener) => {
+      capturedListener = listener;
+      return () => {};
+    },
+  });
+  const { dom, controller } = createHarness(t, { knowledge });
+  controller.bind();
+  await settle();
+
+  capturedListener({ schemaVersion: 1, revision: 4, roots: makeRoots(), enabled: true, projectId: 'project_alpha' });
+  firstRequest.resolve({ schemaVersion: 1, revision: 3, roots: [], enabled: true, projectId: 'project_alpha' });
+  await settle();
+
+  assert.equal(controller._view.revision, 4);
+  assert.ok(dom.window.document.querySelector('[data-root-id="kbroot_1"]'));
+});
+
+test('stale mutation response refreshes the selected project revision without retrying the action', async (t) => {
+  let revision = 5;
+  let addCalls = 0;
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: async (payload) => ({ schemaVersion: 1, revision, roots: [], enabled: true, projectId: payload.project_id }),
+    addFolder: async () => {
+      addCalls += 1;
+      revision = 6;
+      return { ok: false, reason: 'stale_revision', current_revision: revision };
+    },
+  });
+  const { dom, controller } = createHarness(t, { knowledge });
+  controller.bind();
+  await settle();
+  dom.window.document.getElementById('knowledgeFolderPathInput').value = 'C:\\Notes';
+  dom.window.document.querySelector('[data-knowledge-folders-action="add"]')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await settle();
+
+  assert.equal(addCalls, 1, 'the explicit add action is never replayed automatically');
+  assert.equal(controller._view.revision, 6);
+});
+
+test('a getState result cannot repaint after the selected session changes projects', async (t) => {
+  const alphaRequest = deferred();
+  const calls = [];
+  const state = makeState();
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: (payload) => {
+      calls.push(payload);
+      if (payload.project_id === 'project_alpha') return alphaRequest.promise;
+      return Promise.resolve({ schemaVersion: 1, revision: 8, roots: [], enabled: true, projectId: 'project_beta' });
+    },
+  });
+  const { dom, controller } = createHarness(t, { state, knowledge });
+  controller.bind();
+  controller.render();
+  state.sessions[0] = { id: 'session_alpha', project_id: 'project_beta' };
+  controller.render();
+  alphaRequest.resolve({ schemaVersion: 1, revision: 7, roots: makeRoots(), enabled: true, projectId: 'project_alpha' });
+  await settle();
+
+  assert.deepEqual(calls.map((payload) => payload.project_id), ['project_alpha', 'project_beta']);
+  assert.equal(dom.window.document.querySelector('.knowledge-folders-row'), null);
+  assert.equal(controller._view.projectId, 'project_beta');
+  assert.equal(controller._view.revision, 8);
+});
+
+test('a picker result cannot refresh or repaint after selection moves to another session', async (t) => {
+  const pickerRequest = deferred();
+  const getCalls = [];
+  let pickerPayload = null;
+  const state = makeState();
+  const knowledge = makeKnowledgeBridgeStub({
+    getState: async (payload) => {
+      getCalls.push(payload);
+      return { schemaVersion: 1, revision: 5, roots: [], enabled: true, projectId: payload.project_id };
+    },
+    chooseFolder: (payload) => {
+      pickerPayload = payload;
+      return pickerRequest.promise;
+    },
+  });
+  const { dom, controller } = createHarness(t, { state, knowledge });
+  controller.bind();
+  await settle();
+  dom.window.document.querySelector('[data-knowledge-folders-action="browse"]')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  state.currentSessionId = 'session_beta';
+  state.sessions.push({ id: 'session_beta', project_id: 'project_beta' });
+  controller.render();
+  pickerRequest.resolve({ ok: true, root: makeRoots()[0] });
+  await settle();
+
+  assert.deepEqual(pickerPayload, {
+    session_id: 'session_alpha',
+    project_id: 'project_alpha',
+    expected_revision: 5,
+  });
+  assert.deepEqual(getCalls.map((payload) => payload.project_id), ['project_alpha', 'project_beta']);
+  assert.equal(dom.window.document.querySelector('.knowledge-folders-row'), null);
 });
 
 test('group mounts into the settings CARD, never the nav item with the same section attribute (regression)', async (t) => {

@@ -7,6 +7,7 @@ const {
 } = require('./tool-policy-actions');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { isSafeDocument } = require('./plan-artifact-policy');
 
 /**
  * Pure policy evaluator for tool execution decisions.
@@ -64,6 +65,9 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // actions the user already controls. A user policy rule still overrides
   // this default in either direction.
   task_board: 'auto',
+  // The in-session todo list is the model's own scratch state; approval is
+  // for the user's files and commands (owner, 2026-09-22).
+  todo_write: 'auto',
 });
 
 const DEFAULT_SAFETY_FOR_SIDE_EFFECTING = 'ask';
@@ -194,7 +198,10 @@ function normalizeRuleList(value) {
           tool_family: normalizeOptionalMatchText(match.tool_family, 80),
           source_kind: normalizeOptionalMatchText(match.source_kind, 80),
           mode: normalizePolicyModeList(match.mode),
-          path_prefix: normalizeOptionalMatchText(match.path_prefix, MAX_POLICY_MATCH_TEXT_CHARS),
+          path_prefix: normalizeOptionalPathMatchText(
+            match.path_prefix,
+            MAX_POLICY_MATCH_TEXT_CHARS
+          ),
           mcp_server: normalizeOptionalMatchText(match.mcp_server, MAX_POLICY_TOOL_NAME_CHARS),
         },
       })
@@ -211,6 +218,14 @@ function normalizeOptionalMatchText(value, limit) {
     return null;
   }
   return boundedPolicyText(value, limit, '') || null;
+}
+
+function normalizeOptionalPathMatchText(value, limit) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const text = value.trim();
+  return text ? text.slice(0, limit) : null;
 }
 
 function normalizePolicyModeList(value) {
@@ -317,6 +332,20 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
       stage: 'tool_default',
       matched_rule_id: null,
       reason: 'read-only action defaults to auto',
+    });
+  }
+
+  // An inert create_artifact document is scratch the model writes for its own
+  // reasoning; scripts and executable types keep the ask default.
+  if (!unresolvable && descriptor.name === 'create_artifact' && isSafeDocument(args)) {
+    return buildPolicyDecision({
+      descriptor,
+      snapshot: normalizedSnapshot,
+      mode,
+      decision: 'auto',
+      stage: 'tool_default',
+      matched_rule_id: null,
+      reason: 'built-in default for inert create_artifact documents',
     });
   }
 

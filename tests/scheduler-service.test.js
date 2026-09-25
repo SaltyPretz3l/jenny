@@ -200,6 +200,38 @@ test('scheduler exposes structured lifecycle failure when task storage is unavai
   }
 });
 
+// An error already redacted upstream with known prefixes carries the relative
+// tail after [redacted:path]; collapsing it used to stop at the first space.
+test('scheduler lifecycle errors collapse known-prefix path tails with spaces', async () => {
+  const cases = [
+    [String.raw`open [redacted:path]\AI Tools\My Models\scheduled_tasks.json ENOENT`, 'open [redacted] ENOENT'],
+    [String.raw`read [redacted:path]\AI Tools\My Models\scheduled tasks.json, retrying`, 'read [redacted], retrying'],
+    [String.raw`mkdir [redacted:path]\AI Tools\Jenny Tasks`, 'mkdir [redacted]'],
+    [String.raw`spawn [redacted:path]\AI Tools\llama-server.exe ENOENT and/or EACCES`, 'spawn [redacted] ENOENT and/or EACCES'],
+  ];
+  for (const [message, expected] of cases) {
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-scheduler-spaced-tail-'));
+    trackDirectory(userDataPath);
+    const fsImpl = Object.create(fs);
+    fsImpl.mkdirSync = () => {
+      throw new Error(message);
+    };
+    const scheduler = new SchedulerService({
+      userDataPath,
+      configService: new FakeConfigService(''),
+      backendService: createBackendStub(),
+      fsImpl,
+      logger: () => {},
+    });
+    try {
+      assert.equal(await scheduler.start(), false);
+      assert.equal(scheduler.getStateSnapshot().lifecycle.error, expected);
+    } finally {
+      scheduler.stop();
+    }
+  }
+});
+
 test('scheduler reports malformed durable task state instead of claiming idle', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-scheduler-malformed-'));
   trackDirectory(userDataPath);

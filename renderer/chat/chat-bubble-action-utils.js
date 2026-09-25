@@ -149,18 +149,53 @@
       };
     }
 
-    let sourceMessage = null;
+    // F36: the latest plan decision between a message and the user message
+    // before it (Build it resolves inside the turn and adds no user message).
+    const readPlanState = (fromIndex) => {
+      for (let index = fromIndex; index >= 0; index -= 1) {
+        if (normalizeString(list[index]?.role) === 'user') return { state: '', userIndex: index };
+        if (normalizeString(list[index]?.kind) === 'plan_document') {
+          const plan = list[index]?.plan_document;
+          return { state: normalizeString(plan?.state || plan?.transition), userIndex: -1 };
+        }
+      }
+      return { state: '', userIndex: -1 };
+    };
+    const isApprovedPlanState = (value) => value === 'approved' || value === 'approved_auto';
+    const buildPrompt = jt('chat.planDocument.buildAcceptedMessage', 'Build the accepted plan.');
+    let sourceIndex = -1;
     for (let index = targetIndex - 1; index >= 0; index -= 1) {
       if (normalizeString(list[index]?.role) === 'user') {
-        sourceMessage = list[index];
+        sourceIndex = index;
         break;
       }
     }
+    const sourceMessage = sourceIndex >= 0 ? list[sourceIndex] : null;
+    const latestPlanState = isErrorTarget ? readPlanState(targetIndex - 1).state : '';
+    // A failed retry of the build replays that build message in the mode Build it chose.
+    const retriedBuildState = isErrorTarget && sourceMessage && !latestPlanState
+      && normalizeString(sourceMessage.content) === buildPrompt
+      ? readPlanState(sourceIndex - 1).state
+      : '';
 
     if (!sourceMessage) {
       return {
         ...blockedResult,
         reason: REGENERATE_MISSING_SOURCE_REASON,
+      };
+    }
+
+    if (isApprovedPlanState(latestPlanState)) {
+      return {
+        allowed: true,
+        prompt: buildPrompt,
+        visiblePrompt: buildPrompt,
+        replayImageAttachments: [],
+        sourceMessageId: '',
+        targetMessageId: targetId,
+        hasTextAttachments: false,
+        runModeOverride: latestPlanState === 'approved_auto' ? 'auto' : 'ask',
+        reason: '',
       };
     }
 
@@ -195,6 +230,9 @@
       sourceMessageId: normalizeId(sourceMessage.id),
       targetMessageId: targetId,
       hasTextAttachments: false,
+      ...(isApprovedPlanState(retriedBuildState)
+        ? { runModeOverride: retriedBuildState === 'approved_auto' ? 'auto' : 'ask' }
+        : {}),
       reason: '',
     };
   }

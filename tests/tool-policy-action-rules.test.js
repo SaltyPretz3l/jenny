@@ -80,6 +80,32 @@ test('an action-scoped rule matches only its own action argument', () => {
   assert.notEqual(miss.decision, 'auto');
 });
 
+test('path-prefix normalization preserves repeated interior spaces', () => {
+  const snapshot = normalizePolicySnapshot({
+    version: 3,
+    legacy_policies: {},
+    rules: [{
+      id: 'repeated-space-path',
+      decision: 'auto',
+      reason: 'exact filesystem path',
+      match: { tool_id: 'write_file', path_prefix: 'docs/two  spaces/' },
+    }],
+  });
+  assert.equal(snapshot.rules[0].match.path_prefix, 'docs/two  spaces/');
+
+  const fileDescriptor = { ...descriptor, name: 'write_file' };
+  assert.equal(evaluatePolicy({
+    descriptor: fileDescriptor,
+    args: { path: 'docs/two  spaces/a.md' },
+    snapshot,
+  }).decision, 'auto');
+  assert.notEqual(evaluatePolicy({
+    descriptor: fileDescriptor,
+    args: { path: 'docs/two spaces/a.md' },
+    snapshot,
+  }).decision, 'auto');
+});
+
 test('manifest tool names stay composite-key safe (no colons, bounded grammar)', () => {
   const bad = manifest.tools
     .map((tool) => String(tool.name || ''))

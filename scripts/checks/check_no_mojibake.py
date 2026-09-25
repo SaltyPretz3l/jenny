@@ -1,4 +1,4 @@
-"""Reject invalid UTF-8 and obvious mojibake in canonical docs or named source files."""
+"""Reject invalid UTF-8 and obvious mojibake in canonical docs and source trees."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,13 @@ CANONICAL_DOCS = (
     "WORKSPACE_MANIFEST.md",
 )
 CANONICAL_GLOBS = ("docs/manifests/*.md",)
+# Source trees swept with SOURCE_MARKERS by the default run; the pre-commit hook
+# still names changed files explicitly through --source-files.
+SOURCE_TREES = ("sidecar", "services", "renderer", "scripts", "tests")
+SOURCE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".html", ".css"}
+SOURCE_SKIP_DIRS = {
+    "node_modules", ".venv", "__pycache__", ".git", "locales", "vendor", "dist", "build",
+}
 MOJIBAKE_MARKERS = ("\u00c3\u00a2\u00e2\u201a\u00ac", "\u00c3", "\ufffd")
 # Multi-character signatures avoid treating legitimate accented source text as
 # corruption. Keep these escaped so this check can safely inspect itself.
@@ -31,6 +38,21 @@ def iter_target_paths() -> list[Path]:
             targets.append(path)
     for pattern in CANONICAL_GLOBS:
         targets.extend(path for path in sorted(ROOT.glob(pattern)) if path.is_file())
+    return targets
+
+
+def iter_source_paths() -> list[Path]:
+    targets: list[Path] = []
+    for tree in SOURCE_TREES:
+        root = ROOT / tree
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in SOURCE_SUFFIXES or not path.is_file():
+                continue
+            if SOURCE_SKIP_DIRS.intersection(path.relative_to(ROOT).parts[:-1]):
+                continue
+            targets.append(path)
     return targets
 
 
@@ -59,9 +81,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     violations: list[str] = []
     source = args.source_files is not None
-    paths = [ROOT / name for name in args.source_files] if source else iter_target_paths()
-    for path in paths:
-        violations.extend(find_violations(path, source=source))
+    if source:
+        for name in args.source_files:
+            violations.extend(find_violations(ROOT / name, source=True))
+    else:
+        for path in iter_target_paths():
+            violations.extend(find_violations(path))
+        for path in iter_source_paths():
+            violations.extend(find_violations(path, source=True))
 
     if violations:
         print("FAIL: invalid UTF-8 or mojibake markers detected")

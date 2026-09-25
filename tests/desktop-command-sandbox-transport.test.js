@@ -16,6 +16,33 @@ const INCARNATION = '11111111-1111-4111-8111-111111111111';
 const JOB_ID = '22222222-2222-4222-8222-222222222222';
 const ENDPOINT = 'unix:///var/run/docker.sock';
 
+test('Docker command rejection retains its producer until the close event', async () => {
+  let child;
+  const launcher = new DockerLauncher({ ownerId: OWNER_ID, platform: 'linux',
+    spawnImpl: () => {
+      child = fakeChild({ error: 'ENOENT' });
+      return child;
+    } });
+  await assert.rejects(launcher._run(['context', 'inspect'], { endpoint: false }), /docker_missing/);
+  assert.equal(launcher.hasPendingCommands(), true);
+  child.emit('close', -1);
+  assert.equal(launcher.hasPendingCommands(), false);
+});
+
+test('owned container cleanup is idempotent only after exact daemon absence is observed', async () => {
+  const calls = [];
+  const launcher = new DockerLauncher({ ownerId: OWNER_ID, platform: 'linux',
+    spawnImpl: (_command, args) => {
+      calls.push(args);
+      return fakeChild({ stdout: '' });
+    } });
+  launcher.endpoint = ENDPOINT;
+  assert.deepEqual(await launcher.stopAndRemove(CONTAINER_ID), { cleanupConfirmed: true });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(2), ['container', 'ls', '-a', '--no-trunc',
+    '--filter', 'id=' + CONTAINER_ID, '--format', '{{.ID}}']);
+});
+
 function fakeChild({ stdout = null, code = 0, error = null } = {}) {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

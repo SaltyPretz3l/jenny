@@ -44,7 +44,7 @@
       // Same canonical turn view-models the chat code-review rail reads;
       // threaded in from the lifecycle composition via the service registry.
       getTurnViewModelsForActiveSession = () => [],
-      onSendToJenny = noop, activateWorkspaceSession = noop,
+      onSendToJenny = noop, activateWorkspaceSession = noop, getProjectSwitcher = null, peekProjectSwitcher = null,
     } = callbacks;
 
     const windowRef = globalRef.window || globalRef;
@@ -136,6 +136,7 @@
       documentRef: windowRef.document || null, appendClientLog,
     }) || null;
     const editorHost = editorHostUtils.createIdeEditorHost?.({
+      getDocumentWorkspaceId: (path) => fileLifecycle?.fileOperations?.getDocumentToken(path)?.rootId || '',
       getDom,
       log: (...args) => appendClientLog(...args),
       onDirtyChange(path, dirty) {
@@ -145,6 +146,9 @@
       onSaveRequest() {
         saveActiveFile();
       },
+      // PDF/DOCX panes: every mutation feeds the save fence (editVersion) and
+      // nothing else -- no preview, gutter, or auto-save hooks for documents.
+      onDocumentEdit(path) { fileLifecycle?.noteEdit(path); },
       onCursorActivity(info) {
         // Cursor choke point -> nav-bookmarks facade (drops the null non-file
         // diff/preview case; nav-history coalesces the rest).
@@ -247,7 +251,7 @@
       getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
       buildFileContextMenuItems, buildPathUtilityMenuItems, schedulePersist,
       getWorkspaceRootApi, showShellErrorToast, appendClientLog, panelDeps,
-      getChooseWorkspaceRoot: () => chooseWorkspaceRoot,
+      getChooseWorkspaceRoot: () => chooseWorkspaceRoot, getProjectSwitcher, peekProjectSwitcher,
       getFileLifecycle: () => fileLifecycle, getSearchPanel: () => searchPanel,
       getCloseOrchestrator: () => closeOrchestrator, getConfirmDialog: () => confirmDialog,
       getGitFeature: () => gitFeature, getTerminalPanel: () => terminalPanel, getBottomPanel: () => bottomPanel,
@@ -418,6 +422,8 @@
         openFile(path);
       },
       onChooseFolder: () => chooseWorkspaceRoot(),
+      // Projects v2: "Your projects" rows + "Switch project…" share the lazy switcher.
+      getProjects: () => peekProjectSwitcher?.()?.getProjects?.() || [], getProjectSwitcher,
     }) || null;
 
     // Editor selection actions (Send to Jenny + Explain/Fix/Refactor/Tests

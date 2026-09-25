@@ -70,12 +70,14 @@ def run_temp_script_tool(
     script_path = temp_root / f"script{extension}"
     result: ToolHandlerResult | None = None
     cleanup_error_type: str | None = None
+    execution_entered = False
     try:
         script_path.write_text(script, encoding="utf-8", newline="")
         if os.name != "nt":
             script_path.chmod(0o700)
         command = _script_command(script_path, language=language)
         delegated = _delegated_arguments(arguments, command=command, cwd=cwd)
+        execution_entered = True
         result = _redact_temp_details(
             _run_with_redacted_live_output(
                 delegated,
@@ -83,6 +85,26 @@ def run_temp_script_tool(
                 temp_root=temp_root,
             ),
             temp_root=temp_root, language=language,
+        )
+    except ToolExecutionFailure as error:
+        if execution_entered:
+            raise
+        # A handler exception loses cleanup evidence at the MCP error boundary.
+        # Return a failed result only where this owner knows no process started.
+        result = ToolHandlerResult(
+            output=error.message,
+            success=False,
+            error_code=error.code,
+            metadata={
+                **error.to_error_data(),
+                "effects": "none",
+                "resource_cleanup": {
+                    "cleanup": "confirmed",
+                    "process_tree_terminated": True,
+                    "output_readers_terminated": True,
+                    "reason": "no_native_process_started",
+                },
+            },
         )
     except OSError as error:
         raise ToolExecutionFailure(
@@ -101,7 +123,15 @@ def run_temp_script_tool(
     if cleanup_error_type is not None:
         result = replace(
             result,
-            metadata={**result.metadata, "temp_cleanup_failed": True},
+            metadata={
+                **result.metadata, "temp_cleanup_failed": True, "effects": "unknown",
+                "resource_cleanup": {
+                    "cleanup": "uncertain",
+                    "process_tree_terminated": not execution_entered,
+                    "output_readers_terminated": not execution_entered,
+                    "reason": "temp_cleanup_failed",
+                },
+            },
         )
     return result
 

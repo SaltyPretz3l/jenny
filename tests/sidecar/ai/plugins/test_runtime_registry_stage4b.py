@@ -256,7 +256,7 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
     state_digest = hashlib.sha256(state_json.encode()).hexdigest()
     descriptor_digest = _tool_descriptor_digest("read_file")
     assert descriptor_digest == (
-        "95620d16a1374d672d20dd3a36f7e7a1deba070af1d624ebacbb120a9f0229df"
+        "f44e4a5edc1a027ab084b0f034003b145ad44b2177ae828081e7582fe3d341a9"
     )
     snapshot = {
         "kind": "plugin_runtime_snapshot",

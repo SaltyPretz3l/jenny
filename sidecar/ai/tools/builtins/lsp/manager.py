@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Protocol, Sequence
 
+from sidecar.ai.tools.builtins.lsp.limits import LSP_MAX_DOCUMENT_BYTES
 from sidecar.ai.tools.builtins.lsp.protocol import LSPProcessSession, LSPProtocolError
 
 LSPLanguage = Literal["typescript", "javascript", "python"]
@@ -72,6 +73,7 @@ SessionFactory = Callable[[tuple[str, ...], Path], _SessionLike]
 class _ManagedSession:
     language: LSPLanguage
     workspace_key: str
+    command: tuple[str, ...]
     session: _SessionLike
     last_used: float
 
@@ -82,6 +84,13 @@ class LSPDocumentSyncResult:
     version: int
     stale_content: bool = False
     reason: str = ""
+    too_large: bool = False
+    size: int | None = None
+    cap: int | None = None
+
+
+class lsp_server_not_pinned(LSPProtocolError):  # noqa: N801
+    """A TypeScript launcher has no adjacent trusted TypeScript implementation."""
 
 
 class LSPManager:
@@ -130,10 +139,12 @@ class LSPManager:
                 current.session.close()
                 self._clear_document_state(current.session)
             session = self._session_factory(safe_command, workspace)
-            session.start()
+            if language != "typescript":
+                session.start()
             self._sessions[key] = _ManagedSession(
                 language=language,
                 workspace_key=str(workspace),
+                command=safe_command,
                 session=session,
                 last_used=now,
             )
@@ -150,6 +161,30 @@ class LSPManager:
         if session_id in self._initialized_sessions:
             return
         workspace = Path(workspace_root).resolve(strict=False)
+        managed = next(
+            (entry for entry in self._sessions.values() if entry.session is session),
+            None,
+        )
+        initialization_options: dict[str, object] = {"language": language}
+        requires_typescript_pin = language in {"typescript", "javascript"} or (
+            managed is not None and managed.language == "typescript"
+        )
+        if requires_typescript_pin:
+            tsserver_path = (
+                _resolve_pinned_tsserver(managed.command[0]) if managed is not None else None
+            )
+            if tsserver_path is None:
+                raise lsp_server_not_pinned(
+                    "lsp_server_not_pinned: trusted TypeScript implementation "
+                    "was not found beside the language-server launcher"
+                )
+            initialization_options.update(
+                {
+                    "tsserver": {"path": str(tsserver_path)},
+                    "disableAutomaticTypingAcquisition": True,
+                }
+            )
+        session.start()
         session.request(
             "initialize",
             {
@@ -165,7 +200,7 @@ class LSPManager:
                         "diagnostic": {},
                     }
                 },
-                "initializationOptions": {"language": language},
+                "initializationOptions": initialization_options,
             },
         )
         session.notify("initialized", {})
@@ -181,7 +216,11 @@ class LSPManager:
         path = Path(file_path).resolve(strict=False)
         uri = path.as_uri()
         try:
-            text = path.read_text(encoding="utf-8")
+            size = path.stat().st_size
+            if size > LSP_MAX_DOCUMENT_BYTES:
+                return _too_large_sync_result(uri=uri, size=size)
+            with path.open("rb") as document:
+                content = document.read(LSP_MAX_DOCUMENT_BYTES + 1)
         except OSError as error:
             return LSPDocumentSyncResult(
                 uri=uri,
@@ -189,6 +228,10 @@ class LSPManager:
                 stale_content=True,
                 reason=f"failed to read document before LSP sync: {type(error).__name__}",
             )
+        if len(content) > LSP_MAX_DOCUMENT_BYTES:
+            return _too_large_sync_result(uri=uri, size=len(content))
+        try:
+            text = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         except UnicodeDecodeError as error:
             return LSPDocumentSyncResult(
                 uri=uri,
@@ -319,6 +362,75 @@ def resolve_language_for_path(path: Path | str) -> LSPLanguage | None:
 
     suffix = Path(str(path)).suffix.lower()
     return _EXTENSION_LANGUAGE_MAP.get(suffix)
+
+
+def _too_large_sync_result(*, uri: str, size: int) -> LSPDocumentSyncResult:
+    return LSPDocumentSyncResult(
+        uri=uri,
+        version=0,
+        stale_content=True,
+        reason="document exceeds the LSP synchronization size limit",
+        too_large=True,
+        size=size,
+        cap=LSP_MAX_DOCUMENT_BYTES,
+    )
+
+
+def _resolve_pinned_tsserver(executable: str) -> Path | None:
+    launcher_path = Path(executable)
+    try:
+        launcher_real = launcher_path.resolve(strict=True)
+    except OSError:
+        return None
+
+    candidates: list[tuple[Path, Path]] = []
+    seen: set[str] = set()
+
+    def add_candidate(candidate: Path, anchor: Path) -> None:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            candidates.append((candidate, anchor))
+
+    for launcher_dir in (launcher_path.parent, launcher_real.parent):
+        add_candidate(
+            launcher_dir / "node_modules" / "typescript" / "lib" / "tsserver.js",
+            launcher_dir,
+        )
+
+    for parent in (launcher_real.parent, *launcher_real.parents):
+        if (parent / "package.json").is_file():
+            add_candidate(
+                parent / "node_modules" / "typescript" / "lib" / "tsserver.js",
+                parent,
+            )
+            if parent.parent.name.lower() == "node_modules":
+                add_candidate(
+                    parent.parent / "typescript" / "lib" / "tsserver.js",
+                    parent.parent,
+                )
+            break
+        if parent.name.lower() == "typescript-language-server":
+            add_candidate(
+                parent / "node_modules" / "typescript" / "lib" / "tsserver.js",
+                parent,
+            )
+            add_candidate(
+                parent.parent / "typescript" / "lib" / "tsserver.js",
+                parent.parent,
+            )
+            break
+
+    for candidate, anchor in candidates:
+        try:
+            resolved_anchor = anchor.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=True)
+            resolved_candidate.relative_to(resolved_anchor)
+        except (OSError, ValueError):
+            continue
+        if resolved_candidate.is_file():
+            return resolved_candidate
+    return None
 
 
 def detect_language_servers(

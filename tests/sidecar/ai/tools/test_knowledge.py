@@ -20,6 +20,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_OUTSIDE_WORKSPACE,
 )
+from sidecar.ai.tools.builtins import file_state as file_state_module
 from sidecar.ai.tools.builtins.knowledge import (
     configure_knowledge_tools,
     knowledge_exec_tool,
@@ -27,6 +28,7 @@ from sidecar.ai.tools.builtins.knowledge import (
     knowledge_view_tool,
 )
 from sidecar.ai.tools.builtins.knowledge import exec_ops as exec_ops_module
+from sidecar.ai.tools.builtins.knowledge import view as view_module
 from sidecar.ai.tools.builtins.rich_files.notebook import notebook_inspect_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -239,6 +241,25 @@ def test_view_text_returns_content_and_kb_source(corpus: dict[str, Path]) -> Non
     assert sources[0]["title"] == "spec.md"
     assert sources[0]["source_type"] == "knowledge"
     assert payload["missing_source_metadata"] is False
+
+
+def test_view_text_routes_read_through_authorized_opener(
+    corpus: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorized_roots: list[Path | None] = []
+    original = file_state_module.open_regular_file
+
+    def _spy(path: Path, mode: str = "rb", *, authorized_root: Path | None = None, **kwargs):
+        authorized_roots.append(authorized_root)
+        return original(path, mode, authorized_root=authorized_root, **kwargs)
+
+    monkeypatch.setattr(view_module, "open_regular_file", _spy)
+
+    result = knowledge_view_tool({"path": "project-x/spec.md"}, _WORKSPACE)
+
+    assert result.success is True
+    assert authorized_roots == [corpus["root_a"].resolve()]
 
 
 def test_view_text_pagination_bounds(corpus: dict[str, Path]) -> None:

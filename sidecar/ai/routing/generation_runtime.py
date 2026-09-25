@@ -6,11 +6,14 @@ import importlib
 import logging
 from contextlib import nullcontext
 from dataclasses import replace as _dataclass_replace
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
 from sidecar.ai import config as _ai_config
 from sidecar.ai import error_codes as _error_codes
+from sidecar.ai.engines import admitted as _admitted
+from sidecar.ai.engines import inference_budget as _inference_budget
 from sidecar.ai.engines import provider_http as _provider_http
 from sidecar.ai.routing import generation_diagnostics as _generation_diagnostics
 from sidecar.ai.routing import generation_runtime_stream as _grs
@@ -25,8 +28,10 @@ from sidecar.exceptions import CompanionError
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.local_engine.request_context import (
+    consume_provider_call_purpose,
     current_diagnostics_store,
     scoped_chat_request_context,
+    set_next_provider_call_purpose,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,8 +84,14 @@ def build_compaction_generate_fn(
     max_tokens: int,
     prompt_cache_enabled: bool,
     runtime: Any | None = None,
+    purpose: str = "compaction_summary",
 ) -> Any:
-    """Build a deadline-aware compaction generator on the canonical stream path."""
+    """Build a deadline-aware compaction generator on the canonical stream path.
+
+    ``purpose`` tags each provider call this generator makes in the turn
+    diagnostics (``provider_calls``), so an internal summary is never read as
+    the user-visible answer.
+    """
 
     compaction_runtime = LoopRuntime(
         request_id=request_id,
@@ -103,21 +114,40 @@ def build_compaction_generate_fn(
         request_context=(
             getattr(runtime, "request_context", None) if runtime is not None else None
         ),
+        inference_admission=(
+            getattr(runtime, "inference_admission", None) if runtime is not None else None
+        ),
     )
 
     def generate_fn(messages: list[Any]) -> str:
+        def _operation(context: Any) -> Any:
+            # Re-tagged per attempt: the engine consumes the purpose once.
+            # An attempt that dies before the engine records the request
+            # must not leave the tag for the turn's real answer to inherit.
+            engine = getattr(kernel, "_engine", None)
+            set_next_provider_call_purpose(engine, purpose)
+            try:
+                return stream_generate_with_tools(
+                    kernel,
+                    runtime=compaction_runtime,
+                    latest_user_content="",
+                    prompt_messages=messages,
+                    max_tokens=context.max_tokens,
+                    # Thinking off: a thinking summarizer fixes on side details.
+                    # Codex CLI forwards the effort verbatim, and its OpenAI
+                    # models reject "none"; low is their floor.
+                    reasoning_effort=(
+                        "low" if kernel._config.engine_type == "codex-cli" else "none"
+                    ),
+                    prompt_cache_enabled=prompt_cache_enabled,
+                    system_prompt="",
+                    tool_schemas=[],
+                )[0]
+            finally:
+                consume_provider_call_purpose(engine)
+
         result = execute_with_provider_retry(
-            operation=lambda context: stream_generate_with_tools(
-                kernel,
-                runtime=compaction_runtime,
-                latest_user_content="",
-                prompt_messages=messages,
-                max_tokens=context.max_tokens,
-                reasoning_effort="low",
-                prompt_cache_enabled=prompt_cache_enabled,
-                system_prompt="",
-                tool_schemas=[],
-            )[0],
+            operation=_operation,
             logger=logger,
             component="ai.router",
             event_prefix="ai.router.compaction.retry",
@@ -128,6 +158,10 @@ def build_compaction_generate_fn(
             feature_flags=kernel._config.feature_flags,
             cancel_handle=compaction_runtime.cancel_handle,
             runtime=compaction_runtime,
+            inference_token_ceilings=_inference_budget.inference_budget_ceilings(
+                getattr(kernel, "_engine", None), max_tokens,
+                compaction_runtime.inference_admission,
+            ),
         )
         return str(result.content or "")
 
@@ -299,7 +333,7 @@ def generate_step(
             source_key,
             system_prompt,
             tool_schemas,
-    )
+        )
     request_id = getattr(runtime, "request_id", "") if runtime is not None else ""
     _generation_diagnostics.record_request_fingerprint_if_available(
         kernel,
@@ -364,6 +398,8 @@ def generate_step(
             feature_flags=kernel._config.feature_flags,
             cancel_handle=runtime.cancel_handle if runtime is not None else None,
             runtime=runtime,
+            inference_token_ceilings=_inference_budget.inference_budget_ceilings(
+                kernel._engine, max_tokens, getattr(runtime, "inference_admission", None)),
             before_retry=(
                 _before_retry if runtime is not None and runtime.streaming else None
             ),
@@ -598,6 +634,8 @@ def attempt_fallback_generation(
                 ),
                 cancel_handle=getattr(runtime, "cancel_handle", None),
                 request_context=getattr(runtime, "request_context", None),
+                inference_admission=_admitted.bind_fallback_inference(
+                    getattr(runtime, "inference_admission", None), normalized_engine_type),
             )
             fallback_kernel = SimpleNamespace(
                 _engine=fallback_engine,
@@ -616,16 +654,33 @@ def attempt_fallback_generation(
                 else nullcontext()
             )
             with context_scope:
-                generated, _fallback_events = stream_generate_with_tools(
-                    fallback_kernel,
-                    runtime=fallback_runtime,
-                    latest_user_content=latest_user_content,
-                    prompt_messages=prompt_messages,
-                    max_tokens=max_tokens,
-                    reasoning_effort=reasoning_effort,
-                    prompt_cache_enabled=prompt_cache_enabled,
-                    system_prompt=system_prompt,
-                    tool_schemas=tool_schemas,
+                ceilings = _inference_budget.inference_budget_ceilings(
+                    fallback_engine, max_tokens, fallback_runtime.inference_admission)
+                generated, _fallback_events = _admitted.execute_admitted_provider_attempt(
+                    admission=fallback_runtime.inference_admission,
+                    context=_admitted.InferenceAttemptContext(
+                        request_id=fallback_runtime.request_id,
+                        session_id=fallback_runtime.session_id,
+                        provider=str(fallback_config.engine_type or ""),
+                        model=str(fallback_config.model or ""),
+                        request_source=QUERY_SOURCE_CHAT_SEND,
+                        attempt=1,
+                        streaming=True,
+                        input_token_ceiling=ceilings[0] if ceilings else None,
+                        output_token_ceiling=ceilings[1] if ceilings else None,
+                    ),
+                    operation=partial(
+                        stream_generate_with_tools,
+                        fallback_kernel,
+                        runtime=fallback_runtime,
+                        latest_user_content=latest_user_content,
+                        prompt_messages=prompt_messages,
+                        max_tokens=max_tokens,
+                        reasoning_effort=reasoning_effort,
+                        prompt_cache_enabled=prompt_cache_enabled,
+                        system_prompt=system_prompt,
+                        tool_schemas=tool_schemas,
+                    ),
                 )
 
             if runtime is not None:

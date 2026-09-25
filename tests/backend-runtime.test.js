@@ -65,10 +65,91 @@ for (const [name, predicate] of [
   });
 }
 
+function makeStartupModelService({ startupModelLoad = true, engine = 'ollama', loadError = null } = {}) {
+  const loadCalls = [];
+  const logs = [];
+  return {
+    defaultModel: 'qwen3:8b',
+    currentModel: '',
+    currentEngineType: engine,
+    currentStatus: {},
+    _lastEngineFallback: null,
+    configService: { getLocalEngines: () => ({ startupModelLoad }) },
+    loadModel(model) {
+      loadCalls.push(model);
+      return loadError ? Promise.reject(loadError) : Promise.resolve({ status: 'ok' });
+    },
+    _emitServiceLog(level, event, details) { logs.push({ level, event, details }); },
+    loadCalls,
+    logs,
+  };
+}
+
+test('autoLoadDefaultModel starts an Ollama default when startup loading is on', () => {
+  const service = makeStartupModelService();
+
+  autoLoadDefaultModel(service);
+
+  assert.deepEqual(service.loadCalls, ['qwen3:8b']);
+  assert.deepEqual(service.logs[0], {
+    level: 'INFO',
+    event: 'backend.default_model_startup_load',
+    details: { model: 'qwen3:8b', engine: 'ollama' },
+  });
+});
+
+test('autoLoadDefaultModel keeps Ollama lazy when startup loading is off', () => {
+  const service = makeStartupModelService({ startupModelLoad: false });
+
+  autoLoadDefaultModel(service);
+
+  assert.deepEqual(service.loadCalls, []);
+  assert.equal(service.logs[0].event, 'backend.default_model_deferred');
+});
+
+test('autoLoadDefaultModel logs a rejected startup load without throwing', async () => {
+  const service = makeStartupModelService({ loadError: new Error('load failed') });
+
+  autoLoadDefaultModel(service);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(service.logs[1].event, 'backend.default_model_startup_load_failed');
+  assert.deepEqual(service.logs[1].details, {
+    model: 'qwen3:8b', engine: 'ollama', message: 'load failed',
+  });
+});
+
+test('autoLoadDefaultModel never starts a mock default', () => {
+  const service = makeStartupModelService({ engine: 'mock' });
+
+  autoLoadDefaultModel(service);
+
+  assert.deepEqual(service.loadCalls, []);
+  assert.equal(service.logs[0].event, 'backend.default_model_deferred');
+});
+
+test('autoLoadDefaultModel refreshes setup readiness when the default model is already active', async () => {
+  let refreshCalls = 0;
+  const service = makeStartupModelService();
+  service.currentStatus = { model: 'qwen3:8b', engine: 'ollama' };
+  service.setupService = {
+    refreshReadiness() {
+      refreshCalls += 1;
+      return Promise.resolve();
+    },
+  };
+
+  autoLoadDefaultModel(service);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(service.logs[0].event, 'backend.default_model_loaded');
+});
+
 // Legacy/lazy models.load callers carry only a model string. Re-deriving the
 // engine from that string alone discards an explicit user pin whenever the
 // heuristic falls through to its conservative 'ollama' default.
-function makeLoadModelService({ preferredEngineType = '', logs = [] } = {}) {
+function makeLoadModelService({ preferredEngineType = '', logs = [], refreshReadiness } = {}) {
   const initCalls = [];
   return {
     logs,
@@ -78,11 +159,63 @@ function makeLoadModelService({ preferredEngineType = '', logs = [] } = {}) {
     _lastEngineFallback: null,
     configService: { getState: () => ({ preferredEngineType }) },
     providerIntegrationRegistry: null,
+    ...(refreshReadiness ? { setupService: { refreshReadiness } } : {}),
     _emitServiceLog(level, event, details) { logs.push({ level, event, details }); },
     async _initializeManagedSidecar(options) { initCalls.push(options); },
     async refreshStatusSnapshot() { return null; },
   };
 }
+
+test('loadModel refreshes setup readiness once after a successful load', async () => {
+  let refreshCalls = 0;
+  const service = makeLoadModelService({
+    refreshReadiness() {
+      refreshCalls += 1;
+      return Promise.resolve();
+    },
+  });
+  service.currentModel = 'qwen3:8b';
+
+  const result = await loadModel(service, 'qwen3:8b');
+
+  assert.deepEqual(result, { status: 'ok', model: 'qwen3:8b' });
+  assert.equal(refreshCalls, 1);
+});
+
+test('loadModel does not refresh setup readiness when engine initialization falls back', async () => {
+  let refreshCalls = 0;
+  const service = makeLoadModelService({
+    refreshReadiness() {
+      refreshCalls += 1;
+      return Promise.resolve();
+    },
+  });
+  service._initializeManagedSidecar = async () => {
+    service._lastEngineFallback = { requested_engine: 'ollama', reason: 'unavailable' };
+  };
+
+  await assert.rejects(loadModel(service, 'qwen3:8b'), /Could not load ollama engine/);
+  assert.equal(refreshCalls, 0);
+});
+
+test('loadModel logs a rejected setup readiness refresh without rejecting the load', async () => {
+  const service = makeLoadModelService({
+    refreshReadiness: () => Promise.reject(new Error('probe failed')),
+  });
+  service.currentModel = 'qwen3:8b';
+
+  const result = await loadModel(service, 'qwen3:8b');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(result, { status: 'ok', model: 'qwen3:8b' });
+  assert.deepEqual(service.logs.find((entry) => (
+    entry.event === 'setup.readiness_refresh_after_model_load_failed'
+  )), {
+    level: 'WARN',
+    event: 'setup.readiness_refresh_after_model_load_failed',
+    details: { message: 'probe failed' },
+  });
+});
 
 test('resolveRequestedEngineType keeps a local-runtime pin the model string cannot imply', () => {
   // Verified: this HF id misses isLikelyVllmModel's prefix list.
@@ -314,7 +447,6 @@ test('listModelsForEngine passes through parameter_size, quantization_level, and
 
 test('unloadModel resets managed status shape after unloading the sidecar model', async () => {
   let unloaded = false;
-  let normalized = false;
   const service = {
     defaultModel: 'qwen3:latest',
     currentModel: 'qwen3:latest',
@@ -337,9 +469,6 @@ test('unloadModel resets managed status shape after unloading the sidecar model'
         ...overrides,
       };
     },
-    _normalizeManagedReasoningEfforts() {
-      normalized = true;
-    },
   };
 
   const result = await unloadModel(service);
@@ -351,7 +480,6 @@ test('unloadModel resets managed status shape after unloading the sidecar model'
   assert.equal(service.currentStatus.model_loaded, false);
   assert.equal(service.currentStatus.native_context_length, null);
   assert.equal(service.currentStatus.local_runtime.context.effective_context_length, null);
-  assert.equal(normalized, true);
 });
 
 test('unloadManagedModelForShutdown clears its timeout after a fast unload', async (t) => {

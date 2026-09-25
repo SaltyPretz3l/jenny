@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import fields
 from pathlib import Path
@@ -102,6 +103,15 @@ def resolve_effective_max_tokens(
 
 def _parse_ui_language(raw_config: dict[str, Any]) -> str:
     return _normalize_ui_language(raw_config.get("ui_language"))
+
+
+def _parse_auto_approve_streak_cap(raw_config: dict[str, Any]) -> int:
+    value = raw_config.get("auto_approve_streak_cap")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 50
+    if not math.isfinite(value):
+        return 50
+    return min(500, max(0, int(value)))
 
 
 def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
@@ -244,7 +254,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("max_task_loop_iterations"),
         default=30,
         min_value=1,
-        max_value=32,
+        max_value=250,
     )
     max_sub_agent_loop_iterations = _as_bounded_int(
         raw_config.get("max_sub_agent_loop_iterations"),
@@ -358,7 +368,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("max_tools_per_turn"),
         default=20,
         min_value=1,
-        max_value=100,
+        max_value=500,
     )
     max_web_tool_calls_per_turn = _as_bounded_int(
         raw_config.get("max_web_tool_calls_per_turn"),
@@ -757,6 +767,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         reasoning_effort=reasoning_effort,
         session_start_date=session_start_date,
         safety_mode=safety_mode,
+        auto_approve_streak_cap=_parse_auto_approve_streak_cap(raw_config),
         ui_language=_parse_ui_language(raw_config),
         use_24_hour_time=raw_config.get("use_24_hour_time") is True,
         tool_search_mode=tool_search_mode,

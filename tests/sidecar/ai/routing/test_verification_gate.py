@@ -82,6 +82,27 @@ def test_gate_runs_after_a_successful_typed_mutation():
     ) is True
 
 
+def test_later_edit_invalidates_an_earlier_passing_verification():
+    assert not _gate.already_verified([
+        _outcome("edit_file"), _outcome("verify", metadata={"status": "passed"}),
+        _outcome("edit_file"),
+    ])
+
+
+def test_explicit_shell_mutation_is_verified_even_on_failed_exit():
+    outcome = _outcome("run_command", success=False, metadata={"workspace_changed": True})
+    assert workspace_was_mutated([outcome])
+    assert not _gate.already_verified([_outcome("verify", metadata={"status": "passed"}), outcome])
+    assert not workspace_was_mutated([_outcome("run_command", metadata={"workspace_changed": False})])
+
+
+def test_failed_verification_cannot_preserve_an_earlier_pass():
+    assert not _gate.already_verified([
+        _outcome("verify", metadata={"status": "passed"}),
+        _outcome("verify", success=False, metadata={"status": "failed"}),
+    ])
+
+
 @pytest.mark.parametrize(
     ("flags", "verify_enabled", "attempts", "outcomes", "why"),
     [

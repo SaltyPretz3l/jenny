@@ -27,6 +27,31 @@ test('resolveErrorSeverity maps cancelled/denied recovery classes to calm', () =
   assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recovery_class: 'transport' }), 'danger');
 });
 
+test('resolveErrorSeverity treats a mid-request run-mode change as calm', () => {
+  /* The user flipped the mode themselves; the stop is theirs, not a fault. */
+  assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recovery_class: 'run_mode_changed' }), 'calm');
+  assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recoveryClass: 'run_mode_changed' }), 'calm');
+});
+
+/* Runtime UX A1 (JEN-048): waiting for a free turn, for the current reply or
+ * for a shutdown is not a fault. These classes render muted alongside the
+ * composer refusal map, which reports the same severities. */
+test('resolveErrorSeverity treats runtime waits as calm, not as failures', () => {
+  for (const recoveryClass of ['session_busy', 'runtime_closing', 'lane_capacity', 'downstream_capacity']) {
+    assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recovery_class: recoveryClass }), 'calm', recoveryClass);
+    assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recoveryClass }), 'calm', recoveryClass);
+  }
+  assert.equal(errorRecoveryUtils.resolveErrorSeverity({ recovery_class: 'runtime' }), 'danger');
+});
+
+test('runtime wait classes derive their buttons from the local loop taxonomy', () => {
+  const { describeRuntimeRefusal } = require('../renderer/chat/renderer-runtime-refusals');
+  for (const recoveryClass of ['session_busy', 'runtime_closing', 'lane_capacity', 'downstream_capacity']) {
+    assert.equal(errorRecoveryUtils.BACKEND_CLASS_TO_LOCAL_CLASS[recoveryClass],
+      describeRuntimeRefusal(recoveryClass).classId, recoveryClass);
+  }
+});
+
 test('resolveErrorSeverity falls back to terminal status pre-enrichment', () => {
   assert.equal(errorRecoveryUtils.resolveErrorSeverity({ terminal_status: 'cancelled' }), 'calm');
   assert.equal(errorRecoveryUtils.resolveErrorSeverity({ status: 'aborted' }), 'calm');
@@ -202,6 +227,26 @@ test('calm card suppresses message identical to its title', () => {
     recovery_title: 'Turn cancelled',
   });
   assert.ok(!html.includes('chat-error-card-message'), 'duplicate message suppressed');
+});
+
+test('run-mode change card renders calm with the backend retry action and copy', () => {
+  const html = errorRecoveryUtils.renderTimelineErrorCard({
+    id: 'msg_mode',
+    session_id: 'sess_mode',
+    stream_error: 'The run mode changed while this request was running, so the reply stopped.',
+    error_code: 'run_mode_changed',
+    recovery_class: 'run_mode_changed',
+    recovery_title: 'Run mode changed',
+    recovery_hint: 'Retry to run it in the new mode.',
+    next_action: 'retry_turn',
+    recovery_actions: [{ id: 'retry_turn', label: 'Retry turn' }],
+  });
+  assert.ok(html.includes('chat-error-card--calm'), 'calm variant class');
+  assert.ok(!html.includes('role="alert"'), 'not an alert');
+  assert.ok(html.includes('Run mode changed'), 'server title');
+  assert.ok(html.includes('Retry to run it in the new mode.'), 'server hint');
+  assert.ok(html.includes('data-inv-error-action="retry_turn"'), 'backend retry action rendered');
+  assert.ok(!html.includes('Processing issue'), 'no local loop-class title leaks through');
 });
 
 /* ── compatibility surface ── */

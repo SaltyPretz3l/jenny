@@ -9,6 +9,7 @@ Feature-flag gated via ``FEATURE_TOKEN_BUDGET``.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from dataclasses import dataclass, field, replace
@@ -72,6 +73,11 @@ _DEFAULT_TOOL_OVERHEAD = 500
 # window (e.g. a 2K-4K model) still plans for *some* generation room.
 _MIN_OUTPUT_RESERVATION = 1_024
 
+# Chat templates wrap each schema in framing text the JSON size does not show.
+# Measured on llama-server (Qwen3.8 template, 29 Jenny tools): the provider
+# prompt exceeded the message estimate by ~1.2x the schemas' chars//4 size.
+_TOOL_SCHEMA_FRAMING_FACTOR = 1.25
+
 _WARNING_RATIO = 0.80
 _AUTO_COMPACT_RATIO = 0.90
 _ERROR_RATIO = 0.95
@@ -111,12 +117,15 @@ class TokenBudget:
             else min(self.max_output_tokens, output_reservation_cap)
         )
 
-    def effective_context(self, num_tools: int = 0) -> int:
-        quarter = self.context_window // 4
-        overhead = min(
+    def tool_overhead(self, num_tools: int = 0) -> int:
+        """Tokens reserved for the request's tool schemas (capped at a quarter)."""
+        return min(
             self.tool_overhead_per_tool * max(0, int(num_tools)),
-            quarter,
+            self.context_window // 4,
         )
+
+    def effective_context(self, num_tools: int = 0) -> int:
+        overhead = self.tool_overhead(num_tools)
         output_reservation = self._output_reservation()
         summary_reservation = min(
             self.reserved_for_summary,
@@ -142,6 +151,17 @@ class TokenBudget:
 
     def auto_compact_threshold(self, num_tools: int = 0) -> int:
         return int(self.effective_context(num_tools) * self.auto_compact_ratio)
+
+    def meter_compact_threshold(self, num_tools: int = 0) -> int:
+        """The compaction trigger in whole-prompt tokens, for the context meter.
+
+        Compaction compares the MESSAGE estimate against a threshold that
+        already set the tool schemas aside, while the meter's used figure is
+        the provider's whole-prompt count, which includes them. Adding the tool
+        reserve back puts both sides of the meter in the same units.
+        """
+        threshold = self.auto_compact_threshold(num_tools)
+        return threshold + self.tool_overhead(num_tools) if threshold > 0 else 0
 
     def error_threshold(self, num_tools: int = 0) -> int:
         return int(self.effective_context(num_tools) * _ERROR_RATIO)
@@ -564,19 +584,50 @@ def resolve_request_output_reservation(
     return normalized if normalized != int(max_output_tokens) else None
 
 
-def apply_budget_check(
+def measured_tool_overhead_per_tool(
+    tool_schema_tokens: int | None,
+    num_tools: int,
+) -> int | None:
+    """Per-tool reserve from a measured schema size, or ``None`` if unmeasured."""
+    count = max(0, int(num_tools or 0))
+    measured = _positive_int(tool_schema_tokens)
+    if count <= 0 or measured is None:
+        return None
+    return max(1, math.ceil(measured * _TOOL_SCHEMA_FRAMING_FACTOR / count))
+
+
+def estimate_tool_schema_tokens(
+    tool_payload: Iterable[Mapping[str, Any]] | None,
+    backend: TokenizerBackend | None = None,
+) -> int:
+    """Estimated tokens of the full (``parameters``-carrying) tool schemas."""
+    counter = backend or CharEstimationBackend()
+    total = 0
+    for schema in tool_payload or ():
+        if isinstance(schema, Mapping) and "parameters" in schema:
+            total += counter.count_tokens(json.dumps(schema, ensure_ascii=False, default=str))
+    return total
+
+
+def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
     working_messages: list[dict[str, Any]],
     config: "RuntimeConfig",
     engine: "BaseEngine",
     *,
     num_tools: int = 0,
     reasoning_effort: str | None = None,
+    tool_schema_tokens: int | None = None,
 ) -> tuple[list[dict[str, Any]], TokenBudget | None, BudgetTracker | None]:
     """Construct a budget from engine/config and check the current context.
 
     Returns the (possibly unchanged) message list, the computed budget,
     and a tracker ready for the agent loop.  Called from ``router.py``
     when the ``token_budget`` feature flag is enabled.
+
+    ``tool_schema_tokens`` is the measured size of the request's tool schemas.
+    When given (and no config override is set), the per-tool reserve is that
+    measurement plus a framing margin instead of the flat default, which was
+    about 2.5x Jenny's real schema cost and took ~14.5k of a 64k window.
     """
     # NOT engine.get_model_context_length(): that is the model's NATIVE window,
     # while every request is served with the configured num_ctx clamp. See
@@ -601,6 +652,10 @@ def apply_budget_check(
         budget_kwargs["reserved_for_summary"] = int(reserved_for_summary)
     if tool_overhead is not None:
         budget_kwargs["tool_overhead_per_tool"] = int(tool_overhead)
+    else:
+        measured_per_tool = measured_tool_overhead_per_tool(tool_schema_tokens, num_tools)
+        if measured_per_tool is not None:
+            budget_kwargs["tool_overhead_per_tool"] = measured_per_tool
     if warning_ratio is not None:
         budget_kwargs["warning_ratio"] = float(warning_ratio)
     budget_kwargs["auto_compact_ratio"] = resolve_auto_compact_ratio(

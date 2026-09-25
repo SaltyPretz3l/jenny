@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 from sidecar.ai.error_codes import (
@@ -22,6 +23,8 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.routing import loop_event_emit, route_policy_runtime
 from sidecar.ai.routing import router as _router
+from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
+from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
@@ -74,10 +77,13 @@ def should_pause_for_live_prompt(
     approvals_pre_granted: bool,
     scan_approval_mode: str | None,
 ) -> bool:
-    if scan_approval_mode != "auto_run" or approvals_pre_granted:
-        return False
     live_run_mode = current_live_run_mode_state()
     if live_run_mode is None or live_run_mode.snapshot()[0] != "prompt":
+        return False
+    if (
+        not live_run_mode.is_paused_unattended()
+        and (scan_approval_mode != "auto_run" or approvals_pre_granted)
+    ):
         return False
     if call.tool_id == TOOL_SEARCH_TOOL_NAME:
         return False
@@ -408,7 +414,7 @@ def pre_filter_tool_calls(  # noqa: C901, PLR0912, PLR0913, PLR0915
     return remaining, outcome_index
 
 
-def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
+def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
     *,
     indexed_calls: list[tuple[Any, int]],
     runtime: Any,
@@ -430,18 +436,35 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
     audit_metadata_by_call: dict[str, dict[str, object]] | None = None,
     approvals_pre_granted: bool = False,
     scan_approval_mode: str | None = None,
+    allow_resource_deferral: bool = False,
+    on_resource_deferral: Any = None,
+    restored_first_input: _tool_restored_inputs.RestoredToolInputs | None = None,
 ) -> None:
     """Execute calls once, in model order, preserving every completed outcome."""
-    for call, outcome_index in indexed_calls:
-        runtime.raise_if_interrupted()
-        call_id = loop_event_emit.emit_tool_executing(
-            runtime,
-            call,
-            request_id,
-            outcome_index,
+    if restored_first_input is not None and (
+        not indexed_calls or indexed_calls[0][0].tool_id == TOOL_SEARCH_TOOL_NAME
+    ):
+        raise _tool_restored_inputs.RestoredToolInputError(
+            "restored_tool_input_has_no_dispatch_target"
         )
-        if runtime.streaming:
-            streamed_event_types.add("tool.executing")
+    outcomes_at_entry = len(outcomes)
+    for call_position, (call, outcome_index) in enumerate(indexed_calls):
+        runtime.raise_if_interrupted()
+        call_id = str(call.call_id or "").strip()
+        dispatch_ready = False
+
+        def _mark_dispatch_ready(
+            *, _call: Any = call, _outcome_index: int = outcome_index
+        ) -> None:
+            nonlocal call_id, dispatch_ready
+            if dispatch_ready:
+                return
+            call_id = loop_event_emit.emit_tool_executing(
+                runtime, _call, request_id, _outcome_index
+            )
+            if runtime.streaming:
+                streamed_event_types.add("tool.executing")
+            dispatch_ready = True
 
         try:
             if should_pause_for_live_prompt(
@@ -481,6 +504,7 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
                         metadata={"host_policy_denied": True},
                     )
                 else:
+                    _mark_dispatch_ready()
                     tool_result = kernel._execute_tool_search(
                         call,
                         resolution_context=tool_resolution_context,
@@ -494,7 +518,21 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
                     if runtime.remaining_tool_calls == 0:
                         tool_payload_ref.clear()
             else:
-                trusted_execution_kwargs = {}
+                trusted_execution_kwargs: dict[str, Any] = {}
+                if call.tool_id == "ask_user":
+                    # Runtime assembly imports this dispatcher; defer the reverse dependency.
+                    from sidecar.runtime.decision_checkpoint import (  # noqa: PLC0415
+                        prepare_question_decision,
+                    )
+                    trusted_execution_kwargs["on_frozen_input"] = partial(
+                        prepare_question_decision, runtime=runtime, request_context=request_context,
+                        config=kernel._config,
+                        tool_contract=tool_contract,
+                        pending_calls=tuple(item for item, _ in indexed_calls[call_position:]),
+                        completed_outcomes=tuple(outcomes),
+                    )
+                if call_position == 0 and restored_first_input is not None:
+                    trusted_execution_kwargs["restored_inputs"] = restored_first_input
                 if (
                     tool_policy_call_key(call)
                     in trusted_plan_artifact_write_call_ids
@@ -510,9 +548,26 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
                         tool_policy_call_key(call)
                     ),
                     runtime=runtime,
+                    on_dispatch_ready=_mark_dispatch_ready,
                     **trusted_execution_kwargs,
                 )
-        except _tool_contracts.ToolExecutionFailure as exc:
+        except (
+            _tool_resource_deferral.ToolResourceDeferred, _tool_contracts.ToolExecutionFailure
+        ) as error:
+            if isinstance(error, _tool_resource_deferral.ToolResourceDeferred):
+                if not dispatch_ready and callable(on_resource_deferral):
+                    on_resource_deferral(
+                        error, tuple(item for item, _ in indexed_calls[call_position:]))
+                if (
+                    allow_resource_deferral
+                    and call_position == 0
+                    and len(outcomes) == outcomes_at_entry
+                    and not dispatch_ready
+                ):
+                    raise
+                exc = _tool_resource_deferral.resource_wait_failure(error.wait)
+            else:
+                exc = error
             failure_metadata: dict[str, object] = {
                 key: value for key, value in exc.to_error_data().items()
             }
@@ -552,6 +607,7 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
                 metadata=failure_metadata,
             )
 
+        _mark_dispatch_ready()
         outcomes.append(tool_result)
         loop_event_emit.emit_tool_result(runtime, tool_result, call_id)
         if runtime.streaming:
@@ -565,6 +621,9 @@ def execute_tool_calls_sequentially(  # noqa: PLR0913, PLR0915
             tool_name=tool_result.tool_name,
             success=tool_result.success,
             metadata=tool_result.metadata,
+            execution_context=getattr(
+                getattr(runtime, "request_context", None), "execution_context", None
+            ),
         )
         working_messages.append(kernel._assistant_tool_call_message(result, call))
         working_messages.append(kernel._tool_result_message(call, tool_result))
@@ -583,7 +642,7 @@ APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE = (
 )
 
 
-def settle_dropped_tool_calls(  # noqa: PLR0913 — mirrors the filtered-outcome recorder.
+def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome recorder.
     *,
     kernel: Any,
     runtime: Any,
@@ -658,7 +717,7 @@ def prevalidate_call_arguments(
 
     Dispatch validates too, but dispatch runs AFTER the user has already
     answered the approval prompt. For an ordinary tool that only wastes a
-    click; for ``exit_plan_mode`` it stranded a live turn — the user approved a
+    click; for ``exit_plan_mode`` it stranded a live turn -- the user approved a
     plan and the very same arguments were then rejected, discarding the
     proposal they had just accepted. Returning the failure here lets the caller
     record a recoverable per-call outcome, carrying the same repair hints

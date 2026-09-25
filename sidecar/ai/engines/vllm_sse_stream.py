@@ -30,13 +30,14 @@ _SSE_DATA_PREFIX = "data: "
 _SSE_DONE_SENTINEL = "[DONE]"
 _MAX_PROVIDER_STREAM_LINE_BYTES = 1024 * 1024
 _MAX_PROVIDER_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
-_PROVIDER_STREAM_READ_CHUNK_BYTES = 64 * 1024
 
 
 def _iter_bounded_sse_lines(response: Any):
     iter_raw = getattr(response, "iter_raw", None)
     if callable(iter_raw):
-        chunks = iter_raw(chunk_size=_PROVIDER_STREAM_READ_CHUNK_BYTES)
+        # No chunk_size: httpx would hold bytes until a whole block filled,
+        # releasing a stream of small deltas in bursts.
+        chunks = iter_raw(chunk_size=None)
     else:
         # Deterministic test doubles historically expose only iter_lines().
         chunks = (
@@ -141,20 +142,33 @@ def _resolve_vllm_stream_finish_reason(
 ) -> str:
     """Classify how a vLLM stream ACTUALLY ended.
 
-    ``reasoning_only`` keeps precedence: it is the more specific fail-closed
-    verdict and already has a dedicated error code downstream. A stream that
-    produced neither a sentinel nor any ``finish_reason`` is ``incomplete`` --
-    previously it was reported as ``stop``, making an EOF mid-answer
-    indistinguishable from a complete completion.
+    Precedence, first match wins: a provider error is a definite verdict; a
+    missing terminal is not evidence the turn ended, even when tool calls
+    parsed, so it stays ``incomplete``; ``reasoning_only`` is the fail-closed
+    verdict over a clean ``stop`` terminal; and tool calls outrank a raw
+    ``length``. Shares the Ollama sibling's "missing terminal beats parsed tool
+    calls" rule -- checking tool calls first made an EOF mid-batch
+    indistinguishable from a clean tool turn -- and adds the
+    provider-error-first and reasoning-only steps.
+
+    ``reasoning_only`` never masks a provider ``length``: a model still inside
+    its thinking block when ``n_predict`` ran out was cut off mid-thought, not
+    finished, so the normalized ``length`` is returned and the turn reaches the
+    thinking-budget checkpoint continuation
+    (``thinking_checkpoint.is_thinking_budget_checkpoint``) instead of the
+    empty-generation fallback. Reasoning-only over a clean ``stop`` stays the
+    fail-closed ``CMP-STREAM-REASONING-ONLY`` verdict: there the model chose to
+    end the turn without answering.
     """
-    if has_tool_calls:
-        return "tool_calls"
-    if reasoning_only:
-        return FINISH_REASON_REASONING_ONLY
     if inband_error or terminal_finish_reason == FINISH_REASON_PROVIDER_ERROR:
         return FINISH_REASON_PROVIDER_ERROR
     if not saw_terminal:
         return FINISH_REASON_INCOMPLETE
+    if reasoning_only:
+        normalized = _normalize_vllm_finish_reason(terminal_finish_reason)
+        return normalized if normalized == "length" else FINISH_REASON_REASONING_ONLY
+    if has_tool_calls:
+        return "tool_calls"
     return _normalize_vllm_finish_reason(terminal_finish_reason)
 
 

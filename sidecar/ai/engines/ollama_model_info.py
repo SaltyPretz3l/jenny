@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import sys
 from typing import Any
 
 from sidecar.ai.engines.ollama_metadata import extract_context_length
@@ -14,6 +16,8 @@ MAX_OLLAMA_MODELFILE_LINES = 64
 MAX_OLLAMA_BLOB_PATH_CHARS = 1024
 MAX_OLLAMA_BLOB_PATHS = 2
 _HTTP_STATUS_NOT_FOUND = 404
+_WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_PATH_CONTROL_CHARACTERS = re.compile(r"[\r\n\0]")
 
 
 def _normalize_model_id(value: Any) -> str:
@@ -102,11 +106,51 @@ def inspect_ollama_model(
     }
 
 
+def _is_local_absolute_path(candidate: str, *, platform: str) -> bool:
+    """Mirror Electron's ``isLocalAbsolutePath``: on Windows, a drive path only.
+
+    A stat or open of a UNC or device path connects to the host it names and
+    sends that host the user's Windows credentials, so one is refused before any
+    filesystem call. A share mapped to a drive letter is a drive path.
+    """
+    if not candidate or _PATH_CONTROL_CHARACTERS.search(candidate):
+        return False
+    if platform == "win32":
+        return _WINDOWS_DRIVE_PATH.match(candidate) is not None
+    return candidate.startswith("/")
+
+
+def _ollama_from_paths(modelfile: str) -> list[str]:
+    """Return the paths on the FROM lines Ollama itself writes, in order.
+
+    ``/api/show`` renders the model's FROM lines (the model, then any projectors,
+    with adapters between) before every command whose text the model's publisher
+    wrote. The scan stops at the first other command, so a FROM line inside a
+    template, system prompt or license is text, never a path to read.
+    """
+    candidates: list[str] = []
+    for raw_line in modelfile.splitlines()[:MAX_OLLAMA_MODELFILE_LINES]:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        keyword = line.split(maxsplit=1)[0].lower()
+        if keyword == "adapter":
+            continue
+        if keyword != "from":
+            break
+        candidate = line[5:].strip()
+        if candidate[:1] in {'"', "'"} and candidate[-1:] == candidate[:1]:
+            candidate = candidate[1:-1]
+        candidates.append(candidate)
+    return candidates
+
+
 def resolve_ollama_model_blob(
     *,
     host: str,
     model_id: Any,
     timeout_seconds: float = OLLAMA_MODEL_INFO_TIMEOUT_SECONDS,
+    platform: str | None = None,
 ) -> dict[str, Any]:
     """Resolve up to two local GGUF paths without exposing provider payloads."""
     normalized_model_id = _normalize_model_id(model_id)
@@ -137,32 +181,23 @@ def resolve_ollama_model_blob(
 
     paths: list[str] = []
     modelfile = info.get("modelfile")
-    if isinstance(modelfile, str):
-        for raw_line in modelfile.splitlines()[:MAX_OLLAMA_MODELFILE_LINES]:
-            line = raw_line.strip()
-            if not line.lower().startswith("from "):
-                continue
-            candidate = line[5:].strip()
-            if (
-                candidate[:1] in {'"', "'"}
-                and candidate[-1:] == candidate[:1]
-            ):
-                candidate = candidate[1:-1]
-            if (
-                len(candidate) > MAX_OLLAMA_BLOB_PATH_CHARS
-                or not os.path.isabs(candidate)
-                or not os.path.isfile(candidate)
-            ):
-                continue
-            try:
-                with open(candidate, "rb") as blob_file:  # noqa: PTH123
-                    if blob_file.read(4) != b"GGUF":
-                        continue
-            except OSError:
-                continue
-            paths.append(candidate)
-            if len(paths) == MAX_OLLAMA_BLOB_PATHS:
-                break
+    host_platform = platform or sys.platform
+    for candidate in _ollama_from_paths(modelfile) if isinstance(modelfile, str) else []:
+        if (
+            len(candidate) > MAX_OLLAMA_BLOB_PATH_CHARS
+            or not _is_local_absolute_path(candidate, platform=host_platform)
+            or not os.path.isfile(candidate)
+        ):
+            continue
+        try:
+            with open(candidate, "rb") as blob_file:  # noqa: PTH123
+                if blob_file.read(4) != b"GGUF":
+                    continue
+        except OSError:
+            continue
+        paths.append(candidate)
+        if len(paths) == MAX_OLLAMA_BLOB_PATHS:
+            break
 
     blob_path = paths[0] if paths else ""
     return {

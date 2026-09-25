@@ -225,7 +225,7 @@
       renderMemorySurfaces();
       let saveSucceeded = false;
       try {
-        const updated = await memoryApi.update(memory.id, patch);
+        const updated = await memoryApi.update(memory.id, patch, memory.project_id || undefined);
         if (disposed) return;
         if (updated?.updated !== true) {
           throw new Error('Could not update approved memory.');
@@ -270,7 +270,7 @@
       setApprovedMemoryPendingAction(memory.id, 'delete');
       renderMemorySurfaces();
       try {
-        const deleted = await memoryApi.delete(memory.id);
+        const deleted = await memoryApi.delete(memory.id, memory.project_id || undefined);
         if (disposed) return;
         if (deleted?.deleted !== true) {
           throw new Error('Could not delete approved memory.');
@@ -280,7 +280,9 @@
           setEditingMemoryId(null);
         }
         const undoDedupeKey = `${TOAST_SOURCE.memory}:deleted:${memory.id}`;
-        showToastMessage(jt('memory.toasts.removed', 'I removed that memory.'), {
+        // dismissToast takes the id showToastMessage returns, not the dedupeKey.
+        let undoToastId = '';
+        undoToastId = showToastMessage(jt('memory.toasts.removed', 'I removed that memory.'), {
           title: jt('memory.titles.deleted', 'Memory Deleted'),
           tone: 'success',
           source: TOAST_SOURCE.memory,
@@ -291,7 +293,7 @@
               label: jt('memory.actions.undo', 'Undo'),
               kind: 'secondary',
               onClick: async () => {
-                dismissToast(undoDedupeKey);
+                dismissToast(undoToastId);
                 try {
                   if (typeof memoryApi.save !== 'function') throw new Error('Memory restore is unavailable.');
                   const restored = await memoryApi.save(deletedSnapshot.session_id || '', {
@@ -354,7 +356,8 @@
         return;
       }
       const deleteDedupeKey = `${TOAST_SOURCE.memory}:confirm-delete:${memory.id}`;
-      showToastMessage(
+      let confirmToastId = '';
+      confirmToastId = showToastMessage(
         jt('memory.toasts.deleteConfirm', 'Delete "{title}"? You can undo this for a short time.', { title: memory.title }),
         {
           title: jt('memory.titles.confirmDelete', 'Confirm Delete'),
@@ -368,7 +371,7 @@
               label: jt('common.delete', 'Delete'),
               kind: 'danger',
               onClick: () => {
-                dismissToast(deleteDedupeKey);
+                dismissToast(confirmToastId);
                 executeApprovedMemoryDelete(memory);
               },
             },
@@ -377,7 +380,7 @@
               label: jt('common.cancel', 'Cancel'),
               kind: 'secondary',
               onClick: () => {
-                dismissToast(deleteDedupeKey);
+                dismissToast(confirmToastId);
               },
             },
           ],
@@ -402,7 +405,7 @@
           title: memory.title,
           lesson_text: memory.lesson_text,
           remove_provenance: true,
-        });
+        }, memory.project_id || undefined);
         if (disposed) return;
         if (result?.updated !== true) throw new Error('Could not remove memory source.');
         removalSucceeded = true;
@@ -447,7 +450,7 @@
           const deleted = await memoryApi.deletePending(sessionId, fingerprint);
           if (disposed) return;
           if (deleted?.deleted !== true) throw new Error('Pending memory dismissal is unavailable.');
-          if (typeof memoryApi.dismiss === 'function') await memoryApi.dismiss(fingerprint);
+          if (typeof memoryApi.dismiss === 'function') await memoryApi.dismiss(sessionId, fingerprint);
           if (disposed) return;
         }
         await Promise.all([
@@ -585,7 +588,7 @@
                   if (disposed) return;
                   rememberDismissedMemoryFingerprint(sessionId, candidateFingerprint);
                   if (typeof memoryApi.dismiss === 'function') {
-                    memoryApi.dismiss(candidateFingerprint).catch((error) => {
+                    memoryApi.dismiss(sessionId, candidateFingerprint).catch((error) => {
                       appendClientLog('WARN', 'memory.dismiss_failed', {
                         fingerprint: candidateFingerprint,
                         message: String(error?.message || error),
@@ -644,6 +647,9 @@
       function handleChange(event) {
         if (event.target.id === 'memoryManagerKindFilter') {
           state.memoryManager.filter = normalizeApprovedMemoryKindFilter(event.target.value);
+          state.memoryManager.approvedVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
+        } else if (event.target.id === 'memoryManagerProjectFilter') {
+          state.memoryManager.projectFilter = String(event.target.value || '').trim() || 'all';
           state.memoryManager.approvedVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
         } else if (event.target.id === 'pendingMemorySort') {
           state.memoryManager.pendingSort = String(event.target.value || 'newest');

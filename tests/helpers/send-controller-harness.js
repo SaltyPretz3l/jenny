@@ -47,6 +47,7 @@ function createControllerHarness(messages, options = {}) {
   const state = {
     activeStreamId: '',
     activeStreamSessionId: '',
+    features: { featureFlags: { session_runtime: options.durableRuntime === true } },
     backend: { phase: String(options.backendPhase || 'ready') },
     auth: { authenticated: options.authenticated !== false },
     attachments: { queued: [] },
@@ -90,7 +91,9 @@ function createControllerHarness(messages, options = {}) {
   });
 
   global.window = {
+    rendererIdeActiveFileContext: options.activeFileContext,
     jennyShell: {
+      ...(options.shell || {}),
       chat: {
         async startStream(payload) {
           calls.startStream.push(payload);
@@ -206,7 +209,9 @@ function createControllerHarness(messages, options = {}) {
       setComposerStatusNotice: (message, noticeOptions) => {
         calls.composerNotices.push({ message: String(message || ''), options: noticeOptions || {} });
       },
-      clearComposerStatusNotice: () => {},
+      clearComposerStatusNotice: (noticeOptions) => {
+        calls.composerNotices.push({ message: '', options: { ...(noticeOptions || {}), cleared: true } });
+      },
       isSendPreflightPending: () => false,
       showComposerActionError: (error, title) => {
         calls.errors.push({
@@ -288,7 +293,14 @@ function createControllerHarness(messages, options = {}) {
         return state.sessions[existingIndex];
       },
       removeSessionState: () => {},
-      rekeySessionState: (_from, to) => to,
+      rekeySessionState: (from, to) => {
+        if (state.messagesBySession.has(from)) {
+          state.messagesBySession.set(to, state.messagesBySession.get(from)); state.messagesBySession.delete(from);
+        }
+        state.sessions = state.sessions.map(row => row.id === from ? { ...row, id: to } : row);
+        if (state.currentSessionId === from) state.currentSessionId = to;
+        return to;
+      },
       setChatSendLifecycle: (sessionId, lifecycle) => {
         const normalizedSessionId = String(sessionId || '').trim();
         if (!normalizedSessionId) {

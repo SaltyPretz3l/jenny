@@ -88,6 +88,7 @@
     return {
       id,
       session_id: String(candidate.session_id || '').trim(),
+      project_id: String(candidate.project_id || '').trim(),
       title,
       lesson_text: lessonText,
       lesson_kind: lessonKind,
@@ -116,6 +117,7 @@
     return {
       id: Number.isInteger(id) && id > 0 ? id : 0,
       session_id: sessionId,
+      project_id: String(candidate.project_id || '').trim(),
       source_request_id: String(candidate.source_request_id || '').trim(),
       title,
       lesson_text: lessonText,

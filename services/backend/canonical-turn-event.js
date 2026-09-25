@@ -282,6 +282,14 @@ function redactPayloadKey(key) {
   return SECRET_KEY_RE.test(normalizedKey) ? '[redacted:secret]' : null;
 }
 
+// A tool call's own arguments are model-authored content (an ask_user
+// question's prompt, an image prompt), not engine prompt payloads; only
+// secrets and paths are redacted inside them (gate A7 F10).
+function redactToolInputKey(key) {
+  const normalizedKey = normalizeToken(key, { limit: 80, lower: true }).replaceAll('-', '_');
+  return SECRET_KEY_RE.test(normalizedKey) ? '[redacted:secret]' : null;
+}
+
 function capStringField(payload, key, limit, diagnostics) {
   const value = payload[key];
   if (typeof value !== 'string' || utf8Bytes(value) <= limit) {
@@ -316,6 +324,10 @@ function capPayload(eventType, payload) {
   }
   if (!isPlainObject(sanitized)) {
     sanitized = {};
+  }
+  if (!sanitizedResult.reason && isPlainObject(payload) && Object.hasOwn(payload, 'tool_input')) {
+    const toolInput = sanitizeStructure(payload.tool_input, { sanitizeString, redactKey: redactToolInputKey });
+    if (!toolInput.reason) sanitized.tool_input = toolInput.value;
   }
 
   if (eventType === 'text_delta') {

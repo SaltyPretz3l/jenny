@@ -20,6 +20,7 @@ from sidecar.ai.routing.sub_agent_invocation import (
     COMPLETION_REASON_CAPACITY_UNAVAILABLE,
     INVOCATION_KIND_RESEARCH,
     SUBAGENT_BATCH_OPERATION,
+    _child_request_context,
     build_delegation_contract_payload,
     build_parent_invocation_hash,
     build_sub_agent_identity,
@@ -438,6 +439,28 @@ def test_batch_identity_uses_batch_root_and_task_ordinal() -> None:
     assert identity.invocation_id == "subagent_batch:req-parent:call-1"
     assert identity.task_id == "subagent_batch:req-parent:call-1:task:3"
     assert identity.agent_id == "research@req-parent:call-1:3"
+
+
+def test_child_context_keeps_authority_scope_while_narrowing_to_read_only() -> None:
+    execution_context = object()
+    parent = _context(execution_context=execution_context, approvals_pre_granted=True)
+    identity = build_sub_agent_identity(
+        parent_request_id=parent.request_id,
+        canonical_call_id="call-scope",
+    )
+
+    child = _child_request_context(
+        parent_context=parent,
+        identity=identity,
+        tool_preferences_override=None,
+        iteration_budget_override=None,
+        report_mode="plain_text",
+    )
+
+    assert child.execution_context is execution_context
+    assert child.approvals_pre_granted is False
+    assert child.read_only is True
+    assert child.plan_mode is False
 
 
 def test_capacity_failure_has_internal_non_reprobe_discriminator() -> None:

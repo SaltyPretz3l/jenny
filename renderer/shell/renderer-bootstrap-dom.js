@@ -5,6 +5,90 @@
   }
   root.rendererBootstrapDom = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  /**
+   * Split view W0-4: the nodes ONE chat pane owns.
+   *
+   * Every one of these is reached today by id, through the one document. With
+   * two panes an id is no longer unique, so each of these elements also carries
+   * `data-chat-node="<its id>"` in index.html and a pane resolves its nodes
+   * relative to its own root. The attribute value IS the id -- that identity is
+   * what lets pane 0 keep using `getElementById` and get byte-for-byte the
+   * nodes it always got.
+   *
+   * `chatView` and `chatSurfaceEffects` are deliberately absent: they are the
+   * VIEW that hosts the panes, not a pane. So is `composerActiveFileActionHost`,
+   * which lives outside the chat view entirely. `chatContextPanel` IS a pane
+   * node: like the artifact review panel it shows the CURRENT session's
+   * artifacts, pulse and logs, so with two sessions side by side it is per
+   * pane, and its own ids are reached by traversal inside it.
+   */
+  const CHAT_PANE_NODE_NAMES = Object.freeze([
+    'heroStage',
+    'chatThreadStage',
+    'chatSearchOverlayHost',
+    'chatSelectionOverlayHost',
+    'chatSurface',
+    'chatThreadScroll',
+    'chatThreadColumn',
+    'chatSpriteLayer',
+    'chatAssistantSprite',
+    'chatOriginChip',
+    'chatOriginLabel',
+    'chatTimeline',
+    'chatScrollSentinel',
+    'jumpToTopButton',
+    'jumpToLastPromptButton',
+    'jumpToBottomButton',
+    'chatTimelineUtilityCluster',
+    'artifactSplitViewToggle',
+    'timelineCollapseExpandToggle',
+    'composerWayfinderHost',
+    'composerWrap',
+    'chatInput',
+    'sendButton',
+    'stopStreamButton',
+    'composerTerminalShortcut',
+    'artifactReviewResizer',
+    'artifactReviewPanel',
+    'chatContextPanel',
+  ]);
+
+  /**
+   * One pane's chat nodes.
+   *
+   * With NO `paneRoot` this is pane 0: `documentRef.getElementById(name)`, the
+   * exact lookup every call site makes today. With a `paneRoot` element the
+   * lookup is scoped to that root via `[data-chat-node="<name>"]` and there is
+   * NO document fallback -- a root that lacks a node yields `null`. That is the
+   * load-bearing rule: a fallback would let a second pane silently resolve, and
+   * then mutate, the first pane's timeline, composer or scroller.
+   *
+   * Only `null` / `undefined` mean pane 0. A root that was GIVEN but cannot be
+   * queried (a wrapper object, a ref, a stale id) is still a pane, so it
+   * resolves every name to `null` -- never through to the document.
+   *
+   * @param {Document} documentRef the boot document (pane 0's lookups)
+   * @param {Element|null} [paneRoot] a pane's root element, or null for pane 0
+   * @returns {Object} every name in CHAT_PANE_NODE_NAMES, each an Element or null
+   */
+  function resolveChatPaneDom(documentRef, paneRoot) {
+    const scoped = paneRoot && typeof paneRoot.querySelector === 'function' ? paneRoot : null;
+    const rootGivenButUnusable = paneRoot != null && !scoped;
+    const byId = !scoped && !rootGivenButUnusable
+      && documentRef && typeof documentRef.getElementById === 'function'
+      ? documentRef
+      : null;
+    const resolved = {};
+    for (const name of CHAT_PANE_NODE_NAMES) {
+      if (scoped) {
+        resolved[name] = scoped.querySelector(`[data-chat-node="${name}"]`) || null;
+      } else {
+        resolved[name] = byId ? (byId.getElementById(name) || null) : null;
+      }
+    }
+    return resolved;
+  }
+
   function resolveDomSpec(documentRef, spec) {
     if (!spec) {
       return null;
@@ -195,6 +279,7 @@
       appearanceStatus: $('appearanceStatus'),
       modelStatus: $('modelStatus'),
       modelCatalogEmpty: $('modelCatalogEmpty'),
+      modelStartupLoadList: $('modelStartupLoadList'),
       skillsSettingsNavItem: $('skillsSettingsNavItem'),
       contextBadge: $('contextBadge'),
       contextStatus: $('contextStatus'),
@@ -206,6 +291,7 @@
       toolsApprovalRulesList: $('toolsApprovalRulesList'),
       toolsWorkspacePath: $('toolsWorkspacePath'),
       toolsWorkspaceStatus: $('toolsWorkspaceStatus'),
+      toolsWorkspaceProject: $('toolsWorkspaceProject'),
       toolsWorkspaceChooseButton: $('toolsWorkspaceChooseButton'),
       toolsSummary: $('toolsSummary'),
       editorBadge: $('editorBadge'),
@@ -225,7 +311,7 @@
       usageSettingsNavItem: $('usageSettingsNavItem'),
       remoteSettingsSection: documentRef.querySelector('[data-settings-section="remote"]'),
       titlebar: documentRef.querySelector('.titlebar'),
-      sidebar: documentRef.querySelector('.sidebar'),
+      sidebar: $('viewPanel'),
       composer: documentRef.querySelector('.composer'),
       composerHolo,
       composerHoloContext: composerHolo && typeof composerHolo.getContext === 'function'
@@ -252,7 +338,10 @@
     };
   }
 
-  function createRendererSurfaceDom(dom, lazyResolvers) {
+  // `documentRef` (split view W0-4) is what the chat group's `resolvePane` is
+  // bound to. It is the third parameter rather than the first so no existing
+  // call site's arguments move; the boot passes its own `document`.
+  function createRendererSurfaceDom(dom, lazyResolvers, documentRef) {
     return {
       status: {
         composerStatusNotice: dom.composerStatusNotice,
@@ -297,6 +386,7 @@
         modelBadge: dom.modelBadge,
         modelStatus: dom.modelStatus,
         modelCatalogEmpty: dom.modelCatalogEmpty,
+        modelStartupLoadList: dom.modelStartupLoadList,
         skillsSettingsNavItem: dom.skillsSettingsNavItem,
         skillsSettingsSection: dom.skillsSettingsSection,
         contextBadge: dom.contextBadge,
@@ -309,6 +399,7 @@
         toolsApprovalRulesList: dom.toolsApprovalRulesList,
         toolsWorkspacePath: dom.toolsWorkspacePath,
         toolsWorkspaceStatus: dom.toolsWorkspaceStatus,
+        toolsWorkspaceProject: dom.toolsWorkspaceProject,
         toolsWorkspaceChooseButton: dom.toolsWorkspaceChooseButton,
         toolsSummary: dom.toolsSummary,
         editorBadge: dom.editorBadge,
@@ -365,13 +456,20 @@
         openComposerSettingsViewButton: dom.openComposerSettingsViewButton,
         composerCommandPopover: dom.composerCommandPopover,
         artifactReviewPanel: dom.artifactReviewPanel,
+        // Split view W0-4: the seam the pane template resolves its nodes
+        // through. Nothing calls it in production yet -- the fields above are
+        // still pane 0's, resolved by id at boot -- but it is what a second
+        // pane will be handed instead of the document.
+        resolvePane: (paneRoot) => resolveChatPaneDom(documentRef, paneRoot),
       },
     };
   }
 
   return {
+    CHAT_PANE_NODE_NAMES,
     createLazyDomResolver,
     createRendererDomRegistry,
     createRendererSurfaceDom,
+    resolveChatPaneDom,
   };
 });

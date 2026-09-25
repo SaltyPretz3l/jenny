@@ -1,6 +1,8 @@
 'use strict';
 
 const { TOOL_ERROR_CODES } = require('./error-codes');
+const { getTrustedExecutionBinding } = require('./session-execution-authority');
+const { createToolResourceClaim, projectToolResourceWait } = require('../tools/tool-resource-execution');
 
 function hostedExecutionBrokerFor(service) {
   return service?.hostExecutionBroker
@@ -48,7 +50,7 @@ function normalizeHostedRunCommandArguments(input) {
 }
 
 async function executeHostedRunCommand(service, {
-  input, sessionId, streamId, abortSignal,
+  input, sessionId, streamId, abortSignal, executionAuthority, callId, beforeProducer = null,
 }, { bridgeFailure, sanitizeBridgeMetadata, maxOutputChars }) {
   const worker = hostedExecutionBrokerFor(service);
   const version = Number(
@@ -65,11 +67,21 @@ async function executeHostedRunCommand(service, {
   if (!String(sessionId || '').trim() || !String(streamId || '').trim()) {
     return bridgeFailure('run_command', 'Hosted execution requires session and stream identity.', TOOL_ERROR_CODES.EXECUTION_FAILED);
   }
+  let resourceClaim;
+  let result;
+  let commandMayStart = false;
+  const trusted = getTrustedExecutionBinding(executionAuthority);
   try {
-    const result = await worker.execute(normalized.value, {
+    resourceClaim = createToolResourceClaim({ binding: executionAuthority,
+      operationId: callId, toolName: 'run_command', input, required: !!service.sessionRuntime });
+    result = await worker.execute(normalized.value, {
       signal: abortSignal,
       sessionId: String(sessionId).trim(),
       streamId: String(streamId).trim(),
+      beforeAdmission: async () => {
+        await resourceClaim?.admit(); await beforeProducer?.();
+        trusted?.assertCurrent(); commandMayStart = true;
+      },
     });
     const stdout = String(result?.stdout || '');
     const stderr = String(result?.stderr || '');
@@ -91,6 +103,7 @@ async function executeHostedRunCommand(service, {
       }),
     };
   } catch (error) {
+    if (projectToolResourceWait(error)) throw error;
     const rawReason = String(error?.reason || '').trim();
     const reason = /^[a-z_]{1,80}$/u.test(rawReason) ? rawReason : 'worker_execution_failed';
     const uncertain = reason === 'sandbox_cleanup_unconfirmed'
@@ -109,6 +122,11 @@ async function executeHostedRunCommand(service, {
         reason: reason || 'worker_execution_failed',
       },
     };
+  } finally {
+    await resourceClaim?.settle({
+      status: result?.status === 'cancelled' ? 'cancelled' : result?.success === true ? 'succeeded' : 'failed',
+      cleanup: !commandMayStart || result?.cleanup_confirmed === true ? 'confirmed' : 'uncertain',
+    });
   }
 }
 

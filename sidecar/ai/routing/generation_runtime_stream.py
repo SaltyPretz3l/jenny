@@ -13,7 +13,7 @@ import queue
 import threading
 import time
 from contextvars import copy_context
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sidecar.ai import engine_liveness as _engine_liveness
@@ -21,13 +21,10 @@ from sidecar.ai import error_codes as _error_codes
 from sidecar.ai import feature_flags as _feature_flags
 from sidecar.ai import thinking_guard as _thinking_guard
 from sidecar.ai.engines import engine_events as _engine_events
+from sidecar.ai.engines.admitted import mark_provider_cleanup_uncertain
 from sidecar.ai.routing import loop_events as _loop_events
 from sidecar.ai.routing import tool_call_canonicalization as _tool_call_canonicalization
 from sidecar.ai.routing import tool_observation as _tool_observation
-from sidecar.ai.thinking_guard import (
-    resolve_thinking_budget_chars,
-    thinking_budget_abort_enabled,
-)
 from sidecar.ai.tools import models as _tool_models
 from sidecar.ai.tools import sanitization as _tool_sanitization
 from sidecar.protocol import CHAT_THINKING_KIND_REASONING, CHAT_THINKING_KIND_STATUS
@@ -58,6 +55,8 @@ ENGINE_EVENT_TOOL_CALL_BOUNDARY = _engine_events.ENGINE_EVENT_TOOL_CALL_BOUNDARY
 ENGINE_EVENT_TOOL_CALL_COMPLETED = _engine_events.ENGINE_EVENT_TOOL_CALL_COMPLETED
 ENGINE_EVENT_TOOL_CALL_DELTA = _engine_events.ENGINE_EVENT_TOOL_CALL_DELTA
 ThinkingRepetitionGuard = _thinking_guard.ThinkingRepetitionGuard
+resolve_thinking_budget_chars = _thinking_guard.resolve_thinking_budget_chars
+thinking_budget_abort_enabled = _thinking_guard.thinking_budget_abort_enabled
 KIND_MODEL_REASONING_DELTA = _tool_observation.KIND_MODEL_REASONING_DELTA
 KIND_MODEL_VISIBLE_TEXT_DELTA = _tool_observation.KIND_MODEL_VISIBLE_TEXT_DELTA
 ThinkingEvent = _loop_events.ThinkingEvent
@@ -67,6 +66,9 @@ PhaseCompletedEvent = _loop_events.PhaseCompletedEvent
 GenerationResult = _tool_models.GenerationResult
 StreamChunk = _tool_models.StreamChunk
 StreamingEvent = _tool_models.StreamingEvent
+STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS = (
+    _tool_models.STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS
+)
 ThinkingDelta = _tool_models.ThinkingDelta
 ToolCallRequest = _tool_models.ToolCallRequest
 _POST_RESPONSE_ANALYSIS_RE = _tool_sanitization._POST_RESPONSE_ANALYSIS_RE
@@ -269,6 +271,7 @@ def _close_stream_reader(reader: _StreamReader, *, runtime: Any, reason: str) ->
     reader.close()
     reader.join(timeout_seconds=_STREAM_READER_SHUTDOWN_GRACE_SECONDS)
     if reader.thread.is_alive() and reader.mark_quarantined_once():
+        mark_provider_cleanup_uncertain()
         quarantine_name = _reader_quarantine_name(reader.thread)
         with _zombie_reader_count_lock:
             _zombie_reader_stats.total += 1
@@ -452,6 +455,15 @@ def stream_generate_with_tools(
             text="".join(unflushed_parts),
             reason=str(reason or "").strip() or "unknown",
         )
+
+    def end_reasoning_phase() -> None:
+        # Reasoning ends at the first tool-call output, not when the provider
+        # call ends: arguments carry no visible text, so a large write kept the
+        # phase (and its "Thought for Xs") open for minutes (gate B1 F19).
+        nonlocal thinking_has_content
+        if current_phase is not None and current_phase.get("phase_kind") == "reasoning":
+            transition_phase(None)
+            thinking_has_content = False
 
     def emit_thinking(delta: str, *, persist: bool) -> None:
         nonlocal pending_phase_summary, thinking_budget_aborted, thinking_has_content
@@ -690,9 +702,12 @@ def stream_generate_with_tools(
                     f" ({liveness_deferrals} engine-liveness deferrals)"
                 )
             # Record the phase so ``tool_loop`` builds a phase-accurate user
-            # message; never let a diagnostics write break the turn.
+            # message, and whether the engine was provably still working while
+            # the stream was silent -- blaming the machine is wrong when it
+            # was. Never let a diagnostics write break the turn.
             try:
                 runtime.stall_phase = stall_phase
+                runtime.stall_engine_was_active = bool(liveness_deferrals)
             except Exception:  # noqa: BLE001 - diagnostics are best-effort
                 pass
             runtime.emit(
@@ -743,26 +758,14 @@ def stream_generate_with_tools(
             if str(result.content or "") and not content_parts:
                 buffer_content(str(result.content))
             if content_parts and not str(result.content or ""):
-                result = GenerationResult(
+                result = replace(
+                    result,
                     content="".join(content_parts).strip(),
-                    tool_calls=result.tool_calls,
-                    finish_reason=result.finish_reason,
-                    usage=result.usage,
-                    thinking_text=result.thinking_text,
-                    inband_tool_call_parse_failed=(
-                        result.inband_tool_call_parse_failed
-                    ),
                 )
             if thinking_parts and not final_thinking:
-                result = GenerationResult(
-                    content=result.content,
-                    tool_calls=result.tool_calls,
-                    finish_reason=result.finish_reason,
-                    usage=result.usage,
+                result = replace(
+                    result,
                     thinking_text="".join(thinking_parts).strip(),
-                    inband_tool_call_parse_failed=(
-                        result.inband_tool_call_parse_failed
-                    ),
                 )
             if result.tool_calls:
                 canonical_calls, coerced_aliases, coalesced_count = (
@@ -771,15 +774,9 @@ def stream_generate_with_tools(
                     )
                 )
                 if canonical_calls != result.tool_calls:
-                    result = GenerationResult(
-                        content=result.content,
+                    result = replace(
+                        result,
                         tool_calls=canonical_calls,
-                        finish_reason=result.finish_reason,
-                        usage=result.usage,
-                        thinking_text=result.thinking_text,
-                        inband_tool_call_parse_failed=(
-                            result.inband_tool_call_parse_failed
-                        ),
                     )
                 if coerced_aliases or coalesced_count:
                     _gr_hub.log_event(
@@ -858,10 +855,12 @@ def stream_generate_with_tools(
                     break
                 continue
             if kind == ENGINE_EVENT_TOOL_CALL_BOUNDARY:
+                end_reasoning_phase()
                 if content_parts:
                     flush_content()
                 continue
             if kind == ENGINE_EVENT_TOOL_CALL_DELTA:
+                end_reasoning_phase()
                 runtime.emit(
                     _loop_events.ToolCallDeltaEvent(
                         call_id=str(chunk.tool_call_id or ""),
@@ -872,6 +871,7 @@ def stream_generate_with_tools(
                 )
                 continue
             if kind == ENGINE_EVENT_TOOL_CALL_COMPLETED:
+                end_reasoning_phase()
                 runtime.emit(
                     _loop_events.ToolCallCompletedEvent(
                         call_id=str(chunk.tool_call_id or ""),
@@ -896,6 +896,7 @@ def stream_generate_with_tools(
         if isinstance(chunk, ToolCallRequest):
             # Mid-stream tool boundary: flush pre-boundary text so it
             # surfaces before the tool-call signal reaches the loop.
+            end_reasoning_phase()
             if content_parts:
                 flush_content()
             continue
@@ -915,6 +916,8 @@ def stream_generate_with_tools(
                 buffer_content(str(chunk.text or ""))
                 flush_content()
                 continue
+            if kind == STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS:
+                end_reasoning_phase()
             continue
         buffer_content(str(chunk or ""))
         flush_content()

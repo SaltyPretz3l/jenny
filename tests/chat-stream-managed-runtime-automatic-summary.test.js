@@ -108,6 +108,11 @@ test('context.compacted persists one bounded automatic summary without exposing 
   const payload = callsOf(ctx, 'emitChatStream')[0].payload;
   assert.equal(payload.summaryPersisted, true);
   assert.equal(Object.hasOwn(payload, 'summaryMessage'), false, 'summary text stays off renderer events');
+  assert.equal(
+    payload.summaryExcerpt,
+    '## Compacted Conversation Summary Derived conversation data. Summary.'
+  );
+  assert.equal(payload.summaryExcerpt.length <= 1200, true);
 });
 
 test('not-applicable compaction stays non-persisting and reaches the renderer unchanged', () => {

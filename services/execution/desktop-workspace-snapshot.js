@@ -18,7 +18,15 @@ async function assertDirectory(directory) {
   if (path.resolve(await fs.realpath(directory)) !== path.resolve(directory)) throw sandboxError('snapshot_reparse_point');
   return stat;
 }
-async function createWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], signal, limits = LIMITS }) {
+async function createWorkspaceSnapshot(options) {
+  let cleanupConfirmed = true;
+  const closeHandle = async handle => {
+    try { await handle.close(); } catch (error) { cleanupConfirmed = false; throw error; }
+  };
+  try { return await stageWorkspaceSnapshot({ ...options, closeHandle }); }
+  finally { options.onSettled?.({ cleanupConfirmed }); }
+}
+async function stageWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], signal, limits = LIMITS, closeHandle }) {
   root = path.resolve(root);
   const rootInfo = await assertDirectory(root);
   const rootIdentity = digest([root, rootInfo.dev, rootInfo.ino]);
@@ -43,7 +51,7 @@ async function createWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [],
     const before = await assertDirectory(source);
     observed.push([source, before]);
     const handle = await fs.opendir(source);
-    for await (const entry of handle) {
+    try { for (let entry; (entry = await handle.read()) !== null;) {
       check();
       entries += 1;
       const relative = prefix ? prefix + '/' + entry.name : entry.name;
@@ -80,11 +88,11 @@ async function createWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [],
           // Preserve POSIX executable bits; never preserve setuid/setgid or group/world writes.
           const mode = initial.mode & 0o111 ? 0o555 : 0o444;
           const target = await fs.open(output, 'wx', mode);
-          try { await target.writeFile(data); await target.sync(); } finally { await target.close(); }
+          try { await target.writeFile(data); await target.sync(); } finally { await closeHandle(target); }
           manifest.push([relative, initial.size, digest(data), mode]);
-        } finally { await inputHandle.close(); }
+        } finally { await closeHandle(inputHandle); }
       } else throw sandboxError('snapshot_special_file_rejected');
-    }
+    } } finally { await closeHandle(handle); }
     if (!same(before, await fs.lstat(source))) throw sandboxError('snapshot_changed');
     await fs.chmod(destination, 0o555);
   }

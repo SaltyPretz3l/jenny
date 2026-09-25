@@ -17,6 +17,7 @@
 
 const VALID_VIEWS = Object.freeze(['preview', 'file_map', 'change_diff']);
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const { createProjectPresentationService } = require('./projects/project-presentation-service');
 
 // Wire-payload path gate: workspace-relative POSIX only. Anything absolute,
 // drive-lettered, escaping, or scheme-like collapses to '' — the service is
@@ -45,13 +46,40 @@ function normalizeOpaqueId(value, maxLength = 160) {
 }
 
 class WorkspacePresentationService {
-  constructor({ sendBridgeEvent, isRendererAvailable, logger } = {}) {
+  constructor({
+    sendBridgeEvent,
+    isRendererAvailable,
+    logger,
+    getUiWorkspaceRoot,
+    projectAuthorityProvider,
+  } = {}) {
     this._sendBridgeEvent = typeof sendBridgeEvent === 'function' ? sendBridgeEvent : null;
     this._isRendererAvailable = typeof isRendererAvailable === 'function'
       ? isRendererAvailable
       : () => this._sendBridgeEvent !== null;
     this._logger = typeof logger === 'function' ? logger : () => {};
+    this._getUiWorkspaceRoot = typeof getUiWorkspaceRoot === 'function'
+      ? getUiWorkspaceRoot
+      : () => '';
+    this._projectAuthorityProvider = projectAuthorityProvider;
     this._sequence = 0;
+  }
+
+  forSessionAuthority(authority, sessionId) {
+    if (this._projectAuthorityProvider === undefined || this._projectAuthorityProvider === null) {
+      throw new TypeError('Scoped presentation requires a project authority provider.');
+    }
+    return createProjectPresentationService({
+      owner: this,
+      authority,
+      sessionId,
+      projectAuthorityProvider: this._projectAuthorityProvider,
+      getUiWorkspaceRoot: this._getUiWorkspaceRoot,
+    });
+  }
+
+  _requestPresentationForAuthority(payload, scopedService) {
+    return this.requestPresentation(payload, scopedService);
   }
 
   /**
@@ -67,7 +95,18 @@ class WorkspacePresentationService {
     session_id: sessionId = '',
     workspace_id: workspaceId = '',
     change_id: changeId = '',
-  } = {}) {
+  } = {}, scopedService = null) {
+    let scopedIdentity = null;
+    if (scopedService) {
+      try {
+        scopedIdentity = scopedService.assertCurrent();
+      } catch (error) {
+        this._logger('WARN', 'workspace_presentation.context_rejected', {
+          reason: String(error?.reason || 'project_authority_stale').slice(0, 64),
+        });
+        return { delivered: false, reason: 'workspace_context_changed' };
+      }
+    }
     if (!VALID_VIEWS.includes(view)) {
       return { delivered: false, reason: 'unsupported_view' };
     }
@@ -82,9 +121,13 @@ class WorkspacePresentationService {
       this._logger('WARN', 'workspace_presentation.path_rejected', { view });
       return { delivered: false, reason: 'unsafe_path' };
     }
-    const normalizedSessionId = normalizeOpaqueId(sessionId);
-    const normalizedWorkspaceId = normalizeOpaqueId(workspaceId, 64);
+    const normalizedSessionId = normalizeOpaqueId(scopedIdentity?.session_id || sessionId);
+    const normalizedWorkspaceId = normalizeOpaqueId(scopedIdentity?.workspace_id || workspaceId, 64);
     const normalizedChangeId = changeId ? normalizeOpaqueId(changeId) : '';
+    if (scopedService && (!normalizedSessionId
+      || !/^root_[0-9a-f]{24}$/i.test(normalizedWorkspaceId))) {
+      return { delivered: false, reason: 'workspace_context_changed' };
+    }
     if (view === 'change_diff' && (!relPath || !normalizedSessionId
       || !/^root_[0-9a-f]{24}$/i.test(normalizedWorkspaceId)
       || (changeId && !normalizedChangeId))) {
@@ -99,18 +142,25 @@ class WorkspacePresentationService {
     this._sequence += 1;
     const requestId = `wsp-${Date.now().toString(36)}-${this._sequence}`;
     try {
+      if (scopedService) scopedService.assertCurrent();
       this._sendBridgeEvent('workspacePresentation.onRequest', {
         view,
         path: relPath,
         request_id: requestId,
         source: source === 'tool' ? 'tool' : String(source || 'tool').slice(0, 32),
-        ...(view === 'change_diff' ? {
+        ...(scopedService || view === 'change_diff' ? {
           session_id: normalizedSessionId,
           workspace_id: normalizedWorkspaceId.toLowerCase(),
-          ...(normalizedChangeId ? { change_id: normalizedChangeId } : {}),
         } : {}),
+        ...(view === 'change_diff' && normalizedChangeId ? { change_id: normalizedChangeId } : {}),
       });
     } catch (error) {
+      if (error?.reason) {
+        this._logger('WARN', 'workspace_presentation.context_rejected', {
+          reason: String(error.reason).slice(0, 64),
+        });
+        return { delivered: false, reason: 'workspace_context_changed' };
+      }
       this._logger('WARN', 'workspace_presentation.dispatch_failed', {
         error_name: String(error?.name || 'Error').slice(0, 64),
       });

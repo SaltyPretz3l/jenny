@@ -100,6 +100,10 @@
         || String(callId || '').trim();
     }
 
+    function resolvePayloadTurnId(payload) {
+      return String(payload?.turnId || '').trim() || String(payload?.turn_id || '').trim();
+    }
+
     function buildToolUseMessageId(payload, callId) {
       return String(payload && payload.toolUseMessageId || '').trim()
         || String(payload && payload.tool_use_message_id || '').trim()
@@ -235,11 +239,13 @@
     async function handleToolUse(payload) {
       syncThinkingIndicatorMode(payload.sessionId, 'tool-use');
       const callId = extractToolCallId(payload);
+      const logicalTurnId = resolvePayloadTurnId(payload);
       const approvalId = normalizeApprovalId(payload, callId);
       const toolUseMessageId = buildToolUseMessageId(payload, callId);
       const policyScope = String(payload.policyScope || payload.policy_scope || '').trim();
       const policyConsequence = String(payload.policyConsequence || payload.policy_consequence || '').trim();
       const reason = String(payload.reason || '').trim();
+      const oneOffOnly = payload.oneOffOnly === true || payload.one_off_only === true;
       applyLiveTurnPayload(payload, {
         primaryToolMessageId: toolUseMessageId,
       });
@@ -284,6 +290,7 @@
           );
         activeMessages[toolUseIndex] = {
           ...activeMessages[toolUseIndex],
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           content: summary || activeMessages[toolUseIndex].content,
           tool_call: {
             ...currentToolCall,
@@ -292,6 +299,7 @@
             ...(policyScope ? { policy_scope: policyScope } : {}),
             ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
             ...(reason ? { reason } : {}),
+            ...(oneOffOnly ? { one_off_only: true } : {}),
             tool_name: String(payload.toolName || currentToolCall.tool_name || ''),
             input: nextInput,
             input_json: JSON.stringify(nextInput),
@@ -304,12 +312,14 @@
         const toolUseMessage = createNormalizedMessage('assistant', summary, {
           id: toolUseMessageId,
           kind: 'tool_use',
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             call_id: callId,
             approval_id: String(payload.approvalId || payload.approval_id || '').trim(),
             ...(policyScope ? { policy_scope: policyScope } : {}),
             ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
             ...(reason ? { reason } : {}),
+            ...(oneOffOnly ? { one_off_only: true } : {}),
             tool_name: String(payload.toolName || ''),
             input,
             input_json: JSON.stringify(input),
@@ -371,16 +381,56 @@
       return { buffered: false, terminal: false };
     }
 
+    // One live turn per session (session turn actor): an approval filed under
+    // another stream of this session can no longer be answered. A runtime pause
+    // suspends it main-side, and Resume re-offers the same call id under a new
+    // approval id, so a leftover entry would answer with a dead id.
+    function pruneSupersededSessionApprovals(sessionId, liveStreamId) {
+      const session = String(sessionId || '').trim();
+      const live = String(liveStreamId || '').trim();
+      if (!session || !live) return 0;
+      let pruned = 0;
+      for (const [key, approval] of [...state.pendingToolApprovals.entries()]) {
+        const streamId = String(approval?.streamId || '').trim();
+        if (String(approval?.sessionId || '').trim() === session && streamId && streamId !== live) {
+          state.pendingToolApprovals.delete(key);
+          pruned += 1;
+        }
+      }
+      return pruned;
+    }
+
+    // Main suspended this approval for a runtime pause: the waiter is gone, but
+    // the persisted tool row stays pending for the checkpoint, so only the live
+    // approval entry, its toast and its pill leave.
+    function withdrawApproval(payload) {
+      state.pendingToolApprovals.delete(normalizeApprovalId(payload, extractToolCallId(payload)));
+      releaseApprovalToastSessions([payload.sessionId]);
+      clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL);
+      queueToolSessionRender(payload, 'tool_approval_withdrawn', {
+        sessions: true,
+        header: true,
+        composerStatus: true,
+      }, { allowLivePatch: false });
+      return { buffered: false, terminal: false };
+    }
+
     async function handleApprovalNeeded(payload) {
+      if (payload.type === 'tool_approval_withdrawn') return withdrawApproval(payload);
       const callId = extractToolCallId(payload);
+      const logicalTurnId = resolvePayloadTurnId(payload);
       const approvalId = normalizeApprovalId(payload, callId);
       const toolUseMessageId = buildToolUseMessageId(payload, callId);
       const policyScope = String(payload.policyScope || payload.policy_scope || '').trim();
       const policyConsequence = String(payload.policyConsequence || payload.policy_consequence || '').trim();
       const reason = String(payload.reason || '').trim();
+      const oneOffOnly = payload.oneOffOnly === true || payload.one_off_only === true;
       applyLiveTurnPayload(payload, {
         primaryToolMessageId: toolUseMessageId,
       });
+      if (pruneSupersededSessionApprovals(payload.sessionId, payload.streamId) > 0) {
+        releaseApprovalToastSessions([payload.sessionId]);
+      }
       state.pendingToolApprovals.set(approvalId, {
         approvalId,
         callId,
@@ -391,6 +441,7 @@
         summary: String(payload.summary || ''),
         policyScope,
         policyConsequence,
+        oneOffOnly,
         ...(reason ? { reason } : {}),
       });
       const activeMessages = [...getSessionMessages(payload.sessionId)];
@@ -403,12 +454,14 @@
       if (toolUseIndex !== -1) {
         activeMessages[toolUseIndex] = {
           ...activeMessages[toolUseIndex],
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             ...activeMessages[toolUseIndex].tool_call,
             status: 'pending_approval',
             ...(policyScope ? { policy_scope: policyScope } : {}),
             ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
             ...(reason ? { reason } : {}),
+            ...(oneOffOnly ? { one_off_only: true } : {}),
           },
         };
         setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
@@ -424,6 +477,7 @@
         activeMessages.push(createNormalizedMessage('assistant', approvalSummary, {
           id: toolUseMessageId,
           kind: 'tool_use',
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             call_id: callId,
             approval_id: approvalId,
@@ -434,6 +488,7 @@
             ...(policyScope ? { policy_scope: policyScope } : {}),
             ...(policyConsequence ? { policy_consequence: policyConsequence } : {}),
             ...(reason ? { reason } : {}),
+            ...(oneOffOnly ? { one_off_only: true } : {}),
             status: 'pending_approval',
             parent_stream_id: payload.streamId,
           },
@@ -455,6 +510,7 @@
         const planMessage = createNormalizedMessage('assistant', String(planDocument.title || jt('chat.planDocument.defaultTitle', 'Implementation plan')), {
           id: planMessageId,
           kind: 'plan_document',
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           plan_document: planDocument,
           status: MESSAGE_STATUS.COMPLETE,
           // Rebuilds must not slide a divider-eligible node's timeline position.
@@ -502,6 +558,7 @@
 
     async function handleUserQuestionsRequested(payload) {
       const callId = extractToolCallId(payload);
+      const logicalTurnId = resolvePayloadTurnId(payload);
       const toolUseMessageId = buildToolUseMessageId(payload, callId);
       const questionRef = String(payload.questionRef || payload.question_ref || '').trim();
       const questions = Array.isArray(payload.questions)
@@ -518,6 +575,7 @@
       if (toolUseIndex !== -1) {
         activeMessages[toolUseIndex] = {
           ...activeMessages[toolUseIndex],
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             ...activeMessages[toolUseIndex].tool_call,
             status: 'pending_user_input',
@@ -537,6 +595,7 @@
         activeMessages.push(createNormalizedMessage('assistant', summary, {
           id: toolUseMessageId,
           kind: 'tool_use',
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             call_id: callId,
             tool_name: String(payload.toolName || 'ask_user'),
@@ -581,6 +640,7 @@
 
     async function handleToolResult(payload) {
       const callId = extractToolCallId(payload);
+      const logicalTurnId = resolvePayloadTurnId(payload);
       const approvalId = normalizeApprovalId(payload, callId);
       try {
         // W2-1: the settled row owns its Output panel — remove the live tail.
@@ -623,6 +683,7 @@
           );
         activeMessages[toolUseIndex] = {
           ...activeMessages[toolUseIndex],
+          ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
             ...activeMessages[toolUseIndex].tool_call,
             input: nextToolCallInput,
@@ -636,6 +697,7 @@
       const toolResultMessage = createNormalizedMessage('tool', String(payload.summary || ''), {
         id: toolResultMessageId,
         kind: 'tool_result',
+        ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
         tool_result: {
           call_id: callId,
           tool_name: String(payload.toolName || ''),
@@ -719,6 +781,11 @@
         globalThis.rendererTaskBoard?.notifyMutation?.();
       }
       setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
+      if (resultToolName.toLowerCase() === 'todo_write') {
+        try {
+          globalThis.rendererTaskRailActions?.refreshChecklist?.({ sessionId: payload.sessionId });
+        } catch (_error) { /* optional task-rail affordance only */ }
+      }
       clearSessionComposerNotice(payload.sessionId);
       clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_RUNNING_TOOL);
       clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL);

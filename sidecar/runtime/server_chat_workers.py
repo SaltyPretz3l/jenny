@@ -116,6 +116,43 @@ def runtime_frame_writer(
     return _write
 
 
+def _release_paused_worker_ownership(
+    *, transport: StdioTransportMultiplexer, request_id: str, cancel_handle: Any,
+    plugin_runtime_admission: Any | None, logger: logging.Logger,
+) -> bool:
+    """Release every request owner before a successful pause becomes visible."""
+
+    released = True
+    if plugin_runtime_admission is not None:
+        try:
+            plugin_runtime_admission.release()
+        except Exception:  # noqa: BLE001 - a pause must fail closed on cleanup.
+            released = False
+            logger.exception("failed to release paused chat plugin admission")
+    try:
+        transport.unregister_turn(request_id, expected_handle=cancel_handle)
+    except Exception:  # noqa: BLE001 - a pause must fail closed on cleanup.
+        released = False
+        logger.exception("failed to unregister paused chat turn")
+    session_id = str(getattr(cancel_handle, "session_id", "") or "").strip()
+    is_active = getattr(transport, "has_active_session_turn", None)
+    if not session_id or not callable(is_active):
+        released = False
+    else:
+        try:
+            if is_active(session_id):
+                released = False
+        except Exception:  # noqa: BLE001 - inability to prove release is failure.
+            released = False
+            logger.exception("failed to verify paused chat turn unregister")
+    if not released:
+        logger.error(
+            "paused chat worker cleanup was not confirmed",
+            extra={"event": "sidecar.runtime.chat_pause.cleanup_unconfirmed"},
+        )
+    return released
+
+
 def make_chat_send_worker(  # noqa: PLR0913
     *,
     message: dict[str, Any],
@@ -127,6 +164,7 @@ def make_chat_send_worker(  # noqa: PLR0913
     plugin_runtime_admission: Any | None = None,
 ) -> Callable[[], None]:
     def _worker() -> None:
+        paused_outcome: ProcessOutcome | None = None
         try:
             runner_options: dict[str, Any] = {
                 "write_frame": runtime_frame_writer(transport),
@@ -140,28 +178,45 @@ def make_chat_send_worker(  # noqa: PLR0913
                 live_run_mode = _initial_live_run_mode(message)
             with bind_live_run_mode_state(live_run_mode):
                 outcome = chat_send_runner(message, **runner_options)
-            send_outcome(outcome, multiplexer=transport)
+            if getattr(outcome, "deliver_after_worker_cleanup", False):
+                paused_outcome = outcome
+            else:
+                send_outcome(outcome, multiplexer=transport)
         except Exception as error:  # noqa: BLE001
             logger.exception("fatal chat.send worker error")
             try:
-                transport.send_control(
-                    error_response(
-                        message.get("id"),
-                        code=-32603,
-                        message=f"internal error: {type(error).__name__}",
-                        data={
-                            "code": CMP_CHAT_STREAM_FAILED,
-                            "reason": "chat_worker_failed",
-                            "retryable": False,
-                        },
-                    )
+                response = error_response(
+                    message.get("id"),
+                    code=-32603,
+                    message=f"internal error: {type(error).__name__}",
+                    data={
+                        "code": CMP_CHAT_STREAM_FAILED,
+                        "reason": "chat_worker_failed",
+                        "retryable": False,
+                    },
                 )
+                # Terminal lane, like send_outcome: the response must trail the
+                # data frames this turn already queued; control would overtake.
+                transport.send_terminal_result([], response)
             except Exception:  # noqa: BLE001
                 logger.debug("failed to send chat.send worker error")
         finally:
-            if plugin_runtime_admission is not None:
-                plugin_runtime_admission.release()
-            transport.unregister_turn(request_id, expected_handle=cancel_handle)
+            if paused_outcome is None:
+                try:
+                    if plugin_runtime_admission is not None:
+                        plugin_runtime_admission.release()
+                finally:
+                    # A failing release must not leak the registration, which
+                    # would reject every later send for the session.
+                    transport.unregister_turn(request_id, expected_handle=cancel_handle)
+        if paused_outcome is not None and _release_paused_worker_ownership(
+            transport=transport, request_id=request_id, cancel_handle=cancel_handle,
+            plugin_runtime_admission=plugin_runtime_admission, logger=logger,
+        ):
+            try:
+                send_outcome(paused_outcome, multiplexer=transport)
+            except Exception:  # noqa: BLE001 - transport failure cannot expose a false pause.
+                logger.exception("failed to enqueue paused chat.send outcome")
 
     return _worker
 
@@ -361,6 +416,8 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
                 "max_active_workers": max_active_workers,
             },
         )
+        # Release before answering: a transport failure must not leak admission.
+        _release_plugin_runtime_admission(plugin_runtime_admission)
         transport.send_control(
             _chat_worker_limit_error_response(
                 message,
@@ -368,7 +425,6 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
                 max_active_workers=max_active_workers,
             )
         )
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         return False
 
     request_id, trace_id, session_id = _message_transport_ids(message)

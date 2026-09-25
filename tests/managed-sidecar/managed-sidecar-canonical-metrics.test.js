@@ -238,6 +238,113 @@ test('managed chat stream runtime canonical bridge projects text once and suppre
   assert.equal(turnEventCollector.capturedEvents.some((event) => event.kind === 'assistant_text_segment'), true);
 });
 
+test('managed chat canonical-only text settles byte-identically without chat.token', async () => {
+  const chunks = ['A\r\n', '🙂', 'é'];
+  const expectedText = 'A\r\n🙂é';
+  const expectedBytes = [65, 13, 10, 240, 159, 153, 130, 101, 204, 129];
+  const emitted = [];
+  const sessionMessages = [];
+  const handledMethods = [];
+  const service = {
+    currentModel: 'test-model',
+    pendingToolApprovals: new Map(),
+    featureFlags: { canonical_turn_events: true, canonical_bridge: true },
+    emit(eventName, payload) {
+      if (eventName === 'chat-stream') emitted.push(payload);
+    },
+    _emitServiceLog() {},
+    renameSession: async () => null,
+    sessionStore: {
+      appendMessage(_sessionId, message) {
+        sessionMessages.push(message);
+        return null;
+      },
+      updateMessage(_sessionId, messageId, patch) {
+        const target = sessionMessages.find(
+          (message) => String(message.id || '') === String(messageId || '')
+        );
+        if (target) Object.assign(target, patch);
+        return target || null;
+      },
+      getSessionMessages() { return sessionMessages; },
+      setSessionPreferences() { return null; },
+      getActiveTurn() { return null; },
+      setActiveTurn() { return null; },
+      touchActiveTurn() { return null; },
+      clearActiveTurn() { return null; },
+    },
+  };
+  const turnEventCollector = new CanonicalTurnEventCollector({
+    turnId: 'stream-canonical-only-text',
+    sessionId: 'session-canonical-only-text',
+    canonicalPrimary: true,
+  });
+  const runtime = createManagedChatStreamRuntime({
+    service,
+    resolvedSessionId: 'session-canonical-only-text',
+    streamId: 'stream-canonical-only-text',
+    traceId: 'trace-canonical-only-text',
+    normalizedPreferences: { conversation_mode: 'chat', interactive_round_count: 0 },
+    normalizedInteractiveResponse: null,
+    normalizedAttachments: [],
+    transcriptPrompt: 'Prompt',
+    userMessageId: 'user-canonical-only-text',
+    turnEventCollector,
+    canonicalBridge: true,
+  });
+  const toolContext = {
+    seenToolCalls: new Set(),
+    toolSummaries: new Map(),
+    model: 'test-model',
+    resolvedSessionId: 'session-canonical-only-text',
+    streamId: 'stream-canonical-only-text',
+    eventBase: {
+      streamId: 'stream-canonical-only-text',
+      sessionId: 'session-canonical-only-text',
+      model: 'test-model',
+    },
+    adapter: runtime.adapter,
+    turnEventCollector,
+  };
+  const handle = (event) => {
+    const notification = { method: 'turn.event', params: event };
+    handledMethods.push(notification.method);
+    runtime.handleNotification(notification, { toolContext, handleToolNotification });
+  };
+
+  chunks.forEach((delta, index) => handle(buildCanonicalTurnEvent({
+    type: 'text_delta',
+    turn_id: 'stream-canonical-only-text',
+    stream_id: 'stream-canonical-only-text',
+    session_id: 'session-canonical-only-text',
+    seq: index + 1,
+    payload: { delta, role: 'assistant', sequence: index + 1 },
+  })));
+  handle(buildCanonicalTurnEvent({
+    type: 'text_part_completed',
+    turn_id: 'stream-canonical-only-text',
+    stream_id: 'stream-canonical-only-text',
+    session_id: 'session-canonical-only-text',
+    seq: 4,
+    payload: {
+      text: expectedText,
+      assistant_phase: 'final_answer',
+      segment_id: 'assistant_stream-canonical-only-text_seg_0',
+      segment_group_index: 0,
+    },
+  }));
+
+  const terminal = await runtime.settleTerminalResult({ status: 'completed' });
+  const deltas = emitted.filter((payload) => payload.type === 'delta' && payload.content);
+  const assistant = sessionMessages.find((message) => message.role === 'assistant');
+  assert.deepEqual(handledMethods, ['turn.event', 'turn.event', 'turn.event', 'turn.event']);
+  assert.deepEqual(deltas.map((payload) => payload.content), chunks);
+  assert.equal(assistant.content, expectedText);
+  assert.deepEqual([...Buffer.from(assistant.content, 'utf8')], expectedBytes);
+  assert.equal(terminal.status, 'completed');
+  assert.ok(emitted.some((payload) => payload.type === 'complete'));
+});
+
 test('managed chat stream runtime canonical bridge dedupes unsequenced legacy text before canonical delta', () => {
   const emitted = [];
   const sessionMessages = [];

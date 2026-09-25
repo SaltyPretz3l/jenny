@@ -16,6 +16,7 @@ const {
   normalizeTranscriptPhase,
   normalizeVisibleSegment,
   normalizeToolStep,
+  normalizeContextCompaction,
   normalizeProactiveSuggestionMetadata,
   normalizeSkillInvocationMetadata,
   normalizeMessageFields,
@@ -374,6 +375,27 @@ test('normalizeToolCallMetadata: missing tool_name returns null', () => {
   assert.equal(result, null);
 });
 
+test('normalizeToolCallMetadata preserves non-empty model replay input JSON', () => {
+  const result = normalizeToolCallMetadata({
+    call_id: 'call-replay',
+    tool_name: 'list_dir',
+    input_json: '{"path":"[redacted:path]\\\\sandbox"}',
+    model_input_json: '{"path":".\\\\sandbox"}',
+  });
+
+  assert.equal(result.model_input_json, '{"path":".\\\\sandbox"}');
+});
+
+test('normalizeToolCallMetadata omits absent or empty model replay input JSON', () => {
+  const base = { call_id: 'call-replay', tool_name: 'list_dir' };
+
+  assert.equal(Object.hasOwn(normalizeToolCallMetadata(base), 'model_input_json'), false);
+  assert.equal(Object.hasOwn(normalizeToolCallMetadata({
+    ...base,
+    model_input_json: '',
+  }), 'model_input_json'), false);
+});
+
 /* ---- normalizeToolResultMetadata ---- */
 
 // Lines 274-276: missing call_id → null
@@ -634,6 +656,60 @@ test('normalizeToolStep: missing call_id returns null', () => {
 test('normalizeToolStep: missing tool_name returns null', () => {
   const result = normalizeToolStep({ call_id: 'call-sample-1', tool_name: '' });
   assert.equal(result, null);
+});
+
+test('normalizeContextCompaction bounds persisted camelCase fields', () => {
+  const result = normalizeContextCompaction({
+    strategy: ` ${'s'.repeat(50)} `,
+    tokensBefore: Number.MAX_SAFE_INTEGER + 10,
+    tokensAfter: -1,
+    phase: ` ${'p'.repeat(50)} `,
+    summaryStatus: ` ${'q'.repeat(50)} `,
+    reasonCode: ` ${'r'.repeat(100)} `,
+    inputComplete: 1,
+    droppedMessages: 4.8,
+    droppedBytes: Infinity,
+    summaryPersisted: 'yes',
+    historyScopeFallback: ` ${'recent'.repeat(10)} `,
+    summaryExcerpt: ` ${'excerpt '.repeat(200)} `,
+    occurredAt: '2026-09-21T12:00:00.000Z',
+  });
+  assert.equal(result.historyScopeFallback.length, 40);
+
+  assert.equal(result.strategy.length, 40);
+  assert.equal(result.tokensBefore, Number.MAX_SAFE_INTEGER);
+  assert.equal(result.tokensAfter, 0);
+  assert.equal(result.phase.length, 40);
+  assert.equal(result.summaryStatus.length, 40);
+  assert.equal(result.reasonCode.length, 80);
+  assert.equal(result.inputComplete, true);
+  assert.equal(result.droppedMessages, 4);
+  assert.equal(result.droppedBytes, 0);
+  assert.equal(result.summaryPersisted, true);
+  assert.equal(result.summaryExcerpt.length, 1200);
+  assert.equal(result.occurredAt, '2026-09-21T12:00:00.000Z');
+  assert.equal(normalizeContextCompaction([]), null);
+});
+
+test('normalizeMessageFields round-trips the last 20 context compactions only when present', () => {
+  const entries = Array.from({ length: 22 }, (_value, index) => ({
+    strategy: `strategy-${index}`,
+    occurredAt: index === 21 ? 'invalid' : '2026-09-21T12:00:00.000Z',
+  }));
+  const normalized = normalizeMessageFields({
+    role: 'assistant',
+    context_compactions: entries,
+    context_compacted: entries[21],
+  });
+
+  assert.equal(normalized.context_compactions.length, 20);
+  assert.equal(normalized.context_compactions[0].strategy, 'strategy-2');
+  assert.equal(normalized.context_compacted.strategy, 'strategy-21');
+  assert.equal(Object.hasOwn(normalized.context_compacted, 'occurredAt'), false);
+
+  const absent = normalizeMessageFields({ role: 'assistant' });
+  assert.equal(Object.hasOwn(absent, 'context_compactions'), false);
+  assert.equal(Object.hasOwn(absent, 'context_compacted'), false);
 });
 
 /* ---- normalizeProactiveSuggestionMetadata ---- */

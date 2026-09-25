@@ -104,7 +104,7 @@ test('viewport limits cap the chat dock at 65% while preserving rails and editor
     chatDockOpen: true,
     chatDockWidth: 2000,
   }, 1440);
-  assert.equal(railBound.chatDockMax, 280, 'static dock floor applies when rails consume the budget');
+  assert.equal(railBound.chatDockMax, 320, 'static dock floor applies when rails consume the budget');
 });
 
 test('display-only dock clamp leaves the persisted requested width untouched', () => {

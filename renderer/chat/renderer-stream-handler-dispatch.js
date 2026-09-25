@@ -247,9 +247,13 @@
       // Ephemeral live-only payloads: a replayed one is worse than none. The
       // tool_output_chunk tail is superseded by its tool_result; a context
       // usage snapshot is superseded by the next snapshot (and by the turn's
-      // terminal usage), so a buffered one would only repaint a stale ring.
+      // terminal usage), so a buffered one would only repaint a stale ring;
+      // the compaction/tool-input activity rows describe a moment that has
+      // passed by the time a replay could run.
       const isEphemeralOutputChunk = payload.type === 'tool_output_chunk'
-        || payload.type === 'context_usage';
+        || payload.type === 'context_usage'
+        || payload.type === 'context_compacting'
+        || payload.type === 'tool_input_delta';
       if (callOptions.allowBuffer !== false && payloadStreamId && flushingStreamIds.has(payloadStreamId)) {
         if (isEphemeralOutputChunk) {
           return { buffered: false, terminal: false };
@@ -321,6 +325,9 @@
           notifyActivity(payload);
           return result;
         }
+        // A runtime pause suspended the approval main-side (no presence or
+        // activity: nothing new is happening on the turn).
+        if (payload.type === 'tool_approval_withdrawn') return await handlers.handleApprovalNeeded(payload);
         if (payload.type === 'user_questions_requested') {
           const result = await handlers.handleUserQuestionsRequested(payload);
           notifyPresence(payload);
@@ -343,6 +350,9 @@
         }
         if (payload.type === 'stream_reset') return await handlers.handleStreamReset(payload);
         if (payload.type === 'context_compacted') return await handlers.handleContextCompacted(payload);
+        if (payload.type === 'context_compacting' || payload.type === 'tool_input_delta') {
+          return { buffered: false, terminal: false };
+        }
         if (payload.type === 'context_usage') {
           // Ephemeral meter snapshot: chrome-only, no presence/activity
           // fan-out (it proves nothing about the turn's progress).

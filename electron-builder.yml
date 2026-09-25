@@ -67,6 +67,11 @@ win:
       filter:
         - "**/*"
         - "!**/.gitignore"
+    - from: vendor/sidecar-media-site
+      to: sidecar-media-site
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
     # Owner-signed first-party plugin archives. The source directory is always
     # present; release packaging copies only finalized .jenny-plugin bundles.
     - from: plugins
@@ -129,6 +134,11 @@ mac:
       to: plugins
       filter:
         - "*.jenny-plugin"
+    - from: vendor/sidecar-media-site
+      to: sidecar-media-site
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
 # Built only in the release workflow's Linux job inside an ubuntu:22.04
 # container, establishing a glibc 2.35 floor.
 linux:
@@ -176,6 +186,11 @@ linux:
         - "!**/.gitignore"
     - from: vendor/python-runtime-wheels
       to: python-runtime-wheels
+      filter:
+        - "**/*"
+        - "!**/.gitignore"
+    - from: vendor/sidecar-media-site
+      to: sidecar-media-site
       filter:
         - "**/*"
         - "!**/.gitignore"

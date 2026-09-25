@@ -559,13 +559,14 @@ function startMainProcess() {
         try {
           const mainSyncInitStartedAt = Date.now();
           emitMainEntryMark({ mainModuleEntryAt, appStartupStartedAt });
-          await dataLifecycleStartup.promotePendingRestore(app, nativeImage, log);
+          const restoreResult = await dataLifecycleStartup.promotePendingRestore(app, nativeImage);
           emitStartupAuditMark('main-sync-init-start', {
             source: 'main',
             ts_ms: mainSyncInitStartedAt,
             startupMs: Math.max(mainSyncInitStartedAt - appStartupStartedAt, 0),
           });
           createRuntimeServices();
+          if (!restoreResult.ok) log('WARN', 'data_lifecycle.restore_promotion_failed', restoreResult.error);
           flushStartupAuditMarks();
           // Deny-by-default permission guard, display-media picker, and the
           // jenny-artifact:// preview protocol — see default-session-wiring.js.

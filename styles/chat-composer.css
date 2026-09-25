@@ -625,6 +625,7 @@
 }
 
 .composer-send:focus-visible,
+.composer-pause-button:focus-visible,
 .composer-stop-button:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
@@ -686,7 +687,54 @@
   50%      { box-shadow: 0 0 0 5px var(--accent-a-30); }
 }
 
+/* Pause sits beside Stop and reads as its quieter sibling: the same target and
+   ring, no urgency colour, and dimmed once a pause has been requested. */
+.composer-pause-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: calc(48px * var(--chat-zoom-factor, 1));
+  height: calc(48px * var(--chat-zoom-factor, 1));
+  min-width: calc(48px * var(--chat-zoom-factor, 1));
+  min-height: calc(48px * var(--chat-zoom-factor, 1));
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--widget-stop-bg) 42%, transparent);
+  background: color-mix(in srgb, var(--widget-stop-bg) 8%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-pause-button svg {
+  /* Scale the pause glyph with the chat zoom factor. */
+  width: calc(18px * var(--chat-zoom-factor, 1));
+  height: calc(18px * var(--chat-zoom-factor, 1));
+  fill: currentColor;
+}
+
+.composer-pause-button:hover {
+  background: color-mix(in srgb, var(--widget-stop-bg) 18%, transparent);
+  color: var(--text-primary);
+  transform: translateY(calc(-1 * var(--motion-hover-lift)));
+}
+
+.composer-pause-button:disabled {
+  cursor: not-allowed;
+  transform: none;
+}
+
+.composer-pause-button[data-pause-state="requested"] {
+  opacity: 0.6;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .composer-pause-button:hover { transform: none; }
   .composer-stop-button[data-send-lifecycle="streaming"] { animation: none; }
 }
 

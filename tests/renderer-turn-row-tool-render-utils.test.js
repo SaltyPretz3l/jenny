@@ -9,7 +9,7 @@ const {
   clearToolRowExpansionOverrides,
 } = require('../renderer/chat/renderer-turn-row-tool-render-utils');
 const toolCallUtils = require('../renderer/chat/tool-call-utils');
-const { renderApprovalBlock } = require('../renderer/chat/renderer-approval-block');
+const { renderApprovalBlock, resolveApprovalCardState } = require('../renderer/chat/renderer-approval-block');
 const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
 const { projectPersistedEventsWithReducer } = require('../renderer/chat/renderer-stream-rehydrate');
 const { projectRows } = require('./helpers/renderer-turn-row-projector-helpers');
@@ -828,6 +828,38 @@ test('turn row tool renderer builds error result rows and degrades missing appro
   // the card is labelled exactly like the tool row it sits above.
   assert.match(approvalHtml, /Write:Allow edit\?/);
   assert.equal(noApprovalRenderer.buildApprovalGapMarkup({ payload: { approval_id: 'ap' } }), '');
+});
+
+test('approval gap markup folds a sealed row and keeps an awaiting row live', () => {
+  const renderer = createToolRenderer({
+    renderApprovalBlock,
+    getApprovalCardState: (ref) => resolveApprovalCardState({}, ref),
+  });
+  const row = {
+    kind: 'approval_gap',
+    turn_id: 'turn-approval',
+    tool_call_id: 'call-approval',
+    payload: {
+      approval_id: 'approval-1',
+      tool_call_id: 'call-approval',
+      tool_name: 'write_file',
+      prompt: 'Allow edit?',
+      state: 'interrupted',
+    },
+  };
+  const inactiveHtml = renderer.buildApprovalGapMarkup(row, [], { sessionId: 'session-1' });
+  const liveHtml = renderer.buildApprovalGapMarkup({
+    ...row,
+    payload: { ...row.payload, state: 'awaiting_approval' },
+  }, [], { sessionId: 'session-1' });
+
+  assert.match(inactiveHtml, /data-approval-status="inactive"/);
+  assert.match(inactiveHtml, /Approval no longer active/);
+  assert.doesNotMatch(inactiveHtml, /Allow once|Always allow|Deny/);
+  assert.match(liveHtml, /data-approval-status="pending"/);
+  assert.match(liveHtml, /Allow once/);
+  assert.match(liveHtml, /Always allow/);
+  assert.match(liveHtml, /Deny/);
 });
 
 test('plan approval gap keeps pending hold markup without generic controls while ordinary tools stay interactive', () => {

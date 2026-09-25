@@ -174,6 +174,9 @@ class GenerationResult:
     # Set only when an engine actually ran the in-band parser and an explicit
     # candidate failed to parse. Routing must not infer this from response text.
     inband_tool_call_parse_failed: bool = False
+    # A native tool call was cut off at the output-token limit or rejected at the
+    # argument cap and dropped, so the result's text is not an answer.
+    tool_call_truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +210,16 @@ class StreamingEvent:
     text: str = ""
     finish_reason: str = ""
     usage: Optional[GenerationUsage] = None
+
+
+STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS = "tool_arguments_progress"
+"""Text-free liveness ``StreamingEvent`` kind for streamed tool-call arguments.
+
+A model writing a large tool call (e.g. a whole file for ``create_artifact``)
+can stream arguments for minutes with no visible or reasoning text. Engines
+yield this kind per argument delta so the router's stream-inactivity watchdog
+sees a live stream; every consumer drops kinds it does not know.
+"""
 
 
 StreamChunk = Union[str, ToolCallRequest, ThinkingDelta, StreamingEvent]

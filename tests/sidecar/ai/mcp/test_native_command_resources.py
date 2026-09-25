@@ -14,16 +14,32 @@ from sidecar.ai.mcp import process_containment
 from sidecar.ai.tools.builtins.python_runtime import job_object
 
 
-@pytest.mark.parametrize("host_mode,policy,expected", [
-    ("desktop", None, None), ("server", None, 512), ("server", 1, 512),
-    ("desktop", 1, 512), ("desktop", 999, 512),
+@pytest.mark.parametrize("host_mode,policy,rich_files,expected", [
+    ("desktop", None, True, None), ("desktop", None, False, None),
+    ("server", None, True, 2048), ("server", 1, False, 512),
+    ("desktop", 1, True, 2048), ("desktop", 1, False, 512), ("desktop", 999, True, 2048),
 ])
-def test_only_native_desktop_omits_inherited_memory_limit(tmp_path: Path, host_mode, policy, expected):
-    config = RuntimeConfig(host_mode=host_mode, desktop_execution_policy_version=policy)
+def test_only_native_desktop_omits_inherited_memory_limit(
+    tmp_path: Path, host_mode, policy, rich_files, expected
+):
+    config = RuntimeConfig(
+        host_mode=host_mode,
+        desktop_execution_policy_version=policy,
+        tools_rich_files_enabled=rich_files,
+    )
     builtin = _default_mcp_servers(config, tmp_path)[0]
     assert builtin.memory_limit_mb == expected
     assert builtin.max_processes == 16
     assert builtin.cooperative_cancel is True
+
+
+def test_image_reads_alone_raise_the_media_memory_budget(tmp_path: Path):
+    config = RuntimeConfig(
+        host_mode="server",
+        tools_rich_files_enabled=False,
+        tools_image_read_enabled=True,
+    )
+    assert _default_mcp_servers(config, tmp_path)[0].memory_limit_mb == 2048
 
 
 @pytest.mark.parametrize("requested", [None, 0, -1, "none"])

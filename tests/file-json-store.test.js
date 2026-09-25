@@ -391,6 +391,35 @@ test('dispose flushes pending debounced writes', () => {
   assert.deepEqual(store.read({}), { pending: true });
 });
 
+test('dispose synchronously persists a debounced write already queued asynchronously', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-fjs-dispose-in-flight-'));
+  trackDirectory(dir);
+  const filePath = path.join(dir, 'debounced.json');
+  const store = makeStore(filePath, { writeDebounceMs: 30_000 });
+
+  store.write({ newest: true });
+  store._handleDebounceTimerFired();
+  store.dispose();
+  const persistedAtDispose = fs.existsSync(filePath)
+    ? JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    : null;
+  await store._asyncWriteChain;
+
+  assert.deepEqual(persistedAtDispose, { newest: true });
+});
+
+test('writes after dispose throw store_disposed and flushes are no-ops', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-fjs-disposed-write-'));
+  trackDirectory(dir);
+  const store = makeStore(path.join(dir, 'data.json'));
+
+  store.dispose();
+  assert.throws(() => store.write({ late: true }), { code: 'store_disposed' });
+  assert.throws(() => store.writeImmediate({ late: true }), { code: 'store_disposed' });
+  assert.equal(store.flush(), false);
+  assert.equal(await store.flushAsync(), false);
+});
+
 test('delete cancels any pending debounced write', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-fjs-delete-'));
   trackDirectory(dir);

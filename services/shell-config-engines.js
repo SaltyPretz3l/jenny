@@ -7,6 +7,7 @@ const DEFAULT_OFFLINE_INTELLIGENCE = Object.freeze({
   preferredLocalModel: '',
 });
 const DEFAULT_LOCAL_ENGINES = Object.freeze({
+  startupModelLoad: true,
   vllm: Object.freeze({
     port: 8000,
     maxModelLen: 131072,
@@ -130,10 +131,7 @@ function normalizeManagedLlamaServer(value) {
   const lastPickDirRaw = typeof source.lastPickDir === 'string'
     ? normalizeString(source.lastPickDir)
     : '';
-  const lastPickDir = lastPickDirRaw
-    && path.isAbsolute(lastPickDirRaw)
-    && !/[\r\n\0]/.test(lastPickDirRaw)
-    && lastPickDirRaw.length <= 512
+  const lastPickDir = isLocalAbsolutePath(lastPickDirRaw) && lastPickDirRaw.length <= 512
     ? lastPickDirRaw
     : '';
   const libraryRoots = [];
@@ -141,9 +139,7 @@ function normalizeManagedLlamaServer(value) {
   for (const value of Array.isArray(source.libraryRoots) ? source.libraryRoots : []) {
     const root = typeof value === 'string' ? normalizeString(value) : '';
     const key = root.toLowerCase();
-    if (!root
-      || !path.isAbsolute(root)
-      || /[\r\n\0]/.test(root)
+    if (!isLocalAbsolutePath(root)
       || root.length > 512
       || seenLibraryRoots.has(key)) {
       continue;
@@ -188,6 +184,8 @@ function normalizeManagedLlamaServer(value) {
     const tag = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(tagRaw) && managedModelKey(tagRaw) === token
       ? tagRaw
       : '';
+    const runtimePath = typeof entry.runtimePath === 'string' ? normalizeString(entry.runtimePath) : '';
+    const runtimeBuild = Number(entry.runtimeBuild);
     perModel[token] = {
       engine: ['ollama', 'llama-server'].includes(entry.engine) ? entry.engine : 'ollama',
       modelPath,
@@ -201,11 +199,25 @@ function normalizeManagedLlamaServer(value) {
           : 4,
       },
     };
+    // A per-model llama-server build. Only the main process writes it (the
+    // runtime reconcile); the shape check keeps a hand-edited file from naming
+    // any other executable. Omitted when empty so existing entries keep their shape.
+    if (isLlamaServerRuntimePath(runtimePath)) {
+      perModel[token].runtimePath = runtimePath;
+      if (Number.isSafeInteger(runtimeBuild) && runtimeBuild >= 1 && runtimeBuild <= MAX_RUNTIME_BUILD) {
+        perModel[token].runtimeBuild = runtimeBuild;
+      }
+    }
   }
   return {
     enabled: source.enabled === true,
     profileId,
-    lastUsedTag,
+    // The boot autostart target must still exist and still run on llama-server:
+    // removing a model from the library (perModel[key] = null) must not leave a
+    // launch that fails every boot, and a model moved to Ollama in Tune must not
+    // start llama-server at boot.
+    lastUsedTag: Object.prototype.hasOwnProperty.call(perModel, lastUsedTag)
+      && perModel[lastUsedTag].engine === 'llama-server' ? lastUsedTag : '',
     lastPickDir,
     libraryRoots,
     perModel,
@@ -243,6 +255,7 @@ function normalizeOpenAICompatibleSettings(value = {}) {
 function normalizeLocalEngines(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
+    startupModelLoad: source.startupModelLoad !== false,
     vllm: normalizeVllmLaunchArgs(source.vllm),
     openaiCompatible: normalizeOpenAICompatibleSettings(
       source.openaiCompatible ?? source.openai_compatible,
@@ -320,20 +333,55 @@ function normalizeCodexCliSettings(value = {}) {
   };
 }
 
-// A launchable managed model path: an absolute `.gguf`, or Ollama's own blob
-// copy of one (`sha256-<64 hex>`, extensionless; the sidecar sniffed its GGUF
-// magic before the path ever reached the shell). The launch spec normalizer
-// and the persisted-path rescan share this predicate so the three seams
-// cannot drift.
+// A path main may touch on the renderer's word. On win32 only a drive path
+// qualifies: a stat, readdir or open of a UNC (\\host\share), device (\\.\,
+// \\?\) or root-relative (\dir) path can name another machine, and Windows
+// sends that host the user's credentials before any result comes back. A share
+// mapped to a drive letter is a drive path, so it keeps working. Shape only.
+function isLocalAbsolutePath(value, { platform = process.platform } = {}) {
+  if (typeof value !== 'string' || !value || /[\r\n\0]/.test(value)) return false;
+  return platform === 'win32' ? /^[A-Za-z]:[\\/]/.test(value) : path.posix.isAbsolute(value);
+}
+
+// A launchable managed model path: a local absolute `.gguf`, or Ollama's own
+// blob copy of one (`sha256-<64 hex>`, extensionless; the sidecar sniffed its
+// GGUF magic before the path ever reached the shell). The launch spec
+// normalizer and the persisted-path rescan share this predicate so the three
+// seams cannot drift.
 const OLLAMA_BLOB_BASENAME = /^sha256-[0-9a-f]{64}$/i;
-function isManagedModelPath(value) {
+function isManagedModelPath(value, { platform = process.platform } = {}) {
   const modelPath = String(value || '');
-  if (!modelPath || !path.isAbsolute(modelPath) || /[\r\n\0]/.test(modelPath)) return false;
-  return /\.gguf$/i.test(modelPath) || OLLAMA_BLOB_BASENAME.test(path.basename(modelPath));
+  if (!isLocalAbsolutePath(modelPath, { platform })) return false;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  return /\.gguf$/i.test(modelPath) || OLLAMA_BLOB_BASENAME.test(pathApi.basename(modelPath));
+}
+
+// A per-model llama-server build: an absolute, already-normalized path whose
+// basename is exactly the server executable. On win32 only drive paths qualify
+// (no UNC, device, root-relative or drive-relative forms). Shape only, never
+// existence: the normalizer and the runtime reconcile share it.
+const MAX_RUNTIME_PATH_LENGTH = 1024;
+const MAX_RUNTIME_BUILD = 999_999_999;
+function isLlamaServerRuntimePath(value, { platform = process.platform } = {}) {
+  if (typeof value !== 'string' || !value || value.length > MAX_RUNTIME_PATH_LENGTH) return false;
+  // eslint-disable-next-line no-control-regex -- an executable path rejects C0 controls and DEL.
+  if (/[\u0000-\u001f\u007f]/.test(value) || /[\\/]$/.test(value)) return false;
+  if (platform === 'win32') {
+    return /^[A-Za-z]:\\/.test(value)
+      && value.indexOf(':', 2) === -1
+      && path.win32.normalize(value) === value
+      && path.win32.basename(value).toLowerCase() === 'llama-server.exe';
+  }
+  return value.startsWith('/')
+    && path.posix.normalize(value) === value
+    && path.posix.basename(value) === 'llama-server';
 }
 
 module.exports = {
+  isLocalAbsolutePath,
   isManagedModelPath,
+  isLlamaServerRuntimePath,
+  MAX_RUNTIME_BUILD,
   DEFAULT_OFFLINE_INTELLIGENCE,
   DEFAULT_LOCAL_ENGINES,
   DEFAULT_CODEX_CLI,

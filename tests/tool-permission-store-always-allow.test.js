@@ -1,170 +1,124 @@
 'use strict';
 
-// F15: "Always allow" on a path-bearing call persists a tool + path_prefix
-// rule instead of flipping the whole tool. Lives beside, not inside,
-// tool-permission-store.test.js, so that file stays under the 600-line
-// soft threshold.
-
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
 const { ToolPermissionStore } = require('../services/tools/tool-permission-store');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
 
+const AUTHORITY = Object.freeze({
+  project_id: 'project_alpha',
+  root_path: 'G:\\workspace\\alpha',
+  root_id: 'root_alpha',
+  root_revision: 2,
+  device_id: '7',
+  inode: '42',
+});
+
 function createTempStore() {
   const dir = createTrackedTempDir('jenny-perm-');
   const filePath = path.join(dir, 'tool-permissions.json');
-  return { store: new ToolPermissionStore(filePath), dir, filePath };
+  return { store: new ToolPermissionStore(filePath), filePath };
+}
+
+function evaluateWrite(store, targetPath, authority = AUTHORITY) {
+  return evaluatePolicy({
+    descriptor: {
+      name: 'write_file', side_effecting: true, read_only: false,
+      tool_family: 'filesystem', source_kind: 'builtin',
+    },
+    args: { path: targetPath },
+    snapshot: store.getSnapshot(authority),
+  });
 }
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
+
 describe('ToolPermissionStore scoped always-allow grants', () => {
-  test('grantAlwaysAllow stores one idempotent path-scoped rule', () => {
+  test('grantAlwaysAllow durably stores one idempotent authority-scoped grant', () => {
     const { store, filePath } = createTempStore();
-
-    const grant = store.grantAlwaysAllow('write_file', { path: 'docs/a.md' });
+    const grant = store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }, AUTHORITY);
     const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
-    assert.equal(grant.scope, 'path');
-    assert.equal(grant.toolName, 'write_file');
-    assert.equal(grant.pathPrefix, 'docs/a.md');
-    assert.equal(persisted.rules.length, 1);
-    assert.equal(persisted.rules[0].decision, 'auto');
-    assert.equal(persisted.rules[0].match.tool_id, 'write_file');
-    assert.equal(persisted.rules[0].match.path_prefix, 'docs/a.md');
-    assert.equal(store.getPolicy('write_file'), undefined);
+    assert.equal(persisted.schema_version, 2);
+    assert.equal(persisted.scoped_grants.length, 1);
+    assert.deepEqual(persisted.scoped_grants[0].authority, AUTHORITY);
+    assert.equal(persisted.scoped_grants[0].path_prefix, 'docs/a.md');
+    assert.equal(store.getSnapshot().rules.some((rule) => rule.id === grant.ruleId), false);
+    assert.equal(store.getSnapshot(AUTHORITY).rules.some((rule) => rule.id === grant.ruleId), true);
 
-    assert.deepEqual(store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }), grant);
-    assert.equal(JSON.parse(fs.readFileSync(filePath, 'utf8')).rules.length, 1);
-  });
-});
-
-describe('ToolPermissionStore always-allow scope selection', () => {
-  test('file_path scopes the grant and path takes precedence when both are present', () => {
-    const filePathGrant = createTempStore().store.grantAlwaysAllow(
-      'write_file',
-      { file_path: 'src/x.js' }
+    assert.deepEqual(
+      store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }, AUTHORITY),
+      grant
     );
-    const pathGrant = createTempStore().store.grantAlwaysAllow(
-      'write_file',
-      { path: 'p', file_path: 'q' }
-    );
-
-    assert.equal(filePathGrant.scope, 'path');
-    assert.equal(filePathGrant.pathPrefix, 'src/x.js');
-    assert.equal(pathGrant.scope, 'path');
-    assert.equal(pathGrant.pathPrefix, 'p');
+    assert.equal(JSON.parse(fs.readFileSync(filePath, 'utf8')).scoped_grants.length, 1);
   });
 
-  test('calls without a path target retain the whole-tool policy', () => {
-    const { store, filePath } = createTempStore();
-
-    const grant = store.grantAlwaysAllow('run_command', { command: 'ls' });
-    const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-
-    assert.deepEqual(grant, { scope: 'tool', toolName: 'run_command' });
-    assert.equal(store.getPolicy('run_command'), 'auto');
-    assert.equal(Array.isArray(persisted.rules) ? persisted.rules.length : 0, 0);
-  });
-
-  test('a path grant auto-allows only matching write_file paths', () => {
-    const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
+  test('auto decisions require a valid captured authority', () => {
     const { store } = createTempStore();
-    const grant = store.grantAlwaysAllow('write_file', { path: 'docs/a.md' });
-    const descriptor = {
-      name: 'write_file',
-      side_effecting: true,
-      read_only: false,
-      tool_family: 'filesystem',
-      source_kind: 'builtin',
-    };
-
-    const matching = evaluatePolicy({
-      descriptor,
-      args: { path: 'docs/a.md' },
-      snapshot: store.getSnapshot(),
-    });
-    const other = evaluatePolicy({
-      descriptor,
-      args: { path: 'docs/b.md' },
-      snapshot: store.getSnapshot(),
-    });
-
-    assert.equal(matching.decision, 'auto');
-    assert.equal(matching.matched_rule_id, grant.ruleId);
-    assert.notEqual(other.decision, 'auto');
+    assert.throws(
+      () => store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }),
+      (error) => error.code === 'permission_scope_required'
+    );
+    assert.throws(
+      () => store.setPolicy('run_command', 'auto'),
+      (error) => error.code === 'permission_scope_required'
+    );
+    assert.equal(store.listStoredDecisions().scoped_grants.length, 0);
   });
 
-  test('a pre-existing legacy deny still wins after a path grant', () => {
-    const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
+  test('path and whole-tool grants are scoped to the captured authority', () => {
+    const { store } = createTempStore();
+    const pathGrant = store.grantAlwaysAllow(
+      'write_file', { file_path: 'src/x.js' }, AUTHORITY
+    );
+    const toolGrant = store.grantAlwaysAllow('run_command', { command: 'ls' }, AUTHORITY);
+
+    assert.equal(pathGrant.scope, 'path');
+    assert.equal(pathGrant.pathPrefix, 'src/x.js');
+    assert.equal(toolGrant.scope, 'tool');
+    assert.equal(store.getPolicy('run_command'), undefined);
+    assert.notEqual(evaluateWrite(store, 'src/y.js').decision, 'auto');
+    assert.equal(evaluateWrite(store, 'src/x.js').decision, 'auto');
+  });
+
+  test('a global deny outranks a matching scoped allow', () => {
     const { store } = createTempStore();
     store.setPolicy('write_file', 'deny');
-    store.grantAlwaysAllow('write_file', { path: 'docs/a.md' });
-
-    const result = evaluatePolicy({
-      descriptor: {
-        name: 'write_file',
-        side_effecting: true,
-        read_only: false,
-        tool_family: 'filesystem',
-        source_kind: 'builtin',
-      },
-      args: { path: 'docs/a.md' },
-      snapshot: store.getSnapshot(),
-    });
-
-    assert.equal(result.decision, 'deny');
+    store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }, AUTHORITY);
+    assert.equal(evaluateWrite(store, 'docs/a.md').decision, 'deny');
   });
 });
 
-describe('ToolPermissionStore saved decisions (Settings > Tools > Approval rules)', () => {
-  test('listStoredDecisions returns only the stored policies and rules, never the synthetic deny rules', () => {
+describe('ToolPermissionStore saved decisions', () => {
+  test('listStoredDecisions exposes scoped grants without synthetic deny rules', () => {
     const { store } = createTempStore();
     store.setPolicy('delete_file', 'deny');
-    store.grantAlwaysAllow('write_file', { path: 'docs/a.md' });
+    store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }, AUTHORITY);
 
     const saved = store.listStoredDecisions();
-
     assert.deepEqual(saved.policies, { delete_file: 'deny' });
-    assert.equal(saved.rules.length, 1, 'the legacy deny is a policy row, not a rule row');
-    assert.equal(saved.rules[0].match.tool_id, 'write_file');
-    assert.equal(saved.rules[0].match.path_prefix, 'docs/a.md');
-    assert.equal(store.getSnapshot().rules.length, 2, 'the evaluated snapshot still materializes the deny rule');
+    assert.deepEqual(saved.rules, []);
+    assert.equal(saved.scoped_grants.length, 1);
+    assert.equal(store.getSnapshot(AUTHORITY).rules.length, 2);
   });
 
-  test('clearPolicy drops a stored per-tool policy and reports a miss otherwise', () => {
-    const { store, filePath } = createTempStore();
-    store.setPolicy('run_command', 'auto');
+  test('clearPolicy restores a default and removeRule removes a scoped grant', () => {
+    const { store } = createTempStore();
+    store.setPolicy('run_command', 'deny');
+    const grant = store.grantAlwaysAllow('write_file', { path: 'docs/a.md' }, AUTHORITY);
 
     assert.deepEqual(store.clearPolicy('Bash'), { cleared: true, toolName: 'run_command' });
-    assert.equal(store.getPolicy('run_command'), undefined);
-    assert.equal(store.getAllPolicies().run_command, 'ask', 'the default comes back');
-    assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')).legacy_policies, {});
-    assert.deepEqual(store.clearPolicy('run_command'), { cleared: false, toolName: 'run_command' });
-    assert.throws(() => store.clearPolicy(''), /Tool name is required/);
-  });
-
-  test('removeRule deletes one stored rule by id and leaves the rest', () => {
-    const { store } = createTempStore();
-    const first = store.grantAlwaysAllow('write_file', { path: 'docs/a.md' });
-    const second = store.grantAlwaysAllow('write_file', { path: 'docs/b.md' });
-
-    assert.deepEqual(store.removeRule(first.ruleId), { removed: true, ruleId: first.ruleId });
-    assert.deepEqual(store.listStoredDecisions().rules.map((rule) => rule.id), [second.ruleId]);
-    assert.deepEqual(store.removeRule(first.ruleId), { removed: false, ruleId: first.ruleId });
-    assert.throws(() => store.removeRule(''), /Rule id is required/);
-
-    const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
-    const descriptor = {
-      id: 'write_file', side_effecting: true, read_only: false, tool_family: 'filesystem',
-    };
-    const evaluated = evaluatePolicy({ descriptor, args: { path: 'docs/a.md' }, snapshot: store.getSnapshot() });
-    assert.notEqual(evaluated.decision, 'auto', 'the removed grant no longer auto-approves');
+    assert.equal(store.getAllPolicies().run_command, 'ask');
+    assert.deepEqual(store.removeRule(grant.ruleId), { removed: true, ruleId: grant.ruleId });
+    assert.notEqual(evaluateWrite(store, 'docs/a.md').decision, 'auto');
+    assert.deepEqual(store.removeRule(grant.ruleId), { removed: false, ruleId: grant.ruleId });
   });
 });

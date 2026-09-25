@@ -43,6 +43,13 @@ def _strip_self_prefixed_tool_id(raw_tool_id: str) -> str:
     return raw_tool_id
 
 
+def canonical_model_tool_id(raw_tool_id: str) -> str:
+    """The tool id dispatch runs for a model-emitted tool name."""
+
+    normalized_tool_id = _strip_self_prefixed_tool_id(raw_tool_id)
+    return MODEL_TOOL_ID_ALIASES.get(normalized_tool_id, normalized_tool_id)
+
+
 def canonicalize_tool_calls(
     tool_calls: tuple[ToolCallRequest, ...],
     *,
@@ -72,8 +79,7 @@ def canonicalize_tool_calls(
             used_ids=used_call_ids,
         )
         raw_tool_id = str(call.tool_id or "").strip()
-        normalized_tool_id = _strip_self_prefixed_tool_id(raw_tool_id)
-        canonical_tool_id = MODEL_TOOL_ID_ALIASES.get(normalized_tool_id, normalized_tool_id)
+        canonical_tool_id = canonical_model_tool_id(raw_tool_id)
         canonical_call = call
         sanitized_arguments = strip_plan_artifact_write_arg(call.arguments)
         if sanitized_arguments != call.arguments:

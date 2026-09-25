@@ -267,6 +267,7 @@ class ApprovalPlan:
     # / ``message_history_hash``.
     personality_rendered: bool | None = None
     change_set_id: str = ""
+    quota_state_json: bytes | None = None
 
     def frozen_input_for_call(self, call_id: str) -> FrozenExecutionInputs | None:
         normalized = str(call_id or "").strip()
@@ -434,11 +435,15 @@ def build_approval_plan(
     tool_call_limit: int = 0,
     remaining_tool_calls: int = 0,
     change_set_id: str = "",
+    quota_state_json: bytes | None = None,
 ) -> ApprovalPlan:
     from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
         freeze_approval_tool_calls,
     )
 
+    if quota_state_json is not None:
+        from sidecar.ai.routing.tool_quota_state import decode_quota_state  # noqa: PLC0415
+        decode_quota_state(quota_state_json)
     tool_contract_hash = build_tool_contract_hash(tool_contract)
     effective_args_fingerprint = build_effective_args_fingerprint(frozen_inputs)
     execution_context_fingerprint = build_execution_context_fingerprint(frozen_inputs)
@@ -472,6 +477,8 @@ def build_approval_plan(
             "remaining_iterations": max(int(remaining_iterations), 0),
             "tool_call_limit": normalized_tool_call_limit,
             "remaining_tool_calls": normalized_remaining_tool_calls,
+            **({"quota_state_sha256": hashlib.sha256(quota_state_json).hexdigest()}
+               if quota_state_json is not None else {}),
         }
     )
     call_id = str(approved_call_id or "").strip()
@@ -525,5 +532,6 @@ def build_approval_plan(
         message_history_hash=message_history_hash,
         parent_approval_plan_hash=normalized_parent_approval_plan_hash,
         approval_plan_hash=approval_plan_hash,
+        quota_state_json=quota_state_json,
         change_set_id=str(change_set_id or "").strip(),
     )

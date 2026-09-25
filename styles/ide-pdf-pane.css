@@ -1,0 +1,176 @@
+@import url("../node_modules/pdfjs-dist/web/pdf_viewer.css");
+
+.ide-pdf-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* The pane sits in the Workspace editor column; anything that does not fit
+   * must stay inside it rather than paint over the chat dock beside it. The
+   * toolbar sizes off the pane (container), not the window: the dock or rail
+   * can squeeze the editor column at any window width. */
+  overflow: hidden;
+  container: ide-pdf / inline-size;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.ide-pdf-toolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.ide-pdf-toolbar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
+.ide-pdf-toolbar-row--edit {
+  min-height: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.ide-pdf-button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ide-pdf-button:hover,
+.ide-pdf-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  color: var(--text-primary);
+}
+
+.ide-pdf-button[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.ide-pdf-button:focus-visible,
+.ide-pdf-pane .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-pdf-page-field,
+.ide-pdf-find-field {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.ide-pdf-page-field .inv-text-field-control,
+.ide-pdf-find-field .inv-text-field-control {
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.ide-pdf-page-field .inv-text-field-control {
+  width: 42px;
+  text-align: center;
+}
+
+.ide-pdf-find-field {
+  margin-inline-start: auto;
+}
+
+.ide-pdf-find-field .inv-text-field-control {
+  width: min(180px, 20vw);
+}
+
+.ide-pdf-page-readout,
+.ide-pdf-find-readout,
+.ide-pdf-note {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ide-pdf-page-readout,
+.ide-pdf-find-readout {
+  min-width: 48px;
+  text-align: center;
+}
+
+.ide-pdf-note {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-inline-start: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-pdf-separator {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--line);
+}
+
+.ide-pdf-error {
+  flex: 0 0 auto;
+  margin: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.ide-pdf-documents {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ide-pdf-doc {
+  position: absolute;
+  inset: 0;
+}
+
+.ide-pdf-viewer-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  background: color-mix(in srgb, var(--bg-base) 88%, var(--text-muted));
+}
+
+.ide-pdf-viewer-scroll .pdfViewer {
+  --page-bg-color: var(--bg-panel);
+  --page-border: 1px solid var(--line);
+  padding: 12px 0 24px;
+}
+
+.ide-pdf-viewer-scroll .pdfViewer .page {
+  margin: 0 auto 12px;
+}
+
+/* ~870px fits the navigation row on one line; below that it wraps. */
+@container ide-pdf (max-width: 900px) {
+  .ide-pdf-find-field {
+    margin-inline-start: 0;
+  }
+
+  .ide-pdf-note {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+  }
+}

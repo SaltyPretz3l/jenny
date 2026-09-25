@@ -161,6 +161,36 @@ test('flushAsync skips an unloaded dirty session and logs flush_failed when writ
   assert.equal(failures[0].data.errorMessage, 'async write blew up', 'carries the async write error');
 });
 
+test('disposeAsync keeps a failed session flush retryable while rejecting later mutations', async () => {
+  const rootDir = makeTempRoot('disposeasync-retry');
+  const logger = makeRecordingLogger();
+  const backend = makeBackend(rootDir, { logger, writeDebounceMs: 60_000 });
+  backend.upsertSession('sess_async_retry', { title: 'Retry async' });
+  const store = backend._sessionStores.get('sess_async_retry');
+  const writeNow = store._writeNow.bind(store);
+  let failNextWrite = true;
+  store._writeNow = (...args) => {
+    if (failNextWrite) {
+      failNextWrite = false;
+      throw new Error('transient async dispose failure');
+    }
+    return writeNow(...args);
+  };
+
+  assert.deepEqual(await backend.disposeAsync(), { disposed: true, pending: 1 });
+  assert.equal(backend.isDisposed(), true);
+  assert.equal(backend.upsertSession('sess_async_late', { title: 'Too late' }), false);
+  assert.equal(logger.find('session_store.mutation_after_dispose').length, 1);
+  assert.equal(await backend.flushAsync(), true);
+  assert.equal(backend.hasPendingWrites(), false);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(rootDir, 'sess_async_retry.json'), 'utf8')).session.title,
+    'Retry async'
+  );
+  assert.deepEqual(await backend.disposeAsync(), { disposed: true, pending: 0 });
+  assert.equal(await backend.flushAsync(), false);
+});
+
 // Region 465-470: a store WITH flushAsync whose flushAsync rejects -> .catch logs.
 test('flushAsync logs flush_failed when a session store.flushAsync rejects', async () => {
   const rootDir = makeTempRoot('flushasync-reject');

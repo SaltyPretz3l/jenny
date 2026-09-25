@@ -118,7 +118,7 @@ test('session shadow store leaves newer schema payloads untouched and logs the m
   assert.equal(entry.level, 'WARN');
   assert.equal(entry.details.filePath, storePath);
   assert.equal(entry.details.observedVersion, 99);
-  assert.equal(entry.details.expectedVersion, 8);
+  assert.equal(entry.details.expectedVersion, 9);
 
   store.upsertSession('sess_blocked', { title: 'Blocked Downgrade' });
   // A future-schema monolithic file stays in place (no migration runs) so
@@ -379,10 +379,10 @@ test('session shadow store migrates legacy payloads to the current schema withou
   const store = new SessionShadowStore(storePath);
   const session = store.getSession('sess_legacy');
   // The legacy monolithic file split into shadow-sessions/_index.json plus a
-  // per-session record; the index carries the current v8 schema marker.
+  // per-session record; the index carries the current schema marker.
   const indexPayload = JSON.parse(fs.readFileSync(shadowIndexFilePath(storePath), 'utf8'));
 
-  assert.equal(indexPayload.schema_version, 8);
+  assert.equal(indexPayload.schema_version, 9);
   assert.equal(session.active_turn.request_id, 'req_legacy');
   assert.equal(session.active_turn.stream_id, 'stream_legacy');
   assert.equal(session.messages[0].role, 'assistant');

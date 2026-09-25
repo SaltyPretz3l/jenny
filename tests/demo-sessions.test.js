@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const { ToolPermissionStore } = require('../services/tools/tool-permission-store');
+const { evaluatePolicy } = require('../services/tools/tool-policy-evaluator');
 const {
   DEMO_MODEL,
   SEEDED_SESSIONS,
@@ -100,7 +101,8 @@ test('seeded sessions are promo-facing, newest first, and one is pinned', () => 
 
 test('seedDemoSessions writes through the real session store and the sidebar sees the seeded ages', (t) => {
   const profile = tempProfile(t);
-  const ids = seedDemoSessions(profile, NOW);
+  const projectId = 'project_ledger';
+  const ids = seedDemoSessions(profile, NOW, projectId);
   assert.strictEqual(ids.length, SEEDED_SESSIONS.length);
 
   const store = new ElectronSessionStore(path.join(profile, 'sessions.json'));
@@ -114,6 +116,7 @@ test('seedDemoSessions writes through the real session store and the sidebar see
     assert.strictEqual(summary.updated_at, session.updatedAt);
     assert.strictEqual(summary.created_at, session.createdAt);
     assert.strictEqual(summary.pinned, session.pinned);
+    assert.strictEqual(summary.project_id, projectId);
     assert.strictEqual(summary.message_count, session.messages.length);
     assert.strictEqual(summary.last_model_used, DEMO_MODEL);
     assert.ok(summary.last_message_preview.startsWith(session.messages.at(-1).content.slice(0, 40)));
@@ -124,7 +127,12 @@ test('seedDemoSessions writes through the real session store and the sidebar see
   assert.deepStrictEqual(store.sweepEmptySessions({ dryRun: true }).candidateIds, [], 'nothing seeded is empty');
 });
 
-test('seedDemoCalendar covers the recording week and seedDemoToolPolicy auto-allows Home', (t) => {
+test('seedDemoSessions refuses to place demo history in General implicitly', (t) => {
+  const profile = tempProfile(t);
+  assert.throws(() => seedDemoSessions(profile, NOW), /require a project id/);
+});
+
+test('demo calendar and tool policy stay scoped to the Ledger CLI project authority', (t) => {
   const profile = tempProfile(t);
   seedDemoCalendar(profile, NOW);
   const stored = JSON.parse(fs.readFileSync(path.join(profile, 'home-calendar.json'), 'utf8'));
@@ -141,8 +149,35 @@ test('seedDemoCalendar covers the recording week and seedDemoToolPolicy auto-all
     assert.strictEqual(event.recurrence, 'none');
   }
 
-  seedDemoToolPolicy(profile);
+  const workspace = path.join(profile, 'demo-workspace');
+  fs.mkdirSync(workspace);
+  const authority = seedDemoToolPolicy(profile, workspace);
+  seedDemoSessions(profile, NOW, authority.project_id);
   const policies = new ToolPermissionStore(path.join(profile, 'tool-permissions.json'));
-  assert.strictEqual(policies.getAllPolicies().home, 'auto');
-  assert.notStrictEqual(policies.getAllPolicies().edit_file, 'auto', 'file edits still stop for approval');
+  const decision = (toolName, scope) => evaluatePolicy({
+    descriptor: { name: toolName, read_only: false, side_effecting: true, source_kind: 'builtin' },
+    args: { action: 'create_event' },
+    snapshot: policies.getSnapshot(scope),
+  }).decision;
+  const homeDecision = (scope) => decision('home', scope);
+  assert.strictEqual(homeDecision(authority), 'auto');
+  assert.strictEqual(homeDecision({ ...authority, project_id: 'project_other' }), 'ask');
+  assert.strictEqual(homeDecision({ ...authority, root_revision: authority.root_revision + 1 }), 'ask');
+  assert.strictEqual(decision('edit_file', authority), 'ask', 'file edits still stop for approval');
+  const projects = JSON.parse(fs.readFileSync(path.join(profile, 'projects.json'), 'utf8'));
+  assert.strictEqual(projects.projects.project_general.root_path, null);
+  assert.strictEqual(projects.projects[authority.project_id].name, 'Ledger CLI');
+  assert.strictEqual(projects.projects[authority.project_id].root_path, authority.root_path);
+  const generalAuthority = {
+    project_id: 'project_general',
+    root_path: null,
+    root_id: null,
+    root_revision: 0,
+    device_id: null,
+    inode: null,
+  };
+  assert.strictEqual(homeDecision(generalAuthority), 'ask');
+  const sessions = new ElectronSessionStore(path.join(profile, 'sessions.json'));
+  t.after(() => sessions.dispose());
+  assert.ok(sessions.listSessions().every((session) => session.project_id === authority.project_id));
 });

@@ -219,7 +219,7 @@ test('framed hosted stdio cancellation during paced replay persists cancelled wi
       () => reject(new Error('paced replay did not emit a delta')), 10_000))]);
     const current = fixture.router.snapshot(sessionId);
     const cancelled = await fixture.router.dispatch(fixture.command(fixture.a, 'chat.cancel', {
-      stream_id: admitted.stream_id,
+      stream_id: current.active_turn.stream_id,
     }, {
       session_id: sessionId,
       control_generation: lease.generation,
@@ -230,7 +230,7 @@ test('framed hosted stdio cancellation during paced replay persists cancelled wi
       () => reject(new Error('cancelled replay did not settle')), 15_000))]);
     assert.ok(final.type === 'cancelled' || final.terminalStatus === 'cancelled' || final.status === 'cancelled', JSON.stringify(final));
     const session = fixture.host.backend.sessionStore.getSession(sessionId);
-    const cancelledRow = session.messages.find((message) => message.parent_stream_id === admitted.stream_id);
+    const cancelledRow = session.messages.find((message) => message.parent_stream_id === current.active_turn.stream_id);
     assert.ok(cancelledRow, `cancelled assistant turn must be persisted: ${JSON.stringify(session.messages)}`);
     assert.equal(cancelledRow.status || cancelledRow.terminal_status, 'cancelled');
     const frozen = JSON.stringify(session);

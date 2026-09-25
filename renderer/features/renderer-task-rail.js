@@ -71,6 +71,14 @@
       return typeof render.buildTaskRows === 'function' ? render.buildTaskRows(state) : [];
     }
 
+    function currentChecklist() {
+      const sessionId = String(state.currentSessionId || '').trim();
+      const messages = state.messagesBySession instanceof Map
+        ? state.messagesBySession.get(sessionId) || [] : [];
+      return typeof render.buildSessionChecklist === 'function'
+        ? render.buildSessionChecklist(messages) : { items: [], updatedAt: '' };
+    }
+
     function isTasksMode() {
       return state.ui?.artifactReview?.mode === 'tasks';
     }
@@ -88,7 +96,11 @@
     }
 
     function syncCount() {
-      const count = buildRows().filter((row) => row.section === 'active' || row.section === 'deferred').length;
+      const followUpCount = buildRows()
+        .filter((row) => row.section === 'active' || row.section === 'deferred').length;
+      const checklistCount = currentChecklist().items
+        .filter((item) => item.status !== 'completed').length;
+      const count = followUpCount + checklistCount;
       const badgeEl = toggleEl?.querySelector?.('[data-task-count]');
       if (badgeEl) {
         badgeEl.textContent = String(count);
@@ -133,13 +145,35 @@
       const host = prepareSurface(surface);
       if (!host) return;
       host.innerHTML = typeof render.renderTaskRailSurface === 'function'
-        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), { escapeHtml }) : '';
+        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), {
+            escapeHtml,
+            checklist: currentChecklist(),
+          }) : '';
       syncCount();
     }
 
     function rerender() {
       renderArtifactReviewPanel();
       syncToggle();
+    }
+
+    function refreshChecklist(options) {
+      if (disposed) return;
+      const sessionId = String(options?.sessionId || '').trim();
+      if (sessionId && sessionId !== String(state.currentSessionId || '').trim()) return;
+      // A re-render replaces the rail's markup wholesale; never throw away a
+      // follow-up the user is editing or a draft they are typing. The count
+      // still syncs, and the next ordinary render picks the checklist up.
+      const activeEl = panelEl?.ownerDocument?.activeElement;
+      const typing = Boolean(ensureUiState().editTaskId)
+        || Boolean(activeEl && panelEl?.contains?.(activeEl)
+          && activeEl.closest?.('.task-rail-add, .task-rail-editor'));
+      if (!typing && isTasksMode() && isRailVisible()) {
+        const currentSurface = panelEl?.querySelector?.('.task-rail-surface');
+        if (currentSurface?.parentElement) renderRailContent(currentSurface.parentElement);
+        else rerender();
+      }
+      syncCount();
     }
 
     function rowById(taskId) {
@@ -245,10 +279,35 @@
       });
     }
 
+    async function openOrStartSession(row) {
+      if (!row) return;
+      if (row.linkedSessionId) return activateWorkspaceSession(row.linkedSessionId);
+      const ui = ensureUiState();
+      if (ui.busyTaskId === row.followUpId) return;
+      ui.busyTaskId = row.followUpId;
+      rerender();
+      try {
+        await Promise.resolve(windowRef.rendererTaskSessionActions?.start?.({
+          title: row.title,
+          initialPrompt: buildTaskBrief(row, { linkedTaskId: row.followUpId }),
+          linkedTaskId: row.followUpId,
+        }));
+      } finally {
+        if (!disposed) { ui.busyTaskId = ''; rerender(); }
+      }
+    }
+
     function showOverflow(anchor, row) {
       const contextMenu = inventory.contextMenu || windowRef.inventoryContextMenu;
       if (!contextMenu?.show || !row) return;
       const items = [
+        {
+          label: row.linkedSessionId
+            ? jt('tasks.rail.openSession', 'Open session')
+            : jt('tasks.rail.startSession', 'Start a session'),
+          disabled: String(ensureUiState().busyTaskId || '') === row.followUpId,
+          action: () => openOrStartSession(row),
+        },
         { label: jt('common.edit', 'Edit'), action: () => { ensureUiState().editTaskId = row.followUpId; rerender(); } },
         { label: jt('tasks.rail.deferUntilTomorrow', 'Defer until tomorrow'), action: () => runMutation(row.followUpId, () => companionApi.deferFollowUp(row.followUpId, 'tomorrow')) },
       ];
@@ -281,20 +340,7 @@
       const row = rowById(taskId);
       if (action === 'task-rail-add') return addTask();
       if (action === 'task-rail-send-list') return sendListToChat();
-      if (action === 'task-rail-start' && row) {
-        if (row.linkedSessionId) return activateWorkspaceSession(row.linkedSessionId);
-        const ui = ensureUiState();
-        if (ui.busyTaskId === row.followUpId) return;
-        ui.busyTaskId = row.followUpId;
-        rerender();
-        try {
-          await Promise.resolve(windowRef.rendererTaskSessionActions?.start?.({
-            title: row.title, initialPrompt: buildTaskBrief(row, { linkedTaskId: row.followUpId }), linkedTaskId: row.followUpId,
-          }));
-        } finally {
-          if (!disposed) { ui.busyTaskId = ''; rerender(); }
-        }
-      }
+      if (action === 'task-rail-start' && row) return openOrStartSession(row);
       if (action === 'task-rail-open-session' && row?.linkedSessionId) return activateWorkspaceSession(row.linkedSessionId);
       if (action === 'task-rail-overflow') return showOverflow(button, row);
       if (action === 'task-rail-edit-save') return saveEditor(taskId);
@@ -397,8 +443,8 @@
     }
 
     const boardActions = { notifyMutation };
-    const railActions = { open };
-    return { bind, dispose, renderRailContent, notifyMutation, open, isEnabled };
+    const railActions = { open, refreshChecklist };
+    return { bind, dispose, renderRailContent, notifyMutation, open, refreshChecklist, isEnabled };
   }
 
   return { createTaskRail };

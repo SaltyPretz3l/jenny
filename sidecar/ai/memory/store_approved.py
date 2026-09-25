@@ -16,6 +16,7 @@ from sidecar.ai.error_codes import (
     CMP_MEMORY_NOT_FOUND,
 )
 from sidecar.ai.memory.contracts import (
+    GENERAL_PROJECT_ID,
     MAX_CATEGORY_CHARS,
     MAX_FAMILY_KEY_CHARS,
     MAX_LESSON_TEXT_CHARS,
@@ -37,6 +38,8 @@ from sidecar.ai.memory.store_shared import (
     PROMPT_RECALL_TOKEN_BUDGET,
     ApprovedMemory,
     _locked,
+    _project_scope,
+    recall_scopes,
 )
 from sidecar.exceptions import MemoryStoreError
 
@@ -55,7 +58,13 @@ class _ApprovedMemoriesMixin:
     _quarantine_malformed_row: Callable[..., None]
 
     @_locked
-    def has_memory_fingerprint(self, content_fingerprint: str) -> bool:
+    def has_memory_fingerprint(
+        self,
+        content_fingerprint: str,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+    ) -> bool:
+        scope = _project_scope(project_id)
         normalized = str(content_fingerprint or "").strip().lower()
         if not normalized:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "content_fingerprint is required")
@@ -65,10 +74,10 @@ class _ApprovedMemoriesMixin:
                 """
                 SELECT 1
                 FROM memories
-                WHERE content_fingerprint = ?
+                WHERE project_id = ? AND content_fingerprint = ?
                 LIMIT 1
                 """,
-                (normalized,),
+                (scope, normalized),
             ).fetchone()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to read memories") from error
@@ -76,15 +85,21 @@ class _ApprovedMemoriesMixin:
         return bool(row)
 
     @_locked
-    def get_memory_by_id(self, memory_id: int) -> ApprovedMemory | None:
+    def get_memory_by_id(
+        self,
+        memory_id: int,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+    ) -> ApprovedMemory | None:
+        scope = _project_scope(project_id)
         safe_memory_id = int(memory_id)
         if safe_memory_id <= 0:
             raise MemoryStoreError(CMP_MEMORY_NOT_FOUND, "memory_id must be positive")
 
         try:
             row = self._connection.execute(
-                f"{_APPROVED_MEMORY_SELECT} WHERE id = ? LIMIT 1",
-                (safe_memory_id,),
+                f"{_APPROVED_MEMORY_SELECT} WHERE project_id = ? AND id = ? LIMIT 1",
+                (scope, safe_memory_id),
             ).fetchone()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to read memories") from error
@@ -103,7 +118,9 @@ class _ApprovedMemoriesMixin:
         source_excerpt: str,
         family_key: str = "",
         provenance: str = "unknown_legacy",
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> tuple[ApprovedMemory, bool]:
+        scope = _project_scope(project_id)
         try:
             normalized_session_id = require_bounded_text(
                 session_id, field="session_id", max_chars=MAX_SESSION_ID_CHARS
@@ -145,8 +162,8 @@ class _ApprovedMemoriesMixin:
         try:
             with self._write_transaction():
                 existing_row = self._connection.execute(
-                    f"{_APPROVED_MEMORY_SELECT} WHERE content_fingerprint = ? LIMIT 1",
-                    (normalized_fingerprint,),
+                    f"{_APPROVED_MEMORY_SELECT} WHERE project_id = ? AND content_fingerprint = ? LIMIT 1",
+                    (scope, normalized_fingerprint),
                 ).fetchone()
                 existing = self._approved_from_row(existing_row) if existing_row else None
                 if existing:
@@ -185,7 +202,7 @@ class _ApprovedMemoriesMixin:
                             family_key = ?,
                             provenance = ?,
                             updated_at = ?
-                        WHERE id = ?
+                        WHERE project_id = ? AND id = ?
                         """,
                         (
                             normalized_session_id,
@@ -197,19 +214,20 @@ class _ApprovedMemoriesMixin:
                             normalized_family_key,
                             normalized_provenance,
                             timestamp,
+                            scope,
                             existing.id,
                         ),
                     )
                     self._connection.execute(
                         """
                         DELETE FROM pending_memory_candidates
-                        WHERE session_id = ? AND content_fingerprint = ?
+                        WHERE project_id = ? AND session_id = ? AND content_fingerprint = ?
                         """,
-                        (normalized_session_id, normalized_fingerprint),
+                        (scope, normalized_session_id, normalized_fingerprint),
                     )
                     self._connection.execute(
-                        "DELETE FROM memory_suppressions WHERE content_fingerprint = ?",
-                        (normalized_fingerprint,),
+                        "DELETE FROM memory_suppressions WHERE project_id = ? AND content_fingerprint = ?",
+                        (scope, normalized_fingerprint),
                     )
                 if existing:
                     result = (
@@ -226,6 +244,7 @@ class _ApprovedMemoriesMixin:
                             provenance=normalized_provenance,
                             created_at=existing.created_at,
                             updated_at=timestamp,
+                            project_id=scope,
                         ),
                         False,
                     )
@@ -244,8 +263,9 @@ class _ApprovedMemoriesMixin:
                         family_key,
                         provenance,
                         created_at,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        updated_at,
+                        project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             normalized_session_id,
@@ -259,18 +279,19 @@ class _ApprovedMemoriesMixin:
                             normalized_provenance,
                             timestamp,
                             timestamp,
+                            scope,
                         ),
                     )
                     self._connection.execute(
                         """
                     DELETE FROM pending_memory_candidates
-                    WHERE session_id = ? AND content_fingerprint = ?
+                    WHERE project_id = ? AND session_id = ? AND content_fingerprint = ?
                     """,
-                        (normalized_session_id, normalized_fingerprint),
+                        (scope, normalized_session_id, normalized_fingerprint),
                     )
                     self._connection.execute(
-                        "DELETE FROM memory_suppressions WHERE content_fingerprint = ?",
-                        (normalized_fingerprint,),
+                        "DELETE FROM memory_suppressions WHERE project_id = ? AND content_fingerprint = ?",
+                        (scope, normalized_fingerprint),
                     )
                     last_row_id = cursor.lastrowid
                     if last_row_id is None:
@@ -289,6 +310,7 @@ class _ApprovedMemoriesMixin:
                             provenance=normalized_provenance,
                             created_at=timestamp,
                             updated_at=timestamp,
+                            project_id=scope,
                         ),
                         True,
                     )
@@ -304,8 +326,10 @@ class _ApprovedMemoriesMixin:
         title: str,
         lesson_text: str,
         remove_provenance: bool = False,
+        project_id: str = GENERAL_PROJECT_ID,
     ) -> ApprovedMemory:
-        existing_memory = self.get_memory_by_id(memory_id)
+        scope = _project_scope(project_id)
+        existing_memory = self.get_memory_by_id(memory_id, project_id=scope)
         if existing_memory is None:
             raise MemoryStoreError(CMP_MEMORY_NOT_FOUND, "memory not found")
 
@@ -329,10 +353,11 @@ class _ApprovedMemoriesMixin:
                 """
                 SELECT 1
                 FROM memories
-                WHERE id != ? AND content_fingerprint = ?
+                WHERE project_id = ? AND id != ? AND content_fingerprint = ?
                 LIMIT 1
                 """,
                 (
+                    scope,
                     existing_memory.id,
                     normalized_fingerprint,
                 ),
@@ -364,7 +389,7 @@ class _ApprovedMemoriesMixin:
                         source_excerpt = ?,
                         provenance = ?,
                         updated_at = ?
-                    WHERE id = ?
+                    WHERE project_id = ? AND id = ?
                     """,
                     (
                         normalized_title,
@@ -373,12 +398,13 @@ class _ApprovedMemoriesMixin:
                         "" if remove_provenance else existing_memory.source_excerpt,
                         "source_removed" if remove_provenance else existing_memory.provenance,
                         timestamp,
+                        scope,
                         existing_memory.id,
                     ),
                 )
                 self._connection.execute(
-                    "DELETE FROM memory_suppressions WHERE content_fingerprint = ?",
-                    (normalized_fingerprint,),
+                    "DELETE FROM memory_suppressions WHERE project_id = ? AND content_fingerprint = ?",
+                    (scope, normalized_fingerprint),
                 )
         except sqlite3.IntegrityError as error:
             raise MemoryStoreError(
@@ -401,10 +427,17 @@ class _ApprovedMemoriesMixin:
             provenance="source_removed" if remove_provenance else existing_memory.provenance,
             created_at=existing_memory.created_at,
             updated_at=timestamp,
+            project_id=scope,
         )
 
     @_locked
-    def delete_memory(self, memory_id: int) -> bool:
+    def delete_memory(
+        self,
+        memory_id: int,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+    ) -> bool:
+        scope = _project_scope(project_id)
         safe_memory_id = int(memory_id)
         if safe_memory_id <= 0:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "memory_id must be positive")
@@ -412,8 +445,8 @@ class _ApprovedMemoriesMixin:
         try:
             with self._write_transaction():
                 row = self._connection.execute(
-                    "SELECT content_fingerprint FROM memories WHERE id = ? LIMIT 1",
-                    (safe_memory_id,),
+                    "SELECT content_fingerprint FROM memories WHERE project_id = ? AND id = ? LIMIT 1",
+                    (scope, safe_memory_id),
                 ).fetchone()
                 if row is None:
                     return False
@@ -421,24 +454,24 @@ class _ApprovedMemoriesMixin:
                 cursor = self._connection.execute(
                     """
                     DELETE FROM memories
-                    WHERE id = ?
+                    WHERE project_id = ? AND id = ?
                     """,
-                    (safe_memory_id,),
+                    (scope, safe_memory_id),
                 )
                 self._connection.execute(
-                    "DELETE FROM pending_memory_candidates WHERE content_fingerprint = ?",
-                    (fingerprint,),
+                    "DELETE FROM pending_memory_candidates WHERE project_id = ? AND content_fingerprint = ?",
+                    (scope, fingerprint),
                 )
                 self._connection.execute(
                     """
                     INSERT INTO memory_suppressions (
-                        content_fingerprint, reason, created_at
-                    ) VALUES (?, 'forgotten', ?)
-                    ON CONFLICT(content_fingerprint) DO UPDATE SET
+                        project_id, content_fingerprint, reason, created_at
+                    ) VALUES (?, ?, 'forgotten', ?)
+                    ON CONFLICT(project_id, content_fingerprint) DO UPDATE SET
                         reason = excluded.reason,
                         created_at = excluded.created_at
                     """,
-                    (fingerprint, datetime.now(timezone.utc).isoformat()),
+                    (scope, fingerprint, datetime.now(timezone.utc).isoformat()),
                 )
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to delete memory") from error
@@ -446,11 +479,16 @@ class _ApprovedMemoriesMixin:
         return int(cursor.rowcount or 0) > 0
 
     @_locked
-    def get_all_memories(self) -> list[ApprovedMemory]:
+    def get_all_memories(
+        self,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+    ) -> list[ApprovedMemory]:
+        scope = _project_scope(project_id)
         try:
             rows = self._connection.execute(
-                f"{_APPROVED_MEMORY_SELECT} ORDER BY updated_at DESC, id DESC LIMIT ?",
-                (MAX_ALL_MEMORIES_LIMIT,),
+                f"{_APPROVED_MEMORY_SELECT} WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+                (scope, MAX_ALL_MEMORIES_LIMIT),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to read memories") from error
@@ -465,7 +503,12 @@ class _ApprovedMemoriesMixin:
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
         legacy_offset: int | None = None,
+        project_id: str = GENERAL_PROJECT_ID,
+        all_projects: bool = False,
     ) -> tuple[list[ApprovedMemory], tuple[int, int] | int | None]:
+        scope = None if all_projects else _project_scope(project_id)
+        project_predicate = "" if all_projects else "WHERE project_id = ?"
+        project_params = () if all_projects else (scope,)
         safe_limit = max(1, min(int(limit), 250))
         try:
             if legacy_offset is not None:
@@ -473,10 +516,11 @@ class _ApprovedMemoriesMixin:
                 rows = self._connection.execute(
                     f"""
                     {_APPROVED_MEMORY_SELECT}
+                    {project_predicate}
                     ORDER BY updated_at DESC, id DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (safe_limit + 1, safe_offset),
+                    (*project_params, safe_limit + 1, safe_offset),
                 ).fetchall()
                 has_more = len(rows) > safe_limit
                 page = rows[:safe_limit]
@@ -487,7 +531,8 @@ class _ApprovedMemoriesMixin:
 
             if snapshot_max_id is None:
                 anchor_row = self._connection.execute(
-                    "SELECT COALESCE(MAX(id), 0) FROM memories"
+                    f"SELECT COALESCE(MAX(id), 0) FROM memories {project_predicate}",
+                    project_params,
                 ).fetchone()
                 snapshot_max_id = int(anchor_row[0] if anchor_row else 0)
             safe_snapshot = max(0, int(snapshot_max_id))
@@ -495,11 +540,11 @@ class _ApprovedMemoriesMixin:
             rows = self._connection.execute(
                 f"""
                 {_APPROVED_MEMORY_SELECT}
-                WHERE id <= ? AND id < ?
+                WHERE {'' if all_projects else 'project_id = ? AND '}id <= ? AND id < ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (safe_snapshot, safe_after, safe_limit + 1),
+                (*project_params, safe_snapshot, safe_after, safe_limit + 1),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to read memories") from error
@@ -514,7 +559,17 @@ class _ApprovedMemoriesMixin:
         )
 
     @_locked
-    def get_recent_memories_by_kind(self, lesson_kind: str, limit: int = 3) -> list[ApprovedMemory]:
+    def get_recent_memories_by_kind(
+        self,
+        lesson_kind: str,
+        limit: int = 3,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
+    ) -> list[ApprovedMemory]:
+        scope = _project_scope(project_id)
+        scopes = recall_scopes(scope) if include_general else (scope,)
+        project_predicate = "project_id = ?" if len(scopes) == 1 else "project_id IN (?, ?)"
         normalized_kind = str(lesson_kind or "").strip().lower()
         if not normalized_kind:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "lesson_kind is required")
@@ -522,8 +577,8 @@ class _ApprovedMemoriesMixin:
         safe_limit = max(1, min(int(limit), MAX_RECALL_LIMIT))
         try:
             rows = self._connection.execute(
-                f"{_APPROVED_MEMORY_SELECT} WHERE lesson_kind = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
-                (normalized_kind, safe_limit),
+                f"{_APPROVED_MEMORY_SELECT} WHERE {project_predicate} AND lesson_kind = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+                (*scopes, normalized_kind, safe_limit),
             ).fetchall()
         except sqlite3.DatabaseError as error:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to read memories") from error
@@ -531,7 +586,15 @@ class _ApprovedMemoriesMixin:
         return self._approved_rows(rows)
 
     @_locked
-    def recall_memories(self, query: str, limit: int = 3) -> list[ApprovedMemory]:
+    def recall_memories(
+        self,
+        query: str,
+        limit: int = 3,
+        *,
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
+    ) -> list[ApprovedMemory]:
+        scope = _project_scope(project_id)
         normalized_query = str(query or "").strip()
         if not normalized_query:
             raise MemoryStoreError(CMP_MEMORY_FAILED, "query is required")
@@ -549,6 +612,8 @@ class _ApprovedMemoriesMixin:
             rows = self._candidate_rows_for_recall(
                 normalized_query=normalized_query,
                 query_tokens=query_tokens,
+                project_id=scope,
+                include_general=include_general,
             )
             for row in rows:
                 if time.perf_counter() > deadline:
@@ -589,7 +654,17 @@ class _ApprovedMemoriesMixin:
         *,
         normalized_query: str,
         query_tokens: set[str],
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
     ) -> list[sqlite3.Row | tuple[Any, ...]]:
+        scope = _project_scope(project_id)
+        scopes = recall_scopes(scope) if include_general else (scope,)
+        project_predicate = "project_id = ?" if len(scopes) == 1 else "project_id IN (?, ?)"
+        fts_project_predicate = (
+            "scoped_memory.project_id = ?"
+            if len(scopes) == 1
+            else "scoped_memory.project_id IN (?, ?)"
+        )
         bounded_tokens = sorted(query_tokens, key=lambda token: (-len(token), token))[
             :_MAX_RECALL_QUERY_TOKENS
         ]
@@ -602,15 +677,16 @@ class _ApprovedMemoriesMixin:
                     rows = self._connection.execute(
                         f"""
                         {_APPROVED_MEMORY_SELECT}
-                        WHERE id IN (
-                            SELECT rowid FROM memory_fts
-                            WHERE memory_fts MATCH ?
+                        WHERE {project_predicate} AND id IN (
+                            SELECT memory_fts.rowid FROM memory_fts
+                            JOIN memories AS scoped_memory ON scoped_memory.id = memory_fts.rowid
+                            WHERE {fts_project_predicate} AND memory_fts MATCH ?
                             ORDER BY bm25(memory_fts)
                             LIMIT 1000
                         )
                         ORDER BY updated_at DESC, id DESC
                         """,
-                        (fts_query,),
+                        (*scopes, *scopes, fts_query),
                     ).fetchall()
                     if rows:
                         return rows
@@ -621,9 +697,9 @@ class _ApprovedMemoriesMixin:
             f"instr({searchable}, ?) > 0" for _token in bounded_tokens
         )
         return self._connection.execute(
-            f"{_APPROVED_MEMORY_SELECT} WHERE {predicates} "
+            f"{_APPROVED_MEMORY_SELECT} WHERE {project_predicate} AND ({predicates}) "
             "ORDER BY updated_at DESC, id DESC LIMIT ?",
-            (*bounded_tokens, MAX_ALL_MEMORIES_LIMIT),
+            (*scopes, *bounded_tokens, MAX_ALL_MEMORIES_LIMIT),
         ).fetchall()
 
     @_locked
@@ -634,6 +710,8 @@ class _ApprovedMemoriesMixin:
         limit: int = MAX_RECALL_LIMIT,
         max_prompt_tokens: int = PROMPT_RECALL_TOKEN_BUDGET,
         backend: TokenizerBackend | None = None,
+        project_id: str = GENERAL_PROJECT_ID,
+        include_general: bool = False,
     ) -> list[ApprovedMemory]:
         try:
             token_cap = max(0, int(max_prompt_tokens))
@@ -644,7 +722,12 @@ class _ApprovedMemoriesMixin:
         token_backend = backend if backend is not None else CharEstimationBackend()
         selected: list[ApprovedMemory] = []
         tokens_used = 0
-        for memory in self.recall_memories(query, limit=limit):
+        for memory in self.recall_memories(
+            query,
+            limit=limit,
+            project_id=project_id,
+            include_general=include_general,
+        ):
             memory_tokens = max(1, token_backend.count_tokens(self._prompt_recall_text(memory)))
             if tokens_used + memory_tokens > token_cap:
                 continue
@@ -749,6 +832,7 @@ class _ApprovedMemoriesMixin:
                 ),
                 created_at=str(row[10]),
                 updated_at=str(row[11]),
+                project_id=_project_scope(row[12]),
             )
         except (IndexError, TypeError, ValueError, OverflowError):
             self._quarantine_malformed_row(

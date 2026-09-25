@@ -48,6 +48,7 @@
       handleCodeReviewAction = function noopHandleCodeReviewAction() { return Promise.resolve(); },
       handleOpenChangeDiff = function noopHandleOpenChangeDiff() { return Promise.resolve(false); },
       toggleInteractiveRoundRecap,
+      toggleContextCompactionDetails = function noopToggleContextCompactionDetails() {},
       toggleThreadBranch,
       setReasoningPhaseExpandedPreference, setReasoningPhaseExpandedPreferences,
       syncThinkingBlockNode,
@@ -160,10 +161,23 @@
         || null;
     }
 
-    // A2: shared busy/disable helper for the Allow/Deny pair in a single
-    // approval block, mirroring renderer-approval-batch-utils.js's
-    // setBannerBusy (busyBanners/aria-disabled pattern) but scoped to the two
-    // buttons that live in the same block rather than a whole banner.
+    // F14: answer Resume's re-offer (new approval id), matched by call id within this session only.
+    function answerLiveApproval(button, id, sessionId, answer) {
+      const approvals = state.pendingToolApprovals instanceof Map ? state.pendingToolApprovals : null;
+      const callId = String(button.dataset.callId || button.dataset.toolCallId || '').trim();
+      const find = () => {
+        if (!approvals || approvals.has(id)) return id;
+        const matches = [...approvals.values()].filter((approval) => callId && String(approval?.callId || '').trim() === callId
+          && String(approval?.sessionId || '').trim() === sessionId);
+        return matches.length === 1 ? matches[0].approvalId : '';
+      };
+      if (find()) return answer(find());
+      const wait = (waited) => new Promise((resolve) => setTimeout(resolve, 100))
+        .then(() => (find() || waited >= 5000 ? answer(find() || id) : wait(waited + 100)));
+      return wait(100);
+    }
+
+    // A2: busy/disable the Allow/Deny pair of one approval block (setBannerBusy, scoped to the block).
     function setApprovalBlockBusy(block, busy) {
       if (!block || typeof block.querySelectorAll !== 'function') {
         return;
@@ -348,6 +362,10 @@
       }
       setApprovalBlockBusy(block, false);
       appendClientLog('WARN', logEvent, { callId });
+      // A4: nothing waits on this card any more; fold it to its receipt.
+      if (!(state.inactiveApprovalCallIds instanceof Set)) state.inactiveApprovalCallIds = new Set();
+      state.inactiveApprovalCallIds.add(String(callId || ''));
+      renderAll();
       showComposerActionError(
         new Error('This approval request was already resolved or is no longer active.'),
         title
@@ -418,6 +436,7 @@
             : { ok: false, reason: 'materializer_unavailable', markup: '' });
         if (materialized.ok && bodyNode) {
           bodyNode.innerHTML = materialized.markup;
+          globalThis.rendererCodeHighlight?.decorateCodeBlocks?.(bodyNode);
           rowNode.dataset.toolDetailsMaterialized = 'true';
         } else {
           appendClientLog?.('WARN', 'tool.details_materialization_fallback', {
@@ -477,6 +496,18 @@
           return;
         }
 
+        // A4: a paused reply's card resumes that reply, like the queue strip.
+        const resumeApproval = event.target.closest('[data-action="resume-paused-approval"]');
+        if (resumeApproval) {
+          event.preventDefault();
+          if (!resumeApproval.disabled) {
+            resumeApproval.disabled = true;
+            Promise.resolve(state.runtimeSendController?.resume?.(resumeApproval.dataset.resumeKey))
+              .catch(() => false).then(() => { resumeApproval.disabled = false; });
+          }
+          return;
+        }
+
         const toolApproveBtn = event.target.closest('.tool-approve-btn');
         if (toolApproveBtn) {
           event.preventDefault();
@@ -499,7 +530,7 @@
             // can itself blur it, so this must reflect focus at click time.
             const heldFocus = !!(approvalRow && doc && approvalRow.contains(doc.activeElement));
             setApprovalBlockBusy(block, true);
-            window.jennyShell.tools.approve(callId, { alwaysAllow }).then((result) => {
+            answerLiveApproval(toolApproveBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.approve(liveId, { alwaysAllow })).then((result) => {
               // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
               if (handleApprovalOutcomeRefused(result, {
                 block, callId, logEvent: 'tool.approve_refused', title: jt('chat.transcript.approvalFailedTitle', 'Approval Failed'),
@@ -543,7 +574,7 @@
             // the matching comment in the Allow branch above.
             const heldFocus = !!(approvalRow && doc && approvalRow.contains(doc.activeElement));
             setApprovalBlockBusy(block, true);
-            window.jennyShell.tools.deny(callId).then((result) => {
+            answerLiveApproval(toolDenyBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.deny(liveId)).then((result) => {
               // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
               if (handleApprovalOutcomeRefused(result, {
                 block, callId, logEvent: 'tool.deny_refused', title: jt('chat.transcript.denyFailedTitle', 'Deny Failed'),
@@ -810,6 +841,13 @@
         if (toolRowToggle) {
           event.preventDefault();
           toggleMinimalToolRow(toolRowToggle);
+          return;
+        }
+
+        const compactionToggle = event.target.closest('[data-action="context-compaction-details"]');
+        if (compactionToggle) {
+          event.preventDefault();
+          toggleContextCompactionDetails(compactionToggle.dataset.messageId);
           return;
         }
 

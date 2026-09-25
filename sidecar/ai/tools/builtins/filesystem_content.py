@@ -6,6 +6,7 @@ import importlib
 import io
 import json
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,20 +14,30 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_IO_FAILED,
+    CMP_TOOL_PDF_ADDON_MISSING,
+)
+from sidecar.ai.tools.builtins import pdf_text
+from sidecar.ai.tools.builtins.file_state import (
+    open_regular_file,
+    workspace_root_from_relative_path,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
-from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.ai.tools.trusted_attachments import (
     ATTACHMENT_KIND_IMAGE,
     ATTACHMENT_KIND_PDF_PAGE,
     TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES,
     build_trusted_attachment,
 )
+from sidecar.runtime.media_site import pdf_addon_configured
 
 MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024
 MAX_MEDIA_OUTPUT_CHARS = 12_000
-MAX_PDF_PAGES = 3
-MAX_PDF_PAGE_TEXT_CHARS = 800
+MAX_PDF_PAGES = pdf_text.MAX_PDF_PAGES
+# Kept under the private name for existing callers and tests.
+_parse_pages_argument = pdf_text.parse_pages_argument
+# Per-page whole-line text budget. Three pages must still fit under the
+# router's MAX_RESPONSE_CHARS (16_000) with room for page metadata.
+MAX_PDF_PAGE_TEXT_CHARS = 4000
 # WIDE-021: refuse rasterization/decoding BEFORE allocation when the declared
 # pixel count exceeds this budget (Pillow's lazy open / PyMuPDF page metadata
 # expose dimensions without loading pixel data).
@@ -58,6 +69,8 @@ def read_media_file(
     *,
     relative_path: str,
     pages_argument: object | None = None,
+    cursor_argument: object | None = None,
+    authorized_root: Path | None = None,
 ) -> ToolHandlerResult:
     if path.stat().st_size > MAX_MEDIA_FILE_BYTES:
         raise ToolExecutionFailure(
@@ -65,15 +78,28 @@ def read_media_file(
             message=f"media file exceeds {MAX_MEDIA_FILE_BYTES} byte limit: {relative_path}",
             retryable=False,
         )
+    root = authorized_root or workspace_root_from_relative_path(path, relative_path)
     if path.suffix.lower() == ".pdf":
-        return _read_pdf_file(path, relative_path=relative_path, pages_argument=pages_argument)
+        return _read_pdf_file(
+            path,
+            relative_path=relative_path,
+            pages_argument=pages_argument,
+            cursor_argument=cursor_argument,
+            authorized_root=root,
+        )
     if pages_argument is not None:
         raise ToolExecutionFailure(
             code=CMP_TOOL_EXECUTION_FAILED,
             message="tool argument 'pages' is only supported for PDF files",
             retryable=False,
         )
-    return _read_image_file(path, relative_path=relative_path)
+    if cursor_argument is not None:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="tool argument 'cursor' is only supported for PDF files",
+            retryable=False,
+        )
+    return _read_image_file(path, relative_path=relative_path, authorized_root=root)
 
 
 def _load_pillow():
@@ -93,9 +119,21 @@ def _load_pymupdf():
     try:
         fitz = importlib.import_module("fitz")
     except Exception as exc:  # noqa: BLE001
+        if not pdf_addon_configured():
+            message = (
+                "PDF reading needs the optional PDF reading add-on, which is not installed. "
+                "Tell the user they can install it in Settings › Tools › PDF reading add-on. "
+                "Do not retry this PDF until they say it is installed."
+            )
+        else:
+            message = (
+                "The PDF reading add-on is installed but could not be loaded. "
+                "Tell the user to remove it and install it again in Settings › Tools › "
+                "PDF reading add-on. Do not retry this PDF until they say it is reinstalled."
+            )
         raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message="PDF read support requires PyMuPDF to be installed",
+            code=CMP_TOOL_PDF_ADDON_MISSING,
+            message=message,
             retryable=False,
         ) from exc
     return fitz
@@ -192,16 +230,8 @@ def _build_output(payload: dict[str, object]) -> str:
 
     pages = trimmed.get("pages")
     if isinstance(pages, list):
-        for page in pages:
-            if not isinstance(page, dict):
-                continue
-            if "text_excerpt" in page:
-                page["text_excerpt"] = sanitize_tool_output(
-                    page.get("text_excerpt", ""),
-                    max_chars=320,
-                    tool_name="read_file",
-                )
-        raw = json.dumps(trimmed, ensure_ascii=False, separators=(",", ":"))
+        # PDF excerpts are pre-fitted as whole lines against this exact
+        # serialized budget; page removal remains a last-resort guard.
         while len(raw) > MAX_MEDIA_OUTPUT_CHARS and len(pages) > 1:
             pages.pop()
             selected_pages = trimmed.get("selected_pages")
@@ -227,33 +257,40 @@ def _attachment_ref_payload(attachment: dict[str, Any]) -> dict[str, object]:
     return ref
 
 
-def _read_image_file(path: Path, *, relative_path: str) -> ToolHandlerResult:
+def _read_image_file(
+    path: Path,
+    *,
+    relative_path: str,
+    authorized_root: Path | None = None,
+) -> ToolHandlerResult:
     Image, ImageOps = _load_pillow()
     try:
         with warnings.catch_warnings():
             _apply_pillow_safety_warning_policy(Image)
-            with Image.open(path) as source:
-                # WIDE-021: Pillow's open is lazy — declared dimensions are
-                # available here without decoding pixels. Refuse oversize
-                # media BEFORE load() allocates the full raster.
-                _preflight_media_pixels(
-                    int(getattr(source, "width", 0) or 0),
-                    int(getattr(source, "height", 0) or 0),
-                    target="image",
-                )
-                source.load()
-                image = ImageOps.exif_transpose(source)
-                original_width = int(image.width)
-                original_height = int(image.height)
-                jpeg_bytes, width, height = _encode_complete_jpeg(
-                    image,
-                    max_bytes=min(
-                        MAX_ATTACHMENT_IMAGE_BYTES,
-                        TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES,
-                    ),
-                )
-                if image is not source:
-                    image.close()
+            with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
+                source = Image.open(handle)
+                with source:
+                    # WIDE-021: Pillow's open is lazy — declared dimensions are
+                    # available here without decoding pixels. Refuse oversize
+                    # media BEFORE load() allocates the full raster.
+                    _preflight_media_pixels(
+                        int(getattr(source, "width", 0) or 0),
+                        int(getattr(source, "height", 0) or 0),
+                        target="image",
+                    )
+                    source.load()
+                    image = ImageOps.exif_transpose(source)
+                    original_width = int(image.width)
+                    original_height = int(image.height)
+                    jpeg_bytes, width, height = _encode_complete_jpeg(
+                        image,
+                        max_bytes=min(
+                            MAX_ATTACHMENT_IMAGE_BYTES,
+                            TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES,
+                        ),
+                    )
+                    if image is not source:
+                        image.close()
     except OSError as exc:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
@@ -309,88 +346,6 @@ def _read_image_file(path: Path, *, relative_path: str) -> ToolHandlerResult:
     )
 
 
-def _parse_pages_argument(raw_value: object, *, page_count: int) -> list[int]:
-    if raw_value is None:
-        return list(range(1, min(page_count, MAX_PDF_PAGES) + 1))
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message="tool argument 'pages' must be a non-empty string like '1-3,5'",
-            retryable=False,
-        )
-    selected: list[int] = []
-    seen: set[int] = set()
-    for chunk in raw_value.split(","):
-        token = chunk.strip()
-        if not token:
-            continue
-        values: range | list[int]
-        if "-" in token:
-            start_text, end_text = token.split("-", 1)
-            if not start_text.strip().isdigit() or not end_text.strip().isdigit():
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message="tool argument 'pages' must contain only positive page numbers",
-                    retryable=False,
-                )
-            start = int(start_text.strip())
-            end = int(end_text.strip())
-            if start <= 0 or end <= 0 or end < start:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message="tool argument 'pages' contains an invalid range",
-                    retryable=False,
-                )
-            if start > page_count or end > page_count:
-                missing_page = start if start > page_count else end
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message=f"tool argument 'pages' references page {missing_page}, but the PDF has {page_count} pages",
-                    retryable=False,
-                )
-            if (end - start + 1) > MAX_PDF_PAGES:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message=f'Page range "{token}" exceeds maximum of {MAX_PDF_PAGES} pages per request. Please use a smaller range.',
-                    retryable=False,
-                )
-            values = range(start, end + 1)
-        else:
-            if not token.isdigit():
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message="tool argument 'pages' must contain only positive page numbers",
-                    retryable=False,
-                )
-            values = [int(token)]
-        for value in values:
-            if value <= 0 or value > page_count:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_EXECUTION_FAILED,
-                    message=f"tool argument 'pages' references page {value}, but the PDF has {page_count} pages",
-                    retryable=False,
-                )
-            if value not in seen:
-                selected.append(value)
-                seen.add(value)
-                if len(selected) > MAX_PDF_PAGES:
-                    raise ToolExecutionFailure(
-                        code=CMP_TOOL_EXECUTION_FAILED,
-                        message=(
-                            f"tool argument 'pages' selects {len(selected)} pages, "
-                            f"which exceeds the maximum of {MAX_PDF_PAGES} pages per request"
-                        ),
-                        retryable=False,
-                    )
-    if not selected:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message="tool argument 'pages' did not select any pages",
-            retryable=False,
-        )
-    return selected[:MAX_PDF_PAGES]
-
-
 _PDF_RENDER_SCALE = 1.25
 
 
@@ -418,63 +373,170 @@ def _render_pdf_page_image(page: Any, *, max_bytes: int) -> tuple[bytes | None, 
         raise
 
 
+def _attach_pdf_page(
+    page: Any,
+    *,
+    page_number: int,
+    remaining_budget: int,
+    attachments: list[dict[str, Any]],
+) -> tuple[dict[str, object], int]:
+    """Render one page into the typed attachment channel.
+
+    Returns the model-visible page fields and the bytes consumed; when no
+    complete rendering fits the budget the fields carry a structured reason
+    instead (WIDE-021: never a sliced encoding).
+    """
+
+    page_budget = min(MAX_ATTACHMENT_IMAGE_BYTES, remaining_budget)
+    jpeg_bytes, width, height = (
+        _render_pdf_page_image(page, max_bytes=page_budget) if page_budget > 0 else (None, 0, 0)
+    )
+    fields: dict[str, object] = {
+        "page_number": page_number,
+        "mime_type": "image/jpeg",
+        "width": width,
+        "height": height,
+    }
+    if jpeg_bytes is None:
+        fields["attachment_omitted_reason"] = (
+            "no complete page rendering fit the attachment byte budget"
+        )
+        return fields, 0
+    attachment = build_trusted_attachment(
+        kind=ATTACHMENT_KIND_PDF_PAGE,
+        mime_type="image/jpeg",
+        data=jpeg_bytes,
+        source_tool="read_file",
+        width=width,
+        height=height,
+        page_number=page_number,
+    )
+    attachments.append(attachment)
+    fields["attachment"] = _attachment_ref_payload(attachment)
+    return fields, len(jpeg_bytes)
+
+
 def _read_pdf_file(
     path: Path,
     *,
     relative_path: str,
     pages_argument: object | None,
+    cursor_argument: object | None = None,
+    authorized_root: Path | None = None,
 ) -> ToolHandlerResult:
     fitz = _load_pymupdf()
     attachments: list[dict[str, Any]] = []
     try:
-        with fitz.open(path) as document:
+        with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
+            raw_pdf = handle.read(MAX_MEDIA_FILE_BYTES + 1)
+        if len(raw_pdf) > MAX_MEDIA_FILE_BYTES:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_IO_FAILED,
+                message=(
+                    f"media file exceeds {MAX_MEDIA_FILE_BYTES} byte limit: {relative_path}"
+                ),
+                retryable=False,
+            )
+        digest = pdf_text.document_digest(raw_pdf)
+        with fitz.open(stream=raw_pdf, filetype="pdf") as document:
             page_count = int(document.page_count)
-            selected_pages = _parse_pages_argument(pages_argument, page_count=page_count)
+            selected_pages, starts, cursor, unread_pages = pdf_text.resolve_selection(
+                cursor_argument=cursor_argument,
+                pages_argument=pages_argument,
+                digest=digest,
+                page_count=page_count,
+            )
             pages_payload: list[dict[str, object]] = []
-            any_truncated = False
+            pages_lines: list[list[pdf_text.PdfTextLine]] = []
+            attachment_truncated = False
             remaining_budget = TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES
+            # Lazy: pdf_ocr (urllib, hashing, download lock) stays out of the
+            # sidecar.server import graph until a PDF is actually read.
+            from sidecar.ai.tools.builtins import pdf_ocr  # noqa: PLC0415
+
+            ocr_session = pdf_ocr.PdfOcrSession()
+            text_less_pages: list[int] = []
             for page_number in selected_pages:
                 page = document.load_page(page_number - 1)
-                text_excerpt = sanitize_tool_output(
-                    page.get_text("text"),
-                    max_chars=MAX_PDF_PAGE_TEXT_CHARS,
+                lines, text_layer, ocr_info = pdf_text.page_lines(
+                    page,
+                    page_number=page_number,
+                    ocr_session=ocr_session,
+                    text_less_pages=text_less_pages,
                     tool_name="read_file",
                 )
-                any_truncated = any_truncated or len(text_excerpt) >= MAX_PDF_PAGE_TEXT_CHARS
-                page_budget = min(MAX_ATTACHMENT_IMAGE_BYTES, remaining_budget)
-                jpeg_bytes, width, height = (
-                    _render_pdf_page_image(page, max_bytes=page_budget)
-                    if page_budget > 0
-                    else (None, 0, 0)
+                if cursor is not None:
+                    pdf_text.check_cursor_line(cursor, lines, page_number=page_number)
+                pages_lines.append(lines)
+                page_fields, used_bytes = _attach_pdf_page(
+                    page,
+                    page_number=page_number,
+                    remaining_budget=remaining_budget,
+                    attachments=attachments,
                 )
+                remaining_budget -= used_bytes
+                attachment_truncated = attachment_truncated or "attachment" not in page_fields
                 page_payload: dict[str, object] = {
-                    "page_number": page_number,
-                    "mime_type": "image/jpeg",
-                    "width": width,
-                    "height": height,
-                    "text_excerpt": text_excerpt,
+                    **page_fields,
+                    "text_layer": text_layer,
+                    "line_count": len(lines),
+                    **pdf_ocr.ocr_page_fields(
+                        ocr_info,
+                        text_layer=text_layer,
+                        session=ocr_session,
+                    ),
                 }
-                if jpeg_bytes is not None:
-                    remaining_budget -= len(jpeg_bytes)
-                    attachment = build_trusted_attachment(
-                        kind=ATTACHMENT_KIND_PDF_PAGE,
-                        mime_type="image/jpeg",
-                        data=jpeg_bytes,
-                        source_tool="read_file",
-                        width=width,
-                        height=height,
-                        page_number=page_number,
-                    )
-                    attachments.append(attachment)
-                    page_payload["attachment"] = _attachment_ref_payload(attachment)
-                else:
-                    # WIDE-021: never a sliced encoding — omit whole with a
-                    # structured reason when no complete rendering fits.
-                    page_payload["attachment_omitted_reason"] = (
-                        "no complete page rendering fit the attachment byte budget"
-                    )
-                    any_truncated = True
                 pages_payload.append(page_payload)
+
+            ocr_note = ocr_session.note(text_less_pages=text_less_pages)
+
+            def build_payload(excerpts: Sequence[str]) -> dict[str, object]:
+                pages = [
+                    {
+                        **pages_payload[index],
+                        **pdf_text.excerpt_fields(
+                            pages_lines[index],
+                            start=starts[index],
+                            excerpt=excerpt,
+                            page=selected_pages[index],
+                            digest=digest,
+                        ),
+                    }
+                    for index, excerpt in enumerate(excerpts)
+                ]
+                continuation = pdf_text.continuation_summary(pages)
+                built: dict[str, object] = {
+                    "kind": "pdf",
+                    "path": relative_path,
+                    "page_count": page_count,
+                    "selected_pages": selected_pages,
+                    "pages": pages,
+                    **continuation,
+                    "truncated": bool(
+                        "cursor" in continuation
+                        or attachment_truncated
+                        or page_count > len(selected_pages)
+                    ),
+                }
+                if unread_pages:
+                    built["unread_pages"] = unread_pages
+                built["note"] = pdf_text.read_note(ocr_note, unread_pages=unread_pages)
+                return built
+
+            # Whole-line budgeting against the exact serialized output, so
+            # _build_output's page-dropping guard never fires for PDF reads.
+            fitted = pdf_text.fit_excerpts(
+                pages_lines,
+                starts=starts,
+                page_max_chars=MAX_PDF_PAGE_TEXT_CHARS,
+                total_max_chars=MAX_MEDIA_OUTPUT_CHARS,
+                serialized_length=lambda excerpts: len(
+                    json.dumps(
+                        build_payload(excerpts), ensure_ascii=False, separators=(",", ":")
+                    )
+                ),
+            )
+            payload = build_payload([text for text, _next in fitted])
     except ToolExecutionFailure:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -484,14 +546,6 @@ def _read_pdf_file(
             retryable=False,
         ) from exc
 
-    payload = {
-        "kind": "pdf",
-        "path": relative_path,
-        "page_count": page_count,
-        "selected_pages": selected_pages,
-        "pages": pages_payload,
-        "truncated": any_truncated or page_count > len(selected_pages),
-    }
     return ToolHandlerResult(
         output=_build_output(payload),
         success=True,
@@ -501,6 +555,15 @@ def _read_pdf_file(
             "selected_pages": selected_pages,
             "truncated": payload["truncated"],
             "backend": "PyMuPDF",
+            "text_less_pages": text_less_pages,
+            "ocr_pages": list(ocr_session.used_pages or []),
+            "ocr_engines": ocr_session.engines_used,
+            "digest": digest,
+            "cursor": payload.get("cursor"),
+            "line_counts": {
+                page_number: len(pages_lines[index])
+                for index, page_number in enumerate(selected_pages)
+            },
         },
         trusted_attachments=tuple(attachments),
     )

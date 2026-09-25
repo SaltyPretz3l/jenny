@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sidecar.ai.config_models import ToolPolicySnapshot
 from sidecar.ai.context.builder import (
     ContextBuilder,
     RuntimeToolStatus,
@@ -30,7 +31,7 @@ from sidecar.ai.feature_flags import (
     FEATURE_PROMPT_CACHE,
     FEATURE_TOKEN_BUDGET,
 )
-from sidecar.ai.memory.contracts import MemoryPolicy
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
 from sidecar.ai.memory.store import ApprovedMemory
 from sidecar.ai.personality import build_personality_system_message
 from sidecar.ai.routing import vision_turn as _vision_turn
@@ -89,6 +90,7 @@ from sidecar.runtime.chat_resume import (
 )
 from sidecar.runtime.chat_streaming import _build_live_stream_messages
 from sidecar.runtime.diagnostics import StructuredLogFormatter
+from sidecar.runtime.execution_context import ExecutionContext
 from sidecar.runtime.multiplexer import SubAgentSlotAllocator
 from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
 from sidecar.runtime.turn_retry import InnerRetryableTurnError
@@ -662,8 +664,10 @@ class _ApprovalResumeRouter:
         plan_mode: bool = False,
         read_only: bool = False,
         trusted_plan_artifact_write: bool | None = None,
+        execution_context: object | None = None,
+        turn_id: str | None = None,
     ) -> FrozenExecutionInputs:
-        _ = call, session_id, tool_contract
+        _ = call, session_id, tool_contract, execution_context
         self.freeze_contexts.append((plan_mode, read_only, trusted_plan_artifact_write))
         if read_snapshot_cache == self._live_read_snapshot_cache:
             return self._frozen_inputs[0]
@@ -672,8 +676,10 @@ class _ApprovalResumeRouter:
     def _rebuild_read_snapshot_cache(
         self,
         canonical_session_messages: list[dict[str, object]] | None,
+        *,
+        execution_context: object | None = None,
     ) -> dict[str, dict[str, object]]:
-        _ = canonical_session_messages
+        _ = canonical_session_messages, execution_context
         return dict(self._rebuilt_read_snapshot_cache)
 
     def _update_read_snapshot_cache(
@@ -683,7 +689,9 @@ class _ApprovalResumeRouter:
         tool_name: str,
         success: bool,
         metadata: dict[str, object],
+        execution_context: object | None = None,
     ) -> None:
+        _ = execution_context
         self.snapshot_updates.append((tool_name, success))
         if not success:
             return
@@ -1323,6 +1331,46 @@ def test_build_chat_send_response_pins_dates_on_request_context(monkeypatch) -> 
     assert request_context.current_date == "2026-07-18"
 
 
+def test_build_chat_send_response_carries_immutable_execution_context(tmp_path) -> None:
+    decision = ChatDecision(
+        thinking_text=None,
+        response_text="Ready.",
+        approval_request=None,
+        tool_results=(),
+    )
+    brain_container = _build_brain_container(decision)
+    root = tmp_path.resolve()
+
+    build_chat_send_response(
+        "msg-execution-context",
+        {
+            "request_id": "req-execution-context",
+            "session_id": "session-execution-context",
+            "messages": [{"role": "user", "content": "Inspect the workspace"}],
+            "execution_context": {
+                "schema_version": 1,
+                "authority_revision": "rev_1",
+                "project_id": "project_chat_test",
+                "root_path": str(root),
+                "root_id": "root_1234567890abcdef12345678",
+                "root_revision": 3,
+                "device_id": None,
+                "inode": None,
+                "tool_policy_snapshot": {"version": 1},
+                "knowledge_roots": [str(root / "knowledge")],
+            },
+        },
+        approvals_pre_granted=True,
+        brain_container=brain_container,
+        invalid_params_code=-32602,
+    )
+
+    request_context = brain_container.stack.router.last_kwargs["request_context"]
+    assert request_context.execution_context.root_path == str(root)
+    assert request_context.execution_context.knowledge_roots == (str(root / "knowledge"),)
+    assert request_context.workspace_root_present is True
+
+
 def test_build_chat_send_response_forwards_canonical_session_messages_to_router() -> None:
     decision = ChatDecision(
         thinking_text=None,
@@ -1699,9 +1747,125 @@ def test_build_chat_send_response_passes_stream_runtime_into_agent_executor(
     runtime = captured["runtime"]
     assert runtime is not None
     assert runtime.request_id == "req-agent-executor-runtime"
+    assert runtime.logical_turn_id == "req-agent-executor-runtime"
     assert runtime.streaming is True
     assert runtime.sub_agent_slot_allocator is slot_allocator
     assert runtime.request_context.request_id == "req-agent-executor-runtime"
+
+
+def test_runtime_continuation_context_binds_logical_identity_and_callbacks(monkeypatch) -> None:
+    decision = ChatDecision(None, "Executor path.", None, ())
+    brain_container = _build_brain_container(
+        decision, feature_flags={FEATURE_AGENT_EXECUTOR: True},
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeExecutor:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def execute(self, **kwargs: object) -> ChatDecision:
+            captured["runtime"] = kwargs["runtime"]
+            return decision
+
+    checkpoint_callback = object()
+
+    def _operation_callback(**kwargs: object) -> object:
+        captured["operation"] = kwargs
+        return object()
+
+    def _checkpoint_callback(**kwargs: object) -> object:
+        captured["checkpoint"] = kwargs
+        return checkpoint_callback
+
+    monkeypatch.setattr("sidecar.runtime.chat.AgentExecutor", _FakeExecutor)
+    monkeypatch.setattr(
+        "sidecar.runtime.operation_admission.build_operation_admission_callback",
+        _operation_callback,
+    )
+    monkeypatch.setattr(
+        "sidecar.runtime.continuation_checkpoint.build_continuation_checkpoint_callback",
+        _checkpoint_callback,
+    )
+    params = {
+        "request_id": "stream_1", "session_id": "session_1",
+        "logical_turn_id": "turn_1",
+        "messages": [{"role": "user", "content": "Continue"}],
+        "execution_context": {
+            "schema_version": 1, "authority_revision": "authority_1",
+            "project_id": "project_1", "root_path": None, "root_id": None,
+            "root_revision": 0, "device_id": None, "inode": None,
+            "tool_policy_snapshot": {"version": 3, "legacy_policies": {}},
+            "knowledge_roots": [],
+        },
+        "continuation_context": {
+            "schema_version": 1, "work_id": "work_1", "turn_id": "turn_1",
+            "source_attempt": {
+                "attempt_id": "attempt_1", "stream_id": "stream_1",
+                "incarnation": "incarnation_1", "authority_revision": "authority_1",
+            },
+            "authority": {
+                "project_id": "project_1", "root_id": None, "root_revision": 0,
+                "sha256": "a" * 64,
+            },
+            "route": {
+                "route_id": "route_1", "route_revision": "configuration:4",
+                "sha256": "b" * 64,
+            },
+        },
+    }
+
+    response = build_chat_send_response(
+        "msg-continuation", params, approvals_pre_granted=True,
+        brain_container=brain_container, invalid_params_code=-32602,
+        stream_notifications=True, notification_writer=lambda _message: None,
+    )
+
+    assert response.result["status"] == "completed"
+    runtime = captured["runtime"]
+    assert runtime.request_id == "stream_1"
+    assert runtime.logical_turn_id == "turn_1"
+    assert runtime.continuation_checkpoint is checkpoint_callback
+    assert captured["operation"]["continuation_enabled"] is True
+    assert captured["checkpoint"]["context"].turn_id == "turn_1"
+
+
+def test_logical_turn_id_is_strict_and_must_match_continuation_context() -> None:
+    brain_container = _build_brain_container(ChatDecision(None, "unused", None, ()))
+    for logical_turn_id in (None, "turn other", "turn_other"):
+        params = {
+            "request_id": "stream_1", "session_id": "session_1",
+            "logical_turn_id": logical_turn_id,
+            "messages": [{"role": "user", "content": "Continue"}],
+        }
+        if logical_turn_id == "turn_other":
+            params["execution_context"] = {
+                "schema_version": 1, "authority_revision": "authority_1",
+                "project_id": "project_1", "root_path": None, "root_id": None,
+                "root_revision": 0, "device_id": None, "inode": None,
+                "tool_policy_snapshot": {"version": 3, "legacy_policies": {}},
+                "knowledge_roots": [],
+            }
+            params["continuation_context"] = {
+                "schema_version": 1, "work_id": "work_1", "turn_id": "turn_1",
+                "source_attempt": {
+                    "attempt_id": "attempt_1", "stream_id": "stream_1",
+                    "incarnation": "incarnation_1", "authority_revision": "authority_1",
+                },
+                "authority": {
+                    "project_id": "project_1", "root_id": None, "root_revision": 0,
+                    "sha256": "a" * 64,
+                },
+                "route": {
+                    "route_id": "route_1", "route_revision": "configuration:4",
+                    "sha256": "b" * 64,
+                },
+            }
+        with pytest.raises(ChatRequestError):
+            build_chat_send_response(
+                "msg-invalid-logical", params, approvals_pre_granted=True,
+                brain_container=brain_container, invalid_params_code=-32602,
+            )
 
 
 def test_build_chat_send_response_marks_workspace_root_present_when_configured_even_if_missing() -> (
@@ -2113,6 +2277,7 @@ def test_explicit_memory_policy_supersedes_legacy_learning_context() -> None:
             "memory_policy": {
                 "enabled": False,
                 "include_response_style": False,
+                "project_id": "project_chat_test",
             },
             "learning_context": {
                 "lessons": [
@@ -2133,6 +2298,7 @@ def test_explicit_memory_policy_supersedes_legacy_learning_context() -> None:
     kwargs = brain_container.stack.router.last_kwargs
     assert kwargs["learned_lessons"] is None
     assert kwargs["request_context"].memory_policy.enabled is False
+    assert kwargs["request_context"].memory_policy.project_id == "project_chat_test"
 
 
 def test_build_chat_send_response_forwards_request_reasoning_effort_to_router() -> None:
@@ -2198,8 +2364,17 @@ def test_live_stream_memory_overlay_stays_within_shared_recall_budget() -> None:
     bounded_lesson = "The user likes green tea in the afternoon."
 
     class PromptRecallStore:
-        def recall_memories(self, query: str, *, limit: int) -> list[ApprovedMemory]:
+        def recall_memories(
+            self,
+            query: str,
+            *,
+            limit: int,
+            project_id: str,
+            include_general: bool = False,
+        ) -> list[ApprovedMemory]:
             assert query == "tea"
+            assert project_id == GENERAL_PROJECT_ID
+            assert include_general is True
             return [
                 ApprovedMemory(
                     id=1,
@@ -2218,8 +2393,10 @@ def test_live_stream_memory_overlay_stays_within_shared_recall_budget() -> None:
             ]
 
         def get_recent_memories_by_kind(
-            self, _kind: str, _limit: int
+            self, _kind: str, _limit: int, *, project_id: str, include_general: bool = False
         ) -> list[ApprovedMemory]:
+            assert project_id == GENERAL_PROJECT_ID
+            assert include_general is True
             return []
 
     brain_container = SimpleNamespace(
@@ -3815,6 +3992,8 @@ def test_validate_approval_plan_live_context_ignores_unapproved_sibling_drift() 
             plan_mode: bool = False,
             read_only: bool = False,
             trusted_plan_artifact_write: bool | None = None,
+            execution_context: object | None = None,
+            turn_id: str | None = None,
         ) -> FrozenExecutionInputs:
             _ = (
                 session_id,
@@ -3822,6 +4001,7 @@ def test_validate_approval_plan_live_context_ignores_unapproved_sibling_drift() 
                 plan_mode,
                 read_only,
                 trusted_plan_artifact_write,
+                execution_context,
             )
             if read_snapshot_cache != self._live_read_snapshot_cache:
                 raise AssertionError("unexpected read_snapshot_cache passed to live freeze helper")
@@ -4132,13 +4312,14 @@ def test_build_chat_send_response_shapes_preempted_terminal_metadata() -> None:
     }
 
 
+@pytest.mark.parametrize("streaming", [False, True])
 def test_resume_chat_send_response_from_approval_plan_respects_remaining_iteration_budget(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, streaming: bool,
 ) -> None:
     plan = _build_approval_plan_for_chat_tests(remaining_iterations=0)
     plan = replace(
         plan,
-        request_context=replace(plan.request_context, agent_id="agent-resume"),
+        request_context=replace(plan.request_context, agent_id="agent-resume", logical_turn_id="logical-resumed-turn"),
     )
 
     class _ContextTrackingEngine(_TextOnlyEngine):
@@ -4188,7 +4369,7 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
                 model_load_grace_seconds=300.0,
                 max_tools_per_turn=20,
                 session_start_date="2026-04-13",
-                feature_flags={},
+                feature_flags={"canonical_turn_events": True},
                 max_inline_payload_bytes=65_536,
             ),
             engine=context_engine,
@@ -4205,6 +4386,11 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
     )
 
     def fake_execute_tool_calls_sequentially(**kwargs):  # noqa: ANN003
+        assert kwargs["runtime"].logical_turn_id == "logical-resumed-turn"
+        from sidecar.ai.routing.loop_event_emit import emit_tool_result
+        outcome = ToolExecutionOutcome(tool_name="write_file", output="notes.md saved",
+                                       success=True, call_id="call-write-1")
+        emit_tool_result(kwargs["runtime"], outcome, "call-write-1")
         kwargs["outcomes"].append(
             ToolExecutionOutcome(
                 tool_name="write_file",
@@ -4239,11 +4425,13 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
     )
     monkeypatch.setattr("sidecar.ai.routing.tool_loop.run_tool_loop", fake_run_tool_loop)
 
+    notifications = []
     response = resume_chat_send_response_from_approval_plan(
         plan,
         brain_container=brain_container,
         live_params={"messages": [{"role": "user", "content": "write notes.md"}]},
         canonical_session_messages=[],
+        stream_notifications=streaming, notification_writer=notifications.append,
     )
 
     assert captured["max_iterations"] == 0
@@ -4255,6 +4443,12 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
     assert context_engine.bound_contexts[0]["request_id"] == "req-approval-1"
     assert context_engine.bound_contexts[0]["agent_id"] == "agent-resume"
     assert context_engine.cleared_request_ids == ["req-approval-1"]
+
+    if streaming:
+        canonical = [row["params"] for row in notifications if row.get("method") == "turn.event"]
+        assert canonical
+        assert all(row["turn_id"] == "logical-resumed-turn" for row in canonical)
+        assert all(row["stream_id"] == plan.request_id for row in canonical)
 
 
 def test_resume_from_approval_plan_rewraps_tool_execution_failure_with_observations(
@@ -5324,3 +5518,49 @@ def test_text_only_engine_refuses_vision_before_any_engine_call(tmp_path: Path) 
     assert error.rpc_code == -32602
     assert error.retryable is False
     assert engine.calls == 0
+
+
+@pytest.mark.parametrize("root_path", [None, "C:/bound/project"])
+def test_live_approval_prompt_forwards_request_authority_root(root_path) -> None:
+    """Resume rebuilds the prompt against the ORIGINAL request authority's root."""
+    captured: dict[str, object] = {}
+
+    def _build_system_prompt(_base_prompt: str, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "rebuilt"
+
+    plan = _build_approval_plan_for_chat_tests()
+    plan = replace(
+        plan,
+        request_context=replace(
+            plan.request_context,
+            execution_context=ExecutionContext(
+                schema_version=1, authority_revision="revision", project_id="project_resume",
+                root_path=root_path, root_id="root" if root_path else None,
+                root_revision=1 if root_path else 0, device_id=None, inode=None,
+                tool_policy_snapshot=ToolPolicySnapshot(), knowledge_roots=(),
+            ),
+        ),
+        prompt_cache_enabled=True,
+    )
+    brain_container = SimpleNamespace(
+        stack=SimpleNamespace(
+            config=SimpleNamespace(
+                system_prompt="Frozen system prompt",
+                session_start_date="2026-04-13",
+                engine_type="mock",
+            ),
+            router=SimpleNamespace(
+                _context_builder=SimpleNamespace(build_system_prompt=_build_system_prompt)
+            ),
+        )
+    )
+
+    prompt = _build_live_approval_system_prompt(
+        plan, brain_container=brain_container, live_params={}, tool_statuses=()
+    )
+
+    assert prompt == "rebuilt"
+    assert "request_workspace_root" in captured
+    assert captured["request_workspace_root"] == root_path
+    assert captured["cache_aware"] is True

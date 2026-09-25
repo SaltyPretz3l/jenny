@@ -203,7 +203,7 @@
 
     async function handleAttachmentPicker(token = beginAttachmentToken()) {
       try {
-        const payload = await windowRef.jennyShell.attachments.pick();
+        const payload = await windowRef.jennyShell.attachments.pick({ session_id: token?.sessionId || '' });
         const routed = routeAttachmentResult(token, payload);
         if (!disposed && routed.target !== 'discarded') {
           closeComposerPopover({ restoreFocus: true });
@@ -220,7 +220,7 @@
         return;
       }
       try {
-        const payload = await windowRef.jennyShell.attachments.prepare(paths);
+        const payload = await windowRef.jennyShell.attachments.prepare(paths, { session_id: token?.sessionId || '' });
         routeAttachmentResult(token, payload);
       } catch (error) {
         cancelAttachmentToken(token);
@@ -230,7 +230,7 @@
 
     async function queueInlineImageAttachment(payload, token = beginAttachmentToken()) {
       try {
-        const saved = await windowRef.jennyShell.attachments.saveImageAsset(payload);
+        const saved = await windowRef.jennyShell.attachments.saveImageAsset(payload, { session_id: token?.sessionId || '' });
         routeAttachmentResult(token, { accepted: [saved], rejected: [] });
         return saved;
       } catch (error) {

@@ -59,6 +59,7 @@
       getRuntimePreferenceSnapshot: (...a) => getRuntimePreferenceSnapshot(...a),
       runRuntimePreferenceActivity: (...a) => runRuntimePreferenceActivity(...a),
       handleWorkspaceRootChoose: (...a) => handleWorkspaceRootChoose(...a),
+      clearWorkspaceRoot: (...a) => clearWorkspaceRoot(...a),
       handleRunSetupAgain: (...a) => handleRunSetupAgain(...a),
       showSetupHelp: (...a) => showSetupHelpSafe(...a),
       showFactoryReset: (...a) => showFactoryResetSafe(...a),
@@ -130,6 +131,7 @@
     syncComposerModelSelectWidth = noop,
   } = settingsShellController || {});
   window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
+  window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
   /* logRendererController */
   const logRenderUtils = window.rendererDiagnosticsRenderUtils || {};
   const logRendererController = logRenderUtils.createLogRenderer?.({
@@ -751,7 +753,8 @@
       buildInteractiveQuestionBatchVisibleText: (...a) => buildInteractiveQuestionBatchVisibleText(...a),
       refreshSnapshots: (...a) => refreshSnapshots(...a),
       refreshObservability: () => (settingsShellController?.notifyUsageTurnSettled?.(), observabilityController?.notifyTurnSettled?.(), Promise.resolve(null)),
-      dismissStreamErrors: () => toastStore.dismissBySource(TOAST_SOURCE.chatStream),
+      // A finishing chat clears its own and app-wide stream toasts, never another chat's.
+      dismissStreamErrors: (sessionId) => toastStore.dismissBySource(TOAST_SOURCE.chatStream, { sessionId }),
       maybeSuggestMemoryCapture: (...a) => maybeSuggestMemoryCaptureSafe(...a),
       mergeMessageReasoning: (...a) => mergeMessageReasoning(...a), publishFirstTokenImpulse: (...a) => (typeof publishFirstTokenImpulse === 'function' ? publishFirstTokenImpulse(...a) : undefined),
       publishToolStartImpulse: (...a) => (typeof publishToolStartImpulse === 'function' ? publishToolStartImpulse(...a) : undefined),
@@ -797,6 +800,7 @@
         chatScrollCoordinator?.setUnreadController?.(nextController); chatWayfinderController?.setUnreadController?.(nextController);
       },
       toggleInteractiveRoundRecap: (...a) => toggleInteractiveRoundRecap(...a),
+      toggleContextCompactionDetails: (...a) => toggleContextCompactionDetails(...a),
       toggleThreadBranch: (...a) => toggleThreadBranch(...a),
       handleFollowUpMessage: (...a) => handleFollowUpMessage(...a),
       setReasoningPhaseExpandedPreference: (...a) => setReasoningPhaseExpandedPreference(...a),

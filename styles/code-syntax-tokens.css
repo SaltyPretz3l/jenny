@@ -2,15 +2,21 @@
   --tok-default: var(--widget-tool-code-color);
   --tok-comment: var(--text-decorative);
   --tok-string: var(--accent-amber);
-  --tok-number: var(--accent-amber);
+  --tok-number: color-mix(in srgb, var(--tl-status-ok) 65%, var(--text-primary));
   --tok-keyword: var(--accent-primary);
   --tok-type: var(--accent-cyan);
-  --tok-function: var(--accent-cyan);
+  --tok-function: color-mix(in srgb, var(--accent-amber) 55%, var(--text-primary));
   --tok-delimiter: var(--text-secondary);
   --tok-invalid: var(--tl-status-error);
+  --tok-variable: color-mix(in srgb, var(--accent-cyan) 45%, var(--text-primary));
+  --tok-property: var(--tok-variable);
+  --tok-tag: var(--accent-primary);
+  --tok-operator: var(--text-secondary);
+  --tok-regexp: color-mix(in srgb, var(--tl-status-error) 70%, var(--text-primary));
+  --tok-constant: var(--accent-strong);
+  --tok-annotation: color-mix(in srgb, var(--accent-amber) 60%, var(--text-primary));
 }
 
-.tok { color: var(--tok-default); }
 .tok-default { color: var(--tok-default); }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
 .tok-string { color: var(--tok-string); }
@@ -20,3 +26,10 @@
 .tok-function { color: var(--tok-function); }
 .tok-delimiter { color: var(--tok-delimiter); }
 .tok-invalid { color: var(--tok-invalid); }
+.tok-variable { color: var(--tok-variable); }
+.tok-property { color: var(--tok-property); }
+.tok-tag { color: var(--tok-tag); }
+.tok-operator { color: var(--tok-operator); }
+.tok-regexp { color: var(--tok-regexp); }
+.tok-constant { color: var(--tok-constant); }
+.tok-annotation { color: var(--tok-annotation); }

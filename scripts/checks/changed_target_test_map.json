@@ -12,6 +12,654 @@
     "server/"
   ],
   "rules": [
+    {"target_prefixes": ["services/data-lifecycle/fresh-profile-bootstrap.js", "services/data-lifecycle/restore-service.js", "services/data-lifecycle/restore-runtime-backup.js", "services/main/data-lifecycle-startup.js"], "required_tests": ["tests/data-lifecycle-fresh-bootstrap.test.js", "tests/data-lifecycle-restore.test.js", "tests/data-lifecycle-cross-volume-restore.test.js", "tests/session-runtime/lineage-archive.test.js"]},
+    {"target_prefixes": ["services/backend/managed-sidecar-chat-reconnect.js", "services/backend/chatgpt-auth-turn-retry.js"], "required_tests": ["tests/managed-sidecar/chatgpt-turn-auth-retry.test.js", "tests/managed-sidecar/managed-sidecar-initialize-send.test.js", "tests/managed-sidecar/managed-sidecar-chat-preflight.test.js", "tests/session-runtime/managed-checkpoint-send.test.js"]},
+    {"target_prefixes": ["services/backend/backend-sessions.js", "renderer/chat/chat-message-utils.js", "renderer/chat/renderer-message-index-utils.js", "renderer/chat/renderer-render-pipeline-message-renderer.js"], "required_tests": ["tests/session-runtime/message-status-projection.test.js", "tests/chat-message-utils.test.js", "tests/backend-sessions.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-turn-tree-projector-persistence.js"], "required_tests": ["tests/renderer-turn-row-projector-tools.test.js", "tests/renderer-turn-tree-projector.test.js", "tests/renderer-turn-row-projector-trace.test.js"]},
+    {"target_prefixes": ["sidecar/ai/context/runtime_overlays.py", "sidecar/ai/routing/chat_decision.py"], "required_tests": ["tests/sidecar/ai/context/test_session_environment_overlay.py", "tests/sidecar/ai/routing/test_chat_decision_session_environment.py"]},
+    {"target_prefixes": ["sidecar/ai/tools/builtins/temp_script.py"], "required_tests": ["tests/sidecar/ai/tools/builtins/test_temp_script.py", "tests/sidecar/ai/tools/builtins/test_temp_script_language.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py"]},
+    {"target_prefixes": ["sidecar/ai/mcp/exceptions.py", "sidecar/ai/mcp/transport_stdio.py", "sidecar/ai/routing/tool_dispatch.py"], "required_tests": ["tests/sidecar/ai/mcp/test_transport_stdio.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py", "tests/session-runtime/plan-smoke-stdio.test.js"]},
+    {"target_prefixes": ["services/backend/managed-sidecar-terminal-cleanup.js"], "required_tests": ["tests/session-runtime/managed-checkpoint-send.test.js", "tests/renderer-stream-terminal-state.test.js"]},
+    {"target_prefixes": ["services/backend/canonical-text-message-ownership.js", "services/backend/canonical-turn-event-collector.js", "services/backend/backend-sessions.js"], "required_tests": ["tests/canonical-text-message-ownership.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-turn-row-projector.js"], "required_tests": ["tests/renderer-turn-row-projector-tools.test.js", "tests/renderer-user-questions-persisted-projection.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/ask-user-tool.js", "services/backend/electron-tool-bridge.js"], "required_tests": ["tests/renderer-user-questions-surface-dom.test.js"]},
+    {"target_prefixes": ["services/backend/execution-tool-descriptors.js", "services/tools/plan-artifact-policy.js"], "required_tests": ["tests/session-runtime/execution-authority.test.js", "tests/session-runtime/plan-smoke-stdio.test.js"]},
+    {"target_prefixes": ["services/backend/session-runtime-chat-adapter.js", "services/session-runtime/scheduler.js", "services/backend/session-runtime-chat-operations.js"], "required_tests": ["tests/session-runtime/review-inference-stdio.test.js", "tests/session-runtime/review-plan-continuation.test.js"]},
+    {"target_prefixes": ["services/backend/session-execution-authority.js", "sidecar/runtime/decision_checkpoint.py", "sidecar/runtime/decision_restore.py", "sidecar/runtime/approval_input_bundle.py", "services/backend/runtime-continuation-resume.js"], "required_tests": ["tests/session-runtime/review-plan-continuation.test.js"]},
+    {"target_prefixes": ["services/backend/request-tool-availability.js", "services/backend/session-execution-authority.js", "services/tools/builtin/exit-plan-mode-tool.js", "sidecar/runtime/chat_resume.py"], "required_tests": ["tests/session-runtime/execution-authority.test.js", "tests/session-runtime/plan-smoke-stdio.test.js", "tests/renderer-plan-approval-surface-dom.test.js"]},
+    {"target_prefixes": ["services/backend/runtime-electron-start-gate.js", "sidecar/runtime/electron_tool_bridge.py", "sidecar/ai/routing/tool_dispatch.py"], "required_tests": ["tests/session-runtime/tool-resource-execution.test.js", "tests/session-runtime/tool-test-runner-authority.test.js", "tests/session-runtime/electron-resource-stdio.test.js", "tests/desktop-command-sandbox-lifecycle.test.js", "tests/desktop-command-sandbox-resource-start.test.js", "tests/sidecar/ai/routing/test_electron_resource_start.py", "tests/sidecar/ai/routing/test_electron_tool_bridge.py"]},
+    {"target_prefixes": ["services/backend/runtime-resource-proof.js", "sidecar/ai/routing/tool_resource_progress.py"], "required_tests": ["tests/session-runtime/resource-progress-proof.test.js", "tests/session-runtime/resource-progress-stdio.test.js", "tests/session-runtime/resource-progress-transitions.test.js", "tests/session-runtime/continuation-contracts.test.js", "tests/sidecar/ai/routing/test_tool_resource_deferral.py"]},
+    {"target_prefixes": ["services/session-runtime/quota-state.js", "services/backend/runtime-continuation-quota.js"], "required_tests": ["tests/session-runtime/quota-state.test.js", "tests/session-runtime/quota-stdio.test.js", "tests/session-runtime/continuation-contracts.test.js"]},
+    {"target_prefixes": ["sidecar/ai/routing/quota_runtime.py", "sidecar/ai/routing/tool_quota_state.py", "sidecar/ai/routing/tool_quotas.py", "sidecar/runtime/cooldowns.py"], "required_tests": ["tests/sidecar/ai/routing/test_quota_runtime.py", "tests/sidecar/ai/routing/test_tool_quotas.py", "tests/sidecar/runtime/test_cooldowns.py", "tests/session-runtime/quota-stdio.test.js"]},
+    {"target_prefixes": ["services/session-runtime/mutation-preparation-recovery.js", "sidecar/runtime/mutation_preparation_recovery.py"], "required_tests": ["tests/session-runtime/mutation-preparation-recovery.test.js", "tests/session-runtime/mutation-preparation-recovery-stdio.test.js", "tests/sidecar/ai/tools/test_workspace_mutation_checkpoint.py"]},
+    {"target_prefixes": ["services/session-runtime/mutation-journal-proof.js"], "required_tests": ["tests/session-runtime/mutation-journal-proof.test.js", "tests/session-runtime/mutation-stdio.test.js"]},
+    {"target_prefixes": ["services/session-runtime/paused-cancellation-recovery.js", "services/backend/runtime-mutation-release.js"], "required_tests": ["tests/session-runtime/mutation-stdio.test.js", "tests/session-runtime/lifecycle-hooks-integration.test.js"]},
+    {"target_prefixes": ["sidecar/ai/tools/workspace_mutation_checkpoint.py"], "required_tests": ["tests/sidecar/ai/tools/test_workspace_mutation_checkpoint.py", "tests/session-runtime/mutation-journal-proof.test.js", "tests/session-runtime/mutation-stdio.test.js"]},
+    {"target_prefixes": ["sidecar/runtime/mutation_continuation.py", "sidecar/runtime/mutation_checkpoint_release.py"], "required_tests": ["tests/session-runtime/mutation-stdio.test.js", "tests/sidecar/runtime/test_continuation_checkpoint.py", "tests/sidecar/runtime/test_chat_continuation_resume.py"]},
+    {"target_prefixes": ["services/backend/runtime-canonical-activation.js"], "required_tests": ["tests/session-runtime/runtime-canonical-activation.test.js", "tests/session-runtime/managed-checkpoint-send.test.js", "tests/session-runtime/mixed-stdio.test.js"]},
+    {"target_prefixes": ["services/session-runtime/continuation-effect-refs.js", "services/session-runtime/dependency-mixed-proof.js", "services/session-runtime/continuation-predecessor.js"], "required_tests": ["tests/session-runtime/mixed-dependency-proof.test.js", "tests/session-runtime/mixed-stdio.test.js", "tests/session-runtime/dependency-cycles.test.js"]},
+    {"target_prefixes": ["sidecar/runtime/continuation_outcomes.py", "sidecar/ai/routing/tool_mixed_dependency_wait.py", "sidecar/runtime/chat_resume_admission.py"], "required_tests": ["tests/sidecar/runtime/test_continuation_outcomes.py", "tests/session-runtime/mixed-stdio.test.js", "tests/session-runtime/decision-stdio.test.js"]},
+    {"target_prefixes": ["services/backend/runtime-approval-inputs.js"], "required_tests": ["tests/session-runtime/approval-inputs.test.js", "tests/session-runtime/decision-stdio.test.js"]},
+    {"target_prefixes": ["sidecar/runtime/approval_input_bundle.py"], "required_tests": ["tests/sidecar/runtime/test_chat_continuation_resume.py", "tests/sidecar/runtime/test_continuation_checkpoint.py", "tests/session-runtime/decision-stdio.test.js"]},
+    {
+      "target_prefixes": ["services/backend/sidecar-client-notifications.js"],
+      "required_tests": ["tests/sidecar-client.test.js", "tests/sidecar-client-canonical-routing.test.js"]
+    },
+    {
+      "target_prefixes": ["services/tools/builtin/ask-user-tool.js", "services/tools/tool-execution-dispatch.js", "services/backend/sidecar-client-request-rpc.js", "services/backend/electron-tool-bridge.js", "services/backend/chat-stream-managed-runtime-failure.js"],
+      "required_tests": ["tests/session-runtime/decision-waiters.test.js", "tests/session-runtime/decision-stdio.test.js", "tests/ask-user-tool.test.js", "tests/electron-tool-bridge.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-decision-proof.js", "services/backend/runtime-decision-prefix.js", "services/backend/runtime-continuation-effects.js"],
+      "required_tests": ["tests/session-runtime/canonical-continuation-store.test.js", "tests/session-runtime/continuation-managed.test.js", "tests/session-runtime/decision-proof.test.js", "tests/session-runtime/decision-stdio.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/decision_checkpoint.py", "sidecar/runtime/decision_restore.py"],
+      "required_tests": ["tests/sidecar/runtime/test_continuation_checkpoint.py", "tests/sidecar/runtime/test_chat_continuation_resume.py", "tests/session-runtime/decision-stdio.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-decision-control.js", "services/backend/chat-stream-tool-approval.js"],
+      "required_tests": ["tests/session-runtime/decision-waiters.test.js", "tests/chat-stream-tool-approval.test.js", "tests/session-runtime/scheduler.test.js"]
+    },
+    {
+      "target_prefixes": ["services/host/runtime-commands.js", "server/command-router.js", "server/api-contract.js"],
+      "required_tests": ["tests/server/runtime-commands.test.js", "tests/server/command-router.test.js", "tests/server/stdio-persistence.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/browser/browser-orchestration.js", "renderer/browser/browser-conversation.js", "renderer/browser/browser-mutation-recovery.js"],
+      "required_tests": ["tests/server/browser-orchestration.test.js", "tests/server/browser-mutation-recovery.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/shell/renderer-orchestration-view.js", "renderer/shell/renderer-orchestration-controller.js", "renderer/shell/renderer-settings-session-runtime.js"],
+      "required_tests": ["tests/renderer-orchestration.test.js", "tests/renderer-settings-session-runtime.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-runtime-refusals.js", "renderer/chat/renderer-runtime-queue-view.js"],
+      "required_tests": ["tests/renderer-runtime-refusals.test.js", "tests/renderer-runtime-queue.test.js", "tests/renderer-durable-send.test.js", "tests/renderer-error-card-markup.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-turn-pause-interaction.js", "renderer/chat/renderer-durable-send-pause.js"],
+      "required_tests": ["tests/renderer-turn-pause.test.js", "tests/renderer-durable-send-pause.test.js", "tests/renderer-durable-send.test.js", "tests/renderer-composer-disabled-reasons.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/shell/renderer-attention-inbox-model.js", "renderer/shell/renderer-attention-inbox.js"],
+      "required_tests": ["tests/renderer-attention-inbox-model.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-attention-inbox-view.test.js", "tests/renderer-chats-strip.test.js", "tests/renderer-controller-dispose.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/shell/renderer-away-digest-model.js", "renderer/shell/renderer-away-digest.js"],
+      "required_tests": ["tests/renderer-away-digest-model.test.js", "tests/renderer-away-digest.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-controller-dispose.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-durable-send.js", "renderer/chat/renderer-send-utils.js", "renderer/chat/renderer-send-receipts.js", "renderer/chat/renderer-stream-handler-lifecycle.js", "services/backend/session-runtime-chat-adapter.js", "services/chat-stream-bridge.js", "services/backend/backend-sessions.js", "services/backend/backend-service.js"],
+      "required_tests": ["tests/renderer-durable-send.test.js", "tests/renderer-durable-send-pause.test.js", "tests/session-runtime/desktop-admission.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/application-controls.js", "services/session-runtime/pending-input.js", "services/session-runtime/work-details.js"],
+      "required_tests": ["tests/session-runtime/application-controls.test.js", "tests/session-runtime/submission.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/checkpoint-retirement.js", "services/backend/runtime-checkpoint-retention.js", "services/session-runtime/checkpoint-store.js", "services/backend/runtime-terminal-retention.js", "services/session-runtime/terminal-retention-contract.js", "services/session-runtime/terminal-retention.js", "services/session-runtime/root-run-start.js", "services/data-lifecycle/runtime-coordination-archive.js"],
+      "required_tests": ["tests/session-runtime/checkpoint-retention.test.js", "tests/session-runtime/terminal-retention.test.js", "tests/session-runtime/runtime-coordination-archive.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/dependency-predecessor.js", "services/session-runtime/dependency-proof.js", "services/session-runtime/child-operations.js", "services/backend/runtime-dependency-prefix.js", "services/backend/runtime-continuation-resume.js"],
+      "required_tests": ["tests/session-runtime/dependency-cycles.test.js", "tests/session-runtime/child-publication.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/continuation-events.js", "services/backend/runtime-continuation-prefix.js", "services/backend/runtime-continuation-records.js", "services/backend/chat-stream-managed-runtime-notifications.js", "services/backend/chat-stream-tool-handling.js"],
+      "required_tests": ["tests/session-runtime/continuation-managed-integration.test.js", "tests/session-runtime/child-publication.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/tool_dependency_wait.py", "sidecar/ai/routing/tool_resolution.py", "sidecar/runtime/chat_continuation_input.py", "sidecar/runtime/chat_continuation_resume.py", "sidecar/runtime/continuation_checkpoint.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_tool_dependency_wait.py", "tests/sidecar/runtime/test_dependency_continuation_resume.py", "tests/sidecar/runtime/test_continuation_checkpoint.py"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/subtree-cancellation.js", "services/session-runtime/child-capabilities.js", "services/session-runtime/dependency-proof.js", "services/backend/runtime-dependency-prefix.js", "services/tools/builtin/session-runtime-tools.js", "services/session-runtime/child-operations.js", "services/session-runtime/runtime-work-authority.js", "services/backend/runtime-child-publication.js"],
+      "required_tests": ["tests/session-runtime/child-publication.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/lineage-store.js", "services/session-runtime/lineage-contracts.js", "services/data-lifecycle/runtime-lineage-archive.js", "services/data-lifecycle/runtime-coordination-archive.js", "services/data-lifecycle/restore-preferences.js"],
+      "required_tests": ["tests/session-runtime/lineage-store.test.js", "tests/session-runtime/lineage-archive.test.js", "tests/session-runtime/runtime-coordination-archive.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-runtime-chat-operations.js", "services/session-runtime/root-run-start.js", "services/session-runtime/submission-contract.js", "services/session-runtime/application-service.js", "services/session-runtime/service.js", "services/session-runtime/composition.js", "services/backend/session-runtime-chat-adapter.js"],
+      "required_tests": ["tests/session-runtime/start.test.js", "tests/session-runtime/submission.test.js", "tests/session-runtime/session-runtime-ipc.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/engines/inference_budget.py", "sidecar/ai/engines/admitted.py", "sidecar/ai/engines/ollama_generation.py", "sidecar/ai/routing/generation_runtime.py", "sidecar/ai/routing/retry.py", "sidecar/runtime/inference_admission.py", "sidecar/runtime/chat_normalization.py"],
+      "required_tests": ["tests/sidecar/ai/engines/test_inference_budget.py", "tests/sidecar/runtime/test_chat_inference_budget.py", "tests/sidecar/runtime/test_inference_admission.py", "tests/sidecar/ai/routing/test_inference_admission.py", "tests/session-runtime/inference-budget-python.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/inference-budget.js", "services/session-runtime/inference-operations.js"],
+      "required_tests": ["tests/session-runtime/inference-budget.test.js", "tests/session-runtime/inference-budget-python.test.js", "tests/session-runtime/inference-operations.test.js", "tests/session-runtime/budgets.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/checkpoint-store.js", "services/session-runtime/terminal-retention-contract.js", "services/session-runtime/terminal-retention.js", "services/backend/runtime-terminal-retention.js", "services/session-runtime/contracts.js", "services/session-runtime/store.js", "services/session-runtime/service.js", "services/session-runtime/composition.js"],
+      "required_tests": ["tests/session-runtime/terminal-retention.test.js", "tests/session-runtime/store.test.js", "tests/session-runtime/runtime-archive.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/file-json-store.js", "services/backend/session-storage-backend.js", "services/backend/session-storage-migration.js", "services/backend/session-runtime-chat-adapter.js", "services/session-runtime/composition.js", "services/backend/chat-turn-admission.js"],
+      "required_tests": ["tests/session-runtime/cache-admission.test.js", "tests/session-runtime/transcript-cache.test.js", "tests/file-json-store.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/store-control.js", "services/session-runtime/contracts.js", "services/session-runtime/projections.js", "services/session-runtime/scheduler.js", "services/backend/runtime-continuation-operations.js", "services/backend/runtime-continuation-managed.js"],
+      "required_tests": ["tests/session-runtime/store.test.js", "tests/session-runtime/lifecycle.test.js", "tests/session-runtime/continuation-operations.test.js", "tests/session-runtime/continuation-managed-integration.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/tool_explicit_pause.py", "sidecar/ai/routing/tool_loop_calls.py", "sidecar/ai/routing/tool_resource_deferral.py", "sidecar/runtime/continuation_checkpoint.py", "sidecar/runtime/continuation_codec.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_tool_explicit_pause.py", "tests/sidecar/runtime/test_continuation_checkpoint.py", "tests/session-runtime/continuation-python-integration.test.js", "tests/session-runtime/continuation-contracts.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-runtime-provider-route.js", "services/session-runtime/scheduler.js", "services/session-runtime/submission-contract.js", "services/session-runtime/application-service.js", "services/session-runtime/service.js", "services/backend/session-runtime-chat-adapter.js", "services/backend/local-engine-requests.js", "services/backend/session-turn-actor.js", "services/backend/session-turn-actor-resume.js"],
+      "required_tests": ["tests/session-runtime/submission.test.js", "tests/session-runtime/session-runtime-ipc.test.js", "tests/local-engine-requests.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-turn-actor.js", "services/backend/session-turn-actor-resume.js"],
+      "required_tests": ["tests/session-turn-actor-deletion-proof.test.js", "tests/session-turn-actor.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-runtime-chat-adapter.js", "services/backend/chat-lifecycle-contracts.js", "services/backend/managed-sidecar-chat.js"],
+      "required_tests": ["tests/session-runtime/chat-adapter-controller-races.test.js", "tests/session-runtime/chat-adapter.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/eligibility.js", "services/session-runtime/service.js", "services/session-runtime/scheduler.js", "services/session-runtime/composition.js", "services/backend/session-runtime-chat-adapter.js"],
+      "required_tests": ["tests/session-runtime/eligibility-integration.test.js", "tests/session-runtime/chat-adapter-preflight.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/application-service.js", "services/session-runtime/projections.js", "services/backend/error-codes.js"],
+      "required_tests": ["tests/session-runtime/application-service.test.js", "tests/session-runtime/session-runtime-ipc.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/plugin-stage8-registration.js", "services/main/plugins-ipc-registration.js", "services/main/plugins-startup-runtime.js"],
+      "required_tests": ["tests/plugins-ipc-stage8-lifecycle.test.js", "tests/plugins-ipc-registration.test.js", "tests/plugins-ipc-startup-readiness.test.js", "tests/plugins-startup-runtime.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/chat-lifecycle-contracts.js", "services/backend/managed-sidecar-chat.js"],
+      "required_tests": ["tests/chat-lifecycle-contracts.test.js", "tests/session-runtime/chat-adapter.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/local-engine-requests.js"],
+      "required_tests": ["tests/local-engine-requests.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/managed-sidecar-session-preflight.js"],
+      "required_tests": ["tests/managed-sidecar/managed-sidecar-chat-preflight.test.js", "tests/session-runtime/attachment-authority.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/eligibility.js"],
+      "required_tests": ["tests/session-runtime/eligibility.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/service.js", "services/session-runtime/scheduler.js", "services/session-runtime/lifecycle.js", "services/session-runtime/composition.js", "services/backend/session-runtime-chat-adapter.js", "services/backend/backend-session-delete-lifecycle.js"],
+      "required_tests": ["tests/session-runtime/lifecycle.test.js", "tests/session-runtime/lifecycle-hooks-integration.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/resource-broker.js"],
+      "required_tests": ["tests/session-runtime/resource-availability.test.js", "tests/session-runtime/coordination.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/chat-turn-admission.js"],
+      "required_tests": ["tests/chat-turn-admission.test.js", "tests/session-runtime/chat-adapter.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-transcript-cache.js", "services/backend/session-storage-backend.js", "services/backend/session-storage-durability.js"],
+      "required_tests": ["tests/session-runtime/transcript-cache.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/unattended-guard.js"],
+      "required_tests": ["tests/unattended-guard.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/local-engine-lifecycle.js", "services/backend/backend-runtime-lifecycle.js"],
+      "required_tests": ["tests/session-runtime/backend-lifecycle-hooks.test.js", "tests/local-engine-lifecycle-startup.test.js", "tests/local-engine-lifecycle.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/runtime-shutdown.js"],
+      "required_tests": ["tests/session-runtime/runtime-shutdown-hooks.test.js", "tests/runtime-shutdown-drain.test.js", "tests/runtime-shutdown-cancellation.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/contracts.js", "services/session-runtime/store.js"],
+      "required_tests": ["tests/session-runtime/cancellation-intent.test.js", "tests/session-runtime/store.test.js", "tests/session-runtime/checkpoint-restart-recovery.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/backend-chat-stream.js"],
+      "required_tests": ["tests/session-runtime/cancellation-bridge.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/container.py", "sidecar/ai/routing/router.py", "sidecar/runtime/request_dispatch_mcp.py", "sidecar/runtime/chat_continuation_input.py", "sidecar/runtime/chat_router.py"],
+      "required_tests": ["tests/sidecar/test_sidecar_server_import_cost.py", "tests/sidecar/ai/test_container.py", "tests/sidecar/runtime/test_mcp_inspect.py"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-resume.js", "sidecar/runtime/chat_continuation_resume.py", "sidecar/runtime/chat_continuation_input.py", "sidecar/runtime/chat_continuation_batch.py", "sidecar/runtime/chat_router.py", "sidecar/ai/routing/chat_decision.py"],
+      "required_tests": ["tests/session-runtime/continuation-python-integration.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-recovery.js"],
+      "required_tests": ["tests/session-runtime/checkpoint-restart-recovery.test.js", "tests/session-runtime/resource-composition.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-resume.js", "services/backend/managed-sidecar-continuation.js", "services/backend/managed-sidecar-chat.js", "services/backend/chat-stream-managed-runtime.js"],
+      "required_tests": ["tests/session-runtime/managed-checkpoint-send.test.js", "tests/session-runtime/continuation-managed-integration.test.js", "tests/managed-sidecar/managed-sidecar-logical-turn.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-turn-actor-resume.js"],
+      "required_tests": ["tests/session-runtime/resume-identity.test.js", "tests/session-runtime/managed-checkpoint-send.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/chat_continuation_resume.py", "sidecar/runtime/chat_continuation_input.py", "sidecar/runtime/chat_continuation_batch.py", "sidecar/runtime/chat_models.py", "sidecar/runtime/chat_router.py", "sidecar/ai/routing/chat_decision.py", "sidecar/ai/routing/loop_runtime.py"],
+      "required_tests": ["tests/sidecar/runtime/test_chat_continuation_resume.py", "tests/sidecar/runtime/test_request_dispatch_continuation_pause.py"]
+    },
+    {
+      "target_prefixes": ["services/data-lifecycle/runtime-coordination-archive.js", "services/data-lifecycle/runtime-archive.js", "services/data-lifecycle/restore-preferences.js", "services/data-lifecycle/data-lifecycle-service.js"],
+      "required_tests": ["tests/session-runtime/runtime-coordination-archive.test.js", "tests/session-runtime/runtime-archive.test.js"]
+    },
+    {
+      "target_prefixes": ["services/plugins/full-host/host-resource-admission.js", "services/plugins/full-host/native-supervisor-client.js", "services/plugins/full-host/host-session-manager.js", "services/plugins/full-host/process-supervisor.js", "services/plugins/full-host/cleanup-reconciler.js", "services/main/plugin-stage8-registration.js"],
+      "required_tests": ["tests/session-runtime/native-host-resources.test.js", "tests/plugins/full-host/session-pool.test.js", "tests/plugins/full-host/supervisor-client.test.js", "tests/plugins/full-host/durable-host-launch.test.js", "tests/plugins-ipc-registration.test.js"]
+    },
+    {
+      "target_prefixes": ["services/plugins/full-host/cleanup-receipt-store.js", "services/plugins/full-host/durable-host-launch.js"],
+      "required_tests": ["tests/plugins/full-host/persistence.test.js", "tests/plugins/full-host/durable-host-launch.test.js"]
+    },
+    {
+      "target_prefixes": ["native/plugin-full-host-supervisor/src/", "config/plugins/v6/plugin-full-host-termination-receipt.schema.json"],
+      "required_tests": ["tests/plugins/full-host/termination-receipt-contract.test.js", "tests/plugins/full-host/native-supervisor-integration.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/budgets.js"],
+      "required_tests": ["tests/session-runtime/budgets.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/continuation-context.js"],
+      "required_tests": ["tests/session-runtime/continuation-context.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-coordinator.js"],
+      "required_tests": ["tests/session-runtime/continuation-coordinator.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-operations.js"],
+      "required_tests": ["tests/session-runtime/continuation-operations.test.js", "tests/session-runtime/resource-operations.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-managed.js", "services/backend/session-turn-actor.js", "services/backend/session-turn-actor-terminal.js"],
+      "required_tests": ["tests/session-runtime/continuation-managed.test.js", "tests/session-runtime/continuation-managed-integration.test.js", "tests/session-turn-actor.test.js", "tests/session-turn-actor-terminal.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-history.js", "services/backend/chat-stream-reasoning.js"],
+      "required_tests": ["tests/session-runtime/continuation-history.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-prefix.js"],
+      "required_tests": ["tests/session-runtime/continuation-prefix.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/runtime-continuation-records.js", "services/backend/runtime-continuation-store.js"],
+      "required_tests": ["tests/session-runtime/canonical-continuation-store.test.js", "tests/session-export-import.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/continuation_context.py"],
+      "required_tests": ["tests/sidecar/runtime/test_continuation_context.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/continuation_checkpoint.py"],
+      "required_tests": ["tests/sidecar/runtime/test_continuation_checkpoint.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/tool_restored_inputs.py", "sidecar/ai/routing/tool_execution_snapshots.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_restored_tool_inputs.py", "tests/sidecar/ai/routing/test_mutation_change_set_lifecycle.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/chat_models.py", "sidecar/runtime/chat_router.py", "sidecar/runtime/chat_serialization.py", "sidecar/runtime/request_dispatch_chat.py", "sidecar/runtime/server_chat_workers.py", "sidecar/runtime/outcomes.py"],
+      "required_tests": ["tests/sidecar/runtime/test_request_dispatch_continuation_pause.py", "tests/sidecar/runtime/test_server_chat_workers.py", "tests/sidecar/runtime/test_chat_serialization.py", "tests/sidecar/test_outcomes.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/tool_resource_deferral.py", "sidecar/ai/routing/loop_runtime.py", "sidecar/ai/routing/tool_call_execution.py", "sidecar/ai/routing/tool_loop_calls.py", "sidecar/ai/routing/tool_execution.py", "sidecar/ai/routing/tool_dispatch.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_tool_resource_deferral.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py", "tests/sidecar/ai/routing/test_tool_execution_orchestration.py", "tests/sidecar/ai/routing/test_tool_loop.py"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/store-io.js"],
+      "required_tests": ["tests/session-runtime/store.test.js", "tests/session-runtime/checkpoint-store.test.js", "tests/session-runtime/runtime-archive.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/checkpoint-store.js"],
+      "required_tests": ["tests/session-runtime/checkpoint-store.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/continuation-contracts.js"],
+      "required_tests": ["tests/session-runtime/continuation-contracts.test.js", "tests/session-runtime/checkpoint-store.test.js", "tests/session-runtime/continuation-context.test.js", "tests/session-runtime/continuation-coordinator.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/continuation_codec.py", "sidecar/runtime/continuation_codec_fields.py"],
+      "required_tests": ["tests/sidecar/runtime/test_session_runtime_continuations.py", "tests/session-runtime/continuation-contracts.test.js", "tests/sidecar/runtime/test_continuation_context.py"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/contracts.js", "services/session-runtime/store.js", "services/session-runtime/scheduler.js"],
+      "required_tests": ["tests/session-runtime/continuations.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/plugin-tool-execution-authority.js"],
+      "required_tests": ["tests/session-runtime/execution-authority.test.js", "tests/electron-tool-bridge.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/contained-process-runner.js"],
+      "required_tests": ["tests/workspace-test-runner-contained-runner.test.js", "tests/workspace-test-runner-runner.test.js", "tests/workspace-test-runner-wiring.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/tools/builtins/contained_process_helper.py"],
+      "required_tests": ["tests/sidecar/ai/tools/builtins/test_contained_process_helper.py", "tests/sidecar/test_sidecar_entrypoint.py"]
+    },
+    {
+      "target_prefixes": ["services/workspace-git-resources.js", "services/contained-git-runner.js", "services/workspace-git-service.js", "services/workspace-git-checkpoint.js", "services/workspace-git-executor.js"],
+      "required_tests": ["tests/session-runtime/workspace-git-resources.test.js", "tests/workspace-git-service.test.js", "tests/workspace-git-checkpoint.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/sandbox-resources.js", "services/execution/desktop-sandbox-service.js", "services/execution/desktop-workspace-snapshot.js", "services/execution/docker-launcher.js"],
+      "required_tests": ["tests/session-runtime/sandbox-resources.test.js", "tests/desktop-command-sandbox-lifecycle.test.js", "tests/desktop-command-sandbox-snapshot.test.js", "tests/desktop-command-sandbox-transport.test.js"]
+    },
+    {
+      "target_prefixes": ["services/tools/tool-test-runner-authority.js", "services/tools/tool-execution-dispatch.js"],
+      "required_tests": ["tests/session-runtime/tool-test-runner-authority.test.js", "tests/session-runtime/test-runner-resources.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/tools/builtins/owned_process_observation.py", "sidecar/ai/mcp/builtin_server.py", "sidecar/ai/tools/workspace_manifest.py"],
+      "required_tests": ["tests/sidecar/ai/tools/builtins/test_owned_process_observation.py", "tests/sidecar/ai/mcp/test_builtin_cleanup_observation.py"]
+    },
+    {
+      "target_prefixes": ["services/workspace-test-runner-resources.js", "services/workspace-test-runner-service.js", "services/main/workspace-test-runner-wiring.js", "services/backend/workspace-test-runner-runner.js"],
+      "required_tests": ["tests/session-runtime/test-runner-resources.test.js", "tests/workspace-test-runner-service.test.js", "tests/workspace-test-runner-runner.test.js", "tests/workspace-test-runner-wiring.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/tools/builtins/owned_process.py", "sidecar/ai/tools/builtins/owned_process_settlement.py", "sidecar/ai/tools/builtins/shell.py", "sidecar/ai/tools/builtins/shell_background.py"],
+      "required_tests": ["tests/sidecar/ai/tools/builtins/test_owned_process.py", "tests/sidecar/ai/tools/builtins/test_owned_process_release.py", "tests/sidecar/ai/tools/builtins/test_shell_stop_background.py", "tests/sidecar/ai/tools/builtins/test_shell_integration.py"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/operations.js", "services/session-runtime/resource-operations.js", "services/tools/tool-resource-execution.js", "services/tools/tool-execution-dispatch.js"],
+      "required_tests": ["tests/session-runtime/tool-resource-execution.test.js", "tests/session-runtime/resource-operations.test.js", "tests/session-runtime/chat-adapter.test.js"]
+    },
+    {
+      "target_prefixes": ["services/versioned-workspace-file-resources.js", "services/versioned-workspace-file-service.js"],
+      "required_tests": ["tests/session-runtime/workspace-file-resources.test.js", "tests/versioned-workspace-file-service.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/composition.js", "services/session-runtime/service.js"],
+      "required_tests": ["tests/session-runtime/resource-composition.test.js"]
+    },
+    {
+      "target_prefixes": ["services/execution/command-bridge.js", "services/execution/desktop-sandbox-service.js", "services/execution/execution-broker.js", "services/backend/hosted-command-bridge.js"],
+      "required_tests": ["tests/desktop-command-sandbox-lifecycle.test.js", "tests/desktop-command-sandbox-approval.test.js", "tests/server/execution-broker.test.js", "tests/host-sandbox-bridge.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/tool_resource_admission.py", "sidecar/runtime/operation_admission.py", "sidecar/ai/routing/tool_dispatch.py"],
+      "required_tests": ["tests/sidecar/runtime/test_tool_resource_admission.py", "tests/sidecar/runtime/test_operation_admission.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py", "tests/sidecar/ai/routing/test_tool_authority.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/inference_admission.py", "sidecar/runtime/request_dispatch.py", "sidecar/runtime/request_dispatch_suggestions.py", "sidecar/runtime/request_dispatch_commit.py", "sidecar/runtime/request_dispatch_inline.py", "sidecar/runtime/suggestions.py", "sidecar/runtime/commit_message.py", "sidecar/runtime/inline_completion.py", "sidecar/runtime/server_auxiliary_workers.py", "sidecar/server.py"],
+      "required_tests": ["tests/sidecar/runtime/test_auxiliary_inference_admission.py", "tests/sidecar/runtime/test_inference_admission.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/request_dispatch_compact.py"],
+      "required_tests": ["tests/sidecar/runtime/test_request_dispatch_compact.py", "tests/sidecar/test_server_compact_workers.py", "tests/sidecar/runtime/test_auxiliary_inference_admission.py"]
+    },
+    {
+      "target_prefixes": ["services/backend/backend-runtime-inference.js", "services/backend/backend-chat-stream.js"],
+      "required_tests": ["tests/session-runtime/compaction-admission.test.js", "tests/backend-service-compact-context.test.js", "tests/backend-service-compact-snapshot.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/inference-protocol.js", "services/backend/sidecar-client.js", "services/backend/sidecar-client-initialize.js", "sidecar/runtime/capabilities.py"],
+      "required_tests": ["tests/session-runtime/inference-protocol.test.js", "tests/sidecar/runtime/test_capabilities.py"]
+    },
+    {
+      "target_prefixes": ["services/backend/backend-runtime-inference.js", "services/backend/backend-commit.js", "services/backend/backend-suggestions.js", "services/backend/backend-inline-complete.js"],
+      "required_tests": ["tests/session-runtime/auxiliary-inference.test.js", "tests/backend-commit.test.js", "tests/backend-suggestions.test.js", "tests/backend-inline-complete.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/service.js", "services/session-runtime/composition.js", "services/backend/session-runtime-chat-adapter.js", "services/backend/managed-sidecar-session-preflight.js"],
+      "required_tests": ["tests/session-runtime/chat-adapter.test.js", "tests/session-runtime/scheduler.test.js", "tests/local-engine-requests.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/chatgpt-auth-turn-retry.js"],
+      "required_tests": ["tests/managed-sidecar/chatgpt-turn-auth-retry.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/chat-stream-managed-runtime.js", "services/backend/chat-stream-managed-runtime-denial.js", "services/backend/chat-stream-managed-runtime-failure.js", "services/backend/chat-stream-managed-runtime-notifications.js", "services/backend/chat-stream-managed-runtime-segments.js", "services/backend/chat-stream-managed-terminal-settlement.js", "services/backend/chat-stream-session-lifecycle.js", "services/backend/chat-stream-terminal-tool-repairs.js", "services/backend/chat-stream-tool-handling.js", "services/backend/chat-stream-tool-payload-utils.js", "services/backend/managed-sidecar-chat-turn-seams.js", "services/backend/canonical-turn-event-collector.js", "services/backend/message-normalization.js", "services/backend/plan-document-events.js"],
+      "required_tests": ["tests/session-runtime/managed-identities.test.js", "tests/canonical-turn-event-collector.test.js", "tests/session-runtime/canonical-resume-projection.test.js", "tests/chat-stream-tool-handling.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/chat-message-utils.js", "renderer/chat/renderer-turn-tree-projector.js", "renderer/chat/renderer-stream-handler-reducer-wiring.js", "renderer/chat/renderer-turn-reducer-stream-event-utils.js", "renderer/chat/renderer-stream-handler-pending-message.js", "renderer/chat/renderer-stream-handler-terminal.js", "renderer/chat/renderer-stream-rehydrate.js", "renderer/chat/renderer-render-pipeline-hydration.js", "renderer/chat/renderer-stream-handler-tools.js"],
+      "required_tests": ["tests/session-runtime/renderer-identities.test.js", "tests/session-runtime/managed-identities.test.js"]
+    },
+    {
+      "target_prefixes": ["services/data-lifecycle/runtime-ledger-archive.js"],
+      "required_tests": ["tests/session-runtime/runtime-archive.test.js", "tests/session-runtime/portable-data.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/engines/admitted.py", "sidecar/runtime/inference_admission.py", "sidecar/ai/routing/generation_runtime_stream.py", "sidecar/ai/routing/generation_runtime.py", "sidecar/ai/routing/retry.py", "sidecar/ai/routing/sub_agent_invocation.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_inference_admission.py", "tests/sidecar/runtime/test_inference_admission.py", "tests/sidecar/ai/routing/test_sub_agent_invocation.py"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/inference-operations.js"],
+      "required_tests": ["tests/session-runtime/inference-operations.test.js", "tests/sidecar-client-runtime-operation.test.js", "tests/session-runtime/lanes.test.js"]
+    },
+    {
+      "target_prefixes": ["services/execution/desktop-sandbox-service.js"],
+      "required_tests": ["tests/session-runtime/sandbox-admission.test.js", "tests/desktop-command-sandbox-lifecycle.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-turn-actor.js"],
+      "required_tests": ["tests/session-runtime/actor-identities.test.js", "tests/session-turn-actor.test.js", "tests/session-turn-actor-terminal.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-runtime-provider-route.js"],
+      "required_tests": ["tests/session-runtime/provider-route.test.js", "tests/chat-turn-admission.test.js"]
+    },
+    {
+      "target_prefixes": ["scripts/demo/demo-profile.js", "scripts/demo/record-demo-clips.js"],
+      "required_tests": ["tests/demo-sessions.test.js", "tests/demo-recording-project-assignment.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/scheduler.js"],
+      "required_tests": ["tests/session-runtime/scheduler.test.js", "tests/session-runtime/lanes.test.js", "tests/session-runtime/store.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/lanes.js"],
+      "required_tests": ["tests/session-runtime/lanes.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/knowledge-ipc-handlers.js", "renderer/shell/renderer-knowledge-scope.js", "renderer/shell/renderer-knowledge-folders.js"],
+      "required_tests": ["tests/knowledge-ipc-bridge-integration.test.js", "tests/renderer-knowledge-folders.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/browser/browser-projects.js"],
+      "required_tests": ["tests/server/browser-projects.test.js", "tests/server/browser-bridge.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/contracts.js", "services/session-runtime/store.js"],
+      "required_tests": ["tests/session-runtime/store.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/session-attachment-authority.js", "services/backend/managed-sidecar-attachments.js", "services/backend/tool-result-attachments.js"],
+      "required_tests": ["tests/session-runtime/attachment-authority.test.js", "tests/session-runtime/attachment-intake.test.js", "tests/tool-result-attachments.test.js", "tests/managed-sidecar/managed-sidecar-chat-image-attachments.test.js"]
+    },
+    {
+      "target_prefixes": ["services/shell-config-session-runtime.js", "services/shell-config-state.js", "services/shell-config-service.js"],
+      "required_tests": ["tests/session-runtime/settings.test.js", "tests/shell-config-state.test.js", "tests/shell-config-service.test.js", "tests/feature-flags.test.js"]
+    },
+    {
+      "target_prefixes": ["services/tools/tool-execution-dispatch.js"],
+      "required_tests": ["tests/tool-executor.test.js", "tests/session-runtime/execution-authority.test.js", "tests/session-runtime/preview-authority.test.js"]
+    },
+    {
+      "target_prefixes": ["services/ipc-contract-project-types.js"],
+      "required_tests": ["tests/session-runtime/session-runtime-ipc.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/attachment-ipc-handlers.js", "services/attachment-service.js", "renderer/features/renderer-attachment-queue-utils.js"],
+      "required_tests": ["tests/session-runtime/attachment-intake.test.js", "tests/auxiliary-ipc-handlers.test.js", "tests/attachment-service.test.js", "tests/renderer-composer-session-ownership.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/project-automation-service.js"],
+      "required_tests": ["tests/session-runtime/workspace-services.test.js", "tests/automation-tools.test.js"]
+    },
+    {
+      "target_prefixes": ["services/session-runtime/physical-paths.js", "services/session-runtime/resource-broker.js"],
+      "required_tests": ["tests/session-runtime/coordination.test.js"]
+    },
+    {
+      "target_prefixes": ["services/host/project-commands.js"],
+      "required_tests": ["tests/server/project-commands.test.js", "tests/server/command-router.test.js", "tests/server/host-contract.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/project-browser-service.js", "services/browser-session-service.js"],
+      "required_tests": ["tests/session-runtime/preview-authority.test.js", "tests/browser-session-service.test.js", "tests/preview-test-tool.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/project-presentation-service.js", "services/workspace-presentation-service.js", "services/tools/builtin/workspace-present-tool.js", "renderer/features/renderer-workspace-presentation-controller.js"],
+      "required_tests": ["tests/session-runtime/presentations.test.js", "tests/workspace-present-tool.test.js", "tests/renderer-workspace-presentation-controller.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/project-application-service.js", "services/projects/session-project-assignment.js", "services/main/session-runtime-ipc-registration.js"],
+      "required_tests": ["tests/session-runtime/project-application-api.test.js", "tests/session-runtime/session-runtime-ipc.test.js", "tests/session-runtime/application-scope.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/shell/renderer-settings-core-renderers.js", "renderer/shell/renderer-settings-utils.js", "renderer/shell/renderer-settings-event-utils.js"],
+      "required_tests": ["tests/renderer-settings-approval-rules.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/session-execution-authority.js", "services/backend/sidecar-client-request-rpc.js", "services/backend/chat-stream-context-assembly.js", "services/tools/tool-executor.js"],
+      "required_tests": ["tests/session-runtime/execution-authority.test.js", "tests/sidecar-client-runtime-operation.test.js", "tests/chat-stream-active-file-context.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/execution_context.py", "sidecar/runtime/operation_admission.py", "sidecar/runtime/chat_resume_snapshots.py"],
+      "required_tests": ["tests/sidecar/runtime/test_execution_context.py", "tests/sidecar/runtime/test_operation_admission.py", "tests/sidecar/runtime/test_chat.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/mcp/builtin_request_scope.py", "sidecar/ai/mcp/builtin_server.py", "sidecar/ai/tools/hosted_file_io.py"],
+      "required_tests": ["tests/sidecar/ai/mcp/test_builtin_request_scope.py", "tests/sidecar/ai/mcp/test_builtin_server_search_tools.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/tool_authority.py", "sidecar/ai/routing/tool_dispatch.py", "sidecar/ai/routing/tool_execution.py", "sidecar/ai/routing/tool_loop_calls.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_tool_authority.py", "tests/sidecar/ai/routing/test_tool_execution_security.py"]
+    },
+    {
+      "target_prefixes": ["services/data-lifecycle/runtime-archive.js", "services/data-lifecycle/data-inventory.js", "services/data-lifecycle/restore-preferences.js", "services/data-lifecycle/restore-service.js", "services/data-lifecycle/cleanup-service.js"],
+      "required_tests": ["tests/session-runtime/portable-data.test.js", "tests/data-lifecycle-restore.test.js", "tests/data-lifecycle-inventory.test.js"]
+    },
+    {
+      "target_prefixes": ["services/artifact-session-authority.js", "services/artifact-session-cleanup.js", "services/artifact-branch-workspace.js", "services/artifact-workspace-service.js"],
+      "required_tests": ["tests/session-runtime/artifacts.test.js", "tests/session-runtime/artifact-lifecycle.test.js", "tests/artifact-branch-clone.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/backend-sessions.js", "services/backend/session-branching.js"],
+      "required_tests": ["tests/session-runtime/artifact-lifecycle.test.js", "tests/backend-sessions.test.js", "tests/session-branching-fork-artifacts.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/application-execution-composition.js"],
+      "required_tests": ["tests/session-runtime/application-scope.test.js", "tests/server/host-composition.test.js"]
+    },
+    {
+      "target_prefixes": ["services/main/workspace-test-runner-wiring.js", "services/workspace-test-runner-service.js", "services/workspace-root-runtime.js"],
+      "required_tests": ["tests/workspace-test-runner-wiring.test.js", "tests/workspace-test-runner-service.test.js", "tests/workspace-root-runtime.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/features/renderer-ide-controller.js", "renderer/features/renderer-ide-editor-host.js", "renderer/features/renderer-ide-active-file-context.js", "renderer/features/renderer-ide-mention-autocomplete.js"],
+      "required_tests": ["tests/renderer-ide-active-file-context.test.js", "tests/renderer-ide-mention-autocomplete.test.js", "tests/renderer-ide-editor-host-active-file-event.test.js", "tests/renderer-ide-controller-lifecycle.test.js"]
+    },
+    {
+      "target_prefixes": ["services/knowledge-service.js"],
+      "required_tests": ["tests/session-runtime/knowledge.test.js", "tests/knowledge-service.test.js", "tests/knowledge-ipc-bridge-integration.test.js"]
+    },
+    {
+      "target_prefixes": ["services/execution/sandbox-project-authority.js", "services/execution/desktop-sandbox-service.js", "services/execution/command-bridge.js"],
+      "required_tests": ["tests/desktop-command-sandbox-lifecycle.test.js", "tests/desktop-command-sandbox-approval.test.js", "tests/desktop-command-sandbox-snapshot.test.js", "tests/desktop-command-sandbox-recovery.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/project-workspace-services.js", "services/workspace-git-operation-context.js"],
+      "required_tests": ["tests/session-runtime/workspace-services.test.js", "tests/automation-tools.test.js", "tests/workspace-git-operation-context.test.js", "tests/workspace-git-checkpoint.test.js"]
+    },
+    {
+      "target_prefixes": ["services/personality-workspace-service.js", "services/skills-service.js"],
+      "required_tests": ["tests/session-runtime/context-sources.test.js", "tests/personality-workspace-service.test.js", "tests/skills-service.test.js"]
+    },
+    {
+      "target_prefixes": [
+        "services/projects/application-project-scope.js",
+        "services/backend/backend-conversation-storage.js",
+        "services/backend/backend-memory.js",
+        "services/backend/backend-sessions.js",
+        "services/backend/electron-session-store.js",
+        "services/backend/session-normalizers.js",
+        "services/backend/session-store-drain.js",
+        "services/backend/chat-stream-context-assembly.js",
+        "services/backend/linked-session-recall.js"
+      ],
+      "required_tests": [
+        "tests/session-runtime/application-scope.test.js",
+        "tests/linked-session-recall.test.js"
+      ]
+    },
+    {
+      "target_prefixes": ["services/host/service-composition.js"],
+      "required_tests": ["tests/server/host-composition.test.js", "tests/session-runtime/application-scope.test.js"]
+    },
+    {
+      "target_prefixes": [
+        "services/auxiliary-ipc-handlers.js",
+        "renderer/features/renderer-memory-actions-utils.js"
+      ],
+      "required_tests": ["tests/auxiliary-ipc-handlers.test.js", "tests/renderer-memory-dismissed-state.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/error-codes.js", "renderer/shared/i18n-backend-strings.js"],
+      "required_tests": ["tests/i18n-backend-strings.test.js", "tests/i18n-ledger.test.js", "tests/i18n-catalogs.test.js"]
+    },
+    {
+      "target_prefixes": [
+        "services/tools/tool-permission-store.js",
+        "services/tools/tool-permission-migrations.js"
+      ],
+      "required_tests": [
+        "tests/session-runtime/permissions.test.js",
+        "tests/tool-permission-store.test.js",
+        "tests/tool-permission-store-always-allow.test.js"
+      ]
+    },
+    {
+      "target_prefixes": ["services/tools/tool-policy-evaluator.js"],
+      "required_tests": ["tests/tool-policy-action-rules.test.js"]
+    },
+    {
+      "target_prefixes": ["services/projects/"],
+      "required_tests": [
+        "tests/session-runtime/projects.test.js",
+        "tests/session-runtime/migrations.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "services/backend/session-store-migrations.js",
+        "services/backend/session-shadow-store.js",
+        "services/backend/session-normalizers.js",
+        "services/backend/session-summary-projection.js",
+        "services/backend/electron-session-store.js",
+        "services/backend/backend-sessions.js",
+        "services/backend/session-branching.js",
+        "services/backend/session-templates.js",
+        "services/backend/session-export-import.js"
+      ],
+      "required_tests": [
+        "tests/session-runtime/migrations.test.js",
+        "tests/session-store-migrations.test.js"
+      ]
+    },
+    {
+      "target_prefixes": ["scripts/checks/check_test_coverage_map.py"],
+      "required_tests": ["tests/sidecar/test_test_coverage_map.py"]
+    },
+    {
+      "target_prefixes": ["sidecar/ai/routing/verification_gate.py"],
+      "required_tests": ["tests/sidecar/ai/routing/test_verification_gate.py"]
+    },
     {
       "target_prefixes": [
         "services/preview-vision-image.js",
@@ -75,7 +723,8 @@
         "renderer/chat/renderer-stream-handler.js"
       ],
       "required_tests": [
-        "tests/renderer-stream-segment-boundary-parity.test.js"
+        "tests/renderer-stream-segment-boundary-parity.test.js",
+        "tests/renderer-pane-visibility-boot.test.js"
       ]
     },
     {
@@ -297,7 +946,31 @@
       ],
       "required_tests": [
         "tests/sidecar/ai/memory/test_store.py",
+        "tests/sidecar/ai/memory/test_project_scope.py",
+        "tests/sidecar/ai/memory/test_project_migration.py",
         "tests/sidecar/server_core/test_memory_dispatch.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/runtime/memory.py",
+        "sidecar/runtime/memory_suggestions.py",
+        "sidecar/runtime/request_dispatch_memory.py"
+      ],
+      "required_tests": [
+        "tests/sidecar/runtime/test_memory.py",
+        "tests/sidecar/runtime/test_request_dispatch_memory.py",
+        "tests/sidecar/server_core/test_memory_dispatch.py"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "sidecar/runtime/chat.py",
+        "sidecar/runtime/chat_normalization.py"
+      ],
+      "required_tests": [
+        "tests/sidecar/runtime/test_chat.py",
+        "tests/sidecar/runtime/test_chat_normalization.py"
       ]
     },
     {
@@ -368,6 +1041,7 @@
       ],
       "required_tests": [
         "tests/managed-plugin-runtime.test.js",
+        "tests/managed-sidecar/managed-sidecar-logical-turn.test.js",
         "tests/managed-sidecar-chat-dark-paths.test.js",
         "tests/sidecar-client.test.js"
       ]
@@ -509,6 +1183,78 @@
         "tests/renderer-viewport-live-follow-utils.test.js",
         "tests/renderer-viewport-reveal-utils.test.js",
         "tests/renderer-pin-to-top-utils.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/shell/renderer-pane-model.js",
+        "renderer/chat/renderer-pane-visibility-utils.js"
+      ],
+      "required_tests": [
+        "tests/renderer-pane-model.test.js",
+        "tests/renderer-pane-visibility.test.js",
+        "tests/renderer-pane-visibility-boot.test.js",
+        "tests/renderer-chat-surface-live-utils.test.js",
+        "tests/renderer-stream-handler.test.js",
+        "tests/renderer-stream-handler-wiring.test.js",
+        "tests/renderer-app-split.test.js",
+        "tests/renderer-startup-script-budget.test.js",
+        "tests/renderer-shell.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/chat/renderer-render-pipeline-projection-cache.js"
+      ],
+      "required_tests": [
+        "tests/renderer-render-pipeline-projection-cache.test.js",
+        "tests/renderer-render-pipeline-message-renderer.test.js",
+        "tests/renderer-render-pipeline-settled-refresh.test.js",
+        "tests/renderer-pane-model.test.js",
+        "tests/renderer-shell.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/chat/renderer-chat-pane-surface-controllers.js",
+        "renderer/app/renderer-app-lifecycle-composition.js"
+      ],
+      "required_tests": [
+        "tests/renderer-chat-pane-surface-controllers.test.js",
+        "tests/renderer-controller-dispose.test.js",
+        "tests/renderer-shell.test.js",
+        "tests/renderer-chat-shell-controller.test.js",
+        "tests/renderer-app-lifecycle-export-contract.test.js",
+        "tests/renderer-app-split.test.js",
+        "tests/renderer-shell-harness-parity.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/shell/renderer-bootstrap-dom.js",
+        "index.html"
+      ],
+      "required_tests": [
+        "tests/renderer-chat-pane-dom.test.js",
+        "tests/renderer-shell.test.js",
+        "tests/renderer-app-split.test.js",
+        "tests/renderer-startup-script-budget.test.js",
+        "tests/renderer-shell-harness-parity.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/chat/renderer-pane-runtime.js",
+        "renderer/app.js"
+      ],
+      "required_tests": [
+        "tests/renderer-pane-runtime.test.js",
+        "tests/renderer-pane-render-memo-isolation.test.js",
+        "tests/renderer-controller-dispose.test.js",
+        "tests/renderer-app-split.test.js",
+        "tests/renderer-render-pipeline-projection-cache.test.js",
+        "tests/renderer-startup-script-budget.test.js",
+        "tests/renderer-shell.test.js"
       ]
     },
     {

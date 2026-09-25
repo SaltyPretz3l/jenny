@@ -169,6 +169,37 @@ interpreter, the unversioned `libpython3.13.so` alias, `include/`, and `share/`.
 Without those exclusions, materializing symlinks as copies would make the
 extracted tree about 194 MB.
 
+### Sidecar media site
+
+The optional image and OCR dependencies ship as a platform-specific
+`vendor/sidecar-media-site/` directory, packaged at
+`resources/sidecar-media-site/`. They stay outside the PyInstaller onefile
+sidecar because onefile would re-extract more than 200 MB of optional packages
+for every launch and every builtin-MCP child process. Build the directory on
+the target platform with:
+
+- Windows: `python scripts/packaging/build_media_site.py --platform win_amd64`
+- Linux x64: `python scripts/packaging/build_media_site.py --platform manylinux_2_28_x86_64`
+- macOS arm64: `python scripts/packaging/build_media_site.py --platform macosx_11_0_arm64`
+
+`antlr4-python3-runtime` (needed by omegaconf) is published only as a source
+archive; the builder hash-verifies that archive against the lock, builds it into
+a wheel locally, and installs everything from the verified wheelhouse. Verify it
+before packaging with
+`python scripts/checks/check_media_site.py`. Regenerate its universal hash lock
+with the command recorded in `requirements-media-site.in`:
+`uv pip compile --universal --python-version 3.11 --generate-hashes --override requirements-media-site-overrides.txt -o requirements-media-site-lock.txt requirements-media-site.in`.
+For frozen-build testing, `JENNY_SIDECAR_MEDIA_SITE_DIR` can point the sidecar
+at a hand-built site directory. Review `NOTICE` before distributing a build.
+
+PyMuPDF (AGPL-3.0) is not in the media site or the frozen sidecar. Users opt
+in to it as the PDF reading add-on (Settings › Tools), which installs the wheel
+pinned per platform in `config/pdf-addon-manifest.json` (hash lock
+`requirements-pdf-addon-lock.txt`, recorded from `requirements-pdf-addon.in`).
+`check_media_site.py` fails if a `pymupdf/` or `fitz/` directory appears in the
+site, and `build_sidecar_artifact.py` excludes both modules. A development venv
+with the `media` extra keeps PyMuPDF for local PDF reads.
+
 - Regenerate the sidecar artifact lock with uv 0.11.19 from the repository root:
   `uv pip compile --universal --python-version 3.11 --generate-hashes --extra packaging --no-emit-package setuptools -o requirements-lock.txt pyproject.toml`.
   The lock is universal for win_amd64, macOS arm64, and manylinux, with

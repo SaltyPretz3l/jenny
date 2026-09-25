@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from sidecar.ai.engines.base import EngineMessage
-from sidecar.ai.engines.model_name import is_qwen38_model
+from sidecar.ai.engines.model_name import is_bonsai2_model, uses_qwen38_chat_contract
 from sidecar.ai.engines.vllm_engine import VLLMEngine
 
 _OPENAI_COMPAT_DEFAULT_BASE_URL = "http://127.0.0.1:8033/v1"
@@ -26,6 +26,17 @@ _QWEN38_LLAMA_EFFORT_MAP = {
     "default": "medium",
     "minimal": "low",
     "low": "low",
+    "medium": "medium",
+    "high": "xhigh",
+    "xhigh": "xhigh",
+    "max": "xhigh",
+}
+# Bonsai 2's card: `low` is unsupported and behaves close to `xhigh`. The cheap
+# efforts background callers send (`minimal`, `low`) turn thinking off instead
+# of becoming a thinking turn, and `low` is never sent.
+_BONSAI2_THINKING_OFF_EFFORTS = frozenset({"none", "minimal", "low"})
+_BONSAI2_LLAMA_EFFORT_MAP = {
+    "default": "medium",
     "medium": "medium",
     "high": "xhigh",
     "xhigh": "xhigh",
@@ -41,6 +52,11 @@ class OpenAICompatibleEngine(VLLMEngine):
     _ENGINE_TYPE = "openai-compatible"
     _DISPLAY_NAME = "OpenAI-compatible server"
     _START_COMMAND_HINT = "your OpenAI-compatible server (e.g. llama-server, vllm, tgi)"
+
+    def get_inference_budget_context_length(self) -> int | None:
+        # This subclass may inflate output for reasoning beyond its served hint.
+        # Do not inherit plain vLLM's enforceable-ceiling claim.
+        return None
 
     def __init__(
         self,
@@ -64,6 +80,13 @@ class OpenAICompatibleEngine(VLLMEngine):
         # window, which holds for llama-server but not a generic vLLM endpoint.
         return _positive_int(self._served_context_length) or self._configured_context_length
 
+    @staticmethod
+    def _detect_thinking(model_name: str) -> bool:
+        # Every Qwen3.8-contract name gets `enable_thinking`, including separator
+        # variants (`Ternary_Bonsai_2_27B`) the prefix lists miss; keep their
+        # reasoning output visible.
+        return VLLMEngine._detect_thinking(model_name) or uses_qwen38_chat_contract(model_name)
+
     def get_model_max_output_tokens(self) -> int | None:
         return self._profile_max_output_tokens
 
@@ -75,7 +98,9 @@ class OpenAICompatibleEngine(VLLMEngine):
         if final_tokens is None:
             return None
         requested = str(reasoning_effort or "default").strip().lower() or "default"
-        if requested == "none" or not is_qwen38_model(self.model_name):
+        if not uses_qwen38_chat_contract(self.model_name) or _thinking_disabled(
+            self.model_name, requested
+        ):
             return final_tokens
         return final_tokens + self._profile_thinking_headroom
 
@@ -101,19 +126,17 @@ class OpenAICompatibleEngine(VLLMEngine):
             messages=messages,
             response_format=response_format,
         )
-        if not is_qwen38_model(self.model_name):
+        if not uses_qwen38_chat_contract(self.model_name):
             return payload
 
         requested = str(reasoning_effort or "default").strip().lower() or "default"
         template_kwargs: dict[str, Any] = {}
-        if requested == "none":
+        if _thinking_disabled(self.model_name, requested):
             template_kwargs["enable_thinking"] = False
             payload["reasoning_effort"] = "none"
             thinking = False
         else:
-            resolved = _QWEN38_LLAMA_EFFORT_MAP.get(requested)
-            if resolved is None:
-                raise ValueError(f"Unsupported Qwen3.8 reasoning effort: {requested}")
+            resolved = _resolve_llama_effort(self.model_name, requested)
             template_kwargs.update(
                 {
                     "enable_thinking": True,
@@ -154,6 +177,25 @@ class OpenAICompatibleEngine(VLLMEngine):
             f"'{requested}'. Available models: {available}. "
             f"Restart {self._START_COMMAND_HINT} with the desired model."
         )
+
+
+def _thinking_disabled(model_name: str | None, requested: str) -> bool:
+    """Return whether ``requested`` turns the Qwen3.8-contract template's thinking off."""
+    if is_bonsai2_model(model_name):
+        return requested in _BONSAI2_THINKING_OFF_EFFORTS
+    return requested == "none"
+
+
+def _resolve_llama_effort(model_name: str | None, requested: str) -> str:
+    """Map a Jenny effort onto the levels this Qwen3.8-contract template accepts."""
+    if is_bonsai2_model(model_name):
+        family, effort_map = "Bonsai 2", _BONSAI2_LLAMA_EFFORT_MAP
+    else:
+        family, effort_map = "Qwen3.8", _QWEN38_LLAMA_EFFORT_MAP
+    resolved = effort_map.get(requested)
+    if resolved is None:
+        raise ValueError(f"Unsupported {family} reasoning effort: {requested}")
+    return resolved
 
 
 def _positive_int(value: int | None) -> int | None:

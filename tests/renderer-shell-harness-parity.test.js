@@ -517,3 +517,10 @@ test('plugin settings commands bind to the production chat send controller', asy
 
   assert.ok(pluginOptions, 'plugin settings controller receives its production dependencies');
 });
+
+ test('durable Send loads before its composer consumer; inspector modules stay lazy', () => {
+  const durable = 'renderer/chat/renderer-durable-send.js';
+  assert.ok(SCRIPT_ORDER.includes(durable));
+  assert.ok(SCRIPT_ORDER.indexOf(durable) < SCRIPT_ORDER.indexOf('renderer/chat/renderer-send-utils.js'));
+  for (const name of ['view', 'controller']) assert.equal(SCRIPT_ORDER.includes(`renderer/shell/renderer-orchestration-${name}.js`), false);
+});

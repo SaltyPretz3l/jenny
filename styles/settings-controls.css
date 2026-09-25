@@ -664,3 +664,35 @@
   cursor: default;
   opacity: 0.55;
 }
+
+/* Tools > PDF reading add-on (renderer/shell/renderer-settings-pdf-addon.js).
+   The toggle notes show only while the add-on is missing; the controller sets
+   data-pdf-addon-needed on the persistent field-list container. */
+.tools-config-field-addon-note {
+  display: none;
+}
+
+#toolsConfigFieldList[data-pdf-addon-needed="true"] .tools-config-field-addon-note {
+  display: inline;
+}
+
+.pdf-addon-disclosure {
+  max-width: 62ch;
+  margin-top: var(--space-5);
+}
+
+.pdf-addon-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-6);
+  margin: var(--space-5) 0;
+}
+
+.pdf-addon-facts dt {
+  color: var(--text-muted);
+}
+
+.pdf-addon-facts dd {
+  margin: 0;
+  color: var(--text-primary);
+}

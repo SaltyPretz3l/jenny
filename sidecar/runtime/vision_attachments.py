@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 _MANAGED_ROOT_UNSET = object()
 
 
+def managed_image_attachment_root(config: Any) -> Path | None:
+    raw_root = getattr(config, "electron_state_root", None)
+    if not raw_root:
+        return None
+    return Path(str(raw_root)).expanduser() / "attachments" / "images"
+
+
 def _optional_string(
     attachment: dict[str, Any],
     field: str,

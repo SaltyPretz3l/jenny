@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from sidecar.ai.context.runtime_message_markers import (
     CONTEXT_PRESSURE_ADVISORY_HEADING,
@@ -26,6 +26,10 @@ format_tool_arguments_example = _schema_examples.format_tool_arguments_example
 format_tool_call_example = _schema_examples.format_tool_call_example
 requested_tool_families = _tool_families.requested_tool_families
 status_matches_tool_family = _tool_families.status_matches_tool_family
+
+# "No request root supplied": fall back to the constructor root. Distinct from
+# ``None``, which a captured request authority uses for "explicitly unbound".
+_UNSET_ROOT: Any = object()
 
 BOOTSTRAP_DIRNAME = "BOOTSTRAP"
 BOOTSTRAP_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
@@ -303,3 +307,51 @@ def _skill_dedupe_key(skill_path: Path) -> tuple[Any, ...]:
         return ("path", skill_path.resolve())
     except OSError:
         return ("path", skill_path)
+
+
+REASONING_STATUS_MIN_WORDS: Final[int] = 2
+REASONING_STATUS_MAX_WORDS: Final[int] = 6
+
+# Reasoning Status V2 prompt block (flag `reasoning_status_v2`): the word window is
+# shared with `sidecar.runtime.reasoning_status` so prompt and extractor agree.
+REASONING_STATUS_BLOCK_V2: Final[str] = (
+    "## Reasoning Status Markers\n"
+    "When using your internal thinking/reasoning process, start each genuinely "
+    "new logical phase with a status marker on its own line:\n\n"
+    f"\u27e8STATUS: {REASONING_STATUS_MIN_WORDS}-"
+    f"{REASONING_STATUS_MAX_WORDS} word summary\u27e9\n\n"
+    "IMPORTANT: These markers belong ONLY in your internal thinking output. "
+    "Never include \u27e8STATUS:\u27e9 markers in your visible response "
+    "to the user.\n\n"
+    "Examples (for your thinking blocks only):\n\n"
+    "\u27e8STATUS: Analyzing user constraints\u27e9\n"
+    "\u27e8STATUS: Comparing implementation options\u27e9\n"
+    "\u27e8STATUS: Drafting final response\u27e9\n\n"
+    "Constraints:\n"
+    "- Use exactly the characters \u27e8 (U+27E8) and \u27e9 (U+27E9) as delimiters\n"
+    f"- Keep the summary between {REASONING_STATUS_MIN_WORDS} and "
+    f"{REASONING_STATUS_MAX_WORDS} words with no terminal punctuation\n"
+    "- Start each genuinely new logical phase with one marker - do not over-annotate\n"
+    "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
+    "- If unsure whether to add a marker, omit it\n\n"
+)
+
+# Legacy (flag off) prompt block; byte-for-byte the pre-V2 text.
+REASONING_STATUS_BLOCK_LEGACY: Final[str] = (
+    "## Reasoning Status Markers\n"
+    "When using your internal thinking/reasoning process, signal each new logical "
+    "phase with a status marker on its own line:\n\n"
+    "\u27e8STATUS: 3-5 word summary\u27e9\n\n"
+    "IMPORTANT: These markers belong ONLY in your internal thinking output. "
+    "Never include \u27e8STATUS:\u27e9 markers in your visible response to the user.\n\n"
+    "Examples (for your thinking blocks only):\n\n"
+    "\u27e8STATUS: Analyzing user constraints\u27e9\n"
+    "\u27e8STATUS: Comparing implementation options\u27e9\n"
+    "\u27e8STATUS: Drafting final response\u27e9\n\n"
+    "Constraints:\n"
+    "- Use exactly the characters \u27e8 (U+27E8) and \u27e9 (U+27E9) as delimiters\n"
+    "- Keep the summary between 2 and 6 words with no terminal punctuation\n"
+    "- One marker per logical phase - do not over-annotate\n"
+    "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
+    "- If unsure whether to add a marker, omit it\n\n"
+)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from sidecar.ai.container import BrainContainer
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
@@ -19,6 +19,10 @@ from sidecar.protocol import (
     INLINE_UNLOAD_METHOD,
 )
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.inference_admission import (
+    build_auxiliary_inference_admission_callback,
+    inference_context_from_params,
+)
 from sidecar.runtime.inline_completion import (
     generate_inline_completion,
     list_loaded_inline_models,
@@ -46,13 +50,16 @@ def _emit_log_event(logger: logging.Logger, level: int, **kwargs: Any) -> None:
     log_event_fn(logger, level, **kwargs)
 
 
-def process_inline_method(  # noqa: PLR0913 -- uniform request-dispatch hook contract
+def process_inline_method(  # noqa: PLR0911, PLR0913, PLR0917 -- uniform dispatch hook contract
     method: str,
     message_id: Any,
     params: Any,
     initialized: bool,
     brain_container: BrainContainer,
     logger: logging.Logger,
+    *,
+    write_message: Callable[[dict[str, Any]], None] | None = None,
+    response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None = None,
 ) -> ProcessOutcome | None:
     """Dispatch the inline.* JSON-RPC methods (complete / loaded_models / unload).
 
@@ -118,6 +125,20 @@ def process_inline_method(  # noqa: PLR0913 -- uniform request-dispatch hook con
             notifications=[],
         )
 
+    try:
+        inference_context = inference_context_from_params(safe_params)
+    except ValueError as error:
+        return ProcessOutcome(
+            initialized=initialized,
+            shutdown_requested=False,
+            response=error_response(
+                message_id,
+                code=INVALID_PARAMS_CODE,
+                message="invalid inference_context",
+                data={"detail": str(error)},
+            ),
+            notifications=[],
+        )
     completion = generate_inline_completion(
         brain_container,
         prefix=str(safe_params.get("prefix", "")),
@@ -128,6 +149,12 @@ def process_inline_method(  # noqa: PLR0913 -- uniform request-dispatch hook con
         # resource policy rather than claiming a user-selected CPU/GPU target.
         max_tokens=safe_params.get("max_tokens", 96),
         logger=logger,
+        request_id=inference_context.request_id if inference_context is not None else None,
+        inference_admission=build_auxiliary_inference_admission_callback(
+            context=inference_context,
+            write_message=write_message,
+            response_reader_factory=response_reader_factory,
+        ),
     )
 
     return ProcessOutcome(

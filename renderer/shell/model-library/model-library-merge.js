@@ -159,6 +159,8 @@
       },
       serving: serving,
       servingPort: serving ? context.llamaServer.port : 0,
+      // The model's own llama-server build, shown as " · build N"; 0 = bundled.
+      customBuild: selectedEngine === 'llama-server' && typeof perModel.runtimePath === 'string' && perModel.runtimePath !== '' ? Number(perModel.runtimeBuild) || 0 : 0,
     };
   }
 
@@ -213,7 +215,7 @@
     (Array.isArray(installed) ? installed : []).forEach(function (entry) {
       var source = objectOrEmpty(entry);
       var tag = entryTag(entry);
-      var key = canonicalTag(tag);
+      var key = source.libraryGguf === true && source.ownCardKey ? String(source.ownCardKey) : canonicalTag(tag); // see projectLibraryGgufs
       if (!key) return;
       var sizeBytes = nonNegativeNumber(firstValue(source, ['sizeBytes', 'size']));
       var engineType = stringValue(source, ['engineType', 'engine_type']).toLowerCase();
@@ -234,6 +236,7 @@
           params: params,
           quant: quant,
           digest: digest,
+          libraryGguf: source.libraryGguf === true,
         });
         return;
       }
@@ -246,6 +249,7 @@
       if (!current.params && params) current.params = params;
       if (!current.quant && quant) current.quant = quant;
       if (!current.digest && digest) current.digest = digest;
+      if (source.libraryGguf === true) current.libraryGguf = true;
     });
     return byKey;
   }
@@ -331,6 +335,8 @@
       mtp: engine.mtp,
       serving: engine.serving,
       servingPort: engine.servingPort,
+      customBuild: engine.customBuild,
+      libraryGguf: Boolean(installedEntry && installedEntry.libraryGguf),
       source: installed ? 'both' : 'catalog',
     };
   }
@@ -396,6 +402,8 @@
       mtp: engine.mtp,
       serving: engine.serving,
       servingPort: engine.servingPort,
+      customBuild: engine.customBuild,
+      libraryGguf: entry.libraryGguf === true,
       source: 'installed',
     };
   }
@@ -573,6 +581,7 @@
   return {
     LOCAL_ENGINE_TYPES: LOCAL_ENGINE_TYPES,
     canonicalFamilyToken: canonicalFamilyToken,
+    entryTag: entryTag,
     managedAliasKey: managedAliasKey,
     managedModelKey: managedModelKey,
     joinModelPath: joinModelPath,

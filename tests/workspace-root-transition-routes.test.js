@@ -251,7 +251,7 @@ describe('canonical route: workspaceRoot prepare/commit process recheck', () => 
     shellConfigService.setToolsWorkspaceRoot('G:/old');
     const { deps, ipcMain } = buildMainIpcDeps({ shellConfigService });
     const result0 = registerMainIpcHandlers(deps);
-    result0.workspaceTestRunnerService.getState = () => ({ activeRun: 'run-1' });
+    result0.workspaceTestRunnerService.hasWorkspaceRun = () => true;
     const handler = ipcMain.invoke.get(invokeChannel('workspaceRoot.prepareClear'));
     const prepared = await handler({});
     const commit = ipcMain.invoke.get(invokeChannel('workspaceRoot.commit'));
